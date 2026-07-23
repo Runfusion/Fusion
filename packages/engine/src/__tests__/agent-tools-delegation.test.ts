@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Agent, AgentStore, TaskStore, Task } from "@fusion/core";
+import type { Agent, AgentStore, TaskStore, Task, TaskCreateInput } from "@fusion/core";
 import { createAgentTask, createListAgentsTool, createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
 
 function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
@@ -553,6 +553,142 @@ describe("createDelegateTaskTool", () => {
     expect(createInput.sliceId).toBeUndefined();
   });
 
+  it("bootstraps a defined feature by linking and promoting its first created task", async () => {
+    const missionStore = {
+      getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "defined" }),
+      getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+      getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+      getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+      claimDefinedFeatureTaskInTransaction: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-001", status: "triaged" }),
+      claimDefinedFeatureTask: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-001", status: "triaged" }),
+      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = createMockTaskStore({
+      getMissionStore: vi.fn().mockReturnValue(missionStore),
+      createTask: vi.fn().mockImplementation(async (input) => {
+        const task = { id: "FN-001", dependencies: [], column: "triage", steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" } as Task;
+        await (input as { afterTaskInsert?: (tx: object, created: Task) => Promise<void> }).afterTaskInsert?.({}, task);
+        return task;
+      }),
+    });
+    const result = await createTaskCreateTool(store).execute(
+      "call-1", { description: "Bootstrap the hand-authored feature", mission_lineage: APPROVED_LINEAGE },
+      undefined as any, undefined as any, undefined as any,
+    );
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledWith({}, { featureId: "F-001", taskId: "FN-001", missionId: "M-001", sliceId: "SL-001" });
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ missionId: "M-001", sliceId: "SL-001" }), expect.anything());
+  });
+
+  it("keeps a claimed defined-feature task canonical when a late duplicate appears", async () => {
+    const missionStore = {
+      getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "defined" }),
+      getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+      getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+      getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+      claimDefinedFeatureTaskInTransaction: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-new", status: "triaged" }),
+      claimDefinedFeatureTask: vi.fn(),
+      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+    };
+    const created = { id: "FN-new", description: "Bootstrap feature", dependencies: [], column: "triage" as const, steps: [], currentStep: 0, log: [], createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" } as Task;
+    const older = { ...created, id: "FN-old", createdAt: "2026-01-01T00:00:00.000Z" };
+    const store = createMockTaskStore({
+      getMissionStore: vi.fn().mockReturnValue(missionStore),
+      createTask: vi.fn().mockImplementation(async (input) => {
+        await (input as { afterTaskInsert?: (tx: object, created: Task) => Promise<void> }).afterTaskInsert?.({}, created);
+        return created;
+      }),
+      findRecentTasksByContentFingerprint: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([older, created]),
+    });
+
+    const result = await createTaskCreateTool(store).execute(
+      "call-1", { description: "Bootstrap feature", mission_lineage: APPROVED_LINEAGE },
+      undefined as any, undefined as any, undefined as any,
+    );
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect((result.details as { taskId: string }).taskId).toBe("FN-new");
+    expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledOnce();
+    /* FNXC:MissionAdmission 2026-07-23-19:00: a task that atomically claimed feature.taskId must never be archived by post-create duplicate reconciliation. */
+    expect(store.findRecentTasksByContentFingerprint).toHaveBeenCalledTimes(2);
+    expect(missionStore.archiveDefinedFeatureBootstrapDuplicate).toHaveBeenCalledWith({
+      featureId: "F-001", taskId: "FN-new", duplicateTaskId: "FN-old",
+    });
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-new", "archived");
+  });
+
+  it("rolls back a newly-created task when defined-feature bootstrap cannot link", async () => {
+    const missionStore = {
+      getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "defined" }),
+      getSlice: vi.fn().mockResolvedValue({ id: "SL-001", milestoneId: "MS-001", status: "active" }),
+      getMilestone: vi.fn().mockResolvedValue({ id: "MS-001", missionId: "M-001", status: "active" }),
+      getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
+      claimDefinedFeatureTaskInTransaction: vi.fn().mockRejectedValue(new Error("Feature F-001 is already linked to task FN-OTHER")),
+      claimDefinedFeatureTask: vi.fn(),
+      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = createMockTaskStore({
+      getMissionStore: vi.fn().mockReturnValue(missionStore),
+      createTask: vi.fn().mockImplementation(async (input) => {
+        await (input as { afterTaskInsert?: (tx: object, created: Task) => Promise<void> }).afterTaskInsert?.({}, { id: "FN-001" } as Task);
+        throw new Error("bootstrap hook unexpectedly succeeded");
+      }),
+    });
+    const result = createTaskCreateTool(store).execute(
+      "call-1", { description: "Bootstrap conflicting feature", mission_lineage: APPROVED_LINEAGE },
+      undefined as any, undefined as any, undefined as any,
+    );
+
+    await expect(result).rejects.toThrow("Feature F-001 is already linked to task FN-OTHER");
+    expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a pre-existing same-agent bootstrap duplicate before claiming or creating", async () => {
+    const canonical = {
+      id: "FN-existing", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
+      sourceAgentId: "agent-001", dependencies: [], column: "triage" as const, steps: [], currentStep: 0,
+      log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as Task;
+    const store = createMockTaskStore({ listTasks: vi.fn().mockResolvedValue([canonical]) });
+    const validate = vi.fn().mockRejectedValue(new Error("pre-existing task is not linked to this feature"));
+
+    await expect(createAgentTask(store, {
+      title: "Bootstrap feature",
+      description: "Bootstrap the hand-authored feature",
+      source: { sourceType: "api", sourceAgentId: "agent-001" },
+      preflightSameAgentDuplicate: true,
+      validateDuplicateCanonical: validate,
+    } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> }))
+      .rejects.toThrow("pre-existing task is not linked to this feature");
+
+    expect(validate).toHaveBeenCalledWith(canonical);
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("does not select an archived same-agent task as a defined-feature bootstrap canonical", async () => {
+    const archived = {
+      id: "FN-archived", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
+      sourceAgentId: "agent-001", dependencies: [], column: "archived" as const, steps: [], currentStep: 0,
+      log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as Task;
+    const store = createMockTaskStore({ listTasks: vi.fn().mockResolvedValue([archived]) });
+    const validate = vi.fn().mockResolvedValue(undefined);
+
+    const result = await createAgentTask(store, {
+      title: "Bootstrap feature",
+      description: "Bootstrap the hand-authored feature",
+      source: { sourceType: "api", sourceAgentId: "agent-001" },
+      preflightSameAgentDuplicate: true,
+      validateDuplicateCanonical: validate,
+    } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> });
+
+    /* FNXC:MissionAdmission 2026-07-23-21:10: archived tasks are not live bootstrap canonicals and must not block a valid first task. */
+    expect(result.wasDuplicate).toBe(false);
+    expect(validate).not.toHaveBeenCalled();
+    expect(store.createTask).toHaveBeenCalledOnce();
+  });
+
   it("serializes three concurrent paraphrased creates from one parent", async () => {
     const tasks: Task[] = [];
     vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
@@ -592,7 +728,11 @@ describe("createDelegateTaskTool", () => {
       return canonical;
     });
 
-    const result = await createAgentTask(taskStore, { description: "Add new support" }, { sourceTaskId: "fn-parent" });
+    const validateDuplicateCanonical = vi.fn().mockResolvedValue(undefined);
+    const result = await createAgentTask(taskStore, {
+      description: "Add new support",
+      validateDuplicateCanonical,
+    } as TaskCreateInput & { validateDuplicateCanonical: (task: Task) => Promise<void> }, { sourceTaskId: "fn-parent" });
 
     expect(taskStore.findRecentTasksBySourceParentTaskId).toHaveBeenCalledWith("FN-PARENT");
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -600,6 +740,8 @@ describe("createDelegateTaskTool", () => {
       proposalClaimId: expect.stringMatching(/^agent-parent-intent:FN-PARENT:/),
     }), expect.anything());
     expect(result).toMatchObject({ task: canonical, wasDuplicate: true });
+    /* FNXC:MissionAdmission 2026-07-23-17:20: proposal-claim reuse must validate the final canonical, not only pre-create duplicate probes. */
+    expect(validateDuplicateCanonical).toHaveBeenCalledWith(canonical);
   });
 
   it("carries delegation routing onto the reconcile canonical task", async () => {
@@ -626,17 +768,21 @@ describe("createDelegateTaskTool", () => {
       id === "FN-old" ? moved : { ...created, id, column },
     );
 
+    const validateDuplicateCanonical = vi.fn().mockResolvedValue(undefined);
     const result = await createAgentTask(taskStore, {
       description: "Write tests",
       mission_lineage: APPROVED_LINEAGE,
       column: "todo",
       assignedAgentId: "agent-002",
-    });
+      validateDuplicateCanonical,
+    } as TaskCreateInput & { validateDuplicateCanonical: (task: Task) => Promise<void> });
 
     expect(result.wasDuplicate).toBe(true);
     expect(result.task).toBe(moved);
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-old", { assignedAgentId: "agent-002" });
     expect(taskStore.moveTask).toHaveBeenCalledWith("FN-old", "todo");
+    /* FNXC:MissionAdmission 2026-07-23-17:20: post-create archival reconciliation must validate its returned canonical before duplicate success. */
+    expect(validateDuplicateCanonical).toHaveBeenCalledWith(moved);
   });
 
   it("returns success message with task ID and agent name", async () => {

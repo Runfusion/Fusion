@@ -155,10 +155,15 @@ export function updatePlanningSessionTitle(sessionId: string, title: string, pro
   });
 }
 
-/** Submit a response to the current planning question */
+export interface PlanningContextualComment {
+  quote: string;
+  suggestion: string;
+}
+
+/** Submit a response to the current planning question or a bounded contextual-comment batch. */
 export function respondToPlanning(
   sessionId: string,
-  responses: Record<string, unknown>,
+  responses: Record<string, unknown> | { contextualComments: PlanningContextualComment[] },
   projectId?: string,
 ): Promise<PlanningResponse> {
   return api<PlanningResponse>(withProjectId("/planning/respond", projectId), {

@@ -365,10 +365,14 @@ describe("TaskDetailModal", () => {
       await waitFor(() => expect(noopOpenDetail).toHaveBeenCalled());
     });
 
-    it("renders compact github issue link for github import provenance", () => {
-      render(
+    it.each([
+      ["desktop", undefined],
+      ["compact/mobile", "back"],
+    ] as const)("links only the GitHub Import label to the source issue on %s markup", (_layout, mobileHeaderMode) => {
+      const { container } = render(
         <TaskDetailModal
           initialTab="definition"
+          mobileHeaderMode={mobileHeaderMode}
           task={makeTask({
             sourceType: "github_import",
             sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42" },
@@ -382,19 +386,20 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText(/Created via GitHub Import/).closest(".detail-provenance")).toHaveTextContent(
-        "Created via GitHub Import (owner/repo#42)",
-      );
+      const issueLink = screen.getByRole("link", { name: "GitHub Import" });
+      const provenance = issueLink.closest(".detail-provenance");
+      expect(provenance).toHaveTextContent("Created via GitHub Import");
+      expect(provenance?.textContent).not.toMatch(/[()]/);
+      expect(provenance?.querySelectorAll("a")).toHaveLength(1);
+      expect(container.querySelector(".detail-provenance-context")).toBeNull();
 
-      const issueLink = screen.getByRole("link", { name: "owner/repo#42" });
       expect(issueLink).toHaveAttribute("href", "https://github.com/owner/repo/issues/42");
       expect(issueLink).toHaveAttribute("target", "_blank");
-      expect(issueLink).toHaveAttribute("rel", expect.stringContaining("noopener"));
-      expect(issueLink).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
-      expect(issueLink).toHaveAttribute("title", "https://github.com/owner/repo/issues/42");
+      expect(issueLink).toHaveAttribute("rel", "noopener noreferrer");
+      expect(issueLink).not.toHaveAttribute("title");
     });
 
-    it("falls back to 'Open issue' label for unparseable github import URL", () => {
+    it("keeps GitHub Import as the sole link for a populated nonstandard source URL", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
@@ -411,21 +416,19 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const issueLink = screen.getByRole("link", { name: "Open issue" });
+      const issueLink = screen.getByRole("link", { name: "GitHub Import" });
+      const provenance = issueLink.closest(".detail-provenance");
       expect(issueLink).toHaveAttribute("href", "https://example.com/something");
-      expect(screen.getByText(/Created via GitHub Import/).closest(".detail-provenance")).toHaveTextContent(
-        "Created via GitHub Import (Open issue)",
-      );
+      expect(provenance?.querySelectorAll("a")).toHaveLength(1);
+      expect(provenance?.textContent).toBe("Created via GitHub Import");
+      expect(screen.queryByText("Open issue")).toBeNull();
     });
 
-    it("renders github import provenance with no issue URL as plain label", () => {
-      render(
+    it("renders a URL-absent GitHub import as plain text without a link shell", () => {
+      const { container, rerender } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({
-            sourceType: "github_import",
-            sourceMetadata: {},
-          })}
+          task={makeTask({ sourceType: "github_import", sourceMetadata: undefined })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -435,8 +438,27 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Created via GitHub Import")).toBeInTheDocument();
-      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      const assertPlainFallback = () => {
+        const provenance = screen.getByText("Created via GitHub Import").closest(".detail-provenance");
+        expect(provenance?.textContent).toBe("Created via GitHub Import");
+        expect(provenance?.querySelector("a")).toBeNull();
+        expect(container.querySelector(".detail-provenance-context")).toBeNull();
+      };
+
+      assertPlainFallback();
+      rerender(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ sourceType: "github_import", sourceMetadata: {} })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      assertPlainFallback();
     });
 
     it("renders finding label for research provenance", () => {

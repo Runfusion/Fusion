@@ -4,7 +4,7 @@ import type { TFunction } from "i18next";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, useLayoutEffect, lazy, Suspense, type CSSProperties, type ReactNode, type MutableRefObject, type RefObject, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Move, Info } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
-import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
+import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled } from "../api";
 
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
 import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
@@ -60,6 +60,7 @@ function getAgentRoles(t: TFunction<"app">): { value: AgentCapability; label: st
 }
 
 const HEARTBEAT_MULTIPLIER_PRESETS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
+const HEARTBEAT_DISABLED_OPTION_VALUE = "__disabled__";
 
 const ORG_CHART_SCALE_MIN = 0.25;
 const ORG_CHART_SCALE_MAX = 3;
@@ -177,16 +178,47 @@ function getHealthSummary(agent: Agent, health: AgentHealthStatus, t: TFunction<
 type OrgChartLink = { parentId: string; childId: string };
 type OrgChartTransform = { scale: number; x: number; y: number };
 
+/*
+FNXC:AgentHeartbeatControls 2026-07-23-13:10:
+List, board, and org-chart cards use one explicit heartbeat action. It changes only runtimeConfig.enabled through the preserved payload helper; lifecycle pause/resume remains a separate control.
+*/
+function HeartbeatToggle({ agent, pending, onToggle }: { agent: Agent; pending: boolean; onToggle: (agent: Agent) => void }) {
+  const { t } = useTranslation("app");
+  // FNXC:AgentHeartbeatControls 2026-07-23-13:30: Task-worker agents are ephemeral and must never receive durable heartbeat mutations, even when operators expose system agents.
+  if (isEphemeralAgent(agent)) return null;
+  const enabled = isAgentHeartbeatEnabled(agent);
+  const label = enabled
+    ? t("agents.disableHeartbeat", "Disable heartbeat")
+    : t("agents.enableHeartbeat", "Enable heartbeat");
+  return (
+    <button
+      type="button"
+      className="btn btn-sm agent-heartbeat-toggle"
+      disabled={pending}
+      aria-pressed={enabled}
+      aria-label={t("agents.heartbeatActionForAgent", "{{action}} for {{name}}", { action: label, name: agent.name })}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle(agent);
+      }}
+    >
+      {pending ? t("agents.heartbeatUpdating", "Updating heartbeat…") : label}
+    </button>
+  );
+}
+
 type OrgChartNodeProps = {
   node: OrgTreeNode;
   onSelect: (id: string) => void;
+  onToggleHeartbeat: (agent: Agent) => void;
+  isHeartbeatPending: (agentId: string) => boolean;
   getHealthStatus: (agent: Agent) => AgentHealthStatus;
   selectedAgentId: string | null;
   registerNodeElement: (id: string, element: HTMLDivElement | null) => void;
   linksRef: MutableRefObject<OrgChartLink[]>;
 };
 
-function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, registerNodeElement, linksRef }: OrgChartNodeProps) {
+function OrgChartNode({ node, onSelect, onToggleHeartbeat, isHeartbeatPending, getHealthStatus, selectedAgentId, registerNodeElement, linksRef }: OrgChartNodeProps) {
   const { t } = useTranslation("app");
   const { agent, children } = node;
   const health = getHealthStatus(agent);
@@ -226,6 +258,7 @@ function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, regist
           </span>
         </div>
       </div>
+      <div className="org-chart-node__actions"><HeartbeatToggle agent={agent} pending={isHeartbeatPending(agent.id)} onToggle={onToggleHeartbeat} /></div>
       {children.length > 0 && (
         <div className="org-chart-children" role="group" aria-label={t("agents.orgChartEmployees", "{{name}} employees", { name: agent.name })}>
           {children.map((child) => {
@@ -235,6 +268,8 @@ function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, regist
                 key={child.agent.id}
                 node={child}
                 onSelect={onSelect}
+                onToggleHeartbeat={onToggleHeartbeat}
+                isHeartbeatPending={isHeartbeatPending}
                 getHealthStatus={getHealthStatus}
                 selectedAgentId={selectedAgentId}
                 registerNodeElement={registerNodeElement}
@@ -461,6 +496,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [isBulkEligibilityLoading, setIsBulkEligibilityLoading] = useState(false);
   const [bulkPauseEligibleCount, setBulkPauseEligibleCount] = useState(0);
   const [bulkResumeEligibleCount, setBulkResumeEligibleCount] = useState(0);
+  const [bulkEnableHeartbeatEligibleCount, setBulkEnableHeartbeatEligibleCount] = useState(0);
+  const [bulkDisableHeartbeatEligibleCount, setBulkDisableHeartbeatEligibleCount] = useState(0);
   const [orgChartTransform, setOrgChartTransform] = useState<OrgChartTransform>({ scale: 1, x: 0, y: 0 });
   const [isOrgChartPanning, setIsOrgChartPanning] = useState(false);
   const controlsPanelRef = useRef<HTMLDivElement>(null);
@@ -559,6 +596,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
   const [updatingHeartbeatAgentId, setUpdatingHeartbeatAgentId] = useState<string | null>(null);
+  const [heartbeatMutationAgentIds, setHeartbeatMutationAgentIds] = useState<Set<string>>(new Set());
+  const [isBulkHeartbeatMutationRunning, setIsBulkHeartbeatMutationRunning] = useState(false);
   /** Agent ID currently showing custom heartbeat input */
   const [customHeartbeatAgentId, setCustomHeartbeatAgentId] = useState<string | null>(null);
   /** Custom minutes input value for each agent */
@@ -733,11 +772,15 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           nonEphemeralAgents.filter((projectAgent) => projectAgent.state === "active" || projectAgent.state === "running").length,
         );
         setBulkResumeEligibleCount(nonEphemeralAgents.filter((projectAgent) => projectAgent.state === "paused").length);
+        setBulkEnableHeartbeatEligibleCount(nonEphemeralAgents.filter((projectAgent) => !isAgentHeartbeatEnabled(projectAgent)).length);
+        setBulkDisableHeartbeatEligibleCount(nonEphemeralAgents.filter((projectAgent) => isAgentHeartbeatEnabled(projectAgent)).length);
       })
       .catch((err) => {
         if (cancelled) return;
         setBulkPauseEligibleCount(0);
         setBulkResumeEligibleCount(0);
+        setBulkEnableHeartbeatEligibleCount(0);
+        setBulkDisableHeartbeatEligibleCount(0);
         addToast(t("agents.bulkActionsLoadFailed", "Failed to load bulk agent actions: {{error}}", { error: getErrorMessage(err) }), "error");
       })
       .finally(() => {
@@ -840,6 +883,47 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     }
   };
 
+  const handleBulkHeartbeatChange = async (enabled: boolean) => {
+    if (isBulkHeartbeatMutationRunning || isBulkActionRunning || heartbeatMutationAgentIds.size > 0) return;
+    setIsBulkHeartbeatMutationRunning(true);
+    try {
+      const projectAgents = await fetchAgents(undefined, projectId);
+      const durableAgents = projectAgents.filter((agent) => !isEphemeralAgent(agent));
+      const eligibleAgents = durableAgents.filter((agent) => isAgentHeartbeatEnabled(agent) !== enabled);
+      const skippedCount = projectAgents.length - eligibleAgents.length;
+      if (eligibleAgents.length === 0) {
+        addToast(enabled ? t("agents.noHeartbeatsToEnable", "No agent heartbeats need enabling") : t("agents.noHeartbeatsToDisable", "No agent heartbeats need disabling"), "error");
+        return;
+      }
+      const confirmed = await confirm({
+        title: enabled ? t("agents.enableAllHeartbeats", "Enable all heartbeats") : t("agents.disableAllHeartbeats", "Disable all heartbeats"),
+        message: enabled
+          ? t("agents.enableAllHeartbeatsConfirm", "Enable heartbeats for {{count}} project agents?", { count: eligibleAgents.length })
+          : t("agents.disableAllHeartbeatsConfirm", "Disable heartbeats for {{count}} project agents?", { count: eligibleAgents.length }),
+        danger: !enabled,
+      });
+      if (!confirmed) return;
+      const results = await Promise.allSettled(eligibleAgents.map((agent) => updateAgent(agent.id, { runtimeConfig: withAgentHeartbeatEnabled(agent, enabled) }, projectId)));
+      const failedResults = results
+        .map((result, index) => ({ result, agent: eligibleAgents[index] }))
+        .filter((entry): entry is { result: PromiseRejectedResult; agent: Agent } => entry.result.status === "rejected");
+      const successCount = results.length - failedResults.length;
+      const summary = enabled
+        ? t("agents.enableHeartbeatsSummary", "Enabled {{count}} heartbeats; skipped {{skipped}}", { count: successCount, skipped: skippedCount })
+        : t("agents.disableHeartbeatsSummary", "Disabled {{count}} heartbeats; skipped {{skipped}}", { count: successCount, skipped: skippedCount });
+      const failureSummary = failedResults
+        .slice(0, 3)
+        .map(({ agent, result }) => `${agent.name || agent.id}: ${getErrorMessage(result.reason)}`)
+        .join("; ");
+      addToast(failedResults.length ? `${summary}; ${t("agents.bulkFailures", "failed {{count}}", { count: failedResults.length })}${failureSummary ? ` (${failureSummary})` : ""}` : summary, failedResults.length ? "error" : "success");
+      await loadAgents();
+    } catch (err) {
+      addToast(t("agents.heartbeatUpdateFailed", "Failed to update heartbeat: {{error}}", { error: getErrorMessage(err) }), "error");
+    } finally {
+      setIsBulkHeartbeatMutationRunning(false);
+    }
+  };
+
   const handleStateChange = async (agentId: string, newState: AgentState) => {
     if (transitioningAgentIds.has(agentId)) return;
 
@@ -918,6 +1002,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   };
 
   const handleHeartbeatIntervalChange = async (agent: Agent, newIntervalMs: number) => {
+    if (isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agent.id)) return;
     // Clear custom input state when selecting a preset
     if (customHeartbeatAgentId === agent.id) {
       setCustomHeartbeatAgentId(null);
@@ -933,10 +1018,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       await updateAgent(
         agent.id,
         {
-          runtimeConfig: {
-            ...(agent.runtimeConfig ?? {}),
-            heartbeatIntervalMs: newIntervalMs,
-          },
+          runtimeConfig: { ...withAgentHeartbeatEnabled(agent, true), heartbeatIntervalMs: newIntervalMs },
         },
         projectId,
       );
@@ -949,6 +1031,31 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     }
   };
 
+  const handleHeartbeatEnabledChange = async (agent: Agent, enabled: boolean) => {
+    if (isEphemeralAgent(agent) || isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agent.id)) return;
+    setHeartbeatMutationAgentIds((previous) => new Set(previous).add(agent.id));
+    try {
+      await updateAgent(agent.id, { runtimeConfig: withAgentHeartbeatEnabled(agent, enabled) }, projectId);
+      addToast(
+        enabled
+          ? t("agents.heartbeatEnabledForAgent", "Heartbeat enabled for {{name}}", { name: agent.name })
+          : t("agents.heartbeatDisabled", "Heartbeat disabled for {{name}}", { name: agent.name }),
+        "success",
+      );
+      await loadAgents();
+    } catch (err) {
+      addToast(t("agents.heartbeatUpdateFailed", "Failed to update heartbeat: {{error}}", { error: getErrorMessage(err) }), "error");
+    } finally {
+      setHeartbeatMutationAgentIds((previous) => {
+        const next = new Set(previous);
+        next.delete(agent.id);
+        return next;
+      });
+    }
+  };
+
+  const handleHeartbeatDisabled = (agent: Agent) => handleHeartbeatEnabledChange(agent, false);
+
   /**
    * Handle saving custom heartbeat interval from typed minutes input.
    * Validation behavior:
@@ -959,6 +1066,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
    * - Value >= 5: save exact minute value converted to ms
    */
   const handleCustomHeartbeatSave = async (agent: Agent) => {
+    if (isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agent.id)) return;
     const inputValue = customHeartbeatMinutes[agent.id] ?? "";
 
     // Validate: empty value
@@ -987,10 +1095,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         await updateAgent(
           agent.id,
           {
-            runtimeConfig: {
-              ...(agent.runtimeConfig ?? {}),
-              heartbeatIntervalMs: MIN_HEARTBEAT_INTERVAL_MS,
-            },
+            runtimeConfig: { ...withAgentHeartbeatEnabled(agent, true), heartbeatIntervalMs: MIN_HEARTBEAT_INTERVAL_MS },
           },
           projectId,
         );
@@ -1017,10 +1122,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       await updateAgent(
         agent.id,
         {
-          runtimeConfig: {
-            ...(agent.runtimeConfig ?? {}),
-            heartbeatIntervalMs: intervalMs,
-          },
+          runtimeConfig: { ...withAgentHeartbeatEnabled(agent, true), heartbeatIntervalMs: intervalMs },
         },
         projectId,
       );
@@ -1041,6 +1143,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   /** Handle selecting custom option from dropdown */
   const handleSelectCustomHeartbeat = (agent: Agent) => {
+    if (isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agent.id)) return;
     const configuredIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
     // Convert ms to minutes for the input field
     const currentMinutes = Math.round(configuredIntervalMs / 60_000);
@@ -1352,6 +1455,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   const isPauseAllDisabled = isBulkEligibilityLoading || isBulkActionRunning || bulkPauseEligibleCount === 0;
   const isResumeAllDisabled = isBulkEligibilityLoading || isBulkActionRunning || bulkResumeEligibleCount === 0;
+  const isEnableAllHeartbeatsDisabled = isBulkEligibilityLoading || isBulkActionRunning || isBulkHeartbeatMutationRunning || bulkEnableHeartbeatEligibleCount === 0;
+  const isDisableAllHeartbeatsDisabled = isBulkEligibilityLoading || isBulkActionRunning || isBulkHeartbeatMutationRunning || bulkDisableHeartbeatEligibleCount === 0;
   const showInitialAgentsLoading = isLoading && agents.length === 0;
 
   const handleOpenNewAgent = useCallback(() => {
@@ -1541,6 +1646,32 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                           ? t("agents.noAgentsToPauseHint", "No active or running project agents to pause")
                           : t("agents.pauseCountHint", { count: bulkPauseEligibleCount, defaultValue_one: "Pause {{count}} active/running agent", defaultValue_other: "Pause {{count}} active/running agents" })}
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="agent-detail-bulk-menu-item"
+                    role="menuitem"
+                    disabled={isEnableAllHeartbeatsDisabled}
+                    onClick={() => {
+                      setIsControlsPanelOpen(false);
+                      void handleBulkHeartbeatChange(true);
+                    }}
+                  >
+                    <span className="agent-controls-bulk-actions__label"><Play /><span>{t("agents.enableAllHeartbeats", "Enable all heartbeats")}</span></span>
+                    <span className="agent-detail-bulk-menu-item-hint">{t("agents.enableHeartbeatsCountHint", "Enable {{count}} disabled project heartbeats", { count: bulkEnableHeartbeatEligibleCount })}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="agent-detail-bulk-menu-item"
+                    role="menuitem"
+                    disabled={isDisableAllHeartbeatsDisabled}
+                    onClick={() => {
+                      setIsControlsPanelOpen(false);
+                      void handleBulkHeartbeatChange(false);
+                    }}
+                  >
+                    <span className="agent-controls-bulk-actions__label"><Pause /><span>{t("agents.disableAllHeartbeats", "Disable all heartbeats")}</span></span>
+                    <span className="agent-detail-bulk-menu-item-hint">{t("agents.disableHeartbeatsCountHint", "Disable {{count}} enabled project heartbeats", { count: bulkDisableHeartbeatEligibleCount })}</span>
                   </button>
                   <button
                     type="button"
@@ -1743,6 +1874,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                               key={node.agent.id}
                               node={node}
                               onSelect={handleOrgChartNodeSelect}
+                              onToggleHeartbeat={(agent) => void handleHeartbeatEnabledChange(agent, !isAgentHeartbeatEnabled(agent))}
+                              isHeartbeatPending={(agentId) => isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agentId)}
                               getHealthStatus={getHealthStatus}
                               selectedAgentId={selectedOrgChartAgentId}
                               registerNodeElement={registerOrgChartNodeElement}
@@ -1826,8 +1959,9 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
                       </div>
                     </div>
-                    {(agent.state === "idle" || agent.state === "paused" || agent.state === "error") && (
-                      <div className="agent-board-actions">
+                    <div className="agent-board-actions">
+                      <HeartbeatToggle agent={agent} pending={isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agent.id)} onToggle={(target) => void handleHeartbeatEnabledChange(target, !isAgentHeartbeatEnabled(target))} />
+                      {(agent.state === "idle" || agent.state === "paused" || agent.state === "error") && (
                         <button
                           className="btn btn-sm btn-danger"
                           onClick={() => void handleDelete(agent.id, agent.name)}
@@ -1835,8 +1969,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         >
                           <Trash2 size={14} />
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })
@@ -1855,7 +1989,15 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const stateCardClass = getStateCardClass("agent-card", agent.state);
               const configuredIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
               const heartbeatOptions = getHeartbeatIntervalOptions(configuredIntervalMs);
-              const isUpdatingHeartbeat = updatingHeartbeatAgentId === agent.id;
+              /*
+               * FNXC:AgentHeartbeatControls 2026-07-23-12:43:
+               * The list-card select is the scheduling control: an explicit false wins over its saved cadence,
+               * while absent enabled remains backwards-compatible as enabled. Interval changes always persist
+               * enabled: true; disabling retains the complete runtime configuration and saved cadence.
+               */
+              const isHeartbeatDisabled = !isAgentHeartbeatEnabled(agent);
+              const heartbeatSelectValue = isHeartbeatDisabled ? HEARTBEAT_DISABLED_OPTION_VALUE : String(configuredIntervalMs);
+              const isUpdatingHeartbeat = isBulkHeartbeatMutationRunning || updatingHeartbeatAgentId === agent.id || heartbeatMutationAgentIds.has(agent.id);
               const modelLabel = getAgentModelLabel(agent);
               return (
                 <div
@@ -1996,6 +2138,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isAgentCardInViewport(`list:${agent.id}`)} projectId={projectId} />
                       </div>
                     )}
+                    {!isEphemeralAgent(agent) && (
                     <div className="agent-heartbeat-control">
                       <span className="text-secondary">{t("agents.heartbeat", "Heartbeat:")}</span>
                       {customHeartbeatAgentId === agent.id ? (
@@ -2056,10 +2199,12 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         <>
                           <select
                             className="select agent-heartbeat-select"
-                            value={configuredIntervalMs}
+                            value={heartbeatSelectValue}
                             onChange={(e) => {
                               const value = e.target.value;
-                              if (value === "__custom__") {
+                              if (value === HEARTBEAT_DISABLED_OPTION_VALUE) {
+                                void handleHeartbeatDisabled(agent);
+                              } else if (value === "__custom__") {
                                 handleSelectCustomHeartbeat(agent);
                               } else {
                                 void handleHeartbeatIntervalChange(agent, Number(value));
@@ -2068,6 +2213,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                             disabled={isUpdatingHeartbeat}
                             aria-label={t("agents.setHeartbeatAria", "Set heartbeat interval for {{name}}", { name: agent.name })}
                           >
+                            <option value={HEARTBEAT_DISABLED_OPTION_VALUE}>{t("agents.heartbeatDisabledOption", "Disabled")}</option>
                             {heartbeatOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
@@ -2099,6 +2245,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         );
                       })()}
                     </div>
+                    )}
                   </div>
 
                   <div className="agent-card-actions">

@@ -3064,6 +3064,28 @@ export default function kbExtension(pi: ExtensionAPI) {
   // ── Mission Tools ───────────────────────────────────────────────
   // Mission hierarchy management for multi-phase project planning
 
+  /*
+  FNXC:MissionAutonomyAudit 2026-07-23-16:10:
+  Pi-extension mission mutations execute for either a human CLI operator or a
+  runtime agent. Forward that real identity to the atomic transition audit so
+  lifecycle changes never collapse into the mission-store fallback actor.
+  */
+  const missionTransitionActor = (toolContext: unknown): fusionCore.MissionTransitionActor => {
+    const runtimeContext = toolContext as { agentId?: unknown; agentName?: unknown };
+    const agentId = typeof runtimeContext.agentId === "string" && runtimeContext.agentId.trim()
+      ? runtimeContext.agentId.trim()
+      : undefined;
+    if (agentId) {
+      return {
+        type: "agent",
+        id: agentId,
+        ...(typeof runtimeContext.agentName === "string" && runtimeContext.agentName.trim() ? { displayName: runtimeContext.agentName.trim() } : {}),
+        source: "pi-extension",
+      };
+    }
+    return { type: "operator", id: "cli-operator", displayName: "CLI operator", source: "pi-extension" };
+  };
+
   // ── fn_mission_create ───────────────────────────────────────────
 
   pi.registerTool({
@@ -3100,7 +3122,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       if (params.autoAdvance !== undefined) {
-        await missionStore.updateMission(mission.id, { autoAdvance: params.autoAdvance });
+        await missionStore.updateMission(mission.id, { autoAdvance: params.autoAdvance }, { actor: missionTransitionActor(ctx) });
       }
 
       const createdMission = (await missionStore.getMission(mission.id))!;
@@ -3845,7 +3867,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const mission = await missionStore.updateMission(params.id, updates);
+      const mission = await missionStore.updateMission(params.id, updates, { actor: missionTransitionActor(ctx) });
 
       return {
         content: [{ type: "text", text: `Updated ${mission.id}: "${mission.title}"` }],

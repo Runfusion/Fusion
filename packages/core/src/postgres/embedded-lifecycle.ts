@@ -1035,6 +1035,40 @@ export function readPortFromPostmasterPid(dataDir: string): number | null {
   }
 }
 
+/** Read the postmaster OS pid from line 1 (index 0) of postmaster.pid, or null. */
+export function readPidFromPostmasterPid(dataDir: string): number | null {
+  try {
+    const lines = readFileSync(join(dataDir, "postmaster.pid"), "utf-8").split("\n");
+    const pid = parseInt((lines[0] ?? "").trim(), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-11:50:
+Issue #2411 (stale-pid gap): a hard host crash (SIGKILL, power loss) leaves
+postmaster.pid behind with no postmaster. The optimistic join then handed back
+a URL to a dead port on EVERY subsequent boot, so the dashboard could never
+start again without a manual pid-file delete — the "a plain relaunch just
+repeats the failure" dead shell. Probe the recorded pid: signal 0 raises ESRCH
+for a dead process (dead → the lock is stale and an owned start may proceed —
+PostgreSQL itself re-validates and reclaims a stale lock file on startup, so
+this stays safe even against pid recycling: a recycled live pid keeps today's
+join-then-fail behavior, and a genuinely live postmaster makes our start fail
+with the lock collision we already handle). EPERM means the process exists but
+is not signalable (foreign user) — treat as alive, fail-closed to the join.
+*/
+function isPostmasterProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+  }
+}
+
 /**
  * Check whether an embedded PG is already running for the given data dir.
  * Uses both the in-process registry AND a probe of the postmaster.pid file
@@ -1068,6 +1102,56 @@ function isPostgresLockCollisionError(error: unknown): boolean {
     || /server is already running/i.test(message);
 }
 
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): a cluster left in interrupted-recovery state
+listens on its TCP port almost immediately but rejects every connection with
+SQLSTATE 57P03 ("the database system is starting up") until crash recovery
+finishes; a joiner racing the owner sees plain ECONNREFUSED instead. Both mean
+"not yet accepting connections — wait", never "verify failed". Treating 57P03
+as fatal is what made beta.4 stop() its own just-launched postmaster ~0.2s into
+recovery and then join the instance it had told to shut down.
+*/
+export function isClusterStartingUpError(error: unknown): boolean {
+  const { code } = (error ?? {}) as { code?: string };
+  // 57P03 cannot_connect_now covers "starting up", "in recovery mode", and
+  // "shutting down" — the cluster is alive but not yet queryable.
+  if (code === "57P03") return true;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /the database system is (starting up|in recovery|shutting down)/i.test(message);
+}
+
+/**
+ * FNXC:PostgresEmbedded 2026-07-23-10:40:
+ * Superset used only by the OWNED start's readiness wait: an owned postmaster
+ * that was just launched may also be in its pre-listen window, so socket-level
+ * connect failures are retryable there too. The JOIN path deliberately does NOT
+ * retry socket errors — a stale pid file from a crash resolves to a dead port,
+ * and the optimistic-join contract (resolve the URL, let the connection layer
+ * report it) must stay instant for that case.
+ */
+export function isClusterNotYetAcceptingError(error: unknown): boolean {
+  if (isClusterStartingUpError(error)) return true;
+  const { code } = (error ?? {}) as { code?: string };
+  if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "CONNECT_TIMEOUT") {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /ECONNREFUSED|ECONNRESET|CONNECT_TIMEOUT/i.test(message);
+}
+
+/** Poll cadence while waiting for a starting/recovering cluster to accept connections. */
+const CLUSTER_ACCEPTING_POLL_MS = 500;
+/**
+ * FNXC:PostgresEmbedded 2026-07-23-10:40:
+ * Bounded wait a JOINER gives a starting/recovering instance before falling
+ * back to the historical best-effort optimistic join. Recovery on the reported
+ * cluster completes in ~1s once the .pgrunner fsync stall is gone; 15s covers
+ * modest WAL replay without turning a stale-pid join into a long hang (the
+ * startup-factory retry layer bounds the rest).
+ */
+const JOINED_INSTANCE_RECOVERY_WAIT_MS = 15_000;
+
 function isDuplicateDatabaseError(error: unknown): boolean {
   const { code, constraint_name: constraint } = (error ?? {}) as {
     code?: string;
@@ -1093,14 +1177,33 @@ function waitForPostmasterPidReread(): Promise<void> {
  * small bounded number of times; if its port remains unreadable, fail closed
  * instead of turning parser-null into the double-boot collision that exhausts
  * extension TaskStore's caller budget.
+ *
+ * FNXC:PostgresEmbedded 2026-07-23-11:50:
+ * Issue #2411 (stale-pid gap): the live-lock presumption is rebutted when the
+ * recorded pid is provably dead (see isPostmasterProcessAlive) — then the file
+ * is a crash leftover, joining it can only ever fail, and an owned start (whose
+ * postmaster re-validates the lock itself) is the correct recovery. A readable
+ * pid that is alive-or-unknowable keeps every prior behavior, including the
+ * fail-closed unreadable-port error below.
  */
-async function isAlreadyRunning(dataDir: string): Promise<{ port: number; database: string } | null> {
+async function isAlreadyRunning(
+  dataDir: string,
+  onLog?: (message: string) => void,
+): Promise<{ port: number; database: string } | null> {
   // Check in-process registry first.
   const cached = runningInstances.get(dataDir);
   if (cached) return cached;
 
   const pidPath = join(dataDir, "postmaster.pid");
   if (!existsSync(pidPath)) return null;
+
+  const pid = readPidFromPostmasterPid(dataDir);
+  if (pid !== null && !isPostmasterProcessAlive(pid)) {
+    onLog?.(
+      `embedded postgres: postmaster.pid in ${dataDir} records pid ${pid}, which is not running (stale lock from a crash); starting an owned postmaster — PostgreSQL reclaims the stale lock file itself`,
+    );
+    return null;
+  }
 
   for (let attempt = 0; attempt < POSTMASTER_PID_READ_ATTEMPTS; attempt += 1) {
     const port = readPortFromPostmasterPid(dataDir);
@@ -1316,7 +1419,7 @@ export class EmbeddedPostgresLifecycle {
 
     // FNXC:PostgresCutover 2026-06-27-11:05:
     // Check if PG is already running for this data dir. If so, reuse it.
-    const existing = await isAlreadyRunning(this.options.dataDir);
+    const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
     if (existing) {
       this.options.onLog(
         `embedded postgres: already running on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`,
@@ -1492,7 +1595,7 @@ export class EmbeddedPostgresLifecycle {
       and orphan a live postmaster nothing would ever stop. See isPostgresLockCollisionError.
       */
       if (!isPostgresLockCollisionError(error)) throw error;
-      const existing = await isAlreadyRunning(this.options.dataDir);
+      const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
       if (!existing) throw error;
 
       /*
@@ -1549,6 +1652,18 @@ export class EmbeddedPostgresLifecycle {
     });
 
     try {
+      /*
+      FNXC:PostgresEmbedded 2026-07-23-10:40:
+      Issue #2411 (beta.4 follow-up): an owned start on an interrupted data dir
+      must let crash recovery FINISH before any SQL runs. The elevated Windows
+      launcher declares readiness on a bare TCP accept, which succeeds while
+      recovery still rejects every connection with 57P03 — ensureDatabase then
+      failed, the outer catch called stop(), and Fusion fast-shutdown its own
+      postmaster 0.2s into recovery. Wait (bounded by the start timeout, which
+      also aborts this loop via `signal`) until the cluster genuinely accepts
+      connections; only then verify/create the application database.
+      */
+      await this.waitForClusterAcceptingConnections(port, signal);
       await this.ensureDatabase();
     } catch (error) {
       if (signal?.aborted) {
@@ -1689,12 +1804,93 @@ export class EmbeddedPostgresLifecycle {
    * hard startup failure.
    */
   private async ensureJoinedDatabase(port: number): Promise<void> {
-    try {
-      await this.createDatabaseIfMissing(port);
-    } catch (error) {
-      this.options.onLog(
-        `embedded postgres: could not verify database "${this.options.database}" on joined instance at port ${port} (${error instanceof Error ? error.message : String(error)}); continuing — the connection layer will report an unreachable cluster`,
-      );
+    /*
+    FNXC:PostgresEmbedded 2026-07-23-10:40:
+    Issue #2411 (beta.4 follow-up): a joined instance can be mid crash-recovery,
+    where PostgreSQL listens but rejects every connection with 57P03. A one-shot
+    verify turned that transient state into the "could not verify database on
+    joined instance" give-up path. Retry the RECOVERY signal (57P03 only) within
+    a bounded window; socket-level failures (dead stale-pid port) keep the
+    historical instant best-effort optimistic join (resolve the URL and let the
+    connection layer report the unreachable cluster).
+    */
+    const deadline = Date.now() + JOINED_INSTANCE_RECOVERY_WAIT_MS;
+    let announced = false;
+    for (;;) {
+      try {
+        await this.createDatabaseIfMissing(port);
+        return;
+      } catch (error) {
+        if (isClusterStartingUpError(error) && Date.now() < deadline) {
+          if (!announced) {
+            announced = true;
+            this.options.onLog(
+              `embedded postgres: joined instance at port ${port} is not accepting connections yet (startup or crash recovery in progress); waiting before verifying database "${this.options.database}"`,
+            );
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, CLUSTER_ACCEPTING_POLL_MS));
+          continue;
+        }
+        this.options.onLog(
+          `embedded postgres: could not verify database "${this.options.database}" on joined instance at port ${port} (${error instanceof Error ? error.message : String(error)}); continuing — the connection layer will report an unreachable cluster`,
+        );
+        return;
+      }
+    }
+  }
+
+  /**
+   * Block until the cluster at `port` accepts real connections (a `SELECT 1` on
+   * the maintenance database succeeds), retrying while it reports "starting
+   * up"/"in recovery" (57P03) or is not yet listening.
+   *
+   * FNXC:PostgresEmbedded 2026-07-23-10:40:
+   * Issue #2411: crash recovery on an interrupted cluster must be allowed to
+   * finish instead of being interpreted as a failed start (which shut the
+   * recovering postmaster down). Bounded by the caller's start timeout: the
+   * outer startBounded() race aborts `signal` when it fires, and a local
+   * deadline (the configured timeout, or the default when timeouts are
+   * disabled) backstops callers without a signal.
+   */
+  private async waitForClusterAcceptingConnections(
+    port: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // FNXC:PostgresEmbedded 2026-07-23-10:40: mirrors the elevated-path skip —
+    // a test-injected mock ctor has no real server to poll, so the wait would
+    // spin against a dead port until the start timeout in every mocked test.
+    if (embeddedPostgresCtorIsTestOverride) return;
+    const budgetMs =
+      this.options.startTimeoutMs > 0 && Number.isFinite(this.options.startTimeoutMs)
+        ? this.options.startTimeoutMs
+        : DEFAULT_START_TIMEOUT_MS;
+    const deadline = Date.now() + budgetMs;
+    let announced = false;
+    for (;;) {
+      if (signal?.aborted) throw new EmbeddedStartCancelledError(this.options.dataDir);
+      const sql = this.openMaintenanceSqlOn(port);
+      let lastError: unknown;
+      try {
+        await sql`SELECT 1 AS one`;
+        return;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        await sql.end({ timeout: 5 }).catch(() => {});
+      }
+      if (!isClusterNotYetAcceptingError(lastError)) throw lastError;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `embedded postgres: cluster on port ${port} did not accept connections within ${budgetMs}ms (crash recovery may still be running); last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+        );
+      }
+      if (!announced) {
+        announced = true;
+        this.options.onLog(
+          `embedded postgres: cluster on port ${port} is still starting up (crash recovery may be in progress); waiting for it to accept connections`,
+        );
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, CLUSTER_ACCEPTING_POLL_MS));
     }
   }
 

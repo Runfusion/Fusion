@@ -249,6 +249,55 @@ export async function resolveEffectiveSettingsById(
   return (await effectiveFrom(store, ir, workflowId, projectId)).effective;
 }
 
+/**
+ * Resolve effective settings for an explicit workflow selection while retaining
+ * the project-wide model-lane baseline used by task-based resolution.
+ *
+ * FNXC:PlanningModelPrecedence 2026-07-22-14:00:
+ * Planning Mode names a workflow before a task exists, so it must compose that
+ * selection exactly as a task would: stored Project Models remain the project
+ * baseline and the selected workflow's lanes stay in `selectedWorkflowModelLanes`.
+ * This preserves complete-pair precedence in the canonical model resolver and
+ * prevents a provider from one settings tier combining with a model from another.
+ */
+export async function resolveEffectiveSettingsDetailedById(
+  store: WorkflowSettingsResolverStore,
+  workflowId: string,
+  projectId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<EffectiveSettingsResult> {
+  const effectiveWorkflowId = workflowId || "builtin:coding";
+  const ir = await resolveWorkflowIrById(store, effectiveWorkflowId, irCache);
+  const selected = await effectiveFrom(store, ir, effectiveWorkflowId, projectId);
+
+  const projectBaselineWorkflowId = await projectWorkflowModelLaneWorkflowId(store);
+  if (projectBaselineWorkflowId === effectiveWorkflowId) return selected;
+
+  const projectBaseline = await projectWorkflowModelLaneBaseline(
+    store,
+    projectId,
+    irCache,
+    projectBaselineWorkflowId,
+  );
+  const effective = { ...selected.effective };
+  const storedKeys = new Set(selected.storedKeys);
+  const selectedWorkflowModelLanes: Record<string, unknown> = {};
+  for (const id of PROJECT_WORKFLOW_MODEL_LANE_SETTING_IDS) {
+    if (Object.prototype.hasOwnProperty.call(selected.effective, id)) {
+      selectedWorkflowModelLanes[id] = selected.effective[id];
+      delete effective[id];
+      storedKeys.delete(id);
+    }
+    if (!projectBaseline.storedKeys.has(id)) continue;
+    effective[id] = projectBaseline.effective[id];
+    storedKeys.add(id);
+  }
+  if (Object.keys(selectedWorkflowModelLanes).length > 0) {
+    effective.selectedWorkflowModelLanes = selectedWorkflowModelLanes;
+  }
+  return { effective, storedKeys };
+}
+
 /** The minimal task identity the per-task resolver reads. Task carries no
  *  projectId field — the project key comes from the store. */
 export interface EffectiveSettingsTaskRef {
@@ -293,42 +342,15 @@ export async function resolveEffectiveSettingsDetailed(
     workflowId = undefined;
   }
   const effectiveWorkflowId = workflowId || "builtin:coding";
-  const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
   let projectId: string;
   try {
     projectId = store.getWorkflowSettingsProjectId();
   } catch {
     // Degrade to declaration defaults (empty stored map) on identity failure.
-    // Keep the resolved workflowId so builtin graphs still pick up the catalog fallback.
+    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
     return effectiveFrom(store, ir, effectiveWorkflowId, "");
   }
-  const selected = await effectiveFrom(store, ir, effectiveWorkflowId, projectId);
-
-  const projectBaselineWorkflowId = await projectWorkflowModelLaneWorkflowId(store);
-  if (projectBaselineWorkflowId === effectiveWorkflowId) return selected;
-  const projectBaseline = await projectWorkflowModelLaneBaseline(
-    store,
-    projectId,
-    irCache,
-    projectBaselineWorkflowId,
-  );
-  const effective = { ...selected.effective };
-  const storedKeys = new Set(selected.storedKeys);
-  const selectedWorkflowModelLanes: Record<string, unknown> = {};
-  for (const id of PROJECT_WORKFLOW_MODEL_LANE_SETTING_IDS) {
-    if (Object.prototype.hasOwnProperty.call(selected.effective, id)) {
-      selectedWorkflowModelLanes[id] = selected.effective[id];
-      delete effective[id];
-      storedKeys.delete(id);
-    }
-    if (!projectBaseline.storedKeys.has(id)) continue;
-    effective[id] = projectBaseline.effective[id];
-    storedKeys.add(id);
-  }
-  if (Object.keys(selectedWorkflowModelLanes).length > 0) {
-    effective.selectedWorkflowModelLanes = selectedWorkflowModelLanes;
-  }
-  return { effective, storedKeys };
+  return resolveEffectiveSettingsDetailedById(store, effectiveWorkflowId, projectId, irCache);
 }
 
 function isPlannerOversightLevel(value: unknown): value is PlannerOversightLevel {

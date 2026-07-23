@@ -1128,7 +1128,24 @@
     "notGranted": "Not granted",
     "toggleCapabilityGrant": "Toggle explicit grant for {{permission}}",
     "capabilityPermissionsUpdated": "Capability grants updated",
-    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}"
+    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}",
+    "disableHeartbeat": "Désactiver le battement",
+    "enableHeartbeat": "Activer le battement",
+    "heartbeatActionForAgent": "{{action}} pour {{name}}",
+    "heartbeatUpdating": "Mise à jour du battement…",
+    "heartbeatEnabledForAgent": "Battement activé pour {{name}}",
+    "heartbeatUpdateFailed": "Échec de la mise à jour du battement : {{error}}",
+    "enableAllHeartbeats": "Activer tous les battements",
+    "disableAllHeartbeats": "Désactiver tous les battements",
+    "enableAllHeartbeatsConfirm": "Activer les battements de {{count}} agents du projet ?",
+    "disableAllHeartbeatsConfirm": "Désactiver les battements de {{count}} agents du projet ?",
+    "noHeartbeatsToEnable": "Aucun battement à activer",
+    "noHeartbeatsToDisable": "Aucun battement à désactiver",
+    "enableHeartbeatsSummary": "{{count}} battements activés ; {{skipped}} ignorés",
+    "disableHeartbeatsSummary": "{{count}} battements désactivés ; {{skipped}} ignorés",
+    "enableHeartbeatsCountHint": "Activer {{count}} battements désactivés",
+    "disableHeartbeatsCountHint": "Désactiver {{count}} battements activés",
+    "bulkFailures": "{{count}} échecs"
   },
   "app": {
     "backendError": {
@@ -5964,7 +5981,8 @@
       "reportDiscussionCategoryHelp": "Obligatoire pour envoyer vers les Discussions GitHub. Les catégories sont chargées depuis le dépôt configuré.",
       "reportDiscussionCategorySelect": "Sélectionnez une catégorie de discussion",
       "reportDiscussionCategoryUnavailable": "Les catégories de discussion ne sont pas disponibles pour le dépôt configuré.",
-      "reportDiscussionCategoryEmpty": "Aucune catégorie de discussion n’est disponible pour le dépôt configuré."
+      "reportDiscussionCategoryEmpty": "Aucune catégorie de discussion n’est disponible pour le dépôt configuré.",
+      "reportTargetByActionHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6010,7 +6028,11 @@
       "skipConfirmationDialogs": "",
       "skipConfirmationDialogsHint": "",
       "enableProactiveTaskChat": "",
-      "enableProactiveTaskChatHint": ""
+      "enableProactiveTaskChatHint": "",
+      "releaseChannel": "",
+      "releaseChannelHelp": "",
+      "channelStable": "",
+      "channelBeta": ""
     },
     "globalModels": {
       "allow": "",
@@ -7820,7 +7842,12 @@
       "createdVia": "Créé via",
       "parentTaskOf": "",
       "createdToUndo": "",
-      "undoTask": ""
+      "undoTask": "",
+      "creatingAgent": "",
+      "importedFrom": "",
+      "nearDuplicateOf": "",
+      "parentTask": "",
+      "title": ""
     },
     "recoveryState": "État de récupération",
     "refine": {

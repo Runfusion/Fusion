@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -8,6 +8,7 @@ const mockRunInit = vi.fn(async () => {});
 const mockResolveProject = vi.fn();
 const mockProviderAuthFactory = vi.fn();
 const mockGetDefaultCentralDbPath = vi.fn();
+const mockGetModelRegistryModelsPath = vi.fn(() => "/tmp/models.json");
 
 const globalSettingsState: Record<string, any> = {};
 
@@ -38,7 +39,7 @@ vi.mock("../provider-auth.js", () => ({
   wrapAuthStorageWithApiKeyProviders: vi.fn(() => mockProviderAuthFactory()),
 }));
 vi.mock("../auth-paths.js", () => ({
-  getModelRegistryModelsPath: vi.fn(() => "/tmp/models.json"),
+  getModelRegistryModelsPath: mockGetModelRegistryModelsPath,
 }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   ModelRegistry: { create: vi.fn(() => ({})) },
@@ -54,6 +55,7 @@ vi.mock("@fusion/core", () => ({
 }));
 
 const { __testUtils, runOnboard } = await import("../onboard.js");
+const { composeLocalProviderRegistry, normalizeLocalBaseUrl, parseModelIds, persistLocalProviderRegistry } = __testUtils;
 
 function inputFrom(lines: string[]): PassThrough {
   const input = new PassThrough();
@@ -96,6 +98,7 @@ describe("onboard", () => {
     vi.clearAllMocks();
     for (const key of Object.keys(globalSettingsState)) delete globalSettingsState[key];
     mockGetDefaultCentralDbPath.mockReturnValue(join(mkdtempSync(join(tmpdir(), "fn-onboard-db-")), "fusion-central.db"));
+    mockGetModelRegistryModelsPath.mockReturnValue(join(mkdtempSync(join(tmpdir(), "fn-onboard-models-")), "models.json"));
     mockResolveProject.mockRejectedValue(new Error("no project"));
   });
 
@@ -130,13 +133,37 @@ describe("onboard", () => {
     choiceSession.close();
   });
 
+  it("composes and persists custom providers without losing registry fields", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fn-models-")), "nested", "models.json");
+    const config = {
+      id: "local", name: "Local", baseUrl: normalizeLocalBaseUrl("http://localhost:8080/v1/"),
+      modelIds: parseModelIds("qwen, , qwen, llama"), reasoning: true, qwenChatTemplate: true,
+    };
+    persistLocalProviderRegistry(path, config);
+    const first = JSON.parse(readFileSync(path, "utf8"));
+    expect(first.providers.local.apiKey).toBeUndefined();
+    expect(first.providers.local.baseUrl).toBe("http://localhost:8080/v1");
+    expect(first.providers.local.models).toEqual([
+      { id: "qwen", reasoning: true, compat: { thinkingFormat: "qwen-chat-template", chatTemplateKwargs: { enable_thinking: { $var: "thinking.enabled" } } } },
+      { id: "llama", reasoning: true, compat: { thinkingFormat: "qwen-chat-template", chatTemplateKwargs: { enable_thinking: { $var: "thinking.enabled" } } } },
+    ]);
+
+    const merged = composeLocalProviderRegistry({ unknownTop: true, providers: { local: { unknown: "kept", models: [{ id: "old" }] }, other: { api: "other" } } }, { ...config, apiKey: "secret", modelIds: ["new"], reasoning: false, qwenChatTemplate: false });
+    expect(merged).toMatchObject({ unknownTop: true, providers: { other: { api: "other" }, local: { unknown: "kept", apiKey: "secret", models: [{ id: "old" }, { id: "new" }] } } });
+    expect(() => composeLocalProviderRegistry([], config)).toThrow("JSON object");
+    writeFileSync(path, "{ not json");
+    expect(() => persistLocalProviderRegistry(path, config)).toThrow("Cannot update malformed");
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
+    expect(() => normalizeLocalBaseUrl("relative")).toThrow("absolute http");
+  });
+
   it("runOnboard initializes central db when missing", async () => {
     const providerAuth = makeProviderAuth();
     mockProviderAuthFactory.mockReturnValue(providerAuth);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runOnboard({
-      input: inputFrom(["y", "y", "3", "y", "y", "n", "y"]),
+      input: inputFrom(["y", "y", "4", "y", "y", "n", "y"]),
     });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Creating central DB"));
     expect(centralInitMock).toHaveBeenCalled();
@@ -150,8 +177,24 @@ describe("onboard", () => {
     writeFileSync(existingPath, "db");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await runOnboard({ input: inputFrom(["y", "3", "y", "y", "n", "y"]) });
+    await runOnboard({ input: inputFrom(["y", "4", "y", "y", "n", "y"]) });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Central DB already exists"));
+  });
+
+  it("registers a blank-key local provider through the custom picker", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const path = mockGetModelRegistryModelsPath();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({
+      input: inputFrom(["y", "y", "3", "local", "Local server", "http://localhost:8080/v1/", "", "qwen, , qwen", "y", "y", "n", "n", "n"]),
+    });
+
+    const registry = JSON.parse(readFileSync(path, "utf8"));
+    expect(registry.providers.local).toMatchObject({ api: "openai-completions", baseUrl: "http://localhost:8080/v1" });
+    expect(registry.providers.local.apiKey).toBeUndefined();
+    expect(registry.providers.local.models).toHaveLength(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("local/qwen"));
   });
 
   it("waits for API-key persistence before reporting onboarding success", async () => {
@@ -193,7 +236,7 @@ describe("onboard", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     globalSettingsState.cliOnboardingCompletedAt = "2026-06-01T00:00:00.000Z";
 
-    await runOnboard({ input: inputFrom(["y", "3", "y", "y", "n", "y"]) });
+    await runOnboard({ input: inputFrom(["y", "4", "y", "y", "n", "y"]) });
     expect(logSpy).toHaveBeenCalledWith("Onboarding already completed. Re-run with --force to run it again.");
     expect(providerAuth.setApiKey).not.toHaveBeenCalled();
     expect(mockRunInit).not.toHaveBeenCalled();
@@ -264,7 +307,7 @@ describe("onboard", () => {
     const providerAuth = makeProviderAuth();
     mockProviderAuthFactory.mockReturnValue(providerAuth);
 
-    await runOnboard({ input: inputFrom(["y", "y", "3", "n", "y", "n", "y"]) });
+    await runOnboard({ input: inputFrom(["y", "y", "4", "n", "y", "n", "y"]) });
     expect(mockRunInit).not.toHaveBeenCalled();
     expect(globalSettingsState.testMode).toBe(false);
     expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");

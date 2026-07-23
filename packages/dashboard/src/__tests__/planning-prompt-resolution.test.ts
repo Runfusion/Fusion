@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROMPT_KEY_CATALOG, type TaskStore } from "@fusion/core";
-import { resolvePlanningModeSystemPrompt } from "../planning.js";
+import { type TaskStore } from "@fusion/core";
+import { PLANNING_SYSTEM_PROMPT, resolvePlanningModeSystemPrompt } from "../planning.js";
 
 function store(settings: Record<string, unknown> = {}, workflowPrompt?: string): TaskStore {
   return {
@@ -12,29 +12,40 @@ function store(settings: Record<string, unknown> = {}, workflowPrompt?: string):
 }
 
 describe("resolvePlanningModeSystemPrompt", () => {
-  it("composes the selected workflow planning seam with the interview adapter", async () => {
-    const prompt = await resolvePlanningModeSystemPrompt(store({}, "CUSTOM WORKFLOW PLANNING SEAM"), undefined, "WF-custom");
-    expect(prompt).toContain("CUSTOM WORKFLOW PLANNING SEAM");
+  it("uses only the dedicated planning prompt for custom and built-in workflows", async () => {
+    const executionMarkers = "PROMPT.md NO-CODE TASK CAVEAT CREATE CHILD TASK";
+    const customWorkflow = await resolvePlanningModeSystemPrompt(store({}, executionMarkers), undefined, "WF-custom");
+    const builtInWorkflow = await resolvePlanningModeSystemPrompt(store({}, executionMarkers), undefined, "builtin:coding");
+
+    expect(customWorkflow).toBe(PLANNING_SYSTEM_PROMPT);
+    expect(builtInWorkflow).toBe(PLANNING_SYSTEM_PROMPT);
+    expect(customWorkflow).not.toContain(executionMarkers);
+    expect(builtInWorkflow).not.toContain(executionMarkers);
+  });
+
+  it("cannot inherit execution-only markers from an assigned triage prompt", async () => {
+    const prompt = await resolvePlanningModeSystemPrompt(store({
+      agentPrompts: {
+        roleAssignments: { triage: "custom-triage" },
+        templates: [{ id: "custom-triage", role: "triage", prompt: "TRIAGE PROMPT.md NO-CODE CREATE CHILD TASK" }],
+      },
+    }));
+
+    expect(prompt).toBe(PLANNING_SYSTEM_PROMPT);
+    expect(prompt).not.toMatch(/TRIAGE PROMPT\.md NO-CODE CREATE CHILD TASK/);
     expect(prompt).toContain('"type":"question"');
-    expect(prompt).toContain("exactly one");
     expect(prompt).toContain("Only the user can validate");
   });
 
-  it("does not mistake the catalog fallback for an explicit override", async () => {
-    const prompt = await resolvePlanningModeSystemPrompt(store({}, "WORKFLOW SEAM MARKER"), undefined, "WF-custom");
-    expect(prompt).toContain("WORKFLOW SEAM MARKER");
-    expect(prompt).not.toBe(PROMPT_KEY_CATALOG["planning-system"].defaultContent);
-  });
-
-  it("lets an explicit planning-system override replace the full prompt", async () => {
+  it("lets a nonblank planning-system override replace the full prompt", async () => {
     await expect(resolvePlanningModeSystemPrompt(store(), { "planning-system": "OPERATOR REPLACEMENT" }))
       .resolves.toBe("OPERATOR REPLACEMENT");
   });
 
-  it("prefers the configured triage assignment and fails soft to a builtin seam", async () => {
-    const assigned = await resolvePlanningModeSystemPrompt(store({ agentPrompts: { roleAssignments: { triage: "custom-triage" }, templates: [{ id: "custom-triage", role: "triage", prompt: "TRIAGE ASSIGNMENT MARKER" }] } }));
-    expect(assigned).toContain("TRIAGE ASSIGNMENT MARKER");
-    const fallback = await resolvePlanningModeSystemPrompt({ getSettings: vi.fn().mockRejectedValue(new Error("broken")), getWorkflowDefinition: vi.fn().mockRejectedValue(new Error("broken")) } as unknown as TaskStore);
-    expect(fallback).toContain("task specification agent");
+  it("uses the dedicated prompt for absent or blank overrides and when settings fail", async () => {
+    await expect(resolvePlanningModeSystemPrompt(store())).resolves.toBe(PLANNING_SYSTEM_PROMPT);
+    await expect(resolvePlanningModeSystemPrompt(store({ promptOverrides: { "planning-system": "   " } }))).resolves.toBe(PLANNING_SYSTEM_PROMPT);
+    await expect(resolvePlanningModeSystemPrompt({ getSettings: vi.fn().mockRejectedValue(new Error("broken")) } as unknown as TaskStore))
+      .resolves.toBe(PLANNING_SYSTEM_PROMPT);
   });
 });

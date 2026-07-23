@@ -1443,7 +1443,10 @@ export class TriageProcessor {
               getSettings: async () => this.store.getSettings(),
             })
             : []),
-          ...createMissionTools(this.store),
+          ...createMissionTools(this.store, {
+            agentId: triageRunContext.agentId,
+            agentName: assignedAgent?.name,
+          }),
           ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
             runContext: {

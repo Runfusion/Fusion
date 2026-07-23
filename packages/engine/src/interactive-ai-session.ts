@@ -23,6 +23,7 @@ import type {
 } from "@fusion/core";
 import type { AgentRuntime } from "./agent-runtime.js";
 import { askAcpOnce } from "./cli-agent-ask.js";
+import { interactiveSessionLog } from "./logger.js";
 
 /** Minimal shape of an agent session we depend on (subset of pi's AgentSession). */
 export interface InteractiveAgentSession {
@@ -55,8 +56,12 @@ export type PlanningExecutorSelection =
   | { kind: "model" }
   | { kind: "cli-agent"; runtime: AgentRuntime };
 
-/** One bounded reformat retry, matching planning.ts's MAX_PARSE_RETRIES. */
-const MAX_PARSE_RETRIES = 1;
+/*
+FNXC:InteractiveSessionParse 2026-07-23-10:40:
+A CE Strategy session in the field died with "Failed to parse agent response: AI returned no valid JSON" on the opening turn (non-Anthropic default models comply less reliably with the JSON-only protocol).
+Two bounded reformat retries instead of one give a non-compliant model a second corrective nudge before the session goes terminal, and every failed parse attempt logs a bounded snippet of the raw assistant text plus the resolved provider/model so support can distinguish model non-compliance from an empty message (the disposed-agent race signature) without a repro.
+*/
+const MAX_PARSE_RETRIES = 2;
 
 const REFORMAT_PROMPT =
   "Your previous response could not be parsed as JSON. " +
@@ -337,6 +342,13 @@ function extractLastAssistantText(session: InteractiveAgentSession): string {
 
 type LoopState = "idle" | "awaiting_input" | "complete" | "error";
 
+/** Bounded, quoted preview of an unparseable assistant response for diagnostics. */
+function describeUnparseableResponse(text: string): string {
+  if (!text.trim()) return "(empty assistant message — possible disposed/displaced agent or a tool-call-only final turn)";
+  const preview = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+  return JSON.stringify(preview);
+}
+
 /**
  * Build the interactive session over an injected agent factory.
  * Exported for direct (deterministic, fake-agent) testing.
@@ -384,6 +396,9 @@ export async function createInteractiveAiSessionWith(
         break;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        interactiveSessionLog.warn(
+          `parse attempt ${attempt + 1}/${MAX_PARSE_RETRIES + 1} failed (provider=${options.defaultProvider ?? "default"}, model=${options.defaultModelId ?? "default"}): ${lastError.message} — response: ${describeUnparseableResponse(responseText)}`,
+        );
         if (attempt < MAX_PARSE_RETRIES) {
           try {
             await agent.prompt(REFORMAT_PROMPT);
@@ -398,6 +413,9 @@ export async function createInteractiveAiSessionWith(
 
     if (!parsed) {
       state = "error";
+      interactiveSessionLog.error(
+        `giving up after ${MAX_PARSE_RETRIES + 1} parse attempts (provider=${options.defaultProvider ?? "default"}, model=${options.defaultModelId ?? "default"}): ${lastError?.message ?? "Unknown error"} — last response: ${describeUnparseableResponse(responseText)}`,
+      );
       const ev: InteractiveAiSessionEvent = {
         type: "error",
         data: { message: `Failed to parse agent response: ${lastError?.message ?? "Unknown error"}`, cause: lastError },

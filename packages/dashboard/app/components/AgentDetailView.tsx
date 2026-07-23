@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission, ThinkingLevel } from "@fusion/core";
 import { AGENT_PERMISSIONS, getErrorMessage, isEphemeralAgent } from "@fusion/core";
@@ -3348,10 +3348,6 @@ function deriveHeartbeatValues(runtimeConfig: AgentDetail["runtimeConfig"] | und
   return nextValues;
 }
 
-function deriveHeartbeatEnabled(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): boolean {
-  return runtimeConfig?.enabled !== false;
-}
-
 function deriveAutoClaimRelevantTasksEnabled(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): boolean {
   return runtimeConfig?.autoClaimRelevantTasks !== false;
 }
@@ -3749,7 +3745,7 @@ function ConfigTab({
     () => deriveHeartbeatValues(agent.runtimeConfig),
   );
   const [heartbeatEnabled, setHeartbeatEnabled] = useState<boolean>(
-    () => deriveHeartbeatEnabled(agent.runtimeConfig),
+    () => isAgentHeartbeatEnabled(agent),
   );
   const [autoClaimRelevantTasksEnabled, setAutoClaimRelevantTasksEnabled] = useState<boolean>(
     () => deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig),
@@ -4073,7 +4069,7 @@ function ConfigTab({
     }
     // Check heartbeat values
     const rc = agent.runtimeConfig ?? {};
-    if (heartbeatEnabled !== deriveHeartbeatEnabled(agent.runtimeConfig)) return true;
+    if (heartbeatEnabled !== isAgentHeartbeatEnabled(agent)) return true;
     if (autoClaimRelevantTasksEnabled !== deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig)) return true;
     if (engineerBacklogAutoClaimEnabled !== deriveEngineerBacklogAutoClaim(agent.runtimeConfig)) return true;
     if (assignmentPolicy !== deriveAssignmentPolicy(agent.runtimeConfig)) return true;
@@ -4155,7 +4151,7 @@ function ConfigTab({
 
     previousAgentRuntimeSyncRef.current = nextSnapshot;
     setHeartbeatValues(deriveHeartbeatValues(agent.runtimeConfig));
-    setHeartbeatEnabled(deriveHeartbeatEnabled(agent.runtimeConfig));
+    setHeartbeatEnabled(isAgentHeartbeatEnabled(agent));
     setAutoClaimRelevantTasksEnabled(deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig));
     setEngineerBacklogAutoClaimEnabled(deriveEngineerBacklogAutoClaim(agent.runtimeConfig));
     setRunMissedHeartbeatOnStartup(deriveRunMissedHeartbeatOnStartup(agent.runtimeConfig));
@@ -4318,7 +4314,7 @@ function ConfigTab({
 
     // Build the runtimeConfig payload — only include non-empty values
     const newRuntimeConfig: Record<string, unknown> = { ...agent.runtimeConfig };
-    newRuntimeConfig.enabled = heartbeatEnabled;
+    Object.assign(newRuntimeConfig, withAgentHeartbeatEnabled(agent, heartbeatEnabled));
     newRuntimeConfig.autoClaimRelevantTasks = autoClaimRelevantTasksEnabled;
     newRuntimeConfig.engineerBacklogAutoClaim = engineerBacklogAutoClaimEnabled;
     if (assignmentPolicy === "auto") {
@@ -4628,6 +4624,10 @@ function ConfigTab({
             <label>{t("agents.avatarLabel", "Avatar")}</label>
             <div className="agent-avatar-editor">
               <AgentAvatar agent={agent} size={64} className="agent-avatar-editor-preview" />
+              {/*
+              FNXC:AgentSettingsTheming 2026-07-23-13:01:
+              Avatar actions retain their existing upload/remove behavior while explicit action classes let the Settings theme contract cover pending, hover, and keyboard-focus states without styling the hidden file input as a visible control.
+              */}
               <div className="agent-avatar-editor-actions">
                 <input
                   ref={avatarInputRef}
@@ -4645,14 +4645,14 @@ function ConfigTab({
                 />
                 <button
                   type="button"
-                  className="btn btn-sm"
+                  className="btn btn-sm agent-avatar-editor-action"
                   disabled={isAvatarPending}
                   onClick={() => avatarInputRef.current?.click()}
                 >
                   {t("agents.uploadAvatar", "Upload Avatar")}
                 </button>
                 {agent.imageUrl ? (
-                  <button type="button" className="btn btn-sm" onClick={() => void handleAvatarDelete()} disabled={isAvatarPending}>
+                  <button type="button" className="btn btn-sm agent-avatar-editor-action" onClick={() => void handleAvatarDelete()} disabled={isAvatarPending}>
                     {t("agents.removeAvatar", "Remove Avatar")}
                   </button>
                 ) : null}

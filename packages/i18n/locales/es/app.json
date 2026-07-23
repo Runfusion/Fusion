@@ -1128,7 +1128,24 @@
     "notGranted": "Not granted",
     "toggleCapabilityGrant": "Toggle explicit grant for {{permission}}",
     "capabilityPermissionsUpdated": "Capability grants updated",
-    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}"
+    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}",
+    "disableHeartbeat": "Desactivar latido",
+    "enableHeartbeat": "Activar latido",
+    "heartbeatActionForAgent": "{{action}} para {{name}}",
+    "heartbeatUpdating": "Actualizando latido…",
+    "heartbeatEnabledForAgent": "Latido activado para {{name}}",
+    "heartbeatUpdateFailed": "No se pudo actualizar el latido: {{error}}",
+    "enableAllHeartbeats": "Activar todos los latidos",
+    "disableAllHeartbeats": "Desactivar todos los latidos",
+    "enableAllHeartbeatsConfirm": "¿Activar los latidos de {{count}} agentes del proyecto?",
+    "disableAllHeartbeatsConfirm": "¿Desactivar los latidos de {{count}} agentes del proyecto?",
+    "noHeartbeatsToEnable": "No hay latidos que activar",
+    "noHeartbeatsToDisable": "No hay latidos que desactivar",
+    "enableHeartbeatsSummary": "Se activaron {{count}} latidos; se omitieron {{skipped}}",
+    "disableHeartbeatsSummary": "Se desactivaron {{count}} latidos; se omitieron {{skipped}}",
+    "enableHeartbeatsCountHint": "Activar {{count}} latidos desactivados",
+    "disableHeartbeatsCountHint": "Desactivar {{count}} latidos activados",
+    "bulkFailures": "fallaron {{count}}"
   },
   "app": {
     "backendError": {
@@ -5964,7 +5981,8 @@
       "reportDiscussionCategoryHelp": "Obligatoria al enviar a Discusiones de GitHub. Las categorías se cargan desde el repositorio configurado.",
       "reportDiscussionCategorySelect": "Selecciona una categoría de discusión",
       "reportDiscussionCategoryUnavailable": "Las categorías de discusión no están disponibles para el repositorio configurado.",
-      "reportDiscussionCategoryEmpty": "No hay categorías de discusión disponibles para el repositorio configurado."
+      "reportDiscussionCategoryEmpty": "No hay categorías de discusión disponibles para el repositorio configurado.",
+      "reportTargetByActionHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6010,7 +6028,11 @@
       "skipConfirmationDialogs": "",
       "skipConfirmationDialogsHint": "",
       "enableProactiveTaskChat": "",
-      "enableProactiveTaskChatHint": ""
+      "enableProactiveTaskChatHint": "",
+      "releaseChannel": "",
+      "releaseChannelHelp": "",
+      "channelStable": "",
+      "channelBeta": ""
     },
     "globalModels": {
       "allow": "",
@@ -7820,7 +7842,12 @@
       "createdVia": "Creado mediante",
       "parentTaskOf": "",
       "createdToUndo": "",
-      "undoTask": ""
+      "undoTask": "",
+      "creatingAgent": "",
+      "importedFrom": "",
+      "nearDuplicateOf": "",
+      "parentTask": "",
+      "title": ""
     },
     "recoveryState": "Estado de recuperación",
     "refine": {

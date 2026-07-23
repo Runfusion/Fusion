@@ -47,6 +47,7 @@ import { extractVersionNotes, replaceVersionSection } from "./lib/extract-versio
 import { parseChangesetFile } from "./lib/changeset-schema.mjs";
 import { distillReleaseNotes } from "./lib/distill-release-notes.mjs";
 import { shouldPromptForVersion } from "./lib/release-prompt-gate.mjs";
+import { selectChannelChangesets } from "./lib/channel-changeset-scope.mjs";
 import {
   archivePointerLine,
   CHANGELOG_ARCHIVE_CUTOFF,
@@ -748,8 +749,42 @@ const changesetSummaries = readChangesetSummaries();
 if (changesetSummaries.length === 0) {
   fail("No pending changesets in .changeset/. Run `pnpm changeset` first.");
 }
-ok(`${changesetSummaries.length} pending changeset(s):`);
-for (const cs of changesetSummaries) {
+
+/*
+ * FNXC:Changelog 2026-07-23-10:40:
+ * Scope release notes to the channel. Pre-mode preserves every consumed
+ * changeset .md on disk, so on beta.N the directory holds the WHOLE cycle —
+ * feeding all of it to distillation made every beta's notes an aggregate of
+ * everything since the last stable (v0.73.0-beta.4 shipped the full cycle
+ * instead of its own fixes). Betas distill only changesets NOT yet recorded
+ * in pre.json's `changesets` array (i.e. new since the previous beta).
+ * Stable keeps the full set on purpose: its notes are the rollup of every
+ * change across all betas in the cycle.
+ */
+const preReleasedNames = IS_BETA && preJsonExists()
+  ? (JSON.parse(readFileSync(PRE_JSON_PATH, "utf8")).changesets ?? [])
+  : [];
+const { selected: noteChangesets, alreadyReleased } = selectChannelChangesets(
+  CHANNEL,
+  changesetSummaries,
+  preReleasedNames,
+);
+if (IS_BETA && noteChangesets.length === 0) {
+  fail(
+    `All ${changesetSummaries.length} pending changeset(s) were already released in a prior beta of this cycle. ` +
+    "Nothing new to release — land a changeset first, or run `pnpm release --channel stable` to promote.",
+  );
+}
+if (IS_BETA && alreadyReleased.length > 0) {
+  info(`${alreadyReleased.length} changeset(s) already released in earlier betas of this cycle (kept for the stable rollup; excluded from this beta's notes).`);
+}
+// pre.json survives `pre exit` (mode flips to "exit"); its presence on the
+// stable channel means this release promotes a beta cycle.
+if (!IS_BETA && existsSync(PRE_JSON_PATH)) {
+  info(`Stable notes will roll up all ${changesetSummaries.length} changeset(s) accumulated across the beta cycle.`);
+}
+ok(`${noteChangesets.length} changeset(s) new in this ${CHANNEL} release:`);
+for (const cs of noteChangesets) {
   console.log(`    ${color(33, `[${cs.bump}]`)} ${cs.summary}  ${color(90, `(${cs.file})`)}`);
 }
 
@@ -790,7 +825,7 @@ if (DRY_RUN) {
    * deterministic if no model is reachable) so operators can review the post
    * without authorizing a real publish.
    */
-  const dryEntries = changesetSummaries.map(({ file }) => {
+  const dryEntries = noteChangesets.map(({ file }) => {
     const raw = readFileSync(join(".changeset", file), "utf8");
     return parseChangesetFile(raw).parsed;
   }).filter(Boolean);
@@ -844,8 +879,13 @@ if (!(await confirm(`Proceed with ${CHANNEL} release v${chosenVersion} (build, p
  * Capture and parse structured changeset entries BEFORE `changeset version`
  * runs — versioning consumes and deletes the .changeset/*.md files.
  * The captured entries feed the post-version distillation step.
+ *
+ * FNXC:Changelog 2026-07-23-10:40:
+ * `noteChangesets` is channel-scoped (see selection above): a beta captures
+ * only changesets new since the previous beta; a stable capture is the full
+ * cross-beta rollup.
  */
-const capturedEntries = changesetSummaries.map(({ file }) => {
+const capturedEntries = noteChangesets.map(({ file }) => {
   const raw = readFileSync(join(".changeset", file), "utf8");
   return parseChangesetFile(raw).parsed;
 }).filter(Boolean);

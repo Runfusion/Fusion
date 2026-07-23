@@ -314,6 +314,18 @@ describe("agents-view mobile CSS", () => {
     expect(block).toContain("flex-wrap: wrap");
   });
 
+  it("stacks card identity and populated badges on narrow mobile cards", () => {
+    const headerBlock = extractRuleBlock(mobileMediaBlock, ".agents-view .agent-card-header");
+    expect(headerBlock).toContain("flex-direction: column");
+    expect(headerBlock).toContain("align-items: stretch");
+
+    const infoBlock = extractRuleBlock(mobileMediaBlock, ".agents-view .agent-info");
+    expect(infoBlock).toContain("min-width: 0");
+
+    const badgesBlock = extractRuleBlock(mobileMediaBlock, ".agents-view .agent-badges");
+    expect(badgesBlock).toContain("justify-content: flex-start");
+  });
+
   it("defines mobile org chart sizing and pan/zoom controls rules", () => {
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart-controls")).toContain("display: flex");
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart-controls")).toContain("gap: var(--space-sm)");

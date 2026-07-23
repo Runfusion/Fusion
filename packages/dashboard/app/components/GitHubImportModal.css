@@ -345,8 +345,16 @@ when the preview is short; the top border separates it from scrolling content.
   border-top: 1px solid var(--border);
 }
 
+/* Keep the composer and its action controls as independently sized flex rows. */
+.github-import-detail-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
 /* Never let the primary action's label clip when the bar is narrow. */
-.github-import-detail-actions .btn {
+.github-import-detail-action-row .btn {
   flex: 0 0 auto;
   min-width: max-content;
   min-height: 36px;
@@ -1653,6 +1661,38 @@ counterpart added later cannot silently reintroduce the band.
   }
 
 
+}
+
+/*
+FNXC:GitHubImport 2026-07-23-12:18:
+The selected-issue mobile action row must keep Import as task alongside optional Close issue,
+Plan, and Chat controls. The comment composer remains on its own full-width row, while equal
+shrinkable action tracks preserve every full label by wrapping it inside its own button and the
+shared touch-target token preserves every required target without clipping or scrolling.
+*/
+@media (max-width: 768px) {
+  .github-import-detail-actions {
+    gap: var(--space-xs);
+  }
+
+  .github-import-detail-action-row {
+    flex: 1 1 100%;
+    min-width: 0;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+  }
+
+  .github-import-detail-action-row .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--touch-target-min-size) !important;
+    padding: var(--space-xs);
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 @keyframes github-import-spinner-spin {

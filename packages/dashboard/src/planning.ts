@@ -28,12 +28,6 @@ import {
   TASK_PRIORITIES,
   THINKING_LEVELS,
   summarizeTitle,
-  builtinSeamPrompt,
-  renderTriagePolicyPlaceholders,
-  resolveAgentPrompt,
-  resolveEffectivePlannerHeartbeatPatrolEnabled,
-  resolvePlanningPromptFromIr,
-  resolveWorkflowIrById,
   type PromptOverrideMap,
 } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
@@ -233,29 +227,34 @@ async function ensureNtfyHelpersReady(): Promise<void> {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /*
-FNXC:PlanningMode 2026-07-20-00:55:
-Planning Mode is user-terminated: each answered turn must produce one consequential, novel question with alternatives and trade-offs.
-The model may update the running plan but must never infer completion; only the visible Proceed with plan action can make a session terminal.
+FNXC:PlanningMode 2026-07-23-14:00:
+Planning Mode is a collaborative, user-terminated discovery session, not task triage. Its dedicated prompt must not inherit workflow or assigned-triage execution instructions, because those instructions can turn exploratory responses into executor specifications and child-task directives.
+
+A selected direction is a durable plan-backbone decision: every affected running-plan field must be rebuilt around accumulated selections, then exactly one repository-grounded question must narrow that direction another consequential level. The model may update the running plan but must never infer completion; only the visible Proceed with plan action can make a session terminal.
 */
-/** Planning system prompt for the AI agent */
-export const PLANNING_SYSTEM_PROMPT = `## Planning Mode interaction adapter
+/** Self-contained system prompt for the separate collaborative Planning Mode. */
+export const PLANNING_SYSTEM_PROMPT = `## Collaborative Planning Mode
 
-First analyze the codebase and active board with the available readonly tools, fn_task_list, and fn_task_show. Treat the workflow planning template above as the quality bar and PROMPT.md structure for the evolving plan, but do not write PROMPT.md or use write tools during this interview.
+Help the operator iteratively turn an idea into a clear, useful plan. First investigate relevant repository and active-board context with the available readonly tools, fn_task_list, and fn_task_show when that context can reduce uncertainty. Explore the problem before assuming a solution: identify assumptions, unknowns, constraints, affected surfaces, and meaningful risks. Compare viable approaches and their trade-offs. Discuss decomposition when it clarifies scope, sequencing, ownership, or deliverables, but do not automatically split work or direct the creation of child tasks.
 
-Start by producing a concrete initial plan and exactly one high-impact question. Author the operator-facing plan in Markdown: write the description as concise GitHub-flavored Markdown, while the structured change, acceptance, dependency, and deliverable fields become its Markdown sections and lists. After every answer, regenerate the plan and ask exactly one consequential next question. A refine turn uses the selected or free-text focus to choose that next question. The model never validates or terminates the session. Only the user can validate it through the visible Proceed with plan action.
+Build an evolving operator-facing plan, not an executor-ready task specification. Focus on intended outcomes, concrete deliverables, alternatives considered, and observable acceptance criteria. Do not produce task-specification bookkeeping or execution-process instructions such as task-size policy, commit guidance, no-code-change caveats, or task-creation directives. Author the operator-facing plan in Markdown: write the description as concise GitHub-flavored Markdown, while the structured change, acceptance, dependency, and deliverable fields become its Markdown sections and lists.
+
+Use a deliberate iterative narrowing loop: analyze → concrete options → operator selection → plan rebuild → one deeper question. When the opener is vague, subjective, preference-based, or symptom-only, inspect the relevant implementation surface before proposing at least two materially distinct actionable directions grounded in those findings, plus exactly one Other option. Do not ask a generic clarification question or silently select a direction. Keep the provisional plan honest about unselected alternatives.
+
+After every selected option, multi-selection, or free-text Other answer, treat the choice as a durable decision and rebuild every affected running-plan field around all accumulated decisions. The title, description, proposedChanges, acceptanceCriteria, keyDeliverables, and suggestedRefinements must make the selected direction—not the original vague complaint or an unselected alternative—the central intended outcome. Preserve Other text verbatim as steering. Then inspect the selected direction and relevant repository context and ask exactly one consequential next question that narrows it one level further with concrete, materially distinct options. A refine turn uses the selected or free-text focus to choose that next question. Continue this loop until the operator chooses Proceed with plan. The model never validates or terminates the session. Only the user can validate it through the visible Proceed with plan action.
 
 For every initial, answer, or refine turn respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","proposedChanges":["specific change"],"acceptanceCriteria":["observable outcome"],"suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"],"suggestedRefinements":["next focus 1","next focus 2"]}}}.
 
-Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Do not put PROMPT.md sections (Mission, Before → After, Steps, File Scope, Review Level, Completion Criteria, or Do NOT) in runningPlan or free text: triage writes PROMPT.md only after the operator proceeds with the plan. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
+Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
 /*
-FNXC:PlanningMode 2026-07-20-14:30:
-Planning Mode must use the same workflow planning seam as triage for a newly added task, then layer its infinite JSON interview contract over that template. A catalog defaultContent is Settings UI documentation, not proof that an operator explicitly replaced the full system prompt.
+FNXC:PlanningMode 2026-07-23-11:35:
+The separate Planning Mode prompt has sole default authority. Workflow selection still resolves models and task creation, but workflow planning seams and triage assignments remain execution-task concerns and must never leak into collaborative planning turns.
 */
 export async function resolvePlanningModeSystemPrompt(
   store: TaskStore,
   promptOverrides?: PromptOverrideMap,
-  workflowId?: string,
+  _workflowId?: string,
 ): Promise<string> {
   const settings: Partial<Settings> = (await store.getSettings().catch(() => ({}))) ?? {};
   const overrides = promptOverrides ?? settings.promptOverrides;
@@ -264,23 +263,8 @@ export async function resolvePlanningModeSystemPrompt(
     && overrides["planning-system"].trim().length > 0
     ? overrides["planning-system"]
     : undefined;
-  if (explicitOverride) return explicitOverride;
 
-  const plannerHeartbeatPatrolEnabled = resolveEffectivePlannerHeartbeatPatrolEnabled(settings);
-  const assignedTriagePrompt = settings.agentPrompts?.roleAssignments?.triage
-    ? resolveAgentPrompt("triage", settings.agentPrompts, { plannerHeartbeatPatrolEnabled })
-    : "";
-  let workflowPrompt: string | undefined;
-  try {
-    const ir = await resolveWorkflowIrById(store, workflowId || settings.defaultWorkflowId || "builtin:coding");
-    workflowPrompt = resolvePlanningPromptFromIr(ir);
-  } catch {
-    // Resolve fail-soft below so a missing custom workflow cannot prevent planning.
-  }
-  const fallback = builtinSeamPrompt("planning")
-    || resolveAgentPrompt("triage", undefined, { plannerHeartbeatPatrolEnabled });
-  const base = assignedTriagePrompt || workflowPrompt || fallback;
-  return `${renderTriagePolicyPlaceholders(base, settings)}\n\n${PLANNING_SYSTEM_PROMPT}`;
+  return explicitOverride ?? PLANNING_SYSTEM_PROMPT;
 }
 
 
@@ -308,6 +292,8 @@ export interface DraftInputPayload {
   generationPurpose?: "initial_plan" | "plan_update" | "question";
   generationStartedAt?: string;
   generationReturnQuestion?: PlanningQuestion;
+  /** Contextual batch retained until its plan-update generation succeeds, so retry can replay it. */
+  pendingContextualComments?: ContextualComment[];
   clarificationEnabled?: boolean;
   /* FNXC:PlanningMode 2026-07-21-09:15: Keep old payloads source-compatible without reading or writing this retired mailbox dedupe marker. */
   lastMailboxNotifiedQuestionKey?: string;
@@ -371,6 +357,15 @@ interface Session {
   ip: string;
   initialPlan: string;
   title: string;
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-23-10:40:
+  Monotonic in-memory epoch for streaming-callback invalidation. Bumped every time the
+  session's agent is disposed/replaced; agent onThinking/onText closures capture the epoch at
+  agent creation and no-op when it has moved on. Closes the residual PR #2417 window where a
+  provider that ignores cancellation beyond rewind's bounded settle-wait could persist or
+  broadcast stale thinking deltas after the rewound state was published. Never persisted.
+  */
+  agentCallbackEpoch?: number;
   projectId?: string;
   /** Workflow selected at session start, retained for agent reconstruction. */
   workflowId?: string;
@@ -405,6 +400,13 @@ interface Session {
   generationStartedAt?: string;
   /** Question restored when the user stops the active turn. */
   generationReturnQuestion?: PlanningQuestion;
+  /**
+   * FNXC:PlanningComments 2026-07-23-13:00:
+   * A contextual batch is a durable pending turn, not UI-only state. Retain its normalized
+   * quote/suggestion pairs until the revised summary is accepted so retry and rehydration replay
+   * precisely the requested plan update after the agent session is disposed.
+   */
+  pendingContextualComments?: ContextualComment[];
   /** Last terminal error for retry UX */
   error?: string;
   /** AI agent session for real-time interaction */
@@ -456,6 +458,125 @@ interface ActivePlanningGeneration {
 
 /** Active planning generations keyed by session ID. */
 const activeGenerations = new Map<string, ActivePlanningGeneration>();
+
+/*
+FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+Reported bug: "AI returned no valid JSON" recurred whenever the Planning UI was left and
+re-entered mid-generation (mobile tab switches unmount the view), and generations visibly
+duplicated. Root cause: the `activeGenerations.has()` guard is check-then-act across several
+awaits (persistSession/ensureSessionAgent) — the ActivePlanningGeneration record only exists
+once runGenerationWithTimeout runs. Two overlapping turn entries (re-submitted answer from a
+remounted view, racing auto-retries, duplicate start of an existing session) both passed the
+guard; the second displaced the first, and the displaced teardown disposed the session-shared
+agent that the surviving turn was actively prompting, so the surviving turn read an empty
+assistant message and failed parse with "AI returned no valid JSON".
+Invariant: at most one turn may be admitted per session at any time, enforced SYNCHRONOUSLY
+(no await between check and reservation). Every generation entry point (submitResponse,
+retrySession, startExistingSession, initializeAgent) must hold a reservation for its full span,
+so a concurrent entry is rejected with GenerationInProgressError instead of displacing a
+healthy in-flight generation.
+*/
+interface PlanningTurnReservation {
+  done: Promise<void>;
+  resolveDone: () => void;
+}
+
+const pendingTurnReservations = new Map<string, PlanningTurnReservation>();
+
+function isPlanningTurnActive(sessionId: string): boolean {
+  return activeGenerations.has(sessionId) || pendingTurnReservations.has(sessionId);
+}
+
+/** Synchronously reserve the session's single turn slot; returns the release fn. */
+function reservePlanningTurn(sessionId: string): () => void {
+  if (isPlanningTurnActive(sessionId)) {
+    throw new GenerationInProgressError("Generation already in progress");
+  }
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const reservation: PlanningTurnReservation = { done, resolveDone };
+  pendingTurnReservations.set(sessionId, reservation);
+  return () => {
+    if (pendingTurnReservations.get(sessionId) === reservation) {
+      pendingTurnReservations.delete(sessionId);
+    }
+    reservation.resolveDone();
+  };
+}
+
+/*
+FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+User-takes-control actions (rewind/edit) abort the in-flight generation and must then WAIT for
+that turn's owner to unwind and release its reservation before mutating session state.
+Deleting the active-generation record without waiting left both admission sets empty while the
+aborted turn was still unwinding, so a concurrent submit/retry could interleave with rewind's
+own awaits and corrupt question/history/agent state (review finding on PR #2417).
+*/
+/*
+FNXC:PlanningTurnAdmission 2026-07-23-10:10:
+The turn reservation is released as soon as the abort wins runGenerationWithTimeout's race,
+but the generation OPERATION (which holds the raw provider prompt) can still be pending if the
+provider ignores the AbortSignal. User-takes-control paths (rewind) must also wait — bounded —
+for that operation to settle before disposing/replacing the agent, or a slow provider callback
+could still be running against the mutable session while the rewound state is published
+(review finding on PR #2417). Tracked separately from reservations because settlement can
+outlive the owner's release.
+*/
+const settlingTurnOperations = new Map<string, Promise<void>>();
+
+function trackTurnOperationSettled(sessionId: string, operationPromise: Promise<unknown>): void {
+  const settled = operationPromise.then(
+    () => {},
+    () => {},
+  );
+  settlingTurnOperations.set(sessionId, settled);
+  void settled.then(() => {
+    if (settlingTurnOperations.get(sessionId) === settled) {
+      settlingTurnOperations.delete(sessionId);
+    }
+  });
+}
+
+/**
+ * Bounded wait for a cancelled turn's operation (including its provider prompt) to settle.
+ * Returns false on timeout — callers proceed anyway: agent disposal is the backstop, the
+ * cancelled closure's post-prompt abort checks prevent state writes, and blocking a user's
+ * rewind forever on an unresponsive provider would be worse.
+ */
+async function waitForTurnOperationSettled(sessionId: string, timeoutMs = 2000): Promise<boolean> {
+  const settling = settlingTurnOperations.get(sessionId);
+  if (!settling) return true;
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = await Promise.race([
+    settling.then(() => false),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return !timedOut;
+}
+
+async function waitForPlanningTurnRelease(sessionId: string, timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (isPlanningTurnActive(sessionId)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    const reservation = pendingTurnReservations.get(sessionId);
+    if (reservation) {
+      await Promise.race([
+        reservation.done,
+        new Promise((resolve) => setTimeout(resolve, Math.min(remaining, 50))),
+      ]);
+    } else {
+      // Active generation whose owner has not yet reached its release — brief yield.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  return true;
+}
 
 // ── AI Session Persistence ────────────────────────────────────────────────
 
@@ -618,6 +739,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.generationPurpose ? { generationPurpose: session.generationPurpose } : {}),
       ...(session.generationStartedAt ? { generationStartedAt: session.generationStartedAt } : {}),
       ...(session.generationReturnQuestion ? { generationReturnQuestion: session.generationReturnQuestion } : {}),
+      ...(session.pendingContextualComments ? { pendingContextualComments: session.pendingContextualComments } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -778,6 +900,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     generationReturnQuestion: payload.generationReturnQuestion && typeof payload.generationReturnQuestion === "object"
       ? normalizePlanningQuestion(payload.generationReturnQuestion, payload.initialPlan ?? row.title)
       : undefined,
+    pendingContextualComments: getContextualComments({ contextualComments: payload.pendingContextualComments }) ?? undefined,
     history,
     currentQuestion,
     lastNotifiedQuestionKey: currentQuestion ? `${row.id}:${currentQuestion.id}` : undefined,
@@ -953,6 +1076,11 @@ export class PlanningStreamManager extends EventEmitter {
     this.pendingInitialTurns.set(sessionId, start);
   }
 
+  /** True while a registered initial turn has not been consumed by a stream connection yet. */
+  hasPendingInitialTurn(sessionId: string): boolean {
+    return this.pendingInitialTurns.has(sessionId);
+  }
+
   consumeInitialTurn(sessionId: string): (() => void) | undefined {
     const start = this.pendingInitialTurns.get(sessionId);
     if (!start) {
@@ -998,7 +1126,16 @@ export class PlanningStreamManager extends EventEmitter {
 }
 
 /** Singleton instance of the planning stream manager */
-export const planningStreamManager = new PlanningStreamManager();
+/*
+FNXC:PlanningStreamCatchup 2026-07-22-21:00:
+Reconnecting clients (mobile tab switches unmount the Planning view, so every return opens a
+fresh SSE connection) rebuild the loading view exclusively from the buffered-event replay.
+The default 100-event buffer only held a suffix of a turn's thinking deltas, which forced the
+client to pre-seed from persisted thinkingOutput and then receive the replay again — the
+"generation duplicates every time I come back" report. The buffer must be deep enough to hold
+a full turn of thinking deltas so replay alone reconstructs the view exactly once.
+*/
+export const planningStreamManager = new PlanningStreamManager(2000);
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 
@@ -1181,8 +1318,8 @@ async function getFirstQuestionFromAgent(
     throw new InvalidSessionStateError("AI agent not initialized");
   }
 
-  // Send message to agent
-  await session.agent.session.prompt(message);
+  // Send message to agent (context-limit aware — see promptPlanningAgent)
+  await promptPlanningAgent(session.agent.session, message);
 
   // Extract response text
   interface AgentMessage {
@@ -1246,7 +1383,8 @@ async function getFirstQuestionFromAgent(
 
       if (attempt < MAX_PARSE_RETRIES) {
         try {
-          await session.agent.session.prompt(
+          await promptPlanningAgent(
+            session.agent.session,
             "Your previous response could not be parsed as JSON. " +
             'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
             "No markdown, no explanation, just the JSON."
@@ -1332,7 +1470,8 @@ async function requestMandatoryFirstPlanningQuestion(
   abortSignal?: AbortSignal,
 ): Promise<{ type: "question"; data: PlanningQuestion }> {
   try {
-    await (session.agent!.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
+    await promptPlanningAgent(
+      session.agent!.session,
       'Before producing a plan, ask one clarifying question. Return ONLY valid JSON: {"type":"question","data":{...}}.',
       { signal: abortSignal },
     );
@@ -1610,8 +1749,32 @@ export async function startExistingSession(
     session.clarificationEnabled = runtimeOptions.clarificationEnabled === true;
     session.ntfyConfig = runtimeOptions.ntfyConfig;
   }
+
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+  Starting an existing session must be idempotent while its generation is in flight. A
+  remounted client (mobile tab switches unmount the Planning view) could re-issue
+  start-streaming for a session that is already generating; previously this displaced the
+  live generation and disposed its agent mid-prompt. Now the duplicate start is a no-op and
+  the client simply reconnects to the stream of the run already in progress.
+  */
+  if (isPlanningTurnActive(sessionId) || planningStreamManager.hasPendingInitialTurn(sessionId)) {
+    diagnostics.warn("Ignoring duplicate start for planning session with an active generation", {
+      sessionId,
+      operation: "start-existing-duplicate",
+    });
+    return;
+  }
+
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+  The duplicate-start guard and the initial-turn registration must be one synchronous block —
+  no await between them. With persistSession in between, two concurrent duplicate starts could
+  both pass the guard and the second registerInitialTurn threw "Initial planning turn already
+  registered" for a normal duplicate start (review finding on PR #2417). Registration IS the
+  claim; persistence follows it.
+  */
   beginPlanningGeneration(session, "initial_plan");
-  await persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
     initializeAgent(session, rootDir, store, modelProvider, modelId, session.draftThinkingLevel, promptOverrides, pluginRunner).catch((err) => {
@@ -1623,6 +1786,7 @@ export async function startExistingSession(
       });
     });
   });
+  await persistSession(session, "generating");
 }
 
 /**
@@ -1732,6 +1896,25 @@ async function initializeAgent(
   promptOverrides?: PromptOverrideMap,
   pluginRunner?: SkillPluginRunner,
 ): Promise<void> {
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+  The initial turn reserves the session's single turn slot synchronously (this runs inside
+  consumeInitialTurn's synchronous callback). A duplicate initial turn racing an admitted
+  generation exits quietly instead of displacing it and disposing its agent mid-prompt.
+  */
+  let releaseTurn: () => void;
+  try {
+    releaseTurn = reservePlanningTurn(session.id);
+  } catch (err) {
+    if (err instanceof GenerationInProgressError) {
+      diagnostics.warn("Skipping duplicate initial planning turn — generation already active", {
+        sessionId: session.id,
+        operation: "initialize-agent-duplicate",
+      });
+      return;
+    }
+    throw err;
+  }
   try {
     await runGenerationWithTimeout(session, async (abortSignal) => {
       /*
@@ -1789,6 +1972,8 @@ async function initializeAgent(
       type: "error",
       data: errorMessage,
     });
+  } finally {
+    releaseTurn();
   }
 }
 
@@ -1808,6 +1993,16 @@ async function createPlanningAgent(
   const systemPrompt = await resolvePlanningModeSystemPrompt(store, promptOverrides, session.workflowId);
 
   const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
+
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-23-10:40:
+  Capture the callback epoch at agent creation. A provider that ignores cancellation beyond
+  rewind's bounded settle-wait can keep streaming after this agent is disposed; the epoch
+  check makes those late deltas inert (no thinkingOutput mutation, no persist, no broadcast)
+  instead of letting them corrupt the state published after the agent was replaced.
+  */
+  const callbackEpoch = session.agentCallbackEpoch ?? 0;
+  const callbacksInvalidated = (): boolean => (session.agentCallbackEpoch ?? 0) !== callbackEpoch;
 
   /*
   FNXC:PlanningSkills 2026-06-17-19:33:
@@ -1838,6 +2033,7 @@ async function createPlanningAgent(
       : {}),
     ...(thinkingLevel ? { defaultThinkingLevel: thinkingLevel } : {}),
     onThinking: (delta: string) => {
+      if (callbacksInvalidated()) return;
       markPlanningGenerationProgress(session.id, delta);
       session.thinkingOutput += delta;
       persistThinking(session.id, session.thinkingOutput);
@@ -1850,6 +2046,7 @@ async function createPlanningAgent(
       // Capture AI response text — will be parsed at end of turn. Also
       // surface it through the same stream so non-thinking models (which
       // never emit thinking_delta) still show streaming output in the UI.
+      if (callbacksInvalidated()) return;
       markPlanningGenerationProgress(session.id, delta);
       session.thinkingOutput += delta;
       persistThinking(session.id, session.thinkingOutput);
@@ -1872,7 +2069,7 @@ function buildHistoryReplayPrompt(
   return [
     "Previous conversation summary:",
     interviewSummary,
-    "Use this as context for the next response. Do not repeat prior questions unless necessary.",
+    "Treat every recorded selection and Other answer as an accumulated durable decision. Rebuild affected plan fields around those decisions; do not preserve superseded or unselected alternatives as the plan backbone. Use this as context for the next response. Do not repeat prior questions unless necessary.",
   ].join("\n\n");
 }
 
@@ -1919,7 +2116,7 @@ async function ensureSessionAgent(
     if (abortSignal.aborted) {
       throw createAbortError();
     }
-    await (session.agent!.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(contextMessage, {
+    await promptPlanningAgent(session.agent!.session, contextMessage, {
       signal: abortSignal,
     });
     if (abortSignal.aborted) {
@@ -1968,8 +2165,11 @@ Planning Mode malformed AI output must either recover through the bounded reform
 */
 
 function buildRetryableParseErrorMessage(error: Error | undefined): string {
+  // Strip any trailing "Please try again." suffix AND trailing periods so the appended
+  // call to action cannot render as "…no valid JSON.. Retry this planning session…".
   const baseMessage = (error?.message || "Failed to parse AI response")
     .replace(/\s*Please try again\.?\s*$/i, "")
+    .replace(/[.\s]+$/, "")
     .trim();
   return `${baseMessage}. Retry this planning session or start a new one.`;
 }
@@ -1995,6 +2195,37 @@ function createAbortError(): Error {
   const error = new Error("Generation aborted");
   error.name = "AbortError";
   return error;
+}
+
+/*
+FNXC:PlanningContextCompaction 2026-07-22-22:40:
+Long planning interviews accumulate the whole Q/A history in one agent session and can hit the
+model's context window mid-interview. Planning previously called session.prompt() raw, so a
+context overflow surfaced as a terminal session error — and the auto-retry then replayed the
+FULL history into a fresh agent, overflowing again, unrecoverably. Every planning prompt now
+routes through the engine's promptWithFallback, which classifies context-limit errors and
+recovers via prompt/memory compaction and session.compact() before retrying. Test fakes that
+mock @fusion/engine without promptWithFallback fall back to the raw prompt unchanged.
+*/
+async function promptPlanningAgent(
+  agentSession: { prompt: (input: string, options?: { signal?: AbortSignal }) => Promise<void> },
+  message: string,
+  options?: { signal?: AbortSignal },
+): Promise<void> {
+  let promptWithFallback: ((session: unknown, prompt: string, options?: unknown) => Promise<void>) | undefined;
+  try {
+    promptWithFallback = (engineModule as {
+      promptWithFallback?: (session: unknown, prompt: string, options?: unknown) => Promise<void>;
+    }).promptWithFallback;
+  } catch {
+    // vi.mock("@fusion/engine") proxies throw on undeclared exports; treat as unavailable.
+    promptWithFallback = undefined;
+  }
+  if (typeof promptWithFallback === "function") {
+    await promptWithFallback(agentSession, message, options);
+    return;
+  }
+  await agentSession.prompt(message, options);
 }
 
 function normalizeGenerationProgress(output: string): string {
@@ -2087,7 +2318,11 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   });
 
   try {
-    return await Promise.race([operation(abortController.signal), abortPromise]);
+    // Track the operation's own settlement: on abort the race settles immediately while the
+    // operation (and its provider prompt) may still be pending — rewind waits on this.
+    const operationPromise = operation(abortController.signal);
+    trackTurnOperationSettled(session.id, operationPromise);
+    return await Promise.race([operationPromise, abortPromise]);
   } finally {
     clearTimeout(generationRecord.timer);
     if (activeGenerations.get(session.id) === generationRecord) {
@@ -2125,8 +2360,9 @@ for both agent entry points because system instructions alone can be displaced b
 export function formatInitialPlanRequestForAgent(initialPlan: string): string {
   return [
     "Create the initial running plan from this operator idea before asking the first interview question.",
+    "If the idea is vague, subjective, preference-based, or symptom-only, first inspect the relevant implementation surface and turn those findings into at least two concrete, materially distinct first-level directions plus exactly one Other option. Do not ask a generic question, invent repository findings, or commit the provisional plan to an unselected direction.",
     "Return only type:\"question\" JSON with a full runningPlan: a work-product title, a concise implementation description, and concrete work-item keyDeliverables derived from the idea.",
-    "Then ask exactly one high-impact clarifying question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
+    "Then ask exactly one high-impact, option-driven question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2137,9 +2373,9 @@ export function formatInitialRunningPlanRequestForAgent(initialPlan: string): st
   return [
     "Create a concrete initial implementation plan from this operator idea.",
     "Author the operator-facing plan in Markdown. Write the description as concise GitHub-flavored Markdown; the structured proposed changes, acceptance criteria, dependencies, and deliverables will render as Markdown sections and lists.",
-    "Inspect the relevant codebase and active-board context before drafting it. Make the description specific about the affected behavior and intended outcome. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
+    "Inspect the relevant codebase and active-board context before drafting it. For a vague, subjective, preference-based, or symptom-only idea, turn that inspection into at least two concrete, materially distinct direction options plus exactly one Other option; do not invent findings or preselect a direction. Make the provisional description specific about the affected behavior and intended outcome without falsely committing to an unselected direction. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
     "Also propose concise suggestedRefinements covering every distinct, high-value unresolved area the operator could explore next; do not cap the list at three.",
-    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact next question. Give that question at least two useful alternatives with pros and cons plus one write-your-own option. Do not validate the plan; only the operator can proceed with it.",
+    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact, option-driven next question. Give that question at least two useful alternatives with pros and cons plus one write-your-own option. Do not validate the plan; only the operator can proceed with it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2293,6 +2529,16 @@ export async function validateSession(sessionId: string): Promise<PlanningSummar
   session.summary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
   session.currentQuestion = undefined;
   session.editingQuestionId = undefined;
+  /*
+  FNXC:PlanningMode 2026-07-23-08:55:
+  Validation is the sole terminal transition, including after a synchronous initial turn left
+  generation metadata behind. Clear that non-terminal metadata so stream replay recognizes the
+  validated session, emits its one terminal complete event, and closes without a synthetic event.
+  */
+  session.generationPurpose = undefined;
+  session.generationStartedAt = undefined;
+  session.generationReturnQuestion = undefined;
+  session.pendingContextualComments = undefined;
   session.validated = true;
   session.error = undefined;
   session.updatedAt = new Date();
@@ -2319,7 +2565,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       if (abortSignal.aborted) {
         throw createAbortError();
       }
-      await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(message, {
+      await promptPlanningAgent(session.agent.session, message, {
         signal: abortSignal,
       });
       if (abortSignal.aborted) {
@@ -2393,7 +2639,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
             if (abortSignal.aborted) {
               throw createAbortError();
             }
-            await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
+            await promptPlanningAgent(
+              session.agent.session,
               "Your previous response could not be parsed as JSON. " +
                 'Please respond with ONLY a valid JSON object: {"type":"question","data":{"runningPlan":{...},...}}. ' +
                 'No markdown, no explanation, just the JSON.',
@@ -2458,6 +2705,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
       session.generationPurpose = undefined;
       session.generationStartedAt = undefined;
       session.generationReturnQuestion = undefined;
+      // The revised summary is now durable, so a later retry must not reapply this batch.
+      session.pendingContextualComments = undefined;
       session.currentQuestion = coerceQuestionResponse(parsed, session);
       await persistSession(session, "awaiting_input");
       planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
@@ -2728,11 +2977,41 @@ function isRefineRequest(responses: Record<string, unknown>): boolean {
   return responses.refine === true;
 }
 
+type ContextualComment = { quote: string; suggestion: string };
+
+function getContextualComments(responses: Record<string, unknown>): ContextualComment[] | null {
+  if (!Array.isArray(responses.contextualComments)
+    || responses.contextualComments.length === 0
+    || responses.contextualComments.length > 20) return null;
+  const comments = responses.contextualComments.map((comment) => {
+    if (!comment || typeof comment !== "object" || Array.isArray(comment)) return null;
+    const { quote, suggestion } = comment as { quote?: unknown; suggestion?: unknown };
+    const normalizedQuote = typeof quote === "string" ? quote.trim() : "";
+    const normalizedSuggestion = typeof suggestion === "string" ? suggestion.trim() : "";
+    return normalizedQuote && normalizedQuote.length <= 4_000 && normalizedSuggestion && normalizedSuggestion.length <= 2_000
+      ? { quote: normalizedQuote, suggestion: normalizedSuggestion }
+      : null;
+  });
+  return comments.every((comment): comment is ContextualComment => comment !== null) ? comments : null;
+}
+
+export function formatContextualCommentsForAgent(summary: PlanningSummary, comments: ContextualComment[]): string {
+  return [
+    "The operator reviewed the running plan and submitted contextual comments.",
+    "Revise the running plan using every comment below, preserve unaffected content, and continue the established Planning Mode response contract. Treat each accepted comment as a durable decision: rebuild every affected plan field around it rather than appending contradictory notes.",
+    "Return the revised plan in Markdown and ask exactly one concrete option-driven next question that narrows the updated direction when more input is needed.",
+    "Current summary:",
+    JSON.stringify(summary),
+    "Contextual comments, in submitted order:",
+    ...comments.flatMap((comment, index) => [`${index + 1}. Selected quote: ${comment.quote}`, `Suggestion: ${comment.suggestion}`]),
+  ].join("\n\n");
+}
+
 function formatRefineRequestForAgent(summary: PlanningSummary, focus?: string): string {
   return [
     "The user clicked Refine Further on the planning summary.",
-    "Continue the planning interview from the existing context.",
-    "Ask exactly one focused, high-impact follow-up question with alternatives and pros/cons.",
+    "Continue the planning interview from the existing context. Rebuild affected plan fields around every accumulated selection, Other answer, and requested focus; do not retain an unselected alternative as the plan backbone.",
+    "Inspect the selected direction and relevant repository context, then ask exactly one focused, high-impact option-driven follow-up question that narrows it one consequential level further with alternatives and pros/cons.",
     "Do not return a completion response: only the user can validate a plan.",
     ...(focus ? ["The operator wants this next question to focus on:", focus] : []),
     "Current summary:",
@@ -2788,12 +3067,14 @@ export async function submitResponse(
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
-  if (activeGenerations.has(session.id)) {
+  // FNXC:PlanningTurnAdmission 2026-07-22-21:00: synchronous single-turn admission — see reservePlanningTurn.
+  if (isPlanningTurnActive(session.id)) {
     if (didSubmitSameAnswer(session, responses)) {
       throw new GenerationInProgressError("Generation already in progress for this response");
     }
     throw new GenerationInProgressError("Generation already in progress");
   }
+  const releaseTurn = reservePlanningTurn(session.id);
 
   /*
   FNXC:PlanningRetry 2026-07-14-00:00:
@@ -2810,69 +3091,87 @@ export async function submitResponse(
   */
   let answeredQuestion: PlanningQuestion | undefined;
 
-  if (isRefineRequest(responses) && session.summary) {
-    // Refinement steers which question comes next; it is never an answer to the
-    // currently displayed question and therefore must not create a history entry.
-    beginPlanningGeneration(session, "question");
-    session.currentQuestion = undefined;
-    session.error = undefined;
-    await persistSession(session, "generating");
+  try {
+    const contextualComments = getContextualComments(responses);
+    if (contextualComments && session.summary) {
+      /*
+      FNXC:PlanningComments 2026-07-23-12:00:
+      Comment batches deliberately reuse the existing session, active-turn reservation, SSE, and
+      plan_update generation. They are not a second review authority or agent lifecycle.
+      */
+      beginPlanningGeneration(session, "plan_update");
+      session.currentQuestion = undefined;
+      session.error = undefined;
+      session.pendingContextualComments = contextualComments;
+      await persistSession(session, "generating");
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await continueAgentConversation(session, formatContextualCommentsForAgent(session.summary, contextualComments));
+    } else if (isRefineRequest(responses) && session.summary) {
+      // Refinement steers which question comes next; it is never an answer to the
+      // currently displayed question and therefore must not create a history entry.
+      beginPlanningGeneration(session, "question");
+      session.currentQuestion = undefined;
+      session.error = undefined;
+      await persistSession(session, "generating");
 
-    await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
-    const focus = typeof responses.focus === "string" ? responses.focus.trim() : undefined;
-    const refineMessage = formatRefineRequestForAgent(session.summary, focus);
-    await continueAgentConversation(session, refineMessage);
-  } else if (!session.currentQuestion) {
-    throw new InvalidSessionStateError("No active question in session");
-  } else {
-    const currentQuestion = captureOtherCustomText(session.currentQuestion, responses);
-    const historyEntry = {
-      question: currentQuestion,
-      response: responses,
-      thinkingOutput: session.lastGeneratedThinking || "",
-    };
-
-    session.error = undefined;
-    /*
-    FNXC:DashboardSessionPersistence 2026-06-14-09:09:
-    Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
-    */
-    const editIndex = session.editingQuestionId
-      ? session.history.findIndex((entry) => entry.question.id === session.editingQuestionId)
-      : -1;
-    const isEditingPriorAnswer = editIndex >= 0;
-    if (isEditingPriorAnswer) {
-      session.history[editIndex] = historyEntry;
-      session.editingQuestionId = undefined;
-      // Rebuild from history before the next turn so stale pre-edit plan prose cannot survive.
-      session.summary = buildRunningSummary(session.initialPlan, session.history);
-      // Existing agent context contains the old answer; rebuild it from the preserved history.
-      disposeSessionAgentForRetry(session);
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      const focus = typeof responses.focus === "string" ? responses.focus.trim() : undefined;
+      const refineMessage = formatRefineRequestForAgent(session.summary, focus);
+      await continueAgentConversation(session, refineMessage);
+    } else if (!session.currentQuestion) {
+      throw new InvalidSessionStateError("No active question in session");
     } else {
-      session.history.push(historyEntry);
-    }
-    answeredQuestion = currentQuestion;
+      const currentQuestion = captureOtherCustomText(session.currentQuestion, responses);
+      const historyEntry = {
+        question: currentQuestion,
+        response: responses,
+        thinkingOutput: session.lastGeneratedThinking || "",
+      };
 
-    // Clear the answered question while generation is active so reconnects cannot replay it.
-    // The completed turn persists and broadcasts exactly one newly generated question.
-    beginPlanningGeneration(session, "plan_update");
-    session.currentQuestion = undefined;
-    await persistSession(session, "generating");
-    if (!session.agent) {
-      // An edited older answer must be replayed in its original position with every
-      // later answer retained; only a newly appended answer is sent after replay.
-      await ensureSessionAgent(
-        session,
-        rootDir,
-        isEditingPriorAnswer ? session.history : session.history.slice(0, -1),
-        promptOverrides,
-        store,
-      );
+      session.error = undefined;
+      /*
+      FNXC:DashboardSessionPersistence 2026-06-14-09:09:
+      Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
+      */
+      const editIndex = session.editingQuestionId
+        ? session.history.findIndex((entry) => entry.question.id === session.editingQuestionId)
+        : -1;
+      const isEditingPriorAnswer = editIndex >= 0;
+      if (isEditingPriorAnswer) {
+        session.history[editIndex] = historyEntry;
+        session.editingQuestionId = undefined;
+        // Rebuild from history before the next turn so stale pre-edit plan prose cannot survive.
+        session.summary = buildRunningSummary(session.initialPlan, session.history);
+        // Existing agent context contains the old answer; rebuild it from the preserved history.
+        disposeSessionAgentForRetry(session);
+      } else {
+        session.history.push(historyEntry);
+      }
+      answeredQuestion = currentQuestion;
+
+      // Clear the answered question while generation is active so reconnects cannot replay it.
+      // The completed turn persists and broadcasts exactly one newly generated question.
+      beginPlanningGeneration(session, "plan_update");
+      session.currentQuestion = undefined;
+      await persistSession(session, "generating");
+      if (!session.agent) {
+        // An edited older answer must be replayed in its original position with every
+        // later answer retained; only a newly appended answer is sent after replay.
+        await ensureSessionAgent(
+          session,
+          rootDir,
+          isEditingPriorAnswer ? session.history : session.history.slice(0, -1),
+          promptOverrides,
+          store,
+        );
+      }
+      const message = isEditingPriorAnswer
+        ? "An earlier answer was edited. Use the complete preserved interview context above, discard downstream assumptions contradicted by the edit, rebuild every affected running-plan field around the accumulated decisions, and ask exactly one concrete option-driven next question that narrows the selected direction."
+        : formatResponseForAgent(currentQuestion, responses);
+      await continueAgentConversation(session, message);
     }
-    const message = isEditingPriorAnswer
-      ? "An earlier answer was edited. Use the complete preserved interview context above, regenerate the running plan, and ask exactly one next question."
-      : formatResponseForAgent(currentQuestion, responses);
-    await continueAgentConversation(session, message);
+  } finally {
+    releaseTurn();
   }
 
   // Return the current state (will be updated via SSE)
@@ -2927,37 +3226,64 @@ export async function retrySession(
     throw new InvalidSessionStateError(`Planning session ${sessionId} is not in an error state`);
   }
 
-  disposeSessionAgentForRetry(session);
-
-  session.error = undefined;
-  session.summary = undefined;
   /*
-  FNXC:PlanningRetry 2026-07-14-00:00:
-  A retry regenerates the last turn, so no question is awaiting input. Clearing here also
-  scrubs stale answered questions persisted by pre-fix builds; without this, the fresh SSE
-  connection the retry path opens would be handed the answered question by the stream route's
-  catch-up emit, resetting the FN-7946 auto-retry budget and looping forever.
+  FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+  Two racing retries (e.g. auto-retry from a remounted Planning view plus a second tab) could
+  both read status "error" before either persisted "generating"; the loser then disposed the
+  agent the winner was actively prompting, producing the empty-response "AI returned no valid
+  JSON" failure. Admission is reserved synchronously before any turn state is touched.
   */
-  session.currentQuestion = undefined;
-  session.updatedAt = new Date();
-  beginPlanningGeneration(session, session.history.length === 0 ? "initial_plan" : "plan_update");
-  await persistSession(session, "generating");
+  const releaseTurn = reservePlanningTurn(session.id);
+  try {
+    disposeSessionAgentForRetry(session);
 
-  if (session.history.length === 0) {
-    await ensureSessionAgent(session, rootDir, [], promptOverrides, store);
-    await continueAgentConversation(session, formatInitialRunningPlanRequestForAgent(session.initialPlan));
-    return;
+    session.error = undefined;
+    const pendingContextualComments = session.pendingContextualComments;
+    // Keep the reviewed plan available while replaying a contextual batch; ordinary answer
+    // retries still rebuild their running summary from persisted interview history.
+    if (!pendingContextualComments) session.summary = undefined;
+    /*
+    FNXC:PlanningRetry 2026-07-14-00:00:
+    A retry regenerates the last turn, so no question is awaiting input. Clearing here also
+    scrubs stale answered questions persisted by pre-fix builds; without this, the fresh SSE
+    connection the retry path opens would be handed the answered question by the stream route's
+    catch-up emit, resetting the FN-7946 auto-retry budget and looping forever.
+    */
+    session.currentQuestion = undefined;
+    session.updatedAt = new Date();
+    beginPlanningGeneration(session, session.history.length === 0 ? "initial_plan" : "plan_update");
+    await persistSession(session, "generating");
+
+    if (pendingContextualComments) {
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await continueAgentConversation(
+        session,
+        formatContextualCommentsForAgent(
+          session.summary ?? buildRunningSummary(session.initialPlan, session.history),
+          pendingContextualComments,
+        ),
+      );
+      return;
+    }
+
+    if (session.history.length === 0) {
+      await ensureSessionAgent(session, rootDir, [], promptOverrides, store);
+      await continueAgentConversation(session, formatInitialRunningPlanRequestForAgent(session.initialPlan));
+      return;
+    }
+
+    const replayHistory = session.history.slice(0, -1);
+    const lastEntry = session.history[session.history.length - 1];
+
+    await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides, store);
+    const replayMessage = formatResponseForAgent(
+      lastEntry.question,
+      coerceResponseRecord(lastEntry.question, lastEntry.response),
+    );
+    await continueAgentConversation(session, replayMessage);
+  } finally {
+    releaseTurn();
   }
-
-  const replayHistory = session.history.slice(0, -1);
-  const lastEntry = session.history[session.history.length - 1];
-
-  await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides, store);
-  const replayMessage = formatResponseForAgent(
-    lastEntry.question,
-    coerceResponseRecord(lastEntry.question, lastEntry.response),
-  );
-  await continueAgentConversation(session, replayMessage);
 }
 
 export interface PlanningRewindResult {
@@ -2988,38 +3314,87 @@ export async function rewindSession(
     throw new InvalidSessionStateError("Planning session has no previous question to rewind to");
   }
 
-  const rewindIndex = questionId
-    ? session.history.findIndex((entry) => entry.question.id === questionId)
-    : session.history.length - 1;
-  if (rewindIndex < 0) {
-    throw new InvalidSessionStateError("Planning question to edit was not found");
+  /*
+  FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+  Rewind/edit is a user-takes-control action. Cancel any in-flight generation through its own
+  abort/teardown path (like validateSession) before disposing the agent, so the turn cannot
+  keep running against a disposed session and surface "AI returned no valid JSON".
+
+  FNXC:PlanningTurnAdmission 2026-07-23-08:30:
+  After the abort, WAIT for the cancelled turn's owner to unwind and release its reservation,
+  then hold the reservation for rewind's own span. Without this, both admission sets were
+  empty during rewind's awaits and a concurrent submit/retry could interleave and corrupt
+  question/history/agent state; the cancelled turn's post-prompt abort checks plus this
+  serialization keep a slow provider prompt from outliving the rewound state (PR #2417).
+  All state mutation (including history.pop) happens only after admission succeeds.
+  */
+  const activeGeneration = activeGenerations.get(session.id);
+  if (activeGeneration) {
+    activeGeneration.abortReason = "user-stop";
+    clearTimeout(activeGeneration.timer);
+    activeGeneration.abortTeardown();
+    activeGeneration.abortController.abort();
+    activeGenerations.delete(session.id);
   }
-  const rewindEntry = session.history[rewindIndex]!;
-  if (!questionId) session.history.pop();
-
-  disposeSessionAgentForRetry(session);
-
-  session.currentQuestion = rewindEntry.question;
-  session.editingQuestionId = questionId ? questionId : undefined;
-  // Re-derive from retained answers so an edit cannot revive a prior question as a deliverable.
-  session.summary = buildRunningSummary(session.initialPlan, session.history);
-  session.error = undefined;
-  session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
-  session.thinkingOutput = "";
-  session.updatedAt = new Date();
-
-  if (!session.agent && rootDir) {
-    await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+  if (!(await waitForPlanningTurnRelease(session.id))) {
+    throw new GenerationInProgressError("Generation already in progress");
   }
+  const releaseTurn = reservePlanningTurn(session.id);
 
-  persistSession(session, "awaiting_input");
-  planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
-  planningStreamManager.broadcast(session.id, { type: "question", data: rewindEntry.question });
+  try {
+    /*
+    FNXC:PlanningTurnAdmission 2026-07-23-10:10:
+    Also wait — bounded — for the cancelled turn's OPERATION (including its raw provider
+    prompt) to settle before disposing/replacing the agent. The reservation releases as soon
+    as the abort wins the race, but a provider that ignores the signal can leave its prompt
+    callback live; publishing the rewound state under it was the residual PR #2417 finding.
+    On timeout we proceed anyway: disposal is the backstop and the cancelled closure's
+    post-prompt abort checks prevent state writes.
+    */
+    if (!(await waitForTurnOperationSettled(session.id))) {
+      diagnostics.warn("Rewinding past a provider prompt that has not settled after abort", {
+        sessionId: session.id,
+        operation: "rewind-unsettled-prompt",
+      });
+    }
 
-  return {
-    currentQuestion: rewindEntry.question,
-    history: [...session.history],
-  };
+    // Resolve the rewind target only after admission: a turn that completed while we
+    // waited may have appended to history, so an index computed earlier would be stale.
+    const rewindIndex = questionId
+      ? session.history.findIndex((entry) => entry.question.id === questionId)
+      : session.history.length - 1;
+    if (rewindIndex < 0) {
+      throw new InvalidSessionStateError("Planning question to edit was not found");
+    }
+    const rewindEntry = session.history[rewindIndex]!;
+    if (!questionId) session.history.pop();
+
+    disposeSessionAgentForRetry(session);
+
+    session.currentQuestion = rewindEntry.question;
+    session.editingQuestionId = questionId ? questionId : undefined;
+    // Re-derive from retained answers so an edit cannot revive a prior question as a deliverable.
+    session.summary = buildRunningSummary(session.initialPlan, session.history);
+    session.error = undefined;
+    session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
+    session.thinkingOutput = "";
+    session.updatedAt = new Date();
+
+    if (!session.agent && rootDir) {
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+    }
+
+    persistSession(session, "awaiting_input");
+    planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
+    planningStreamManager.broadcast(session.id, { type: "question", data: rewindEntry.question });
+
+    return {
+      currentQuestion: rewindEntry.question,
+      history: [...session.history],
+    };
+  } finally {
+    releaseTurn();
+  }
 }
 
 export function stopGeneration(sessionId: string): boolean {
@@ -3139,11 +3514,10 @@ export function formatResponseForAgent(
 
   const answerContext = comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
   /*
-  FNXC:PlanningMode 2026-07-20-00:55:
-  System prompts can be displaced by long tool/context turns. Repeat the per-answer contract at the invocation boundary
-  so every submitted answer steers the following high-impact question instead of inviting a model-generated completion.
+  FNXC:PlanningMode 2026-07-23-14:10:
+  System prompts can be displaced by long tool/context turns. Repeat the selection-as-plan-backbone contract at the invocation boundary so every submitted option, multi-selection, or Other answer rebuilds the work product before the one deeper question, instead of becoming an append-only note or inviting model-authored completion.
   */
-  return `${answerContext}\n\nRegenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) informed by this answer; do not cap suggestedRefinements at three. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Return type:"question" with that complete runningPlan and ask exactly one next question. Do not validate the plan; only the user can proceed with it.`;
+  return `${answerContext}\n\nThis answer is a durable planning decision, not an append-only note. Regenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) around this selected label/description and every accumulated decision; do not cap suggestedRefinements at three. Rewrite every affected field so the selected direction is the central intended outcome, not the original vague complaint or an unselected alternative. Preserve free-text Other verbatim as steering. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Inspect the selected direction and relevant repository context, return type:"question" with that complete runningPlan, and ask exactly one next question: a deeper concrete option-driven question with materially distinct alternatives and pros/cons. Do not validate the plan; only the user can proceed with it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {
@@ -3157,6 +3531,9 @@ function coerceResponseRecord(question: PlanningQuestion, response: unknown): Re
 }
 
 function disposeSessionAgentForRetry(session: Session): void {
+  // FNXC:PlanningTurnAdmission 2026-07-23-10:40: invalidate the disposed agent's streaming
+  // callbacks even when the provider keeps running past dispose — see Session.agentCallbackEpoch.
+  session.agentCallbackEpoch = (session.agentCallbackEpoch ?? 0) + 1;
   if (!session.agent) {
     return;
   }
@@ -3570,6 +3947,8 @@ export function __resetPlanningState(): void {
   rateLimits.clear();
   planningStreamManager.reset();
   activeGenerations.clear();
+  pendingTurnReservations.clear();
+  settlingTurnOperations.clear();
 
   if (_aiSessionStore && _aiSessionDeletedListener) {
     _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);

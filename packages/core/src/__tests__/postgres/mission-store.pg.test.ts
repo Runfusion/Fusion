@@ -15,6 +15,9 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { readFile } from "node:fs/promises";
+import type { DbTransaction } from "../../postgres/data-layer.js";
+import type { TaskCreateInput } from "../../types/task-core.js";
 
 import {
   pgDescribe,
@@ -115,6 +118,33 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       expect(await getMissionRow(tx, "M-SHARED")).toBeUndefined();
     });
     expect((await readProject("project-b")).missions.map(({ title }) => title)).toEqual(["Project B mission"]);
+  });
+
+  it("atomically audits status and autopilot transitions with attributed before/after values", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Audited transitions" });
+    const actor = { type: "operator" as const, id: "user-42", displayName: "Operator", source: "dashboard" };
+
+    await m.updateMission(mission.id, { status: "active", autopilotEnabled: true }, { actor });
+    // Unchanged sensitive values must not add noise to the activity feed.
+    await m.updateMission(mission.id, { status: "active", autopilotEnabled: true }, { actor });
+    await m.updateMission(mission.id, { status: "blocked", autopilotEnabled: false }, { actor });
+
+    const events = (await m.getMissionEvents(mission.id, { limit: 20 })).events;
+    expect(events).toHaveLength(4);
+    expect(events.map((event) => event.eventType)).toEqual([
+      "autopilot_disabled", "mission_status_changed", "autopilot_enabled", "mission_status_changed",
+    ]);
+    const statusEvents = events.filter((event) => event.eventType === "mission_status_changed");
+    expect(statusEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "status", from: "planning", to: "active", source: "dashboard", actor }),
+      expect.objectContaining({ field: "status", from: "active", to: "blocked", source: "dashboard", actor }),
+    ]));
+    const autopilotEvents = events.filter((event) => event.eventType.startsWith("autopilot_"));
+    expect(autopilotEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "autopilotEnabled", from: false, to: true, actor }),
+      expect.objectContaining({ field: "autopilotEnabled", from: true, to: false, actor }),
+    ]));
   });
 
   it("createMission → addMilestone → addSlice → addFeature assembles getMissionWithHierarchy tree", async () => {
@@ -242,6 +272,122 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const unlinked = await m.unlinkFeatureFromTask(feature.id);
     expect(unlinked.taskId).toBeUndefined();
     expect(unlinked.status).toBe("defined");
+  });
+
+  it("does not overwrite an existing task directory on a creation collision", async () => {
+    const taskStore = h.store();
+    const existing = await taskStore.createTask({ description: "the existing task must keep its prompt" });
+    const existingDir = taskStore.taskDir(existing.id);
+    const originalPrompt = await readFile(`${existingDir}/PROMPT.md`, "utf8");
+    const allocator = {
+      reserveDistributedTaskId: vi.fn().mockResolvedValue({ taskId: existing.id, reservationId: "duplicate-id-reservation" }),
+      commitDistributedTaskIdReservation: vi.fn().mockResolvedValue(undefined),
+      abortDistributedTaskIdReservation: vi.fn().mockResolvedValue(undefined),
+    };
+    const allocatorSpy = vi.spyOn(taskStore, "getDistributedTaskIdAllocator").mockReturnValue(allocator as ReturnType<typeof taskStore.getDistributedTaskIdAllocator>);
+    try {
+      await expect(taskStore.createTask({ description: "a competing task must not overwrite files" }))
+        .rejects.toThrow(`Task ID already exists: ${existing.id}`);
+
+      /* FNXC:MissionAdmission 2026-07-23-19:00: a task-row collision leaves the winner's final artifacts untouched because the loser wrote only its staging directory. */
+      await expect(readFile(`${existingDir}/PROMPT.md`, "utf8")).resolves.toBe(originalPrompt);
+    } finally {
+      allocatorSpy.mockRestore();
+    }
+  });
+
+  it("does not claim a defined feature when task-file materialization fails", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Bootstrap file failure" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Target feature" });
+    const taskStore = h.store();
+    const claim = vi.fn(async (tx: DbTransaction, taskId: string) =>
+      m.claimDefinedFeatureTaskInTransaction(tx, {
+        featureId: feature.id,
+        taskId,
+        missionId: mission.id,
+        sliceId: slice.id,
+      }),
+    );
+    const writeTaskJson = vi.spyOn(taskStore, "writeTaskJsonFile").mockRejectedValueOnce(new Error("injected task-file failure"));
+
+    try {
+      await expect(taskStore.createTask({
+        description: "must not become a partial feature bootstrap",
+        missionId: mission.id,
+        sliceId: slice.id,
+        afterTaskInsert: (tx: DbTransaction, task: { id: string }) => claim(tx, task.id),
+      } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> })).rejects.toThrow("injected task-file failure");
+    } finally {
+      writeTaskJson.mockRestore();
+    }
+
+    /* FNXC:MissionAdmission 2026-07-23-17:10: filesystem failure precedes the insert-and-claim transaction, so no feature promotion can survive a failed task create. */
+    expect(claim).not.toHaveBeenCalled();
+    expect(await m.getFeature(feature.id)).toMatchObject({ status: "defined", taskId: undefined });
+    expect((await taskStore.listTasks()).some((task) => task.description === "must not become a partial feature bootstrap")).toBe(false);
+  });
+
+  it("rejects an unlinked duplicate canonical even when its mission and slice match", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Bootstrap duplicate guard" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Target feature" });
+    const task = await h.store().createTask({
+      description: "existing work for another feature",
+      missionId: mission.id,
+      sliceId: slice.id,
+    });
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-17:20:
+    A duplicate canonical does not inherit a feature merely because it shares a
+    slice. Only the insert transaction may claim a defined feature for a new
+    task; retry reconciliation requires an existing bidirectional link.
+    */
+    await expect(m.claimDefinedFeatureTask({
+      featureId: feature.id,
+      taskId: task.id,
+      missionId: mission.id,
+      sliceId: slice.id,
+    })).rejects.toThrow("is not linked to this feature");
+    expect(await m.getFeature(feature.id)).toMatchObject({ status: "defined", taskId: undefined });
+  });
+
+  it("preserves a late bootstrap duplicate already linked to another feature", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Bootstrap sibling ownership" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const firstFeature = await m.addFeature(slice.id, { title: "First feature" });
+    const siblingFeature = await m.addFeature(slice.id, { title: "Sibling feature" });
+    const taskStore = h.store();
+    const claimedTask = await taskStore.createTask({
+      description: "same fingerprint work",
+      missionId: mission.id,
+      sliceId: slice.id,
+    });
+    await m.linkFeatureToTask(firstFeature.id, claimedTask.id);
+    const siblingTask = await taskStore.createTask({
+      description: "same fingerprint work",
+      missionId: mission.id,
+      sliceId: slice.id,
+    });
+    await m.linkFeatureToTask(siblingFeature.id, siblingTask.id);
+
+    await m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: firstFeature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: siblingTask.id,
+    });
+
+    /* FNXC:MissionAdmission 2026-07-23-21:10: a late same-fingerprint task claimed by another feature is not a duplicate eligible for archival. */
+    expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "triage" });
+    expect(await m.getFeature(siblingFeature.id)).toMatchObject({ taskId: siblingTask.id, status: "triaged" });
+    expect(await m.getFeature(firstFeature.id)).toMatchObject({ taskId: claimedTask.id, status: "triaged" });
   });
 
   /*

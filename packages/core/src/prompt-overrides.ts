@@ -256,12 +256,16 @@ The prompt should:
 
 Output ONLY the prompt text (no markdown, no explanations).`,
   },
+  /*
+  FNXC:PlanningMode 2026-07-23-11:40:
+  Planning Mode has a dedicated collaborative default rather than triage or workflow prompt composition. This setting remains an explicit full replacement so operators can intentionally provide a different complete system prompt.
+  */
   "planning-system": {
     key: "planning-system",
     name: "Planning System",
     roles: ["triage"],
-    description: "Explicit full system-prompt replacement for Planning Mode; otherwise it uses the workflow planning seam plus interview adapter",
-    defaultContent: "Runtime default: the selected workflow planning seam (the same triage template used for new tasks) plus the user-validated JSON interview adapter. Set an explicit override to replace the full system prompt.",
+    description: "Explicit full system-prompt replacement for Planning Mode's dedicated collaborative prompt",
+    defaultContent: "Runtime default: a dedicated collaborative Planning Mode prompt with a user-validated JSON interview. Set an explicit override to replace the full system prompt.",
   },
   /**
    * FNXC:AgentOnboardingRuntime 2026-07-15-15:25:

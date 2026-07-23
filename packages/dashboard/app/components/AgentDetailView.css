@@ -1075,16 +1075,89 @@ FNXC:AgentDetailView 2026-06-26-01:00:
 }
 
 /* --- Config Tab --- */
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+Agent Settings composes native inputs, buttons, editors, and portaled controls. Scope the complete surface/state contract here so every theme receives readable foregrounds, surfaces, borders, placeholders, focus rings, and disabled treatment without changing configuration behavior.
+*/
 .config-tab {
   display: flex;
   flex-direction: column;
   gap: var(--space-xl);
+  color: var(--text);
 }
 
 .config-section {
   background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: calc(var(--space-md) + var(--space-sm));
+  color: var(--text);
+}
+
+.config-section .input,
+.config-section .select,
+.config-section textarea {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.config-section .input::placeholder,
+.config-section textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.config-section .input:hover:not(:disabled):not([readonly]),
+.config-section .select:hover:not(:disabled),
+.config-section textarea:hover:not(:disabled):not([readonly]) {
+  border-color: var(--text-muted);
+}
+
+.config-section .input:focus-visible,
+.config-section .select:focus-visible,
+.config-section textarea:focus-visible,
+.config-section input[type="checkbox"]:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.config-section .input:disabled,
+.config-section .select:disabled,
+.config-section textarea:disabled,
+.config-section .btn:disabled,
+.config-runtime-tab:disabled,
+.agent-avatar-editor-action:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.config-section .input[readonly],
+.config-section textarea[readonly] {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.config-section input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action {
+  background: var(--card);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .config-section h3 {
@@ -1672,6 +1745,33 @@ FNXC:AgentDetailView 2026-06-26-01:00:
     grid-template-columns: 1fr;
   }
 
+  .config-runtime-tab {
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-avatar-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-avatar-editor-actions .agent-avatar-editor-action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .skill-multiselect {
+    width: 100%;
+  }
+
+  .skill-multiselect-dropdown,
+  .skill-multiselect-chips {
+    width: 100%;
+  }
+
+  .skill-chip {
+    max-width: 100%;
+  }
+
   .agent-detail-overlay {
     padding: 0;
     align-items: stretch;
@@ -2051,6 +2151,19 @@ FNXC:AgentDetailView 2026-06-26-01:00:
 
   .agent-detail-actions .btn-icon {
     align-self: flex-end;
+  }
+
+  .config-actions,
+  .agent-avatar-editor-actions {
+    width: 100%;
+  }
+
+  .config-runtime-tabs {
+    gap: var(--space-xs);
+  }
+
+  .skill-multiselect {
+    gap: var(--space-xs);
   }
 
   .agent-detail-footer .divider,

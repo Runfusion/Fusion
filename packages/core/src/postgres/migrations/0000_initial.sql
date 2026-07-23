@@ -1439,6 +1439,8 @@ CREATE TABLE IF NOT EXISTS project.mission_contract_assertions (
   type text NOT NULL DEFAULT 'static',
   order_index integer NOT NULL DEFAULT 0,
   source_feature_id text,
+  scope text NOT NULL DEFAULT 'feature',
+  origin text NOT NULL DEFAULT 'authored',
   created_at text NOT NULL,
   updated_at text NOT NULL
 );

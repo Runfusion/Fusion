@@ -1,10 +1,40 @@
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+The permission-policy editor nests native fields and rule actions inside Agent Settings. Keep rows, summaries, controls, disabled states, and keyboard focus on shared theme tokens so policy behavior remains unchanged while controls are legible in every theme.
+*/
 .agent-policy-editor {
   padding: var(--space-lg);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.agent-policy-editor .input,
+.agent-policy-editor .select {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.agent-policy-editor .input:focus-visible,
+.agent-policy-editor .select:focus-visible,
+.agent-policy-editor .btn:focus-visible,
+.agent-policy-exempt summary:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-policy-editor .input:disabled,
+.agent-policy-editor .select:disabled,
+.agent-policy-editor .btn:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 .agent-policy-table {
@@ -18,7 +48,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
   gap: var(--space-md);
   padding: var(--space-sm);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
@@ -54,7 +84,7 @@
 }
 
 .agent-policy-tool-rules {
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-sm);
@@ -86,6 +116,8 @@
   grid-template-columns: minmax(0, 1fr) minmax(9rem, 12rem) auto;
   gap: var(--space-sm);
   align-items: end;
+  color: var(--text);
+  background: var(--surface-subtle);
 }
 
 .agent-policy-tool-row label,
@@ -102,7 +134,7 @@
 }
 
 .agent-policy-exempt {
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-sm);
@@ -120,6 +152,10 @@
 }
 
 @media (max-width: 768px) {
+  .agent-policy-editor {
+    padding: var(--space-md);
+  }
+
   .agent-policy-row,
   .agent-policy-tool-row,
   .agent-policy-tool-add {

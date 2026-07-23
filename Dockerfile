@@ -67,7 +67,12 @@ RUN apt-get update \
 
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
-WORKDIR /project
+# FNXC:DockerRun 2026-07-23-00:00: The app install root must be distinct from the
+# documented user-project mount point. Installing the app at /project made the
+# documented `-v host:/project` bind mount shadow the CLI (MODULE_NOT_FOUND on
+# packages/cli/dist/bin.js). The app now lives at /app; users mount their project
+# at /workspace, which is also the runtime working directory (issue #2414).
+WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/cli/package.json ./packages/cli/package.json
@@ -84,16 +89,26 @@ COPY --from=builder /app/packages/dashboard/dist ./packages/dashboard/dist
 COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
 
 # @runfusion/fusion references typebox at runtime via the bundled CLI.
-COPY --from=builder /app/node_modules/.pnpm/typebox@*/node_modules/typebox /project/node_modules/typebox
+COPY --from=builder /app/node_modules/.pnpm/typebox@*/node_modules/typebox /app/node_modules/typebox
 
-RUN chown node:node /project
+# FNXC:DockerRun 2026-07-23-00:00: /workspace is the documented bind-mount point for
+# the user's project and the container working directory, so `fn dashboard` operates
+# on the mounted project. It must stay empty in the image so a bind mount never
+# shadows application code.
+RUN chown node:node /app \
+  && mkdir -p /workspace \
+  && chown node:node /workspace
 
 USER node
+
+WORKDIR /workspace
 
 EXPOSE 4040
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://localhost:4040/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-ENTRYPOINT ["node", "packages/cli/dist/bin.js"]
+# FNXC:DockerRun 2026-07-23-00:00: Entrypoint uses the absolute app path so it works
+# regardless of the working directory or any volume mounted at /workspace.
+ENTRYPOINT ["node", "/app/packages/cli/dist/bin.js"]
 CMD ["dashboard", "--host", "0.0.0.0"]

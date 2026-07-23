@@ -1138,7 +1138,24 @@
     "notGranted": "Not granted",
     "toggleCapabilityGrant": "Toggle explicit grant for {{permission}}",
     "capabilityPermissionsUpdated": "Capability grants updated",
-    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}"
+    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}",
+    "disableHeartbeat": "Disable heartbeat",
+    "enableHeartbeat": "Enable heartbeat",
+    "heartbeatActionForAgent": "{{action}} for {{name}}",
+    "heartbeatUpdating": "Updating heartbeat…",
+    "heartbeatEnabledForAgent": "Heartbeat enabled for {{name}}",
+    "heartbeatUpdateFailed": "Failed to update heartbeat: {{error}}",
+    "enableAllHeartbeats": "Enable all heartbeats",
+    "disableAllHeartbeats": "Disable all heartbeats",
+    "enableAllHeartbeatsConfirm": "Enable heartbeats for {{count}} project agents?",
+    "disableAllHeartbeatsConfirm": "Disable heartbeats for {{count}} project agents?",
+    "noHeartbeatsToEnable": "No agent heartbeats need enabling",
+    "noHeartbeatsToDisable": "No agent heartbeats need disabling",
+    "enableHeartbeatsSummary": "Enabled {{count}} heartbeats; skipped {{skipped}}",
+    "disableHeartbeatsSummary": "Disabled {{count}} heartbeats; skipped {{skipped}}",
+    "enableHeartbeatsCountHint": "Enable {{count}} disabled project heartbeats",
+    "disableHeartbeatsCountHint": "Disable {{count}} enabled project heartbeats",
+    "bulkFailures": "failed {{count}}"
   },
   "app": {
     "backendError": {

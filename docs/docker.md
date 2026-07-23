@@ -13,11 +13,14 @@ docker build -t fusion .
 
 ## Run the dashboard
 
-Mount your project into `/project` and publish the dashboard port:
+Mount your project into `/workspace` and publish the dashboard port:
 
 ```bash
-docker run -p 4040:4040 -v /path/to/project:/project fusion
+docker run -p 4040:4040 -v /path/to/project:/workspace fusion
 ```
+
+The application itself is installed under `/app`; `/workspace` is reserved for
+your project and is the container's working directory. Do not mount over `/app`.
 
 By default, the container runs:
 
@@ -65,22 +68,31 @@ docker run -p 8080:8080 fusion dashboard --port 8080
 
 ## Persistence
 
-Fusion state lives in `.fusion` under the mounted project. You can mount it explicitly:
+Fusion keeps state in two places inside the container:
+
+- **Per-project state** — `.fusion/` under the mounted project (`/workspace/.fusion`).
+  This is covered automatically by the `/workspace` project mount.
+- **Global state** — `/home/node/.fusion` (embedded PostgreSQL data, global
+  settings, agents). This is *not* under `/workspace`, so mount it separately if
+  you want it to survive container removal:
 
 ```bash
 docker run -p 4040:4040 \
-  -v /path/to/project:/project \
-  -v /path/to/project/.fusion:/project/.fusion \
+  -v /path/to/project:/workspace \
+  -v fusion-home:/home/node/.fusion \
   fusion
 ```
+
+The named volume `fusion-home` persists the embedded database across
+`docker run` invocations; a host directory bind mount works too.
 
 ## Complete example
 
 ```bash
 docker run --rm \
   -p 4040:4040 \
-  -v /path/to/project:/project \
-  -v /path/to/project/.fusion:/project/.fusion \
+  -v /path/to/project:/workspace \
+  -v fusion-home:/home/node/.fusion \
   -e ANTHROPIC_API_KEY=your_key \
   -e OPENAI_API_KEY=your_key \
   -e GITHUB_TOKEN=your_token \

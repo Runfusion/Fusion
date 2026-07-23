@@ -613,6 +613,7 @@ export {
 export type {
   PlanningSession,
   PlanningResponse,
+  PlanningContextualComment,
   PlanningStreamEvent,
   AgentOnboardingSummary,
   OnboardingMode,
@@ -800,6 +801,7 @@ export {
   deleteAgent,
   deleteAgentAvatar,
   fetchAgent,
+  isAgentHeartbeatEnabled,
   fetchAgentHeartbeats,
   fetchAgentMemory,
   fetchAgentMemoryFile,
@@ -816,6 +818,7 @@ export {
   startAgentRun,
   stopAgentRun,
   updateAgent,
+  withAgentHeartbeatEnabled,
   updateAgentInstructions,
   updateAgentMemory,
   updateAgentSoul,

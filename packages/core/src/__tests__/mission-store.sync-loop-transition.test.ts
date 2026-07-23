@@ -41,3 +41,56 @@ describe("MissionStore synchronous loop transitions", () => {
     expect(updateFeature).toHaveBeenCalledWith(feature.id, { loopState: "implementing" });
   });
 });
+
+describe("MissionStore synchronous assertion schema compatibility", () => {
+  it("adds scope and origin before querying legacy assertion rows", () => {
+    const executed: string[] = [];
+    const db = {
+      prepare: vi.fn((sql: string) => ({
+        get: vi.fn().mockReturnValue(undefined),
+        all: vi.fn().mockReturnValue(sql.startsWith("PRAGMA table_info") ? [
+          { name: "id" },
+          { name: "milestoneId" },
+          { name: "assertion" },
+        ] : []),
+        run: vi.fn(() => executed.push(sql)),
+      })),
+      bumpLastModified: vi.fn(),
+    } as unknown as Database;
+
+    new MissionStore("/tmp/fusion-mission-store-test", db);
+
+    expect(executed).toEqual(expect.arrayContaining([
+      expect.stringContaining("ADD COLUMN scope"),
+      expect.stringContaining("ADD COLUMN origin"),
+      expect.stringContaining("SET scope = 'feature'"),
+      expect.stringContaining("SET origin = 'authored'"),
+    ]));
+  });
+});
+
+describe("MissionStore derived milestone assertion invariant", () => {
+  it("rejects a second canonical derived assertion before sync insertion", () => {
+    const db = {
+      prepare: vi.fn().mockReturnValue({ get: vi.fn().mockReturnValue(undefined) }),
+      bumpLastModified: vi.fn(),
+    } as unknown as Database;
+    const store = new MissionStore("/tmp/fusion-mission-store-test", db);
+    vi.spyOn(store, "getMilestone").mockReturnValue({ id: "MS-1" } as never);
+    vi.spyOn(store, "listContractAssertions").mockReturnValue([{
+      id: "CA-DERIVED",
+      milestoneId: "MS-1",
+      scope: "milestone",
+      origin: "derived_milestone_acceptance",
+    } as never]);
+    (db.prepare as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    expect(() => store.addContractAssertion("MS-1", {
+      title: "Canonical milestone criteria",
+      assertion: "Parent contract",
+      scope: "milestone",
+      origin: "derived_milestone_acceptance",
+    })).toThrow("already has a derived milestone acceptance assertion");
+    expect(db.prepare).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,7 @@
 import {
   DEFAULT_TASK_PRIORITY,
   formatPlanningPlanMd,
+  resolveEffectiveSettingsDetailedById,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -692,19 +693,40 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const runtime = planningRuntime(settings);
       runtime.clarificationEnabled = resolvedClarificationEnabled;
 
-      // Resolve planning model using canonical lane hierarchy:
-      // 1. Request body planning override
-      // 2. Project/global planning lane
-      // 3. Project default override
-      // 4. Global default
-      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
-      const resolvedPlanningProvider =
-        (planningModelProvider && planningModelId ? planningModelProvider : undefined) ||
-        resolvedPlanningSettings.provider;
-
-      const resolvedPlanningModelId =
-        (planningModelProvider && planningModelId ? planningModelId : undefined) ||
-        resolvedPlanningSettings.modelId;
+      /*
+       * FNXC:PlanningModelPrecedence 2026-07-22-14:15:
+       * A Planning Mode workflow exists before its task, so load its effective
+       * settings explicitly and retain selected lanes as a lower-precedence
+       * overlay. One canonical resolver receives the complete request pair,
+       * which keeps new and persisted-draft starts atomic and preserves test-mode
+       * forcing instead of allowing the request branch to bypass it.
+       */
+      const selectedWorkflowId = workflowId as string | undefined;
+      let workflowSettings: Record<string, unknown> = {};
+      if (selectedWorkflowId) {
+        try {
+          const workflowSettingsProjectId = projectId ?? scopedStore.getWorkflowSettingsProjectId();
+          workflowSettings = (await resolveEffectiveSettingsDetailedById(
+            scopedStore,
+            selectedWorkflowId,
+            workflowSettingsProjectId,
+          )).effective;
+        } catch {
+          // The route's established fail-soft settings behavior falls back to
+          // project/global values when workflow lookup cannot be completed.
+          workflowSettings = {};
+        }
+      }
+      const hasExplicitPlanningPair = Boolean(planningModelProvider && planningModelId);
+      const resolvedPlanningSettings = resolvePlanningSettingsModel({
+        ...settings,
+        ...workflowSettings,
+        ...(hasExplicitPlanningPair
+          ? { planningProvider: planningModelProvider, planningModelId }
+          : {}),
+      });
+      const resolvedPlanningProvider = resolvedPlanningSettings.provider;
+      const resolvedPlanningModelId = resolvedPlanningSettings.modelId;
 
       if (existingSessionId) {
         // Defeat the start-before-debounced-sync race: the textarea contents
@@ -887,8 +909,33 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      if (!responses || typeof responses !== "object") {
+      if (!responses || typeof responses !== "object" || Array.isArray(responses)) {
         throw badRequest("responses is required and must be an object");
+      }
+
+      /*
+      FNXC:PlanningComments 2026-07-23-12:00:
+      Contextual review batches carry only captured plain-text quotes and operator suggestions.
+      Bound and normalize the narrow shape at the HTTP boundary so arbitrary nested prompt data
+      cannot enter the existing Planning Mode generation session.
+      */
+      if ("contextualComments" in responses) {
+        const comments = responses.contextualComments;
+        if (!Array.isArray(comments) || comments.length === 0 || comments.length > 20) {
+          throw badRequest("contextualComments must contain between 1 and 20 comments");
+        }
+        const normalized = comments.map((comment) => {
+          if (!comment || typeof comment !== "object" || Array.isArray(comment)) {
+            throw badRequest("Each contextual comment must be an object");
+          }
+          const quote = typeof comment.quote === "string" ? comment.quote.trim() : "";
+          const suggestion = typeof comment.suggestion === "string" ? comment.suggestion.trim() : "";
+          if (!quote || !suggestion || quote.length > 4_000 || suggestion.length > 2_000) {
+            throw badRequest("Each contextual comment needs a bounded quote and suggestion");
+          }
+          return { quote, suggestion };
+        });
+        req.body.responses = { contextualComments: normalized };
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -1140,6 +1187,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         finalizePlanningTaskCreation,
         reconcilePlanningTaskCreation,
         releasePlanningTaskCreation,
+        validateSession,
       } = await import("../planning.js");
 
       let session = await getSession(sessionId);
@@ -1210,10 +1258,29 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const proposalClaimId = `planning-session:${sessionId}`;
       const findCreatedTask = async () =>
         (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+      /*
+      FNXC:PlanningMode 2026-07-23-12:10:
+      A planning session whose task exists is done: the claim model allows exactly one task per
+      session, so after creation the session must stop advertising awaiting_input in the session
+      list/banner. The Proceed-with-plan flow calls this route without the legacy /validate step,
+      so terminalize here through validateSession (the sole terminal transition) on every path
+      that ends with a created task, including alreadyCreated reconciliation. Best-effort: a
+      failure to terminalize must not fail the task creation itself.
+      */
+      const markSessionComplete = () =>
+        runPlanningCreateSideEffect(
+          "Planning create-task session completion failed",
+          async () => {
+            const current = await getSession(sessionId);
+            if (current && !current.validated) await validateSession(sessionId);
+          },
+          { sessionId },
+        );
       const returnLinkedTask = async (candidate = session) => {
         if (!candidate?.createdTaskId) return false;
         const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
         if (!linkedTask) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        await markSessionComplete();
         res.status(200).json({ task: linkedTask, alreadyCreated: true });
         return true;
       };
@@ -1222,6 +1289,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const existingTask = await findCreatedTask();
       if (existingTask) {
         await reconcilePlanningTaskCreation(sessionId, existingTask.id);
+        await markSessionComplete();
         res.status(200).json({ task: existingTask, alreadyCreated: true });
         return;
       }
@@ -1248,6 +1316,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         const recoveredTask = await findCreatedTask();
         if (recoveredTask) {
           await reconcilePlanningTaskCreation(sessionId, recoveredTask.id);
+          await markSessionComplete();
           res.status(200).json({ task: recoveredTask, alreadyCreated: true });
           return;
         }
@@ -1334,6 +1403,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       } else if (session) {
         await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
       }
+
+      await markSessionComplete();
 
       res.status(201).json({ task, alreadyCreated: false });
     } catch (err: unknown) {

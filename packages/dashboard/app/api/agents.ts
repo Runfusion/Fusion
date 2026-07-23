@@ -31,6 +31,18 @@ import { dedupe } from "./dedupe.js";
 
 // ── Agent API ────────────────────────────────────────────────────────────
 
+/*
+FNXC:AgentHeartbeatControls 2026-07-23-13:00:
+Heartbeat enablement defaults to enabled when no explicit value exists. The agent PATCH route replaces runtimeConfig rather than merging it, so every dashboard surface must share this immutable helper to preserve interval, model, concurrency, and future configuration keys without changing lifecycle state.
+*/
+export function isAgentHeartbeatEnabled(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return agent.runtimeConfig?.enabled !== false;
+}
+
+export function withAgentHeartbeatEnabled<T extends Pick<Agent, "runtimeConfig">>(agent: T, enabled: boolean): AgentUpdateInput["runtimeConfig"] {
+  return { ...(agent.runtimeConfig ?? {}), enabled };
+}
+
 export interface AgentPromptSizePoint {
   runId: string;
   createdAt: string;

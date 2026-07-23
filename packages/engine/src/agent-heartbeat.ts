@@ -2554,7 +2554,7 @@ export class HeartbeatMonitor {
             heartbeatTools.push(createPostRoomMessageTool(this.chatStore, agentId));
           }
 
-          heartbeatTools.push(...createMissionTools(taskStore));
+          heartbeatTools.push(...createMissionTools(taskStore, { agentId }));
           heartbeatTools.push(...createIdeationTools(taskStore));
           heartbeatTools.push(...createGoalRetrievalTools(taskStore, { runContext }));
           heartbeatTools.push(createReadEvaluationsTool(this.store, this.reflectionStore, agentId));
@@ -3852,7 +3852,7 @@ export class HeartbeatMonitor {
       tools.push(createPostRoomMessageTool(this.chatStore, agentId));
     }
 
-    tools.push(...createMissionTools(taskStore));
+    tools.push(...createMissionTools(taskStore, { agentId }));
     tools.push(...createIdeationTools(taskStore));
     tools.push(...createGoalRetrievalTools(taskStore, { runContext, taskId }));
     tools.push(createReadEvaluationsTool(this.store, this.reflectionStore, agentId));

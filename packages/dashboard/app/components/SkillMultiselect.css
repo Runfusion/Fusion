@@ -1,12 +1,17 @@
 /* === Skill Multiselect === */
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+Skills can be empty, loading, populated, all selected, or disabled inside Agent Settings. Keep its select, chips, and removable actions on dashboard tokens so these states remain legible in every theme without changing selection or duplicate-prevention behavior.
+*/
 .skill-multiselect {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  color: var(--text);
 }
 
 .skill-multiselect-label {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -14,23 +19,24 @@
 .skill-multiselect-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 
 .skill-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.4;
+  gap: var(--space-xs);
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
+  background: var(--surface-muted);
+  color: var(--text);
+  border: var(--btn-border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
 }
 
 .skill-chip-name {
-  max-width: 150px;
+  max-width: calc(var(--space-xl) * 6 + var(--space-md));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -40,70 +46,98 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: calc(var(--space-md) + var(--space-xs));
+  height: calc(var(--space-md) + var(--space-xs));
   padding: 0;
   background: transparent;
-  border: none;
-  border-radius: 2px;
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .skill-chip-remove:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.skill-chip-remove:focus-visible {
+  outline: none;
+  color: var(--text);
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .skill-chip-remove:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .skill-multiselect-add {
-  min-height: 32px;
+  min-height: calc(var(--space-xl) + var(--space-sm));
 }
 
 .skill-multiselect-loading,
 .skill-multiselect-empty {
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 4px 0;
+  padding: var(--space-xs) 0;
 }
 
 .skill-multiselect-dropdown {
   width: 100%;
-  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+  font-size: var(--font-size-sm);
+}
+
+.skill-multiselect-dropdown:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.skill-multiselect-dropdown:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.skill-multiselect-dropdown:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 .agent-dialog-skills-hint {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: var(--space-xs);
+  font-size: var(--font-size-xs);
 }
-
-/* Agent detail divider */
 
 /* Skill badge row for Dashboard tab */
 .skill-badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 
 .skill-badge {
   display: inline-block;
-  padding: 2px 6px;
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
 }
 
-/* Skill badges in AgentsView */
 .badge-skill {
   background: var(--bg-tertiary);
   color: var(--text-muted);
@@ -112,60 +146,52 @@
 .agent-board-skills {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px 8px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
 }
 
-.skill-badge-sm {
+.skill-badge-sm,
+.agent-tree__skill {
   display: inline-block;
-  padding: 1px 5px;
+  padding: calc(var(--space-xs) * 0.25) calc(var(--space-sm) - var(--space-xs) * 0.75);
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  border-radius: 3px;
-  font-size: 10px;
-  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-2xs);
+  line-height: var(--line-height-tight);
 }
 
 .skill-badge-extra {
   background: var(--bg-secondary);
 }
 
-/* Tree view skill badge */
 .agent-tree__skill {
-  display: inline-block;
-  padding: 1px 5px;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  border-radius: 3px;
-  font-size: 10px;
-  line-height: 1.4;
-  margin-left: 6px;
+  margin-left: calc(var(--space-sm) - var(--space-xs) * 0.5);
 }
 
-/* Org chart skill badge */
 .org-chart-node__skill {
   display: inline-block;
-  padding: 1px 5px;
+  padding: calc(var(--space-xs) * 0.25) calc(var(--space-sm) - var(--space-xs) * 0.75);
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  border-radius: 3px;
-  font-size: 10px;
-  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-2xs);
+  line-height: var(--line-height-tight);
 }
+
 .divider {
   color: var(--border);
 }
 
-/* Agent detail text-muted */
-.text-muted {
+.text-muted,
+.text-secondary {
   color: var(--text-muted);
 }
 
-/* Agent detail link */
 .link {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   color: var(--todo);
   text-decoration: none;
 }
@@ -174,7 +200,35 @@
   text-decoration: underline;
 }
 
-/* Text secondary helper */
-.text-secondary {
-  color: var(--text-muted);
+@media (max-width: 768px) {
+  .skill-multiselect,
+  .skill-multiselect-add,
+  .skill-multiselect-dropdown,
+  .skill-multiselect-chips {
+    width: 100%;
+  }
+
+  .skill-multiselect-chips {
+    gap: var(--space-xs);
+  }
+
+  .skill-chip {
+    max-width: 100%;
+  }
+
+  .skill-chip-remove {
+    min-width: calc(var(--space-lg) + var(--space-xs));
+    min-height: calc(var(--space-lg) + var(--space-xs));
+  }
+}
+
+@media (max-width: 480px) {
+  .skill-multiselect {
+    gap: var(--space-xs);
+  }
+
+  .skill-chip {
+    width: 100%;
+    justify-content: space-between;
+  }
 }

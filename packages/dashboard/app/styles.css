@@ -71,8 +71,8 @@ html {
    recommended by Apple HIG and WCAG 2.5.8. Apply to interactive
    elements that are too small on mobile (links, small buttons, icons). */
 .touch-target {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--touch-target-min-size);
+  min-height: var(--touch-target-min-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -145,6 +145,13 @@ html {
   --space-lg: 16px;
   --space-xl: 24px;
   --space-2xl: 32px;
+
+  /*
+  FNXC:DashboardStyling 2026-07-23-13:05:
+  Mobile action controls need one shared minimum hit-area token so compact layouts can retain the
+  44px accessibility floor without embedding a raw dimension in component-specific rules.
+  */
+  --touch-target-min-size: 44px;
 
   /*
   FNXC:QuickAddActionRow 2026-07-16-14:00:

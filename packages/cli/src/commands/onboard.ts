@@ -1,10 +1,12 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
 import { createFusionAuthStorage, createFusionModelRegistry } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 import { runInit } from "./init.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
+import { getModelRegistryModelsPath } from "./auth-paths.js";
 
 export interface OnboardOptions {
   force?: boolean;
@@ -24,6 +26,7 @@ interface PromptChoiceOptions {
 
 interface PromptSession {
   prompt(question: string, defaultValue?: string): Promise<string>;
+  promptOptional(question: string, defaultValue?: string): Promise<string>;
   promptYesNo(question: string, defaultValue: boolean): Promise<boolean>;
   promptChoice(
     question: string,
@@ -75,6 +78,12 @@ function createPromptSession(input: NodeJS.ReadableStream = process.stdin): Prom
     }
   };
 
+  const promptOptional = async (question: string, defaultValue?: string): Promise<string> => {
+    const suffix = defaultValue !== undefined ? ` [${defaultValue}]` : "";
+    const answer = await ask(`${question}${suffix}: `);
+    return answer === "" && defaultValue !== undefined ? defaultValue : answer;
+  };
+
   const promptYesNo = async (question: string, defaultValue: boolean): Promise<boolean> => {
     const hint = defaultValue ? "Y/n" : "y/N";
     while (true) {
@@ -112,10 +121,115 @@ function createPromptSession(input: NodeJS.ReadableStream = process.stdin): Prom
 
   return {
     prompt,
+    promptOptional,
     promptYesNo,
     promptChoice,
     close: cleanup,
   };
+}
+
+export interface LocalProviderConfig {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  modelIds: string[];
+  reasoning: boolean;
+  qwenChatTemplate: boolean;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeLocalBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("Base URL must be an absolute http: or https: URL.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Base URL must be an absolute http: or https: URL.");
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+export function parseModelIds(value: string): string[] {
+  return [...new Set(value.split(",").map((id) => id.trim()).filter(Boolean))];
+}
+
+/**
+ * FNXC:LocalProviderOnboarding 2026-07-23-12:00:
+ * Local endpoints must share pi's existing models.json registry without replacing
+ * unrelated provider or extension fields. A malformed registry is a hard stop so
+ * onboarding never turns a recoverable user configuration error into data loss.
+ */
+export function composeLocalProviderRegistry(existing: unknown, config: LocalProviderConfig): Record<string, unknown> {
+  if (!isObject(existing)) throw new Error("models.json must contain a JSON object.");
+  const existingProviders = existing.providers;
+  if (existingProviders !== undefined && !isObject(existingProviders)) {
+    throw new Error("models.json providers must be a JSON object.");
+  }
+  const providers: Record<string, unknown> = { ...(existingProviders ?? {}) };
+  const priorValue = providers[config.id];
+  const prior: Record<string, unknown> = isObject(priorValue) ? priorValue : {};
+  const priorModels: Record<string, unknown>[] = Array.isArray(prior.models)
+    ? prior.models.filter(isObject)
+    : [];
+  const configuredModels = config.modelIds.map((id) => ({
+    id,
+    ...(config.reasoning ? { reasoning: true } : {}),
+    ...(config.qwenChatTemplate
+      ? { compat: { thinkingFormat: "qwen-chat-template", chatTemplateKwargs: { enable_thinking: { $var: "thinking.enabled" } } } }
+      : {}),
+  }));
+  const configuredIds = new Set(config.modelIds);
+  providers[config.id] = {
+    ...prior,
+    name: config.name,
+    baseUrl: config.baseUrl,
+    api: "openai-completions",
+    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    models: [...priorModels.filter((model) => typeof model.id !== "string" || !configuredIds.has(model.id)), ...configuredModels],
+  };
+  if (!config.apiKey) delete (providers[config.id] as Record<string, unknown>).apiKey;
+  return { ...existing, providers };
+}
+
+/**
+ * FNXC:LocalProviderOnboarding 2026-07-23-12:00:
+ * Atomic sibling replacement prevents an interrupted custom-provider setup from
+ * truncating pi's registry; credentials are only persisted in the registry, never logged.
+ */
+function registryHasProvider(path: string, providerId: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const registry = JSON.parse(readFileSync(path, "utf8"));
+    return isObject(registry) && isObject(registry.providers) && isObject(registry.providers[providerId]);
+  } catch {
+    return false;
+  }
+}
+
+export function persistLocalProviderRegistry(path: string, config: LocalProviderConfig): void {
+  let existing: unknown = {};
+  if (existsSync(path)) {
+    try {
+      existing = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      throw new Error(`Cannot update malformed models.json: ${path}`);
+    }
+  }
+  const registry = composeLocalProviderRegistry(existing, config);
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tempPath, path);
+  } finally {
+    if (existsSync(tempPath)) unlinkSync(tempPath);
+  }
 }
 
 function validateMaxConcurrent(input: string): number {
@@ -183,8 +297,6 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
 
     await runSkippableStep(prompts, "AI provider setup", async () => {
       const apiProviders = providerAuth.getApiKeyProviders();
-      if (apiProviders.length === 0) return;
-
       const oauthProviders = new Set(providerAuth.getOAuthProviders().map((provider) => provider.id));
       const providerChoices = apiProviders.map((provider) => {
         const configured = providerAuth.hasApiKey(provider.id) || providerAuth.hasAuth(provider.id);
@@ -195,12 +307,51 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
           label: `${provider.name}${configuredHint}${oauthHint}`,
         };
       });
+      providerChoices.push({ id: "custom-local", label: "Custom / Local (OpenAI-compatible)" });
 
       const selectedProvider = await prompts.promptChoice("Select provider", providerChoices, {
         allowSkip: true,
       });
 
       if (!selectedProvider) return;
+      if (selectedProvider === "custom-local") {
+        const path = getModelRegistryModelsPath();
+        const providerId = await prompts.prompt("Provider ID", "custom-local");
+        if (registryHasProvider(path, providerId) && !await prompts.promptYesNo(
+          `Provider ${providerId} already exists. Merge these settings into it?`,
+          false,
+        )) return;
+        const providerName = await prompts.prompt("Provider name", "Custom / Local");
+        let baseUrl: string;
+        while (true) {
+          try {
+            baseUrl = normalizeLocalBaseUrl(await prompts.prompt("Base URL (for example http://localhost:8080/v1)"));
+            break;
+          } catch (error) {
+            console.log(error instanceof Error ? error.message : "Invalid base URL.");
+          }
+        }
+        const apiKey = await prompts.promptOptional("API key (optional; leave blank for unauthenticated servers)");
+        let modelIds: string[];
+        while (true) {
+          modelIds = parseModelIds(await prompts.prompt("Model IDs (comma-separated)"));
+          if (modelIds.length > 0) break;
+          console.log("Enter at least one model ID.");
+        }
+        const reasoning = await prompts.promptYesNo("Do these models support reasoning/thinking?", false);
+        const qwenChatTemplate = reasoning && await prompts.promptYesNo(
+          "Use Qwen chat-template thinking compatibility? Enable only for servers requiring chat_template_kwargs.enable_thinking.",
+          false,
+        );
+        try {
+          persistLocalProviderRegistry(path, { id: providerId, name: providerName, baseUrl, apiKey, modelIds, reasoning, qwenChatTemplate });
+        console.log(`✓ Registered ${modelIds.map((id) => `${providerId}/${id}`).join(", ")} in ${path}`);
+        } catch (error) {
+          console.log(`Could not save custom provider: ${error instanceof Error ? error.message : "unknown error"}`);
+          throw error;
+        }
+        return;
+      }
       if (oauthProviders.has(selectedProvider)) {
         console.log(`Provider ${selectedProvider} uses OAuth. Authenticate with: fn dashboard`);
         return;
@@ -262,6 +413,10 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
 export const __testUtils = {
   createPromptSession,
   validateMaxConcurrent,
+  normalizeLocalBaseUrl,
+  parseModelIds,
+  composeLocalProviderRegistry,
+  persistLocalProviderRegistry,
   runSkippableStep,
   isCliOnboardingComplete,
   PROMPT_CANCELLED_ERROR,

@@ -3160,6 +3160,56 @@ describe("GitHubImportModal — detail actions sit at the bottom (operator repor
     });
   });
 
+  it("keeps the four populated issue actions uniquely ordered in the shared mobile bar", async () => {
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+      { number: 44, title: "Four actions", body: "Body", html_url: "https://github.com/dustinbyrne/kb/issues/44", labels: [], state: "open" },
+    ]);
+    render(
+      <GitHubImportModal
+        isOpen
+        onClose={onClose}
+        onImport={onImport}
+        onPlanningMode={vi.fn()}
+        onOpenChatWithPrefill={vi.fn()}
+        tasks={[]}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #44/i }));
+
+    const bar = await screen.findByTestId("github-import-detail-actions");
+    const actionRow = within(bar).getByTestId("github-import-detail-action-row");
+    const composer = within(bar).getByTestId("github-import-issue-comment-input");
+    const actions = [
+      within(actionRow).getByTestId("github-import-issue-close"),
+      within(actionRow).getByTestId("github-import-action-plan"),
+      within(actionRow).getByTestId("github-import-action-chat"),
+      within(actionRow).getByTestId("github-import-action-top"),
+    ];
+    expect(actions.map((action) => action.textContent?.trim())).toEqual(["Close issue", "Plan", "Chat", "Import as task"]);
+    expect(composer.closest(".github-import-detail-actions")).toBe(bar);
+    expect(actionRow.previousElementSibling).toBe(composer.closest("form"));
+    expect(within(actionRow).getAllByRole("button", { name: /^Close issue$/i })).toHaveLength(1);
+    expect(within(actionRow).getAllByRole("button", { name: /^Plan$/i })).toHaveLength(1);
+    expect(within(actionRow).getAllByRole("button", { name: /^Chat$/i })).toHaveLength(1);
+    expect(within(actionRow).getAllByRole("button", { name: /^Import as task$/i })).toHaveLength(1);
+  });
+
+  it("uses shrinkable, non-wrapping mobile action tracks while retaining desktop behavior", () => {
+    const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+    const mobileRule = source.match(/@media\s\(max-width:\s768px\)\s\{[\s\S]*?\.github-import-detail-action-row\s\.btn\s\{[\s\S]*?\n\s{2}\}/)?.[0] ?? "";
+
+    expect(mobileRule).toContain(".github-import-detail-action-row {");
+    expect(mobileRule).toContain("flex-wrap: nowrap;");
+    expect(mobileRule).toContain("flex: 1 1 100%;");
+    expect(mobileRule).toContain("gap: var(--space-xs);");
+    expect(mobileRule).toContain("flex: 1 1 0;");
+    expect(mobileRule).toContain("min-width: 0;");
+    expect(mobileRule).toContain("min-height: var(--touch-target-min-size) !important;");
+    expect(mobileRule).toContain("white-space: normal;");
+    expect(mobileRule).toContain("overflow-wrap: anywhere;");
+    expect(source.match(/\.github-import-detail-actions\s*\{[^}]*flex-wrap: wrap;/)?.[0]).toBeTruthy();
+  });
+
 
   /*
   FNXC:GitHubImport 2026-07-17-12:00:
