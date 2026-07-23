@@ -76,6 +76,7 @@ import {
   buildAutostashLabel,
   captureSingleCommitLandedMetadata,
   isNonFastForwardPushError,
+  isRebaseInProgress,
   parsePushRemoteTarget,
   pushToRemoteAfterMerge,
   runMergeAdvanceAutoSync,
@@ -1468,9 +1469,20 @@ async function runPushAfterMergeStep(input: {
     }
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "MergeAbortedError") {
-      // The task already finalized — an abort mid-push must not re-surface as a
-      // failed/aborted merge. Skip quietly; the next merge's push reconciles.
-      aiMergeLog.warn(`${taskId}: push after merge aborted by shutdown signal — skipping (merge already finalized)`);
+      /*
+      FNXC:MergePush 2026-07-22-18:48:
+      Tchori-Labs/Fusion#5 requires shutdown aborts after finalization to remain non-fatal but never silent. The remote recovery branch preserves the approved squash; MergeResult, task log, and run-audit identify that the target push did not complete.
+      */
+      const message = "Push after merge aborted by shutdown signal; the local merge remains finalized and its divergence recovery branch is retained";
+      result.pushedToRemote = false;
+      result.pushError = message;
+      aiMergeLog.warn(`${taskId}: ${message}`);
+      await audit.git({
+        type: "push:origin",
+        target: taskId,
+        metadata: { integrationBranch, remote: settings.pushRemote ?? "origin", outcome: "aborted" },
+      }).catch(() => undefined);
+      await store.logEntry(taskId, message, "PushToRemoteFailed").catch(() => undefined);
       return;
     }
     const message = getErrorMessage(err);
@@ -2172,6 +2184,43 @@ export async function pushAfterMergeToRemote(input: {
     return { pushed: false, remote, targetBranch, error: fastPathError };
   }
 
+  /*
+  FNXC:MergePush 2026-07-22-18:42:
+  Tchori-Labs/Fusion#5 requires approved content to reach durable remote storage before the divergence clean room starts. Force-updating a task-scoped recovery ref makes retries idempotent and preserves the pre-rebase squash across aborts or process death without changing the non-fatal post-finalization push contract.
+  */
+  const recoveryBranch = `fusion/${taskId.toLowerCase()}-stranded`;
+  const recoveryRef = `refs/heads/${recoveryBranch}`;
+  // Both the create and delete recovery-ref paths record the same
+  // {audit event + task-log entry} pair, differing only in outcome/message/
+  // action — keep them in one place so the paths can't drift apart.
+  const recordRecoveryBranch = async (
+    outcome: "success" | "failed" | "deleted" | "delete-failed",
+    logMessage: string,
+    logAction: "PushRecoveryBranch" | "PushRecoveryBranchFailed",
+  ): Promise<void> => {
+    await audit.git({
+      type: "push:recovery-branch",
+      target: taskId,
+      metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome },
+    }).catch(() => undefined);
+    await store.logEntry(taskId, logMessage, logAction).catch(() => undefined);
+  };
+  try {
+    await git(["push", "--force", remote, `${localSha}:${recoveryRef}`], projectRootDir, { timeout: 120_000 });
+    await recordRecoveryBranch(
+      "success",
+      `Push after merge: preserved the approved pre-rebase squash on ${remote}/${recoveryBranch} at ${localSha}`,
+      "PushRecoveryBranch",
+    );
+  } catch (recoveryError: unknown) {
+    const message = getErrorMessage(recoveryError);
+    await recordRecoveryBranch(
+      "failed",
+      `Push after merge: could not preserve the approved squash on recovery branch ${remote}/${recoveryBranch}; continuing the non-fatal divergence rebase: ${message}`,
+      "PushRecoveryBranchFailed",
+    );
+  }
+
   // 2. Divergence path: remote moved ahead — rebase in a detached clean room.
   await log(`Push after merge: ${remote}/${targetBranch} has diverged — rebasing in a clean room before pushing`);
   let pushRoot: string | undefined;
@@ -2205,6 +2254,32 @@ export async function pushAfterMergeToRemote(input: {
     });
     if (!pushResult.pushed) {
       return { pushed: false, remote, targetBranch, error: pushResult.error };
+    }
+
+    // The approved content is now on the target branch, so clean up the
+    // temporary recovery ref. Deletion remains best-effort: a cleanup problem
+    // must not turn a successful target push into a failed merge outcome.
+    // The create push above uses --force, so a restarted/concurrent attempt
+    // for this taskId can force-update the ref to a newer value; lease the
+    // delete to this attempt's localSha so an ownership change fails
+    // harmlessly here instead of destroying a newer safety copy.
+    try {
+      await git(
+        ["push", `--force-with-lease=${recoveryRef}:${localSha}`, remote, `:${recoveryRef}`],
+        canonicalPushRoot,
+        { timeout: 120_000 },
+      );
+      await recordRecoveryBranch(
+        "deleted",
+        `Push after merge: deleted recovery branch ${remote}/${recoveryBranch} after the target push succeeded`,
+        "PushRecoveryBranch",
+      );
+    } catch (recoveryDeleteError: unknown) {
+      await recordRecoveryBranch(
+        "delete-failed",
+        `Push after merge: target push succeeded but recovery branch ${remote}/${recoveryBranch} could not be deleted: ${getErrorMessage(recoveryDeleteError)}`,
+        "PushRecoveryBranchFailed",
+      );
     }
 
     // The clean-room HEAD is what the remote now has. Advance the local
@@ -2247,6 +2322,18 @@ export async function pushAfterMergeToRemote(input: {
     }
     return { pushed: true, remote, targetBranch, refAdvanced: true, rebasedSha };
   } finally {
+    /*
+    FNXC:MergePush 2026-07-22-18:48:
+    The divergence clean room must never survive an unexpected exit with staged, uncommitted rebase state. This outer guard complements the resolver helper's catch so cleanup is safe even when a future throw bypasses that helper.
+    */
+    if (pushRoot && worktreeAdded && (await isRebaseInProgress(pushRoot))) {
+      try {
+        await git(["rebase", "--abort"], pushRoot, { timeout: 120_000 });
+        await log("Push after merge: aborted the unfinished clean-room rebase before cleanup");
+      } catch (abortError: unknown) {
+        aiMergeLog.warn(`${taskId}: failed to abort unfinished push rebase before cleanup: ${getErrorMessage(abortError)}`);
+      }
+    }
     for (const registeredPath of registeredPaths) {
       activeSessionRegistry.unregisterPath(registeredPath);
     }

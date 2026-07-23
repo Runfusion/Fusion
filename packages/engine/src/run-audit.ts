@@ -398,7 +398,9 @@ export type GitMutationType =
    */
   | "pull:fast-forward"
   /**
-   * Metadata shape:
+   * `push:origin` is polymorphic — two producers emit it with different shapes:
+   *
+   * 1. Dashboard Smart Push (interactive):
    * ```ts
    * {
    *   integrationBranch: string;
@@ -413,8 +415,28 @@ export type GitMutationType =
    *   durationMs: number;
    * }
    * ```
+   *
+   * 2. Automated post-merge push (merger-ai.ts pushAfterMergeToRemote):
+   * ```ts
+   * {
+   *   integrationBranch: string;
+   *   remote: string;
+   *   targetBranch?: string;   // omitted on the shutdown-abort path
+   *   refAdvanced?: boolean;   // divergence rebase rewrote the landed squash
+   *   outcome: "success" | "failed" | "aborted";
+   *   stderrPreview?: string;  // present on "failed"
+   * }
+   * ```
+   * `outcome: "aborted"` (Tchori-Labs/Fusion#5) marks a shutdown signal after
+   * finalization: the merge stays landed and its divergence recovery branch is
+   * retained (see `push:recovery-branch`), but the target push did not complete.
    */
   | "push:origin"
+  /*
+   * FNXC:MergePush 2026-07-22-18:55:
+   * Tchori-Labs/Fusion#5 records the best-effort lifecycle of the remote pre-rebase safety ref. Metadata is ids/outcomes-only: `{ taskId, remote, recoveryBranch, sha, outcome }`, where outcome is `success`, `failed`, `deleted`, or `delete-failed`.
+   */
+  | "push:recovery-branch"
   /**
    * Metadata shape:
    * ```ts
