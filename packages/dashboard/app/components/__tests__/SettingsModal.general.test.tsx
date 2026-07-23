@@ -1441,9 +1441,15 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "backups-global" });
       await waitForSettingsModalReady();
 
-      expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveValue(500);
+      /*
+      FNXC:PostgresEmbedded 2026-07-22-23:55:
+      Issue #2411: the cap is schema-unset so the server can resolve a platform-aware
+      default (win32 150, else 500). The input therefore renders empty ("auto"), not 500.
+      */
+      expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveValue(null);
+      expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveAttribute("placeholder", "auto");
       expect(screen.getByTestId("settings-help-embeddedPostgresMaxConnections")).toBeInTheDocument();
-      expect(screen.getByText("Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.").closest(".settings-help-bubble")).toBeTruthy();
+      expect(screen.getByText("Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Unset by default — Fusion picks 500, or 150 on Windows where each connection is a separate process and higher caps can crash backends. External PostgreSQL uses its provider's connection limit.").closest(".settings-help-bubble")).toBeTruthy();
     });
 
     it("saves ephemeral agent toggle in project settings payload", async () => {

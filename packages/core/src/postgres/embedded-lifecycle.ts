@@ -684,6 +684,37 @@ export function defaultEmbeddedPostgresFlagsFor(platform: NodeJS.Platform): read
 export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = defaultEmbeddedPostgresFlagsFor(process.platform);
 
 /*
+ * FNXC:PostgresEmbedded 2026-07-22-23:55:
+ * Issue #2411 (operator-confirmed on 0.73.0-beta.2): on Windows every PostgreSQL
+ * connection is a separate postgres.exe process, and standing up backends against a
+ * max_connections=500 cap exhausts the non-interactive desktop heap during connection
+ * bursts. A forked backend then dies in DLL/session init with exception 0xC0000142,
+ * the postmaster terminates all other backends, and the whole embedded cluster — and
+ * with it the dashboard — goes down. The reporter measured stability at a cap of 100
+ * after repeated crashes at 500. Default the cap platform-aware: 150 on win32 (well
+ * above Fusion's own pool usage of ~3 connections per connection set), 500 elsewhere.
+ * An operator-configured embeddedPostgresMaxConnections is always honored, clamped to
+ * [32, 2000] on every platform — the lower win32 number is only the unset default.
+ * This complements, not replaces, the FN-8522 child PATH hardening and single-restart
+ * recovery for the same 0xC0000142 signature.
+ */
+export const DEFAULT_EMBEDDED_MAX_CONNECTIONS = 500;
+export const DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32 = 150;
+export const EMBEDDED_MAX_CONNECTIONS_MIN = 32;
+export const EMBEDDED_MAX_CONNECTIONS_MAX = 2_000;
+
+/** Resolve the effective embedded-cluster max_connections from the optional operator setting. */
+export function resolveEmbeddedMaxConnections(
+  configured: number | undefined,
+  platform: NodeJS.Platform = process.platform,
+): number {
+  if (typeof configured === "number" && Number.isInteger(configured)) {
+    return Math.min(EMBEDDED_MAX_CONNECTIONS_MAX, Math.max(EMBEDDED_MAX_CONNECTIONS_MIN, configured));
+  }
+  return platform === "win32" ? DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32 : DEFAULT_EMBEDDED_MAX_CONNECTIONS;
+}
+
+/*
 FNXC:PostgresEmbedded 2026-07-18-00:20:
 GitHub issue #2286: initdb without --encoding inherits the OS locale's
 encoding. On non-UTF-8 Windows locales (Turkish WIN1254 in the report; the

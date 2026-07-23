@@ -6839,10 +6839,11 @@
       "description": ""
     },
     "database": {
-      "embeddedConnectionCapHelp": "Fusion 嵌入式 PostgreSQL 的最大服务器连接数。重启 Fusion 后生效。范围：32–2,000。默认：500。外部 PostgreSQL 使用其提供方的连接限制。",
+      "embeddedConnectionCapHelp": "Fusion 嵌入式 PostgreSQL 的最大服务器连接数。重启 Fusion 后生效。范围：32–2,000。默认未设置 — Fusion 选择 500；在 Windows 上为 150，因为每个连接都是一个独立进程，更高的上限可能导致后端崩溃。外部 PostgreSQL 使用其提供方的连接限制。",
       "embeddedConnectionCap": "嵌入式 PostgreSQL 连接上限",
       "embeddedConnectionCapError": "请输入 32 到 2,000 之间的值。",
-      "advanced": "高级数据库设置"
+      "advanced": "高级数据库设置",
+      "embeddedConnectionCapPlaceholder": "自动"
     },
     "configVersions": {
       "title": "配置版本",
