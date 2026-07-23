@@ -571,6 +571,14 @@ export type DatabaseMutationType =
    * deliberately left in place so the operator can see what it carried. Same metadata shape.
    */
   | "task:reconcile-legacy-adoption-unmappable"
+  /*
+  FNXC:OrphanedPendingSteps 2026-07-22-16:35 (FN-8492):
+  Startup/periodic rewrite of orphaned `pending` workflow-step results (no live session
+  behind them) to `failed`, so the merge gate stays closed and failed-pre-merge-steps
+  recovery owns the re-run. Metadata ids/counts-only:
+  { taskId, column, orphanedCount, resultCount }.
+  */
+  | "task:reconcile-orphaned-pending-step-results"
   /**
    * FNXC:MergeQueue 2026-07-15-10:05:
    * Wedged single-flight merge reclaim. Metadata ids/outcomes-only:
@@ -632,6 +640,15 @@ export type DatabaseMutationType =
    * ```
    */
   | "session:runtime-resolved"
+  /**
+   * FNXC:GrokCliRouting 2026-07-22-15:10:
+   * A deferred grok-cli fallback engaged at prompt time: the primary model failed with a
+   * retryable model-selection error and the session swapped onto the Grok CLI runtime with
+   * the deferred fallback model. Metadata is ids/outcomes-only:
+   * `{ sessionPurpose, primaryProvider, primaryModelId, fallbackModelId, triggerPoint, failureCategory }`
+   * — never error prose.
+   */
+  | "session:grok-cli-fallback-engaged"
   /**
    * FNXC:AgentReflectionTelemetry 2026-06-27-00:00:
    * Agent performance reflection attempts must emit durable telemetry for every generated, skipped, or failed outcome. Metadata carries ids, trigger taxonomy, counts, and outcomes only; never persist reflection summaries, insight strings, suggested-improvement text, triggerDetail, or prompt text.

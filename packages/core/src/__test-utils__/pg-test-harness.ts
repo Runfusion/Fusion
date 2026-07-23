@@ -516,10 +516,33 @@ function ensureGoldenTemplate(): Promise<string> {
     // the lock. A sibling fork blocks on pg_advisory_lock until the winner has
     // fully built the golden template and recorded its ready marker.
     await withMaintenanceSql(async (client) => {
-      // Ensure the readiness marker table exists before any read/write of it.
-      await client.unsafe(
-        `CREATE TABLE IF NOT EXISTS ${GOLDEN_MARKER_QUALIFIED} (name text PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now())`,
-      );
+      /*
+      FNXC:PgTestTemplateDb 2026-07-22-23:45:
+      Ensure the readiness marker table exists before any read/write of it.
+      `CREATE TABLE IF NOT EXISTS` is NOT concurrency-safe in PostgreSQL: two
+      sessions that both observe "not exists" race to insert the table's
+      composite-type row, and the loser aborts with `duplicate key value
+      violates unique constraint "pg_type_typname_nsp_index"`. On a fresh CI
+      cluster the gate's vitest forks all reach this line together on first
+      contact, which turned the merge gate red repo-wide (first seen
+      2026-07-23 01:25 UTC); long-lived local clusters already have the table,
+      so the race never reproduces locally. Serialize the one-time DDL under
+      its own advisory lock (this session already uses session-level advisory
+      locks for the golden build below), and additionally swallow the two
+      benign "lost the race" errors — duplicate_table (42P07) and the pg_type
+      unique violation (23505) — since either one proves a sibling created it.
+      */
+      await client`SELECT pg_advisory_lock(hashtext('fusion_golden_marker_table_ddl'))`;
+      try {
+        await client.unsafe(
+          `CREATE TABLE IF NOT EXISTS ${GOLDEN_MARKER_QUALIFIED} (name text PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now())`,
+        );
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code !== "42P07" && code !== "23505") throw error;
+      } finally {
+        await client`SELECT pg_advisory_unlock(hashtext('fusion_golden_marker_table_ddl'))`;
+      }
       // Sweep templates orphaned by crashed/finished processes and drop marker
       // rows whose golden database no longer exists.
       const rows = await client<{ datname: string }[]>`

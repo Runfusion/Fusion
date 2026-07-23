@@ -34,6 +34,7 @@ type SupportedNtfyEvent =
   | "in-review"
   | "merged"
   | "failed"
+  | "task-wedged"
   | "awaiting-approval"
   | "awaiting-user-review"
   | "planning-awaiting-input"
@@ -50,6 +51,7 @@ const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "in-review",
   "merged",
   "failed",
+  "task-wedged",
   "awaiting-approval",
   "awaiting-user-review",
   "planning-awaiting-input",
@@ -212,6 +214,15 @@ export class NtfyNotificationProvider implements NotificationProvider {
       failed: {
         title: `Task ${taskId} failed`,
         message: `Task "${identifier}" has failed and needs attention`,
+        priority: "high",
+      },
+      "task-wedged": {
+        title: `Task ${taskId} needs operator action`,
+        message: [
+          `Task "${identifier}" is wedged${typeof payload.metadata?.reason === "string" ? `: ${payload.metadata.reason}` : " and needs operator action"}`,
+          typeof payload.metadata?.gate === "string" ? `Gate: ${payload.metadata.gate}` : null,
+          typeof payload.metadata?.action === "string" ? `Recommended action: ${payload.metadata.action}` : null,
+        ].filter((part): part is string => part !== null).join("\n"),
         priority: "high",
       },
       "awaiting-approval": {

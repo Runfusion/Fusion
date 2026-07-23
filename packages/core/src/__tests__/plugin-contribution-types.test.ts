@@ -9,6 +9,7 @@ import type {
   PluginSetupHooks,
   PluginSetupManifest,
   PluginSkillContribution,
+  PluginMcpServerContribution,
   PluginWorkflowStepContribution,
 } from "../plugins/plugin-types.js";
 import type {
@@ -125,6 +126,21 @@ describe("plugin contribution type constraints", () => {
     expect(plugin.setup?.manifest.channel).toBe("stable");
     expect(check.status).toBe("installed");
     expect((await minimalHooks.checkSetup({} as never)).status).toBe("not-installed");
+  });
+
+  it("accepts declarative MCP contributions without a per-server enabled flag", () => {
+    const server: PluginMcpServerContribution = {
+      name: "roslyn-navigator",
+      transport: "stdio",
+      command: "cwm-roslyn-navigator",
+      env: { TOKEN: { secretRef: "roslyn-token", scope: "project" } },
+      enabledByDefault: true,
+    };
+    const plugin: FusionPlugin = {
+      manifest: { id: "roslyn", name: "Roslyn", version: "1.0.0" }, state: "installed", hooks: {}, mcpServers: [server],
+    };
+    expect(plugin.mcpServers?.[0]?.name).toBe("roslyn-navigator");
+    expectTypeOf(server.enabledByDefault).toEqualTypeOf<boolean | undefined>();
   });
 
   it("accepts prompt surface union and prompt contribution records", () => {

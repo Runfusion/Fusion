@@ -54,6 +54,23 @@ describe("readChatAttachmentContents", () => {
     expect(formatChatAttachmentContents(result.attachmentContents)).toContain("hello from attachment");
   });
 
+  it("inlines TOML while retaining videos as non-inlineable attachments", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".fusion", "chat-attachments", "session-1"), { recursive: true });
+    await writeFile(join(root, ".fusion", "chat-attachments", "session-1", "config.toml"), "enabled = true");
+    await writeFile(join(root, ".fusion", "chat-attachments", "session-1", "demo.mp4"), Buffer.from("video"));
+
+    const result = await readChatAttachmentContents(root, { kind: "session", sessionId: "session-1" }, [
+      attachment({ filename: "config.toml", originalName: "config.toml", mimeType: "text/x-toml" }),
+      attachment({ filename: "demo.mp4", originalName: "demo.mp4", mimeType: "video/mp4" }),
+    ]);
+
+    expect(result.attachmentContents).toEqual([
+      { originalName: "config.toml", mimeType: "text/x-toml", text: "enabled = true" },
+    ]);
+    expect(formatChatAttachmentContents(result.attachmentContents)).toContain("```toml");
+  });
+
   it("converts matching image attachments to base64 content blocks", async () => {
     const root = await makeRoot();
     await mkdir(join(root, ".fusion", "chat-attachments", "session-1"), { recursive: true });

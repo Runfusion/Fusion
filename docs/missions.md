@@ -386,21 +386,26 @@ Use this endpoint when a feature's delivery task has already shipped and is now 
 **Safety gate behavior:**
 
 - Validates `featureId` and requires a non-empty string `taskId`.
-- Looks up the feature and the delivery task in the request's scoped project store.
-- Only allows reconciliation when the delivery task column is `done` or `archived`.
-- If feature has no `taskId`, the endpoint links it first, then marks feature status `done` via `updateFeatureStatus` (which recomputes slice status).
-- If feature already has a different `taskId`, returns `409` (conflict).
+- Resolves the feature and terminal delivery evidence in the request's scoped PostgreSQL project.
+- Accepts either a live, non-deleted task in `done`, or a supported archived task represented by both its retained soft-deleted `column=archived` project-task tombstone and its project-scoped cold archive snapshot. A deletion without both archive representations is not delivery evidence.
+- Atomically validates conflicts, writes the canonical feature→task link, marks the feature `done`, updates the live task's reverse mission/slice link when applicable, and recomputes slice/milestone rollups. Any validation or write failure rolls back the complete operation.
+- Archived evidence remains archived and read-only: reconciliation intentionally leaves its retained task tombstone without a writable reverse backlink rather than resurrecting the task.
+- Repeating the same terminal task against the same completed feature is idempotent. A feature linked to another task, or a task linked to another feature, returns `409` without mutation.
+- The repair path never enters ordinary triage/implementation state, changes loop attempts, creates or moves a task, activates/watches the mission, or changes mission `status`, `autopilotEnabled`, or `autoAdvance`.
+
+<!-- FNXC:MissionReconciliation 2026-07-20-08:34: Operators need a supported atomic terminal-evidence repair because unarchive/move workarounds enter ordinary task lifecycle observers and can wake a parked mission or generate duplicate work. -->
+**Safe duplicate cleanup:** preserve the first `409`; verify through supported APIs that the current linked task is generated duplicate work with no unique delivery or lineage value; call `POST /api/missions/features/:featureId/unlink-task`; archive only the proven duplicate through the supported task archive API; then call `reconcile-done` with the canonical terminal task. Never overwrite a mismatched link, unarchive/move canonical delivery evidence, or use direct storage edits. If the duplicate is ambiguous, leave it untouched and escalate for evidence.
 
 **How this differs from `PATCH /api/missions/features/:featureId`:**
 
 - `PATCH` keeps the execution-status guard and rejects `done`/`triaged`/`in-progress`/`blocked` when no linked task exists.
-- `reconcile-done` is a dedicated, evidence-gated path for shipped work where the delivery task is already terminal.
+- `reconcile-done` is a dedicated, evidence-gated transaction for already-shipped work. It is not a shortcut for active work or mission execution.
 
 **Error responses:**
 
 - `400` — invalid feature ID format or missing/empty `taskId`.
-- `404` — feature not found or delivery task not found.
-- `409` — feature/task mismatch or delivery task is not in `done`/`archived` (use normal PATCH/triage/link flow for active work).
+- `404` — feature not found or no task/archive evidence exists for the supplied task ID.
+- `409` — feature/task mismatch, task already linked to another feature, nonterminal task, or a deleted/archived task lacking the supported retained tombstone plus cold snapshot. Every `409` leaves feature, task, rollups, and mission controls unchanged.
 
 ## Validation Contract Lifecycle
 

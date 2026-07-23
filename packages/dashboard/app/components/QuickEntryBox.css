@@ -989,3 +989,33 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
 }
 
 
+
+/*
+FNXC:QuickAddStart 2026-07-22-16:10:
+The long-press/right-click Start menu is portaled and viewport-clamped by its trigger
+calculation, preserving Save as the primary short-click action on desktop and mobile.
+*/
+.quick-entry-start-menu {
+  z-index: var(--z-dropdown);
+  min-width: calc(var(--space-4xl) * 2);
+  padding: var(--space-xs);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.quick-entry-start-menu button {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-align: left;
+}
+
+.quick-entry-start-menu button:hover,
+.quick-entry-start-menu button:focus-visible {
+  background: var(--card-hover);
+}

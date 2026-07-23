@@ -3450,15 +3450,15 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("image attachments", () => {
+  describe("task attachments", () => {
     it("shows an icon-only Attach control when expanded", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
       const attachButton = screen.getByTestId("quick-entry-attach");
       expect(attachButton).toBeInTheDocument();
-      expect(attachButton).toHaveAccessibleName("Attach images");
-      expect(attachButton).toHaveAttribute("title", "Attach images");
+      expect(attachButton).toHaveAccessibleName("Attach photos or files");
+      expect(attachButton).toHaveAttribute("title", "Attach photos or files");
       expect(attachButton.textContent).not.toContain("Attach");
       expect(attachButton.querySelector("svg")).toBeTruthy();
       expect(attachButton.classList.contains("btn-icon")).toBe(true);
@@ -3476,7 +3476,7 @@ describe("QuickEntryBox", () => {
       expect(clickSpy).toHaveBeenCalled();
     });
 
-    it("adds a preview when an image is pasted", () => {
+    it("adds an image preview when an image is pasted", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
@@ -3552,8 +3552,8 @@ describe("QuickEntryBox", () => {
       fireEvent.change(fileInput, { target: { files: [file] } });
 
       const attachButton = screen.getByTestId("quick-entry-attach");
-      expect(attachButton).toHaveAccessibleName("Attach images (1 pending)");
-      expect(attachButton).toHaveAttribute("title", "Attach images (1 pending)");
+      expect(attachButton).toHaveAccessibleName("Attach photos or files (1 pending)");
+      expect(attachButton).toHaveAttribute("title", "Attach photos or files (1 pending)");
       expect(attachButton.textContent).toBe("1");
       expect(attachButton.textContent).not.toContain("Attach");
     });
@@ -3581,7 +3581,7 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
 
       fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [] } });
-      expect(screen.getByTestId("quick-entry-drop-target")).toHaveTextContent("Drop images to attach");
+      expect(screen.getByTestId("quick-entry-drop-target")).toHaveTextContent("Drop photos or files to attach");
       expect(box.classList.contains("quick-entry-box--drag-over")).toBe(true);
 
       fireEvent.dragLeave(box, { dataTransfer: { types: ["Files"], files: [] } });
@@ -3605,7 +3605,7 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-drop-target")).toBeInTheDocument();
     });
 
-    it("adds previews for supported dropped images and rejects unsupported dropped files", () => {
+    it("accepts mixed supported drops as an image preview and accessible file chip", () => {
       renderQuickEntryBox({});
       const box = screen.getByTestId("quick-entry-box");
       const image = new File(["image"], "dropped.png", { type: "image/png" });
@@ -3616,7 +3616,48 @@ describe("QuickEntryBox", () => {
 
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
       expect(screen.getByRole("button", { name: "Open image dropped.png" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Open image notes.txt" })).toBeNull();
+      expect(screen.getByTestId("quick-entry-preview-file-1")).toHaveTextContent("notes.txt");
+      expect(screen.queryByTestId("quick-entry-preview-open-1")).toBeNull();
+    });
+
+    it("accepts supported picker and paste files, preserves duplicate names, and ignores unsupported MIME types", () => {
+      renderQuickEntryBox({});
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const textarea = screen.getByTestId("quick-entry-input");
+      const firstJson = new File(["{}"], "data.json", { type: "application/json" });
+      const duplicateJson = new File(["{}"], "data.json", { type: "application/json" });
+      const unsupported = new File(["binary"], "archive.bin", { type: "application/octet-stream" });
+
+      expect(fileInput).toHaveAttribute("accept", expect.stringContaining("video/mp4"));
+      fireEvent.change(fileInput, { target: { files: [firstJson, unsupported] } });
+      fireEvent.paste(textarea, { clipboardData: { files: [duplicateJson] } });
+      fireEvent.change(fileInput, { target: { files: [] } });
+
+      expect(screen.getByTestId("quick-entry-preview-file-0")).toHaveTextContent("data.json");
+      expect(screen.getByTestId("quick-entry-preview-file-1")).toHaveTextContent("data.json");
+      expect(screen.queryByText("archive.bin")).toBeNull();
+      expect(screen.getByTestId("quick-entry-attach")).toHaveAccessibleName("Attach photos or files (2 pending)");
+    });
+
+    it("uploads supported mixed attachments sequentially and reports partial failures after creation", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      const addToast = vi.fn();
+      const photo = new File(["photo"], "photo.png", { type: "image/png" });
+      const note = new File(["note"], "note.txt", { type: "text/plain" });
+      vi.mocked(uploadAttachment)
+        .mockResolvedValueOnce({} as any)
+        .mockRejectedValueOnce(new Error("upload failed"));
+      renderQuickEntryBox({ onCreate, addToast });
+      const textarea = screen.getByTestId("quick-entry-input");
+      const fileInput = screen.getByTestId("quick-entry-file-input");
+
+      fireEvent.change(fileInput, { target: { files: [photo, note] } });
+      fireEvent.change(textarea, { target: { value: "Create with mixed attachments" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(2));
+      expect(uploadAttachment.mock.calls.map((call) => call[1])).toEqual([photo, note]);
+      expect(addToast).toHaveBeenCalledWith("Failed to upload: note.txt", "error");
     });
 
     it("uploads images added by dropping files after task creation", async () => {
@@ -5427,6 +5468,140 @@ describe("QuickEntryBox", () => {
 
       resolveCreate();
       await waitFor(() => expect(input).not.toBeDisabled());
+    });
+  });
+
+  describe("Quick Add Start menu", () => {
+    const ideasWorkflow = {
+      id: "builtin:coding-ideas",
+      name: "Coding (Ideas)",
+      columns: [
+        { id: "ideas", name: "Ideas", flags: { hold: true } },
+        { id: "todo", name: "Todo", flags: {} },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    const enterDescription = () => fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Start this task" } });
+    const openStartByContextMenu = () => fireEvent.contextMenu(screen.getByTestId("quick-entry-save"));
+
+    it("creates Coding Ideas Start in Todo from mouse right-click without a follow-up move", async () => {
+      mockDesktopViewport();
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-start", column: "ideas", workflowId: ideasWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      enterDescription();
+
+      openStartByContextMenu();
+      await screen.findByTestId("quick-entry-save-start");
+      fireEvent.click(screen.getByRole("menuitem", { name: "Start" }));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ description: "Start this task", workflowId: ideasWorkflow.id, column: "todo" })));
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it("opens Start after touch and pen long-press, suppresses the compatibility click, and cancels moved/up/cancelled pointers", async () => {
+      mockMobileViewport();
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-touch", column: "ideas", workflowId: ideasWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      const touchRender = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      enterDescription();
+      const save = screen.getByTestId("quick-entry-save");
+
+      fireEvent.pointerDown(save, { pointerType: "touch", pointerId: 1, clientX: 20, clientY: 20 });
+      await act(async () => { vi.advanceTimersByTime(550); });
+      expect(screen.getByTestId("quick-entry-save-start")).toBeInTheDocument();
+      fireEvent.click(save);
+      expect(onCreate).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Start" }));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" })));
+      expect(onMoveTask).not.toHaveBeenCalled();
+      await waitFor(() => expect(save).not.toBeDisabled());
+      touchRender.unmount();
+
+      const penOnCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-pen", column: "todo", workflowId: ideasWorkflow.id });
+      const penOnMoveTask = vi.fn();
+      const { unmount } = renderQuickEntryBox({ onCreate: penOnCreate, onMoveTask: penOnMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Pen task" } });
+      const penSave = screen.getAllByTestId("quick-entry-save").at(-1)!;
+      fireEvent.pointerDown(penSave, { pointerType: "pen", pointerId: 2, clientX: 20, clientY: 20 });
+      await act(async () => { vi.advanceTimersByTime(550); });
+      expect(screen.getByTestId("quick-entry-save-start")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Start" }));
+      await waitFor(() => expect(penOnCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" })));
+      expect(penOnMoveTask).not.toHaveBeenCalled();
+      unmount();
+
+      const cancelled = renderQuickEntryBox({ onMoveTask: vi.fn(), workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Cancelled" } });
+      const cancelledSave = screen.getByTestId("quick-entry-save");
+      fireEvent.pointerDown(cancelledSave, { pointerType: "touch", pointerId: 3, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(cancelledSave, { pointerType: "touch", pointerId: 3, clientX: 31, clientY: 20 });
+      await act(async () => { vi.advanceTimersByTime(550); });
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
+      fireEvent.pointerDown(cancelledSave, { pointerType: "touch", pointerId: 4, clientX: 20, clientY: 20 });
+      fireEvent.pointerUp(cancelledSave, { pointerType: "touch", pointerId: 4 });
+      fireEvent.pointerCancel(cancelledSave, { pointerType: "touch", pointerId: 4 });
+      await act(async () => { vi.advanceTimersByTime(550); });
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
+      cancelled.unmount();
+    });
+
+    it("preserves the submitted Start workflow snapshot through duplicate confirmation", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-duplicate", column: "ideas", workflowId: ideasWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([{ id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 }]);
+      const { rerender } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      enterDescription();
+      openStartByContextMenu();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Start" }));
+      expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
+
+      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} projectId={TEST_PROJECT_ID} tasks={mockTasks} availableModels={MOCK_MODELS} workflowId={ideasWorkflow.id} workflowOptions={[{ ...ideasWorkflow, name: "Refreshed", columns: [{ id: "ideas", name: "Ideas", flags: { hold: true } }, { id: "refreshed-target", name: "Refreshed target", flags: {} }] }]} />);
+      fireEvent.click(screen.getByRole("button", { name: "Create anyway" }));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" })));
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it("has no Start shell for unrelated or malformed workflow metadata and keeps Save create-only", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-plain", column: "ideas", workflowId: "custom" });
+      const onMoveTask = vi.fn();
+      const { rerender } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: "custom", workflowOptions: [{ ...ideasWorkflow, id: "custom", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true } }, ...ideasWorkflow.columns.slice(1)] }] });
+      enterDescription();
+      expect(screen.getByTestId("quick-entry-save")).not.toHaveAttribute("aria-haspopup");
+      openStartByContextMenu();
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
+      clickSave();
+      await waitFor(() => expect(onCreate).toHaveBeenCalled());
+      expect(onMoveTask).not.toHaveBeenCalled();
+
+      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} workflowId="builtin:coding-ideas" workflowOptions={[{ ...ideasWorkflow, columns: [] }]} />);
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Malformed" } });
+      expect(screen.getByTestId("quick-entry-save")).not.toHaveAttribute("aria-haspopup");
+    });
+
+    it("treats void and invalid create results as create-only paths without a move", async () => {
+      const cases = [
+        undefined,
+        { ...CREATED_TASK, id: "", column: "ideas", workflowId: ideasWorkflow.id },
+        { ...CREATED_TASK, id: "FN-no-column", column: "", workflowId: ideasWorkflow.id },
+        { ...CREATED_TASK, id: "FN-wrong", column: "ideas", workflowId: "other" },
+        { ...CREATED_TASK, id: "FN-last", column: "done", workflowId: ideasWorkflow.id },
+      ];
+      for (const created of cases) {
+        const onCreate = vi.fn().mockResolvedValue(created);
+        const onMoveTask = vi.fn().mockResolvedValue({});
+        const { unmount } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+        enterDescription();
+        openStartByContextMenu();
+        await screen.findByTestId("quick-entry-save-start");
+      fireEvent.click(screen.getByRole("menuitem", { name: "Start" }));
+        await waitFor(() => expect(onCreate).toHaveBeenCalled());
+        expect(onMoveTask).not.toHaveBeenCalled();
+        unmount();
+      }
+
     });
   });
 

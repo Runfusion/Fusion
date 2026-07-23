@@ -49,6 +49,29 @@ describe("PluginLoader process single-load lifecycle", () => {
     delete (globalThis as Record<string, unknown>).__fusionPluginOnUnloadCount;
   });
 
+  it("skips malformed MCP contribution containers without blocking healthy plugins", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-plugin-mcp-container-"));
+    roots.push(root);
+    const malformedEntry = join(root, "malformed.mjs");
+    const healthyEntry = join(root, "healthy.mjs");
+    await writeFile(malformedEntry, `export default { manifest: { id: "malformed", name: "Malformed", version: "1.0.0", description: "fixture" }, state: "installed", hooks: {}, mcpServers: {} };`);
+    await writeFile(healthyEntry, `export default { manifest: { id: "healthy", name: "Healthy", version: "1.0.0", description: "fixture" }, state: "installed", hooks: {}, mcpServers: [{ name: "navigator", transport: "stdio", command: "navigator" }] };`);
+    const malformed = createStore(root, malformedEntry);
+    const installations = new Map([
+      ["malformed", { ...(await malformed.pluginStore.getPlugin("single-load")), id: "malformed", name: "Malformed", path: malformedEntry }],
+      ["healthy", { ...(await malformed.pluginStore.getPlugin("single-load")), id: "healthy", name: "Healthy", path: healthyEntry }],
+    ]);
+    malformed.pluginStore.getPlugin = vi.fn(async (id: string) => installations.get(id)!);
+    malformed.pluginStore.listPlugins = vi.fn(async () => [...installations.values()]);
+    const loader = new PluginLoader({ pluginStore: malformed.pluginStore as any, taskStore: malformed.taskStore as any });
+
+    await loader.loadAllPlugins();
+
+    expect(loader.getPluginMcpServers()).toEqual([
+      { pluginId: "healthy", server: { name: "navigator", transport: "stdio", command: "navigator" } },
+    ]);
+  });
+
   it("coalesces concurrent host and engine-style loaders for one project", async () => {
     const fixture = await createFixture("async () => { globalThis.__fusionPluginOnLoadCount = (globalThis.__fusionPluginOnLoadCount || 0) + 1; await new Promise(resolve => setTimeout(resolve, 20)); }");
     roots.push(fixture.root);

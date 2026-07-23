@@ -10,8 +10,10 @@ export interface PluginsSectionProps {
     addToast: (message: string, type?: ToastType) => void;
     activePluginsSubsection: PluginsSubsectionId;
     setActivePluginsSubsection: (id: PluginsSubsectionId) => void;
+    /** Invalidates Settings-owned runtime navigation after a direct mutation. */
+    onPluginsChanged?: () => void;
 }
-export function PluginsSection({ projectId, addToast, activePluginsSubsection, setActivePluginsSubsection, }: PluginsSectionProps) {
+export function PluginsSection({ projectId, addToast, activePluginsSubsection, setActivePluginsSubsection, onPluginsChanged, }: PluginsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.plugins.plugins", "Plugins")}</h4>
@@ -22,7 +24,7 @@ export function PluginsSection({ projectId, addToast, activePluginsSubsection, s
       <div id="plugins-panel-fusion-plugins" role="tabpanel" aria-labelledby="plugins-tab-fusion-plugins" className="settings-plugins-subsection-panel" hidden={activePluginsSubsection !== "fusion-plugins"}>
         {activePluginsSubsection === "fusion-plugins" && (<>
             <Suspense fallback={null}>
-              <PluginManager addToast={addToast} projectId={projectId}/>
+              <PluginManager addToast={addToast} projectId={projectId} onPluginsChanged={onPluginsChanged}/>
             </Suspense>
             <PluginSlot slotId="settings-section" projectId={projectId}/>
           </>)}

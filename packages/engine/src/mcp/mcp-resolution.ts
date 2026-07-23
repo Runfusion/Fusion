@@ -6,6 +6,7 @@ import {
   type McpSecretReaderIdentity,
   type McpSecretResolutionError,
   type ProjectSettings,
+  type PluginMcpServerContribution,
   type ResolvedMcpServerDefinition,
 } from "@fusion/core";
 
@@ -14,6 +15,8 @@ export interface ResolveMcpServersForRuntimeOptions {
   projectSettings?: Pick<ProjectSettings, "mcpServers"> | null;
   secrets: McpSecretReader;
   reader?: McpSecretReaderIdentity;
+  /** Already project-scoped plugin entries. Raw runner/loader output is forbidden here. */
+  pluginServers?: Array<{ pluginId: string; server: PluginMcpServerContribution }>;
 }
 
 export interface ResolvedMcpServersForRuntime {
@@ -23,12 +26,16 @@ export interface ResolvedMcpServersForRuntime {
 
 /**
  * FNXC:McpConfig 2026-06-25-21:43:
+ * FNXC:PluginMcpServers 2026-07-22-12:00:
+ * FN-8491 accepts only entries that the shared project-scoped provider already
+ * filtered by project_plugin_states; raw loader/runner output must never cross this seam.
+ *
  * Runtime MCP forwarding uses Fusion's trusted-once-enabled model: enabled effective servers are materialized once at session/probe creation and then forwarded without per-call prompts. Plaintext env/header values exist only in this in-memory return value and callers must log only counts/errors, never server contents.
  */
 export async function resolveMcpServersForRuntime(
   options: ResolveMcpServersForRuntimeOptions,
 ): Promise<ResolvedMcpServersForRuntime> {
-  const effective = resolveEffectiveMcpServers(options.globalSettings, options.projectSettings);
+  const effective = resolveEffectiveMcpServers(options.globalSettings, options.projectSettings, options.pluginServers);
   if (effective.length === 0) return { servers: [], errors: [] };
 
   const materialized = await materializeMcpServersSecrets(
@@ -52,6 +59,8 @@ export interface McpSettingsAndSecretsStore {
     project: Partial<Pick<ProjectSettings, "mcpServers">>;
   }>;
   getSecretsStore?(): Promise<McpSecretReader> | McpSecretReader;
+  /** Shared provider hook; implementations must filter project_plugin_states. */
+  getProjectScopedPluginMcpServers?(): Promise<Array<{ pluginId: string; server: PluginMcpServerContribution }>> | Array<{ pluginId: string; server: PluginMcpServerContribution }>;
 }
 
 const emptyMcpSecretReader: McpSecretReader = {
@@ -72,14 +81,16 @@ export async function resolveMcpServersForStore(
     return { servers: [], errors: [] };
   }
 
-  const [settings, secrets] = await Promise.all([
+  const [settings, secrets, pluginServers] = await Promise.all([
     store.getSettingsByScope(),
     typeof store.getSecretsStore === "function" ? store.getSecretsStore() : emptyMcpSecretReader,
+    typeof store.getProjectScopedPluginMcpServers === "function" ? store.getProjectScopedPluginMcpServers() : [],
   ]);
   return resolveMcpServersForRuntime({
     globalSettings: settings.global,
     projectSettings: settings.project,
     secrets,
     reader,
+    pluginServers,
   });
 }

@@ -37,6 +37,8 @@ import {
   formatMigrationProgress,
   migrateLegacyProjectPluginRows,
   migrateSqliteToPostgres,
+  projectPluginSqliteMigrationKey,
+  recordSqliteMigrationComplete,
   toSnakeCase,
   type MigrationProgressEvent,
 } from "../../postgres/sqlite-migrator.js";
@@ -1296,6 +1298,19 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       WHERE install.id = 'shared-plugin' AND state.project_path = ${projectA}
     `)) as unknown as Array<{ name: string; enabled: number }>;
     expect(preserved).toEqual([{ name: "Shared from B", enabled: 1 }]);
+  });
+
+  it("does not probe a retained plugin SQLite path after its marker completes", async () => {
+    await applySchemaBaseline(ctx!.db);
+    const projectPath = join(ctx!.fusionDir, "project-complete");
+    await recordSqliteMigrationComplete(
+      ctx!.db,
+      projectPluginSqliteMigrationKey(projectPath),
+    );
+
+    // A directory is not a SQLite database and would throw if the bridge opened it.
+    await expect(migrateLegacyProjectPluginRows(ctx!.db, ctx!.fusionDir, projectPath))
+      .resolves.toBeUndefined();
   });
 
   it("treats missing SQLite files and databases without plugins as a no-op", async () => {

@@ -155,11 +155,13 @@ export {
 } from "./config/worktrunk-settings.js";
 export {
   resolveEffectiveMcpServers,
+  mapPluginMcpServerContribution,
   materializeMcpServerSecrets,
   materializeMcpServersSecrets,
   importMcpServersJson,
   exportMcpServersJson,
 } from "./config/mcp-config.js";
+export { createProjectScopedPluginMcpProvider } from "./plugin-mcp-servers.js";
 export type {
   McpSecretReaderIdentity,
   McpSecretReader,
@@ -1379,6 +1381,7 @@ export type {
   CreateInteractiveAiSessionFactory,
   PluginLogger,
   PluginSkillContribution,
+  PluginMcpServerContribution,
   PluginWorkflowStepContribution,
   PluginTraitContribution,
   PluginTraitHookDescriptor,
@@ -1727,7 +1730,8 @@ export type {
 } from "./missions/mission-types.js";
 export { MissionStore } from "./missions/mission-store.js";
 export type { MissionStoreEvents, MissionSummary } from "./missions/mission-store.js";
-export { AsyncMissionStore } from "./async-stores/async-mission-store.js";
+export { AsyncMissionStore, TerminalTaskReconciliationError } from "./async-stores/async-mission-store.js";
+export type { TerminalTaskReconciliationErrorCode } from "./async-stores/async-mission-store.js";
 export { AsyncIdeationStore } from "./async-stores/async-ideation-store.js";
 export { IDEATION_SESSION_STATUSES, IDEATION_CANDIDATE_ORIGINS } from "./ideation/ideation-types.js";
 export type { IdeationSessionStatus, IdeationCandidateOrigin, IdeationSession, IdeationCandidate, IdeationSessionCreateInput, IdeationCandidateCreateInput, IdeationCandidateUpdateInput, IdeationConvergeInput, IdeationSessionWithCandidates } from "./ideation/ideation-types.js";

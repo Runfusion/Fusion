@@ -36,8 +36,14 @@ describe("settings defaults invariants", () => {
     expect(isGlobalOnlySettingsKey("localNetworkDiscoveryEnabled")).toBe(true);
   });
 
-  it("keeps the embedded PostgreSQL connection cap global and high by default", () => {
-    expect(DEFAULT_GLOBAL_SETTINGS.embeddedPostgresMaxConnections).toBe(500);
+  it("keeps the embedded PostgreSQL connection cap global and schema-unset so the server resolves a platform-aware default", () => {
+    /*
+    FNXC:PostgresEmbedded 2026-07-22-23:55:
+    Issue #2411: the schema default must stay undefined. getSettings() merges
+    DEFAULT_GLOBAL_SETTINGS, so a concrete value here would look operator-set and
+    defeat resolveEmbeddedMaxConnections' win32-lowered default (150 vs 500).
+    */
+    expect(DEFAULT_GLOBAL_SETTINGS.embeddedPostgresMaxConnections).toBeUndefined();
     expect(GLOBAL_SETTINGS_KEYS).toContain("embeddedPostgresMaxConnections");
     expect(PROJECT_SETTINGS_KEYS).not.toContain("embeddedPostgresMaxConnections");
   });

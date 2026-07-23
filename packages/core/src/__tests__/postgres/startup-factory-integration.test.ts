@@ -15,7 +15,7 @@
 import { afterEach, describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createTaskStoreForBackend } from "../../postgres/startup-factory.js";
 import { getSqliteMigrationState } from "../../postgres/sqlite-migrator.js";
@@ -195,7 +195,7 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
 
     const admin = postgres(testUrl, { max: 1 });
     try {
-      await admin`CREATE TABLE public.fusion_sqlite_migrations (
+      await admin`CREATE TABLE IF NOT EXISTS public.fusion_sqlite_migrations (
         migration_key text PRIMARY KEY,
         project_id text,
         status text NOT NULL CHECK (status IN ('running', 'complete', 'failed')),
@@ -285,7 +285,7 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
 
     const admin = postgres(testUrl, { max: 1 });
     try {
-      await admin`CREATE TABLE public.fusion_sqlite_migrations (
+      await admin`CREATE TABLE IF NOT EXISTS public.fusion_sqlite_migrations (
         migration_key text PRIMARY KEY,
         project_id text,
         status text NOT NULL CHECK (status IN ('running', 'complete', 'failed')),
@@ -325,6 +325,111 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       }
     } finally {
       await second.shutdown();
+    }
+  });
+
+  it("does not reopen a completed central backup while a fallback project migration remains pending", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-completed-central-"));
+    const globalDir = await mkdtemp(join(tmpdir(), "startup-factory-completed-central-global-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+
+    const first = await createTaskStoreForBackend({
+      rootDir,
+      globalSettingsDir: globalDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    const fallbackProjectId = first.taskStore.getAsyncLayer()!.projectId!;
+    await first.shutdown();
+    seedLegacyTask(rootDir, "FN-CENTRAL-MARKER-1", "Central marker boundary");
+    seedLegacyRegistry(globalDir, [{ id: "must-not-resolve-from-sqlite", path: rootDir }]);
+
+    const admin = postgres(testUrl, { max: 1 });
+    try {
+      await admin`
+        INSERT INTO public.fusion_sqlite_migrations
+          (migration_key, project_id, status, last_error, updated_at)
+        VALUES ('central:legacy-sqlite', NULL, 'complete', NULL, now())
+      `;
+    } finally {
+      await admin.end();
+    }
+
+    const result = await createTaskStoreForBackend({
+      rootDir,
+      globalSettingsDir: globalDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    try {
+      expect(await getSqliteMigrationState(
+        result.taskStore.getAsyncLayer()!.db,
+        `project:${fallbackProjectId}`,
+      )).toMatchObject({ status: "complete" });
+      expect(await getSqliteMigrationState(
+        result.taskStore.getAsyncLayer()!.db,
+        "project:must-not-resolve-from-sqlite",
+      )).toBeNull();
+    } finally {
+      await result.shutdown();
+    }
+  });
+
+  it("keeps completed core, central, and plugin SQLite backups inert across repeated boots", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-completed-backups-"));
+    const globalDir = await mkdtemp(join(tmpdir(), "startup-factory-completed-global-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    const projectId = "completed-project";
+    const first = await createTaskStoreForBackend({
+      rootDir,
+      projectId,
+      globalSettingsDir: globalDir,
+      env: { DATABASE_URL: testUrl },
+      poolMax: 1,
+    });
+    await first.shutdown();
+    seedLegacyTask(rootDir, "legacy-must-stay-inert", "inert backup task");
+    seedLegacyPlugin(rootDir);
+    seedLegacyRegistry(globalDir, [{ id: projectId, path: rootDir }]);
+
+    const admin = postgres(testUrl, { max: 1 });
+    try {
+      await admin`
+        INSERT INTO public.fusion_sqlite_migrations
+          (migration_key, project_id, status, last_error, updated_at)
+        VALUES
+          (${`project:${projectId}`}, ${projectId}, 'complete', NULL, now()),
+          ('central:legacy-sqlite', NULL, 'complete', NULL, now()),
+          (${`project-plugins:${resolve(rootDir)}`}, NULL, 'complete', NULL, now())
+        ON CONFLICT (migration_key) DO UPDATE SET status = 'complete', last_error = NULL
+      `;
+    } finally {
+      await admin.end();
+    }
+
+    for (let boot = 0; boot < 2; boot += 1) {
+      const result = await createTaskStoreForBackend({
+        rootDir,
+        projectId,
+        globalSettingsDir: globalDir,
+        env: { DATABASE_URL: testUrl },
+        poolMax: 1,
+      });
+      try {
+        expect(await result.taskStore.listTasks()).not.toContainEqual(
+          expect.objectContaining({ id: "legacy-must-stay-inert" }),
+        );
+        const installs = await result.taskStore.getAsyncLayer()!.db.execute(sql`
+          SELECT id FROM central.plugin_installs WHERE id = 'legacy-startup-plugin'
+        `);
+        expect(installs).toEqual([]);
+      } finally {
+        await result.shutdown();
+      }
     }
   });
 

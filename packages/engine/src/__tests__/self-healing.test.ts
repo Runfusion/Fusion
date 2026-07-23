@@ -6320,7 +6320,10 @@ describe("SelfHealingManager", () => {
       await managerWithRecovery.recoverAlreadyMergedReviewTasks();
       await vi.advanceTimersByTimeAsync(60);
 
-      expect(sendNotification).toHaveBeenCalledWith("failed", expect.objectContaining({ taskId: "FN-1" }));
+      expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
+        taskId: "FN-1",
+        metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
+      }));
 
       await notificationService.stop();
       managerWithRecovery.stop();
@@ -11252,6 +11255,10 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
   it("emits reclaim-pr-conflict no-action when triple proof fails", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({ autoMerge: true, globalPause: false, enginePaused: false, taskStuckTimeoutMs: 1_000 } as any),
+      // FNXC:TaskWedgeNotifications 2026-07-22-19:15: The recovery path inventories
+      // active worktrees before triple-proof; keep this fixture deterministic so it
+      // exercises the intended ownerless no-action seam.
+      listTasks: vi.fn().mockResolvedValue([]),
       getTask: vi.fn().mockResolvedValue({ id: "FN-PR", column: "in-review", paused: false, status: null, worktree: "/tmp/wt-pr", branch: "fusion/fn-pr", prInfo: { number: 1, mergeable: "conflicting" }, updatedAt: new Date(Date.now() - 10_000).toISOString() }),
     });
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });

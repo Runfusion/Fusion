@@ -35,6 +35,7 @@ import type {
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
+  SEAM_SKILL_NAME_CONTEXT_KEY,
   SEAM_THINKING_LEVEL_CONTEXT_KEY,
   SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
@@ -4988,6 +4989,9 @@ export class TaskExecutor {
       info.feedback,
       info.stepName,
       `Pre-merge optional workflow step "${info.stepName}" requested revision`,
+      true,
+      false,
+      { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
     );
     return true;
   }
@@ -5086,9 +5090,9 @@ export class TaskExecutor {
    *
    * Picks the latest failed pre-merge workflow step result (there is usually only
    * one, but if several ran we want the most recent), injects its feedback into
-   * `PROMPT.md`, resets steps, and schedules todo → in-progress. The call site
-   * is responsible for enforcing the `maxPostReviewFixes` budget before invoking
-   * this method — this method itself does no accounting.
+   * `PROMPT.md`, resets steps, and schedules todo → in-progress. The caller may
+   * account for a scheduled retry, but this method independently enforces the
+   * effective finite-or-unlimited revision budget before it can reopen work.
    *
    * @returns true when the task was sent back, false when no eligible failed
    *          step exists (caller should skip).
@@ -5122,6 +5126,18 @@ export class TaskExecutor {
 
       const feedback = target.output?.trim() || "(no feedback captured)";
       const stepName = target.workflowStepName || target.workflowStepId || "Unknown";
+      const budget = await this.resolveFailedPreMergeWorkflowStepBudget(task, target);
+      /*
+       * FNXC:WorkflowRevisionBudget 2026-07-22-18:30:
+       * Failed-step recovery is also a remediation entry point, not merely a
+       * retry-label formatter. Enforce the same finite Code Review budget here
+       * as live and restart-local graph remediation: an unset policy remains
+       * unlimited, while zero or an exhausted explicit cap cannot silently send
+       * work back for another fix. Progress-loop termination stays owned by the
+       * graph executor's signature guard rather than this budget check.
+       */
+      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+      if (!budget.unbounded && budget.attempts >= budget.max) return false;
 
       await this.sendTaskBackForFix(
         task,
@@ -5129,6 +5145,9 @@ export class TaskExecutor {
         feedback,
         stepName,
         `Auto-revived from in-review: pre-merge workflow step "${stepName}" had failed`,
+        true,
+        false,
+        { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
       );
       return true;
     } catch (err: unknown) {
@@ -5545,6 +5564,15 @@ export class TaskExecutor {
    * Execute and step-execute seam nodes can pin reasoning effort for the implementation session; keep it per graph run so session creation applies node/step > task > settings precedence.
    */
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
+
+  /**
+   * FNXC:WorkflowStepSkills 2026-07-22-00:00:
+   * FN-8490 pins the canonical `config.executor: "skill"` + trimmed
+   * `config.skillName` request only for the pass-initiating foreach instance.
+   * The implementation pass is shared across instances, so this template-constant
+   * value must settle with the same lifecycle as governing-node and thinking pins.
+   */
+  private graphSeamSkillName = new Map<string, string>();
 
   /** Tasks currently being orchestrated by the graph runner. Process-wide for
    *  the same reason as executingTaskLock (FN-4811): duplicate execute()
@@ -5994,6 +6022,7 @@ export class TaskExecutor {
       this.graphUnattendedRuns.delete(task.id);
       this.graphSeamGoverningNodeId.delete(task.id);
       this.graphSeamThinkingLevel.delete(task.id);
+      this.graphSeamSkillName.delete(task.id);
       this.graphExecuteSelfRequeued.delete(task.id);
       // Per-instance keys: clear every instance slot owned by this task.
       const ctxPrefix = `${task.id}:`;
@@ -6792,6 +6821,7 @@ export class TaskExecutor {
     instanceId?: string,
     governingNodeId?: string,
     thinkingLevel?: ThinkingLevel,
+    skillName?: string,
   ): Promise<{ success: boolean; error?: string }> {
     const active = this.foreachActiveForTask(task.id, instanceId);
     /*
@@ -6826,6 +6856,9 @@ export class TaskExecutor {
       if (thinkingLevel) {
         this.graphSeamThinkingLevel.set(task.id, thinkingLevel);
       }
+      if (skillName) {
+        this.graphSeamSkillName.set(task.id, skillName);
+      }
       phase = this.runImplementationPhase(task);
       this.graphStepRunOnce.set(task.id, phase);
       void phase
@@ -6837,6 +6870,9 @@ export class TaskExecutor {
           }
           if (thinkingLevel && this.graphSeamThinkingLevel.get(task.id) === thinkingLevel) {
             this.graphSeamThinkingLevel.delete(task.id);
+          }
+          if (skillName && this.graphSeamSkillName.get(task.id) === skillName) {
+            this.graphSeamSkillName.delete(task.id);
           }
         });
     }
@@ -6935,6 +6971,7 @@ export class TaskExecutor {
     active: ForeachActiveContext,
     governingNodeId?: string,
     thinkingLevel?: ThinkingLevel,
+    skillName?: string,
   ): Promise<RunTaskStepResult> {
     const worktreePath = active.worktreePath || live.worktree;
     const runStep = (idx: number) =>
@@ -6944,6 +6981,7 @@ export class TaskExecutor {
         active.instanceId,
         governingNodeId,
         thinkingLevel,
+        skillName,
       );
 
     /*
@@ -7078,12 +7116,15 @@ export class TaskExecutor {
         }
         this.graphStepActiveContext.set(this.graphActiveContextKey(task.id, active.instanceId), active);
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
+        const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
         return await this.runProjectedGraphTaskStep(
           task,
           live,
           stepIndex,
           active,
           typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
+          undefined,
+          typeof seamSkillName === "string" && seamSkillName.trim() ? seamSkillName.trim() : undefined,
         );
       },
       resetTaskStep: async (ctx, task, stepIndex, baselineSha, checkpointId) => {
@@ -7680,6 +7721,7 @@ export class TaskExecutor {
         // foreach (overwrite mid-build, or clear while the shared pass is live).
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
         const seamThinkingLevel = context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
+        const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
         const result = await this.runProjectedGraphTaskStep(
           seamTask,
           live,
@@ -7689,6 +7731,7 @@ export class TaskExecutor {
           typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)
             ? (seamThinkingLevel as ThinkingLevel)
             : undefined,
+          typeof seamSkillName === "string" && seamSkillName.trim() ? seamSkillName.trim() : undefined,
         );
         // Capture baseline/checkpoint back into the reserved active context so the
         // foreach sub-walk threads them to later template nodes (step-review/reset).
@@ -11619,6 +11662,39 @@ export class TaskExecutor {
         projectRootDir: this.rootDir,
         pluginRunner: this.options.pluginRunner,
       });
+      const graphSeamSkillName = this.graphSeamSkillName.get(task.id);
+      const ceSkillsDir = typeof taskEnv?.FUSION_CE_SKILLS_DIR === "string" && taskEnv.FUSION_CE_SKILLS_DIR.trim()
+        ? taskEnv.FUSION_CE_SKILLS_DIR.trim()
+        : typeof process.env.FUSION_CE_SKILLS_DIR === "string" && process.env.FUSION_CE_SKILLS_DIR.trim()
+          ? process.env.FUSION_CE_SKILLS_DIR.trim()
+          : undefined;
+      let stepSessionSkillSelection = skillContext.skillSelectionContext;
+      if (graphSeamSkillName) {
+        const bare = graphSeamSkillName.includes(":")
+          ? graphSeamSkillName.slice(graphSeamSkillName.lastIndexOf(":") + 1)
+          : graphSeamSkillName;
+        const existing = stepSessionSkillSelection?.requestedSkillNames ?? [];
+        stepSessionSkillSelection = {
+          projectRootDir: stepSessionSkillSelection?.projectRootDir ?? this.rootDir,
+          ...(stepSessionSkillSelection?.sessionPurpose
+            ? { sessionPurpose: stepSessionSkillSelection.sessionPurpose }
+            : { sessionPurpose: "executor" }),
+          requestedSkillNames: [...new Set([...existing, graphSeamSkillName, bare])],
+        };
+      }
+      const stepSessionAdditionalSkillPaths = mergeAdditionalSkillPaths(
+        skillContext.additionalSkillPaths,
+        graphSeamSkillName && ceSkillsDir ? [ceSkillsDir] : undefined,
+      );
+      if (
+        graphSeamSkillName
+        && !isWorkflowStepSkillDiscoverable(graphSeamSkillName, stepSessionAdditionalSkillPaths, ceSkillsDir)
+      ) {
+        await this.store.logEntry(
+          task.id,
+          `[skill-load] Foreach step-execute requests skill '${graphSeamSkillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
+        );
+      }
 
       // Graph-owned stepwise runs force step-session physics for the run (KTD-2/
       // KTD-8): the discrete per-step boundary the foreach driver needs exists only
@@ -11678,8 +11754,8 @@ export class TaskExecutor {
           mcpServers: await this.resolveMcpServers(stepIdentityAgent?.id),
           workflowStepThinkingLevel: this.graphSeamThinkingLevel.get(task.id),
           // FNXC:PluginSkills 2026-07-12-00:00: Step sessions must forward plugin skill body dirs alongside requested names; otherwise plugin-provided SKILL.md bodies are invisible to the inner createFnAgent loader.
-          skillSelection: skillContext.skillSelectionContext,
-          additionalSkillPaths: skillContext.additionalSkillPaths,
+          skillSelection: stepSessionSkillSelection,
+          additionalSkillPaths: stepSessionAdditionalSkillPaths,
           // Pass agentStore and messageStore for delegation and messaging tools
           agentStore: this.options.agentStore,
           messageStore: this.options.messageStore,
@@ -16026,6 +16102,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     reason: string,
     preserveResumeState: boolean = true,
     mergeVerificationFailure: boolean = false,
+    retryPresentation?: { attempt: number; max?: number },
   ): Promise<void> {
     const taskId = task.id;
     this.clearCompletedTaskWatchdog(taskId);
@@ -16045,9 +16122,20 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       `${reason} — moved back to in-progress for remediation`,
     );
 
-    // 3. Inject failure feedback into PROMPT.md using the existing method
-    // Pass MAX_WORKFLOW_STEP_RETRIES to indicate retries are exhausted (shows "3/3 (0 remaining)")
-    await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, MAX_WORKFLOW_STEP_RETRIES);
+    /*
+     * FNXC:CodeReviewRetryBudget 2026-07-22-00:00:
+     * A graph-owned Code Review REVISE is not a workflow-step hard-failure retry.
+     * Preserve its resolved per-step budget in PROMPT.md: unset Code Review policy
+     * is unlimited, while an explicit finite value (including zero at the gate)
+     * remains operator-visible. The execute requeue progress-signature guard, not
+     * this display, remains the safety boundary for unchanged remediation loops.
+     */
+    await this.injectWorkflowStepFailureInstructions(
+      task,
+      failureFeedback,
+      stepName,
+      retryPresentation ?? { attempt: MAX_WORKFLOW_STEP_RETRIES, max: MAX_WORKFLOW_STEP_RETRIES },
+    );
 
     // 4. Re-open only the last step for a single in-place fix pass. Earlier
     // done steps stay done so the executor doesn't redo finished work.
@@ -16087,7 +16175,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     task: Task,
     failureFeedback: string,
     stepName: string,
-    retryCount: number,
+    retry: { attempt: number; max?: number },
   ): Promise<void> {
     const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
 
@@ -16100,7 +16188,8 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       return;
     }
 
-    const remainingRetries = MAX_WORKFLOW_STEP_RETRIES - retryCount;
+    const retryLabel = retry.max === undefined ? "unbounded" : String(retry.max);
+    const remainingRetries = retry.max === undefined ? "unlimited" : String(Math.max(0, retry.max - retry.attempt));
     const failureSectionHeader = "## Workflow Step Failure";
     const scopeGuard = this.buildWorkflowFailureScopeGuard(task, content);
     const failureSectionContent = `${failureSectionHeader}
@@ -16114,7 +16203,7 @@ ${failureFeedback}
 
 ${scopeGuard}
 
-**Retry:** ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (${remainingRetries} remaining)
+**Retry:** ${retry.attempt}/${retryLabel} (${remainingRetries} remaining)
 
 **Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task has been sent back to in-progress for remediation. The executor will attempt to fix the issues on the next pass.
 
@@ -16157,7 +16246,7 @@ ${scopeGuard}
     // Write updated content
     try {
       await writeFile(promptPath, newContent);
-      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
+      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retry.attempt}/${retryLabel})`);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       executorLog.error(`${task.id}: failed to inject workflow step failure instructions: ${errorMessage}`);

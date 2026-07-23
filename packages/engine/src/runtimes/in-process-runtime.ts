@@ -395,6 +395,7 @@ export class InProcessRuntime
         // InProcessRuntime.start(). When the factory returns a backend result,
         // the engine owns the result's shutdown() for process teardown.
         createTaskStoreForBackend,
+        createProjectScopedPluginMcpProvider,
       } = await import("@fusion/core");
       if (this.config.externalTaskStore) {
         this.taskStore = this.config.externalTaskStore;
@@ -477,6 +478,28 @@ export class InProcessRuntime
         rootDir: this.config.workingDirectory,
       });
       await this.pluginRunner.init();
+      /*
+       * FNXC:PluginMcpServers 2026-07-22-12:00:
+       * FN-8491 installs the sole session-facing provider on the project store.
+       * resolveMcpServersForStore consumes this filtered seam across every AI
+       * lane; it never sees PluginRunner's raw contribution list.
+       */
+      const projectScopedPluginMcpProvider = createProjectScopedPluginMcpProvider({
+        hostRootDir: this.config.workingDirectory,
+        hostLoader: this.pluginLoader,
+        createScopedLoader: (scopedStore) => new PluginLoaderClass({
+          pluginStore: scopedStore.getPluginStore() as PluginStore,
+          taskStore: scopedStore as TaskStore,
+        }),
+      });
+      (this.taskStore as TaskStore & { getProjectScopedPluginMcpServers?: () => Promise<ReturnType<PluginRunner["getPluginMcpServers"]>> }).getProjectScopedPluginMcpServers = () => projectScopedPluginMcpProvider.get(this.taskStore);
+      /*
+       * FNXC:PluginMcpServers 2026-07-22-15:35:
+       * FN-8491 / #2401 requires the runtime seam to use the core provider,
+       * not an ad-hoc enabled-ID filter. The provider owns same-root caching
+       * and non-persisting other-root discovery so all project contexts retain
+       * their own plugin enablement state.
+       */
       runtimeLog.log(`PluginRunner initialized`);
 
       await yieldEventLoop();

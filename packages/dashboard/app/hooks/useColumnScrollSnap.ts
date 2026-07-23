@@ -8,12 +8,25 @@ rubber-band/fling end often reverses for a frame — and (2) origin±nearest hyb
 Direction is locked at finger-up from net gesture delta only (never post-lift ticks). Target
 is always the next column in that scroll direction from the current viewport (classic
 directional page snap). Pin until next touch; hard-jump kills residual fling.
+
+FNXC:BoardNavigation 2026-07-22-15:10:
+A tap during post-lift momentum must cancel the pending directional settle and re-baseline
+the gesture at the current scrollLeft (pointerHeld true). Otherwise the original swipe's
+idle timer still hard-jumps the board away from where the user stopped.
+
+FNXC:BoardNavigation 2026-07-22-15:26:
+After any user touch sequence ends, the board must rest on exactly one column center — never
+between columns. Tap-to-stop and zero-pan lifts hard-jump to the nearest center (not the
+cancelled swipe's directional page). Directional paging still applies only when the settle
+gesture itself had pan intent.
 */
 /** After lift/cancel/wheel: wait for scroll idle (momentum finished) before paging. */
 const SCROLL_IDLE_SETTLE_MS = 48;
 const CENTER_TOLERANCE_PX = 1;
 /** Minimum finger travel to count as a horizontal pan (short swipe still commits). */
 const MIN_PAN_CLIENT_PX = 12;
+/** Keep a WebKit compositor write from outliving the main-thread hard jump. */
+const PIN_REASSERT_INTERVAL_MS = 16;
 
 export interface UseColumnScrollSnapOptions {
   /** Restrict magnetic snapping to phone-class viewports. */
@@ -35,13 +48,13 @@ function addMediaChangeListener(query: MediaQueryList, listener: () => void): ()
   return () => query.removeListener(listener);
 }
 
-function getClientX(event: Event): number | null {
+function getClientPoint(event: Event): { x: number; y: number } | null {
   if (typeof TouchEvent !== "undefined" && event instanceof TouchEvent) {
     const touch = event.touches[0] ?? event.changedTouches[0];
-    return touch ? touch.clientX : null;
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
   }
   if ("clientX" in event && typeof (event as PointerEvent).clientX === "number") {
-    return (event as PointerEvent).clientX;
+    return { x: (event as PointerEvent).clientX, y: (event as PointerEvent).clientY };
   }
   return null;
 }
@@ -99,56 +112,61 @@ export function isColumnCentered(
  * Resolve pan direction from the full gesture (net deltas only).
  * Do NOT pass last micro-tick direction for settle — rubber-band flips it.
  * +1 = scroll right / next columns, -1 = scroll left / previous.
+ *
+ * FNXC:BoardNavigation 2026-07-22-21:40:
+ * Finger travel counts as horizontal pan intent only when it dominates the vertical axis —
+ * a vertical card-list scroll with incidental diagonal drift must not page the board.
+ * The board's own horizontal scrollDelta stays authoritative regardless of finger axis.
  */
 export function resolvePanDirection(options: {
   scrollDelta: number;
   /** gestureStartClientX - endClientX: finger left → positive → next column */
   clientDelta: number;
+  /** gestureStartClientY - endClientY: vertical finger travel for axis dominance. */
+  clientDeltaY?: number;
 }): number {
-  const { scrollDelta, clientDelta } = options;
+  const { scrollDelta, clientDelta, clientDeltaY = 0 } = options;
   if (scrollDelta > CENTER_TOLERANCE_PX) return 1;
   if (scrollDelta < -CENTER_TOLERANCE_PX) return -1;
+  if (Math.abs(clientDelta) <= Math.abs(clientDeltaY)) return 0;
   if (clientDelta >= MIN_PAN_CLIENT_PX) return 1;
   if (clientDelta <= -MIN_PAN_CLIENT_PX) return -1;
   return 0;
 }
 
+/*
+FNXC:BoardNavigation 2026-07-22-21:05:
+The prior directional pager targeted "one past nearest" whenever the viewport center had
+crossed the nearest column's center, so a fling that decelerated with a column mostly on
+screen still got pushed a further column — a visible overshoot. Settle now uses the classic
+paging rule: land on the NEAREST (mostly-on-screen) column, but guarantee at least one
+column of progress from the gesture's ORIGIN column in the locked direction, so a short
+deliberate swipe still commits to the next column and the settle never moves against travel.
+*/
 /**
- * Pick the column to land on given locked scroll direction and current viewport.
- * Always in the scroll direction — never the opposite column.
+ * Pick the column to land on at settle time.
  *
- * Moving right (dir +1): if still approaching nearest from the left, land on nearest;
- * otherwise land on nearest+1 (the next column on the right).
- * Moving left (dir -1): mirror.
+ * Nearest column wins (it is the one mostly on screen as momentum ends), clamped so a
+ * directional gesture always advances at least one column from `originIndex` and never
+ * settles against the locked scroll direction.
  */
-export function resolveTargetIndexInScrollDirection(
+export function resolveSettleTargetIndex(
   scroller: HTMLElement,
   columns: HTMLElement[],
   direction: number,
+  originIndex: number,
 ): number {
   if (columns.length <= 1) return 0;
   const nearest = nearestColumnIndex(scroller, columns);
   if (direction === 0) return nearest;
 
-  const scrollerRect = scroller.getBoundingClientRect();
-  const viewportWidth = scroller.clientWidth || scrollerRect.width;
-  const viewportCenter = scrollerRect.left + viewportWidth / 2;
-  const nearestRect = columns[nearest].getBoundingClientRect();
-  const nearestCenter = nearestRect.left + nearestRect.width / 2;
-
+  const origin = Math.min(Math.max(originIndex, 0), columns.length - 1);
   if (direction > 0) {
-    // Content scrolling right: next column on the right of travel.
-    if (viewportCenter + CENTER_TOLERANCE_PX < nearestCenter) {
-      return nearest;
-    }
-    return Math.min(columns.length - 1, nearest + 1);
+    // Content scrolling right: at least origin+1, otherwise wherever momentum landed.
+    return Math.max(nearest, Math.min(origin + 1, columns.length - 1));
   }
-
-  // Content scrolling left: next column on the left of travel.
-  if (viewportCenter - CENTER_TOLERANCE_PX > nearestCenter) {
-    return nearest;
-  }
-  return Math.max(0, nearest - 1);
+  // Content scrolling left: mirror.
+  return Math.min(nearest, Math.max(origin - 1, 0));
 }
 
 /**
@@ -182,8 +200,12 @@ function hardJumpScrollLeft(scroller: HTMLElement, targetLeft: number): void {
  * Mobile board: free-scroll + momentum, then hard-page only in the scroll direction.
  *
  * FNXC:BoardNavigation 2026-07-22-18:00:
- * Lock settle direction at finger-up from net gesture deltas. Target via
- * resolveTargetIndexInScrollDirection so snap never goes against scroll. Pin until next touch.
+ * Lock settle direction at finger-up from net gesture deltas. Pin until next touch.
+ *
+ * FNXC:BoardNavigation 2026-07-22-21:05:
+ * Target via resolveSettleTargetIndex: nearest (mostly-on-screen) column, clamped to at least
+ * one column of progress from the gesture's origin column — commits short swipes without
+ * overshooting a fling that already decelerated onto a column.
  */
 export function useColumnScrollSnap(
   scroller: HTMLElement | null,
@@ -220,10 +242,35 @@ export function useColumnScrollSnap(
 
     let interactionActive = false;
     let pointerHeld = false;
+    /*
+    FNXC:BoardNavigation 2026-07-22-20:10:
+    iOS/Android fire `pointercancel` when the native scroll pan claims a touch, but the TOUCH
+    stream (touchmove/touchend) keeps going. Treating that pointercancel as gesture end either
+    orphaned the gesture (early cancel, no movement yet → interactionActive false → the later
+    touchend no-ops and the board rests mid-column until the next tap) or armed the idle settle
+    while the finger was still down (slow drag with a brief pause hard-jumped/fought the finger,
+    worst at the edge columns where rubber-band makes WebKit claim the pan aggressively).
+    Track whether a touch sequence is live and ignore pointercancel while it is — touchend is
+    the real finger lift. touchcancel remains a genuine gesture cancel.
+    */
+    let touchSequenceActive = false;
     let gestureStartScrollLeft = scroller.scrollLeft;
+    /** Column the viewport rested on when the gesture began — the paging baseline. */
+    let gestureStartColumnIndex = 0;
+    /*
+    FNXC:BoardNavigation 2026-07-22-21:40:
+    The commit-one-column paging rule assumes the gesture began AT REST centered on its origin
+    column. A re-touch mid-transit (tap-to-stop during momentum, then drag) is not at rest: the
+    forced min-one-column progress from a mid-transit origin overrode the user's corrective drag
+    and paged past where they dragged. Such gestures settle on the plain nearest column instead —
+    the new drag's landing point always wins over the interrupted scroll.
+    */
+    let gestureStartCentered = true;
     let lastScrollLeft = scroller.scrollLeft;
     let gestureStartClientX: number | null = null;
     let lastClientX: number | null = null;
+    let gestureStartClientY: number | null = null;
+    let lastClientY: number | null = null;
     /** Locked at finger-up / cancel — never updated by post-lift rubber-band ticks. */
     let lockedDirection = 0;
     let sawHorizontalMovement = false;
@@ -233,10 +280,17 @@ export function useColumnScrollSnap(
     let capturedPointerId: number | null = null;
     /** Force scrollLeft until the next user touch. */
     let pinnedScrollLeft: number | null = null;
+    /** Continues correcting late WebKit compositor writes until the next user interaction. */
+    let pinReassertTimer: ReturnType<typeof setTimeout> | null = null;
 
     const clearIdleTimer = () => {
       if (idleTimer !== null) clearTimeout(idleTimer);
       idleTimer = null;
+    };
+
+    const clearPinReassertion = () => {
+      if (pinReassertTimer !== null) clearTimeout(pinReassertTimer);
+      pinReassertTimer = null;
     };
 
     const restoreNativeSnap = () => {
@@ -265,6 +319,7 @@ export function useColumnScrollSnap(
     };
 
     const clearPin = () => {
+      clearPinReassertion();
       pinnedScrollLeft = null;
     };
 
@@ -278,7 +333,29 @@ export function useColumnScrollSnap(
         gestureStartClientX !== null && lastClientX !== null
           ? gestureStartClientX - lastClientX
           : 0;
-      lockedDirection = resolvePanDirection({ scrollDelta, clientDelta });
+      const clientDeltaY =
+        gestureStartClientY !== null && lastClientY !== null
+          ? gestureStartClientY - lastClientY
+          : 0;
+      lockedDirection = resolvePanDirection({ scrollDelta, clientDelta, clientDeltaY });
+    };
+
+    /*
+    FNXC:BoardNavigation 2026-07-22-19:15:
+    On phone-class WebKit, `scrollend` can precede a final compositor fling write that has no
+    usable `scroll` callback. Two post-jump tasks can both run before that late write, so retain a
+    lightweight pin watchdog until the next user interaction. It corrects only a changed value,
+    preserving free-scroll while held and CSS proximity rather than making snap mandatory.
+    */
+    const reassertPinnedScrollLeft = () => {
+      pinReassertTimer = setTimeout(() => {
+        pinReassertTimer = null;
+        if (pinnedScrollLeft === null) return;
+        if (scroller.scrollLeft !== pinnedScrollLeft) {
+          hardJumpScrollLeft(scroller, pinnedScrollLeft);
+        }
+        reassertPinnedScrollLeft();
+      }, PIN_REASSERT_INTERVAL_MS);
     };
 
     const applySnapTo = (targetLeft: number) => {
@@ -288,6 +365,33 @@ export function useColumnScrollSnap(
       hardJumpScrollLeft(scroller, target);
       pinnedScrollLeft = target;
       scroller.scrollLeft = target;
+      clearPinReassertion();
+      reassertPinnedScrollLeft();
+    };
+
+    /**
+     * FNXC:BoardNavigation 2026-07-22-15:26:
+     * Hard-jump to the nearest column center when off-center. Returns true when a snap
+     * applied (or already centered); false only when there are no usable snap columns.
+     */
+    const snapToNearestColumnIfNeeded = (): boolean => {
+      const columns = getSnapColumns(scroller);
+      if (columns.length < 2) {
+        restoreNativeSnap();
+        return false;
+      }
+      const viewportWidth = scroller.clientWidth || scroller.getBoundingClientRect().width;
+      if (viewportWidth <= 0) {
+        restoreNativeSnap();
+        return false;
+      }
+      if (isColumnCentered(scroller, columns)) {
+        restoreNativeSnap();
+        return true;
+      }
+      const targetIndex = nearestColumnIndex(scroller, columns);
+      applySnapTo(scrollLeftToCenterColumn(scroller, columns[targetIndex]));
+      return true;
     };
 
     const snapInScrollDirection = () => {
@@ -300,26 +404,39 @@ export function useColumnScrollSnap(
         gestureStartClientX !== null && lastClientX !== null
           ? gestureStartClientX - lastClientX
           : 0;
+      const clientDeltaY =
+        gestureStartClientY !== null && lastClientY !== null
+          ? gestureStartClientY - lastClientY
+          : 0;
 
       // Prefer direction locked at lift; recompute only if never locked.
       const direction =
         lockedDirection !== 0
           ? lockedDirection
-          : resolvePanDirection({ scrollDelta, clientDelta });
+          : resolvePanDirection({ scrollDelta, clientDelta, clientDeltaY });
 
+      // FNXC:BoardNavigation 2026-07-22-21:40: finger travel implies pan only when horizontal dominates.
       const hadPanIntent =
         sawHorizontalMovement ||
         Math.abs(scrollDelta) > CENTER_TOLERANCE_PX ||
-        Math.abs(clientDelta) >= MIN_PAN_CLIENT_PX;
+        (Math.abs(clientDelta) >= MIN_PAN_CLIENT_PX && Math.abs(clientDelta) > Math.abs(clientDeltaY));
 
+      const startedCentered = gestureStartCentered;
       interactionActive = false;
       sawHorizontalMovement = false;
       lockedDirection = 0;
       gestureStartClientX = null;
       lastClientX = null;
+      gestureStartClientY = null;
+      lastClientY = null;
 
+      /*
+      FNXC:BoardNavigation 2026-07-22-15:26:
+      No pan on this settle gesture (tap-to-stop after re-baseline, pure tap): still never
+      rest between columns — nearest-center only. Do not reuse a cancelled swipe's direction.
+      */
       if (!hadPanIntent) {
-        restoreNativeSnap();
+        snapToNearestColumnIfNeeded();
         return;
       }
 
@@ -347,9 +464,16 @@ export function useColumnScrollSnap(
         return;
       }
 
-      const targetIndex = direction === 0
+      /*
+      FNXC:BoardNavigation 2026-07-22-21:40:
+      Commit-one-column paging only applies to gestures that began at rest centered on their
+      origin column. A gesture begun mid-transit (tap-to-stop during momentum, then drag)
+      settles on the plain nearest column so the new drag's landing point wins over the
+      interrupted scroll's pending destination.
+      */
+      const targetIndex = direction === 0 || !startedCentered
         ? nearestColumnIndex(scroller, columns)
-        : resolveTargetIndexInScrollDirection(scroller, columns, direction);
+        : resolveSettleTargetIndex(scroller, columns, direction, gestureStartColumnIndex);
       const targetLeft = scrollLeftToCenterColumn(scroller, columns[targetIndex]);
       applySnapTo(targetLeft);
     };
@@ -359,12 +483,41 @@ export function useColumnScrollSnap(
       idleTimer = setTimeout(snapInScrollDirection, SCROLL_IDLE_SETTLE_MS);
     };
 
+    /*
+    FNXC:BoardNavigation 2026-07-22-15:10:
+    A second touch during post-lift momentum must cancel the pending directional settle and start a fresh gesture at the current scrollLeft.
+    Previously, re-touch while interactionActive only re-captured the pointer and returned early — pointerHeld stayed false, the idle timer kept the original swipe direction, and the board hard-jumped away from where the user tapped to stop.
+    */
     const beginInteraction = (event: Event) => {
       if (!isUserInteraction(event)) return;
 
+      if (event.type === "touchstart") touchSequenceActive = true;
       clearPin();
 
+      // Mid-momentum re-touch (or duplicate pointerdown+touchstart): cancel pending snap and re-baseline.
       if (interactionActive) {
+        clearIdleTimer();
+        lockedDirection = 0;
+        sawHorizontalMovement = false;
+        gestureStartScrollLeft = scroller.scrollLeft;
+        const columns = getSnapColumns(scroller);
+        gestureStartColumnIndex = nearestColumnIndex(scroller, columns);
+        gestureStartCentered = isColumnCentered(scroller, columns);
+        lastScrollLeft = scroller.scrollLeft;
+        const point = getClientPoint(event);
+        gestureStartClientX = point?.x ?? null;
+        lastClientX = point?.x ?? null;
+        gestureStartClientY = point?.y ?? null;
+        lastClientY = point?.y ?? null;
+
+        if (event.type === "wheel") {
+          pointerHeld = false;
+          suspendNativeSnap();
+          armIdleSettle();
+          return;
+        }
+
+        pointerHeld = true;
         if (event.type === "pointerdown" && "pointerId" in event) {
           try {
             scroller.setPointerCapture((event as PointerEvent).pointerId);
@@ -380,10 +533,15 @@ export function useColumnScrollSnap(
       sawHorizontalMovement = false;
       lockedDirection = 0;
       gestureStartScrollLeft = scroller.scrollLeft;
+      const columns = getSnapColumns(scroller);
+      gestureStartColumnIndex = nearestColumnIndex(scroller, columns);
+      gestureStartCentered = isColumnCentered(scroller, columns);
       lastScrollLeft = scroller.scrollLeft;
-      const clientX = getClientX(event);
-      gestureStartClientX = clientX;
-      lastClientX = clientX;
+      const point = getClientPoint(event);
+      gestureStartClientX = point?.x ?? null;
+      lastClientX = point?.x ?? null;
+      gestureStartClientY = point?.y ?? null;
+      lastClientY = point?.y ?? null;
 
       if (event.type === "wheel") {
         pointerHeld = false;
@@ -412,13 +570,14 @@ export function useColumnScrollSnap(
 
     const handlePointerMove = (event: Event) => {
       if (!interactionActive || pinnedScrollLeft !== null) return;
-      const clientX = getClientX(event);
-      if (clientX === null) return;
-      lastClientX = clientX;
-      if (
-        gestureStartClientX !== null &&
-        Math.abs(gestureStartClientX - clientX) >= MIN_PAN_CLIENT_PX
-      ) {
+      const point = getClientPoint(event);
+      if (point === null) return;
+      lastClientX = point.x;
+      lastClientY = point.y;
+      // FNXC:BoardNavigation 2026-07-22-21:40: only dominant-horizontal travel is a board pan.
+      const dx = gestureStartClientX !== null ? Math.abs(gestureStartClientX - point.x) : 0;
+      const dy = gestureStartClientY !== null ? Math.abs(gestureStartClientY - point.y) : 0;
+      if (dx >= MIN_PAN_CLIENT_PX && dx > dy) {
         markMoved();
       }
     };
@@ -440,6 +599,8 @@ export function useColumnScrollSnap(
     };
 
     const handleFingerLift = (event: Event) => {
+      // Clear before any early return so a stale flag can't outlive the touch sequence.
+      if (event.type === "touchend") touchSequenceActive = false;
       if (!interactionActive || pinnedScrollLeft !== null) return;
       if ("isPrimary" in event && (event as PointerEvent).isPrimary === false) return;
 
@@ -456,7 +617,19 @@ export function useColumnScrollSnap(
       armIdleSettle();
     };
 
-    const handleGestureCancel = () => {
+    const handleGestureCancel = (event: Event) => {
+      if (event.type === "touchcancel") {
+        touchSequenceActive = false;
+      } else if (touchSequenceActive) {
+        /*
+        FNXC:BoardNavigation 2026-07-22-20:10:
+        pointercancel from native scroll takeover while the finger is still down: the gesture
+        continues on the touch stream. Only drop the (now dead) pointer capture; touchend or
+        touchcancel will end the gesture.
+        */
+        releasePointerCapture();
+        return;
+      }
       if (!interactionActive || pinnedScrollLeft !== null) return;
       pointerHeld = false;
       releasePointerCapture();
@@ -464,8 +637,9 @@ export function useColumnScrollSnap(
       if (sawHorizontalMovement || lockedDirection !== 0) {
         armIdleSettle();
       } else {
+        // FNXC:BoardNavigation 2026-07-22-15:26: Cancelled zero-pan touch must not leave mid-column.
         interactionActive = false;
-        restoreNativeSnap();
+        snapToNearestColumnIfNeeded();
       }
     };
 

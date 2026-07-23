@@ -39,6 +39,39 @@ describe("MCP core config", () => {
     ).toEqual([projectServer]);
   });
 
+  it("merges enabled plugin contributions between global and project settings", () => {
+    const plugin = { pluginId: "roslyn", server: { name: "navigator", transport: "stdio" as const, command: "cwm-roslyn-navigator" } };
+    const override: McpServerDefinition = { name: "navigator", transport: "stdio", command: "project-navigator" };
+    expect(resolveEffectiveMcpServers(
+      { mcpServers: { enabled: true, servers: [{ name: "global", transport: "stdio", command: "global" }] } },
+      { mcpServers: { enabled: true, servers: [override] } }, [plugin],
+    )).toEqual([
+      { name: "global", transport: "stdio", command: "global" }, override,
+    ]);
+    expect(resolveEffectiveMcpServers(
+      { mcpServers: { enabled: true } },
+      { mcpServers: { enabled: true, servers: [{ ...override, enabled: false }] } }, [plugin],
+    )).toEqual([]);
+    expect(resolveEffectiveMcpServers(
+      { mcpServers: { enabled: true } }, { mcpServers: { enabled: true } },
+      [{ pluginId: "off", server: { ...plugin.server, enabledByDefault: false } }],
+    )).toEqual([]);
+  });
+
+  it("skips malformed runtime plugin entries without disabling healthy settings", () => {
+    const validGlobal: McpServerDefinition = { name: "global", transport: "stdio", command: "global" };
+    const validProject: McpServerDefinition = { name: "project", transport: "stdio", command: "project" };
+    expect(resolveEffectiveMcpServers(
+      { mcpServers: { enabled: true, servers: [validGlobal] } },
+      { mcpServers: { enabled: true, servers: [validProject] } },
+      [
+        null as unknown as { pluginId: string; server: never },
+        { pluginId: "bad-null", server: null as unknown as never },
+        { pluginId: "bad-default", server: { name: "bad", transport: "stdio", command: "bad", enabledByDefault: "no" } as unknown as never },
+      ],
+    )).toEqual([validGlobal, validProject]);
+  });
+
   it("lets a project disabled entry remove a global server", () => {
     const globalServer: McpServerDefinition = {
       name: "global-only",

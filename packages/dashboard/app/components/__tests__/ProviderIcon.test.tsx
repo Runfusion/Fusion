@@ -1,6 +1,50 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ProviderIcon } from "../ProviderIcon";
+import {
+  STATIC_API_KEY_PROVIDER_CATALOG,
+  STATIC_OAUTH_PROVIDER_CATALOG,
+} from "../../../src/routes/auth-provider-catalog";
+
+// These synthetic/runtime IDs have no static auth-catalog source. Keep their aliases
+// explicit so adding a base integration without its runtime spellings fails closed.
+const SYNTHETIC_FIRST_CLASS_PROVIDER_IDS = [
+  "anthropic-subscription",
+  "claude-cli",
+  "pi-claude-cli",
+  "droid-cli",
+  "cursor-cli",
+  "grok-cli",
+  "omp-cli",
+  "llama-cpp",
+  "llama-server",
+  "hermes",
+  "hermes-agent",
+  "hermesagent",
+  "openclaw",
+  "open-claw",
+  "paperclip",
+  "paperclipai",
+  "paperclip-ai",
+  "omp",
+  "oh-my-pi",
+  "xiaomi",
+] as const;
+
+const FIRST_CLASS_PROVIDER_IDS = [...new Set([
+  ...STATIC_OAUTH_PROVIDER_CATALOG.map(({ id }) => id),
+  ...STATIC_API_KEY_PROVIDER_CATALOG.map(({ id }) => id),
+  ...SYNTHETIC_FIRST_CLASS_PROVIDER_IDS,
+])];
+
+/** The fallback's structural signature is Lucide's actual `lucide-cpu` SVG class, never a brand sticker. */
+function hasLucideCpuSignature(svg: SVGElement): boolean {
+  return svg.classList.contains("lucide-cpu");
+}
+
+function isNonCpuMark(svg: SVGElement): boolean {
+  return !hasLucideCpuSignature(svg);
+}
 
 describe("ProviderIcon", () => {
   it("renders OpenAI brand icon for openai-codex provider", () => {
@@ -169,11 +213,34 @@ describe("ProviderIcon", () => {
     expect(screen.getByLabelText("Ollama")).toBeInTheDocument();
   });
 
-  it("renders llama.cpp icon aliases", () => {
+  it("renders llama.cpp aliases as the intentional non-Lucide-Cpu mark", () => {
     const { rerender } = render(<ProviderIcon provider="llama-cpp" />);
-    expect(screen.getByTestId("llama-cpp-icon")).toBeInTheDocument();
+    expect(isNonCpuMark(screen.getByTestId("llama-cpp-icon"))).toBe(true);
     rerender(<ProviderIcon provider="llama-server" />);
-    expect(screen.getByTestId("llama-cpp-icon")).toBeInTheDocument();
+    expect(isNonCpuMark(screen.getByTestId("llama-cpp-icon"))).toBe(true);
+  });
+
+  it("ratchets every catalog-derived and enumerated first-class ID to an accessible non-Cpu mark", () => {
+    for (const provider of FIRST_CLASS_PROVIDER_IDS) {
+      const { container, unmount } = render(<ProviderIcon provider={provider} />);
+      const wrapper = container.querySelector<HTMLElement>(`.provider-icon[data-provider="${provider}"]`);
+      const svg = wrapper?.querySelector<SVGElement>("svg");
+
+      expect(wrapper, provider).toBeTruthy();
+      expect(svg, provider).toHaveAttribute("data-testid");
+      expect(svg, provider).toHaveAccessibleName(/\S+/);
+      expect(isNonCpuMark(svg as SVGElement), provider).toBe(true);
+      unmount();
+    }
+  });
+
+  it("rejects a Lucide Cpu even when a brand testid or configured sticker is attached", () => {
+    const cpuWithStickers = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    cpuWithStickers.setAttribute("class", "lucide lucide-cpu");
+    cpuWithStickers.setAttribute("data-testid", "brave-icon");
+    cpuWithStickers.setAttribute("data-configured-icon", "true");
+
+    expect(isNonCpuMark(cpuWithStickers)).toBe(false);
   });
 
   it("renders Cpu icon as fallback for unknown providers", () => {
@@ -185,6 +252,7 @@ describe("ProviderIcon", () => {
              element?.parentElement?.getAttribute("data-provider") === "unknown";
     });
     expect(icon).toBeInTheDocument();
+    expect(hasLucideCpuSignature(icon as SVGElement)).toBe(true);
   });
 
   it("renders Cpu icon as fallback for empty provider", () => {
@@ -356,6 +424,37 @@ describe("ProviderIcon", () => {
     expect(wrapper).toHaveAttribute("data-provider", "minimax");
   });
 
+  it.each([
+    ["xiaomi", "xiaomi"],
+    ["XIAOMI", "xiaomi"],
+  ])("renders an accessible tokenized Xiaomi mark for %s", (provider, expectedDataProvider) => {
+    render(<ProviderIcon provider={provider} size="md" />);
+    const svg = screen.getByTestId("xiaomi-icon");
+    const wrapper = svg.parentElement;
+
+    expect(svg).toHaveAccessibleName("Xiaomi");
+    expect(isNonCpuMark(svg)).toBe(true);
+    expect(wrapper).toHaveAttribute("data-provider", expectedDataProvider);
+    expect(wrapper).toHaveStyle({ color: "var(--provider-xiaomi)" });
+    expect(svg.querySelector("path")).toHaveAttribute("fill", "var(--provider-xiaomi)");
+    expect(svg).toHaveAttribute("width", "20");
+    expect(svg).toHaveAttribute("height", "20");
+  });
+
+  it("renders independent Xiaomi SVGs for duplicate provider entries", () => {
+    const { container } = render(
+      <>
+        <ProviderIcon provider="xiaomi" size="sm" />
+        <ProviderIcon provider="xiaomi" size="lg" />
+      </>,
+    );
+    const icons = container.querySelectorAll("[data-testid='xiaomi-icon']");
+
+    expect(icons).toHaveLength(2);
+    expect(Array.from(icons).map((icon) => icon.getAttribute("width"))).toEqual(["16", "24"]);
+    expect(Array.from(icons).every((icon) => isNonCpuMark(icon as SVGElement))).toBe(true);
+  });
+
   it("renders Z.ai brand icon for zai provider", () => {
     render(<ProviderIcon provider="zai" />);
     expect(screen.getByTestId("zai-icon")).toBeInTheDocument();
@@ -492,6 +591,22 @@ describe("ProviderIcon", () => {
     const icon = screen.getByTestId("xai-icon").parentElement;
     expect(icon).toHaveStyle({ color: "var(--text)" });
     expect(icon).toHaveAttribute("data-provider", expectedDataProvider);
+  });
+
+  it.each(["xiaomi/MiMo-V2-Flash", "MiMo-V2-Flash"])('infers Xiaomi icon from the boundary-safe MiMo model label %s', (provider) => {
+    render(<ProviderIcon provider={provider} />);
+    const svg = screen.getByTestId("xiaomi-icon");
+
+    expect(svg).toHaveAccessibleName("Xiaomi");
+    expect(isNonCpuMark(svg)).toBe(true);
+  });
+
+  it("preserves the CPU fallback for Xiaomi near-match custom names", () => {
+    const { container } = render(<ProviderIcon provider="mimosa-v1" />);
+    const svg = container.querySelector<SVGElement>('[data-provider="mimosa-v1"] svg');
+
+    expect(svg).toBeTruthy();
+    expect(hasLucideCpuSignature(svg as SVGElement)).toBe(true);
   });
 
   it("infers non-Grok provider icons from model-shaped ids", () => {

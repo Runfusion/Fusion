@@ -4,8 +4,8 @@
 
 ## Latest baseline
 
-- Cycle: **2026-W28**
-- Captured at: **2026-07-08T18:17:42.464Z**
+- Cycle: **2026-W30**
+- Captured at: **2026-07-22T22:40:53.357Z**
 - Timing snapshot: `scripts/test-timings.json` captured at **2026-06-27T05:41:42.568Z**
 - Quarantine ledger: `scripts/lib/test-quarantine.json`
 
@@ -13,10 +13,10 @@
 
 | Metric | Current | Delta vs previous |
 |---|---:|---:|
-| Merge gate wall-time (`pnpm test:gate`) | 8.8s | -27.5s |
-| Boot smoke wall-time (`pnpm smoke:boot`) | 17.6s | -7.7s |
-| Changed-only test wall-time (`pnpm test`) | 1m 01s | +18.0s |
-| Quarantine / flake count | 1 | 0 |
+| Merge gate wall-time (`pnpm test:gate`) | 9.1s | -20.1s |
+| Boot smoke wall-time (`pnpm smoke:boot`) | 18.5s | -5.6s |
+| Changed-only test wall-time (`pnpm test`) | 14.9s | -20.7s |
+| Quarantine / flake count | 2 | 0 |
 | Deletion-due quarantines | 0 | n/a |
 
 ## Measurement failures
@@ -25,7 +25,8 @@
 
 ## Timing snapshot notes
 
-- No stale or missing timing metadata detected in the rendered slowest-file rows.
+- Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.
+- 9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite.
 
 ## Slowest 20 test files
 
@@ -56,7 +57,7 @@
 
 | Age bucket | Count |
 |---|---:|
-| 0-6 days | 1 |
+| 0-6 days | 2 |
 | 7-13 days | 0 |
 | deletion due (>=14 days) | 0 |
 | unknown/future | 0 |
@@ -71,16 +72,16 @@
 
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
-| Previous | 2026-07-08T09:30:50.606Z | 36.3s | 25.3s | 43.4s | 1 |
-| Latest | 2026-07-08T18:17:42.464Z | 8.8s | 17.6s | 1m 01s | 1 |
-| Delta | — | -27.5s | -7.7s | +18.0s | 0 |
+| Previous | 2026-07-22T21:58:46.970Z | 29.3s | 24.0s | 35.7s | 2 |
+| Latest | 2026-07-22T22:40:53.357Z | 9.1s | 18.5s | 14.9s | 2 |
+| Delta | — | -20.1s | -5.6s | -20.7s | 0 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 8.8s (-27.5s), boot smoke 17.6s (-7.7s), pnpm test 1m 01s (+18.0s), quarantine ledger 1 (0). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 9.1s (-20.1s), boot smoke 18.5s (-5.6s), pnpm test 14.9s (-20.7s), quarantine ledger 2 (0). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh

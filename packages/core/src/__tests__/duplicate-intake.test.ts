@@ -138,6 +138,75 @@ describe("findSameAgentDuplicates", () => {
     expect(claims[0]).toMatch(/^agent-diagnostic-intent:/);
   });
 
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-22-14:30:
+  FN-8510/8511/8513/8514 regression: four executors on unrelated parents filed the same
+  "fix the oversized changeset summary" follow-up with different phrasings (exceeds limit /
+  so check:changesets passes / oversized / blocking) and different fingerprints; all four
+  must converge on one cross-parent claim anchored to the named changeset file.
+  */
+  it("derives one cross-parent claim for a gate failure named by file path or slug (FN-8514)", () => {
+    const incidents = [
+      {
+        title: "Shorten mobile board changeset summary",
+        description: "Fix the pre-existing `.changeset/mobile-board-pointercancel-settle.md` summary exceeding the 120-character changeset-format limit, so `pnpm check:changesets` passes.",
+      },
+      {
+        description: "Shorten `.changeset/mobile-board-pointercancel-settle.md` summary to <=120 chars so `pnpm check:changesets` passes. Existing summary is 131 chars; unrelated to FN-8503.",
+      },
+      {
+        description: "Fix oversized summary in existing mobile-board-pointercancel-settle changeset so pnpm check:changesets passes.",
+      },
+      {
+        description: "Fix existing changeset format failure: .changeset/mobile-board-pointercancel-settle.md summary exceeds 120-character limit, blocking pnpm check:changesets.",
+      },
+    ];
+
+    const claims = incidents.map((input) => computeCrossParentDiagnosticClaimId(input));
+
+    expect(new Set(claims).size).toBe(1);
+    expect(claims[0]).toMatch(/^agent-diagnostic-intent:/);
+  });
+
+  it("converges failure paraphrases naming the same file path without a distinctive slug", () => {
+    const first = computeCrossParentDiagnosticClaimId({
+      description: "Fix broken import in packages/core/src/store.ts causing a typecheck error.",
+    });
+    const second = computeCrossParentDiagnosticClaimId({
+      description: "Investigate packages/core/src/store.ts typecheck failure observed during pnpm verify:fast.",
+    });
+
+    expect(first).not.toBeNull();
+    expect(first).toBe(second);
+  });
+
+  it("never anchors on dates or UUIDs, and a date never outranks a file-path anchor", () => {
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Fix nightly build failure observed on 2026-07-22 in the settings modal",
+    })).toBeNull();
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Fix failed run d3be2cd6-9221-4e1d-a27a-c5fbe04f9200 stuck in merge",
+    })).toBeNull();
+
+    const withDate = computeCrossParentDiagnosticClaimId({
+      description: "Fix typecheck error in packages/core/src/store.ts since 2026-07-22",
+    });
+    const withoutDate = computeCrossParentDiagnosticClaimId({
+      description: "Fix typecheck error in packages/core/src/store.ts",
+    });
+    expect(withDate).not.toBeNull();
+    expect(withDate).toBe(withoutDate);
+  });
+
+  it("does not claim ordinary work that merely names a file path", () => {
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Add caching to packages/core/src/store.ts for faster board loads",
+    })).toBeNull();
+    expect(computeCrossParentDiagnosticClaimId({
+      description: "Shorten the onboarding copy in WelcomeModal",
+    })).toBeNull();
+  });
+
   it("does not globally claim ordinary work or unrelated work on the same module", () => {
     expect(computeCrossParentDiagnosticClaimId({
       description: "Add screenshot upload support using html2canvas",

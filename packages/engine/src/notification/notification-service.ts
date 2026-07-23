@@ -16,6 +16,7 @@ import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
+import { describeTaskWedge, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
 
 export interface NotificationServiceOptions {
   /** Project identifier for notification deep links */
@@ -43,6 +44,8 @@ interface NotificationServiceStoreEvents {
 interface NotificationServiceStore {
   getSettings(): Promise<Settings> | Settings;
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
+  /** Durable compare-and-set for restart-safe wedge delivery episodes. */
+  claimTaskWedgeNotificationEpisode?(taskId: string, reasonKey: string | null): Promise<{ episodeId?: string; claimed: boolean }>;
   on<K extends keyof NotificationServiceStoreEvents>(
     event: K,
     listener: (...args: NotificationServiceStoreEvents[K]) => void,
@@ -99,6 +102,8 @@ export class NotificationService {
   private failureNotificationSuppressedCount = 0;
   private failureNotificationDelayMs = 60_000;
   private failureNotificationMode: "sticky-only" | "all" | "terminal-only" = "sticky-only";
+  /** Compatibility fallback for lightweight test stores without the durable TaskStore CAS. */
+  private readonly activeWedgeReasons = new Map<string, string>();
 
   constructor(
     private readonly store: NotificationServiceStore,
@@ -247,6 +252,23 @@ export class NotificationService {
   };
 
   private handleTaskUpdated = (task: Task): void => {
+    /*
+    FNXC:TaskWedgeNotifications 2026-07-22-20:00:
+    FN-5627 transient merge failures retain an active recovery owner despite
+    their temporary failed status. Classify them before claiming a durable wedge
+    episode: the generic terminal-failed fallback must not bypass its grace and
+    self-healing suppression, or turn a recoverable flap into an operator alert.
+    */
+    const transientFailure = task.status === "failed" ? classifyTransientMergeError(task.error) : null;
+    const wedge = transientFailure ? null : describeTaskWedge(task);
+    /*
+    FNXC:TaskWedgeNotifications 2026-07-22-14:30:
+    A generic failed push may have been scheduled before a terminal error was
+    classified. Cancel it at wedge entry so the immediate episode alert is the
+    only operator notification; dispatch-time suppression below covers races.
+    */
+    if (wedge) this.cancelPendingFailureNotification(task.id, "classified-terminal-wedge");
+    if (!transientFailure) void this.maybeNotifyTaskWedge(task, wedge);
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
     /*
@@ -270,7 +292,7 @@ export class NotificationService {
       return;
     }
 
-    if (task.status === "failed") {
+    if (task.status === "failed" && !wedge) {
       // FN-5627: Suppress notifications entirely for transient merge failure
       // classes recognized by `classifyTransientMergeError`. These are
       // recovered automatically by `SelfHealingManager.recoverTransientMergeFailures`
@@ -387,6 +409,75 @@ export class NotificationService {
       schedulerLog.log(
         `[notify] ${task.id} awaiting-approval mailbox message failed: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  /*
+  FNXC:TaskWedgeNotifications 2026-07-22-12:00:
+  Terminal task updates are the shared seam for merger, executor, heartbeat, and
+  self-healing parks. Clear only on a non-wedge lifecycle update, allowing a
+  resolved-then-reparked reason to begin a new actionable episode.
+  */
+  /** Delivers a self-healing no-action escalation through the durable wedge episode seam. */
+  async notifyTaskWedge(task: Task, descriptor: TaskWedgeDescriptor): Promise<void> {
+    await this.maybeNotifyTaskWedge(task, descriptor);
+  }
+
+  private async maybeNotifyTaskWedge(task: Task, suppliedDescriptor?: TaskWedgeDescriptor | null): Promise<void> {
+    const descriptor = suppliedDescriptor ?? describeTaskWedge(task);
+    let episode: string | undefined;
+    if (!descriptor) {
+      /*
+      FNXC:TaskWedgeNotifications 2026-07-22-14:45:
+      A self-healing no-action escalation may remain in `in-review` without a
+      status/error mutation. Incidental task updates are not resolution evidence;
+      resolve only when the lifecycle has visibly resumed in an active or terminal
+      column, or when it carries a non-failed workflow status.
+      */
+      const isActiveSelfHealingNoAction = task.wedgeNotification?.status === "active"
+        && task.wedgeNotification.reasonKey.startsWith("self-healing-no-action:");
+      // FNXC:TaskWedgeNotifications 2026-07-22-15:00: A no-action task normally
+      // stays in review, so arbitrary in-review/status writes are not resolution
+      // evidence. Only an active owner state or real lifecycle advance can close it.
+      const hasProgressed = task.column === "todo" || task.column === "in-progress" || task.column === "done" || task.column === "archived"
+        || (!isActiveSelfHealingNoAction && typeof task.status === "string" && task.status !== "failed")
+        || (isActiveSelfHealingNoAction && ["queued", "planning", "in-progress", "merging", "merging-pr", "merged", "done"].includes(task.status ?? ""));
+      if (hasProgressed) {
+        this.activeWedgeReasons.delete(task.id);
+        await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
+      }
+      return;
+    }
+    if (this.store.claimTaskWedgeNotificationEpisode) {
+      const claim = await this.store.claimTaskWedgeNotificationEpisode(task.id, descriptor.reasonKey);
+      if (!claim.claimed || !claim.episodeId) return;
+      episode = claim.episodeId;
+    } else {
+      if (this.activeWedgeReasons.get(task.id) === descriptor.reasonKey) return;
+      this.activeWedgeReasons.set(task.id, descriptor.reasonKey);
+      episode = `${task.id}:${descriptor.reasonKey}:${task.updatedAt}`;
+    }
+    const link = buildNtfyClickUrl({ dashboardHost: this.dashboardHost, projectId: this.options.projectId, taskId: task.id });
+    const content = [
+      `**${formatTaskIdentifier(task)} needs operator action**`, "", descriptor.reason,
+      ...(descriptor.gate ? [`Gate: \`${descriptor.gate}\`.`] : []),
+      `Recommended action: ${descriptor.action}`,
+      ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+    ].join("\n");
+    const payload: NotificationPayload = {
+      taskId: task.id, taskTitle: task.title, taskDescription: task.description, event: "task-wedged",
+      // Bounded descriptor text is operator-facing provider content, never audit metadata.
+      metadata: { wedgeReason: descriptor.reasonKey, reason: descriptor.reason, action: descriptor.action, ...(descriptor.gate ? { gate: descriptor.gate } : {}), notificationDedupeKey: `task-wedge:${episode}` },
+    };
+    // Push and mailbox delivery are independently best-effort.
+    void this.dispatch("task-wedged", payload);
+    try {
+      await this.options.messageStore?.sendMessageOnce?.({
+        fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system",
+        content, metadata: { taskId: task.id, kind: "task-wedge", wedgeReason: descriptor.reasonKey, ...(descriptor.gate ? { gate: descriptor.gate } : {}) },
+      }, `task-wedge:${episode}`);
+    } catch (error) {
+      schedulerLog.log(`[notify] ${task.id} wedge mailbox message failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -839,15 +930,24 @@ export class NotificationService {
 
     // FN-5627 defense-in-depth: even when a failure notification was scheduled
     // (e.g., the failure happened slightly before the transient classifier
-    // suppression landed on a newer cycle), re-check at dispatch time. Self-
-    // healing may have flipped the error to a transient class via FN-5627
-    // auto-recovery, in which case ntfy stays silent.
+    // suppression landed on a newer cycle), re-check at dispatch time before
+    // terminal-wedge classification. A transient failed task still has an
+    // automatic recovery owner and must not claim a wedge episode.
     const transientClassAtDispatch = classifyTransientMergeError(task.error);
     if (transientClassAtDispatch) {
       this.failureNotificationSuppressedCount += 1;
       schedulerLog.log(
         `[notify] ${taskId} transient merge failure (${transientClassAtDispatch}) at dispatch time — suppressed notification (self-heal in flight)`,
       );
+      return;
+    }
+
+    // A previously generic failure can become a terminal wedge while its grace
+    // timer is pending. The wedge path owns delivery and its durable episode
+    // idempotency; never let this delayed generic event become a second alert.
+    if (describeTaskWedge(task)) {
+      this.failureNotificationSuppressedCount += 1;
+      schedulerLog.log(`[notify] ${taskId} classified terminal wedge at dispatch time — suppressed generic failed notification`);
       return;
     }
 

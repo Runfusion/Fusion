@@ -13,7 +13,7 @@
 
 import type { Database } from "../db/db.js";
 import type { TaskStore } from "../store.js";
-import type { PlanningQuestion, Task, WorkflowStepMode, WorkflowStepToolMode } from "../types.js";
+import type { McpServerDefinition, PlanningQuestion, Task, WorkflowStepMode, WorkflowStepToolMode } from "../types.js";
 import type {
   WorkflowExtensionContribution,
   WorkflowExtensionFallback,
@@ -690,6 +690,17 @@ export interface CliProviderContribution {
 /**
  * Plugin-contributed skill surfaced in agent sessions via the skill-selection system.
  */
+/*
+ * FNXC:PluginMcpServers 2026-07-22-12:00:
+ * FN-8491 / #2401 lets plugins declare MCP wiring without writing consumer settings.
+ * Contributions deliberately omit `enabled`: project settings own enablement and can
+ * override or tombstone a server by name; sensitive values remain secret references.
+ */
+export type PluginMcpServerContribution = Omit<McpServerDefinition, "enabled"> & {
+  /** Opt out of automatic wiring while remaining available for a project override. */
+  enabledByDefault?: boolean;
+};
+
 export interface PluginSkillContribution {
   /** Unique skill identifier within the plugin namespace (kebab-case). */
   skillId: string;
@@ -1163,6 +1174,8 @@ export interface FusionPlugin {
   cliProviders?: CliProviderContribution[];
   /** Plugin-contributed skills surfaced by the skill resolver. */
   skills?: PluginSkillContribution[];
+  /** Declarative MCP servers, scoped to projects where this plugin is enabled. */
+  mcpServers?: PluginMcpServerContribution[];
   /** Plugin-contributed workflow step templates. */
   workflowSteps?: PluginWorkflowStepContribution[];
   /** Plugin-contributed column traits (U8). */

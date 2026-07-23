@@ -865,6 +865,7 @@ export function flowToIr(
             id: c.id,
             name: c.name,
             traits: c.traits,
+            ...(c.description ? { description: c.description } : {}),
             ...(c.agent ? { agent: c.agent } : {}),
           }))
         : [],

@@ -59,7 +59,11 @@ const ANTHROPIC_API_KEY_PROVIDER_ID = "anthropic-api-key";
 const ANTHROPIC_STORAGE_PROVIDER_ID = "anthropic";
 const ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID = "anthropic-subscription";
 
-const BUILT_IN_API_KEY_PROVIDERS: Array<{ id: string; name: string }> = [
+/*
+FNXC:ProviderAuth 2026-07-22-12:00:
+FN-8488 makes the engine's executable API-key catalog public so dashboard's static Authentication catalog can be parity-tested instead of relying on a prose-only synchronization note.
+*/
+export const BUILT_IN_API_KEY_PROVIDERS: ReadonlyArray<{ id: string; name: string }> = [
   { id: ANTHROPIC_API_KEY_PROVIDER_ID, name: "Anthropic API Key" },
   { id: "brave", name: "Brave Search" },
   { id: "kimi-coding", name: "Kimi" },

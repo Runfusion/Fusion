@@ -6839,10 +6839,11 @@
       "allProjectResetSuccess": ""
     },
     "database": {
-      "embeddedConnectionCapHelp": "Fusion 內嵌 PostgreSQL 的最大伺服器連線數。重新啟動 Fusion 後生效。範圍：32–2,000。預設：500。外部 PostgreSQL 使用其提供者的連線限制。",
+      "embeddedConnectionCapHelp": "Fusion 內嵌 PostgreSQL 的最大伺服器連線數。重新啟動 Fusion 後生效。範圍：32–2,000。預設未設定 — Fusion 選擇 500；在 Windows 上為 150，因為每個連線都是一個獨立程序，更高的上限可能導致後端當機。外部 PostgreSQL 使用其提供者的連線限制。",
       "embeddedConnectionCap": "內嵌 PostgreSQL 連線上限",
       "embeddedConnectionCapError": "請輸入 32 到 2,000 之間的值。",
-      "advanced": "進階資料庫設定"
+      "advanced": "進階資料庫設定",
+      "embeddedConnectionCapPlaceholder": "自動"
     },
     "configVersions": {
       "title": "設定版本",

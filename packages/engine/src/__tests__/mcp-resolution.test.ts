@@ -63,6 +63,26 @@ describe("resolveMcpServersForRuntime", () => {
     ]);
   });
 
+  it("uses only provider-filtered plugin contributions before materialization", async () => {
+    const result = await resolveMcpServersForRuntime({
+      globalSettings: { mcpServers: { enabled: true } }, projectSettings: { mcpServers: { enabled: true } },
+      pluginServers: [
+        { pluginId: "enabled-plugin", server: { name: "navigator", transport: "stdio", command: "navigator", env: { TOKEN: { secretRef: "token", scope: "project" } } } },
+      ], secrets: secrets({ token: "SECRET_VALUE" }),
+    });
+    expect(result).toEqual({ servers: [{ name: "navigator", transport: "stdio", command: "navigator", env: { TOKEN: "SECRET_VALUE" } }], errors: [] });
+  });
+
+  it("uses the store scoped provider rather than requiring raw loader output", async () => {
+    const { resolveMcpServersForStore } = await import("../mcp-resolution.js");
+    const result = await resolveMcpServersForStore({
+      async getSettingsByScope() { return { global: { mcpServers: { enabled: true } }, project: { mcpServers: { enabled: true } } }; },
+      async getSecretsStore() { return secrets({}); },
+      async getProjectScopedPluginMcpServers() { return [{ pluginId: "enabled", server: { name: "scoped", transport: "stdio" as const, command: "scoped" } }]; },
+    });
+    expect(result.servers).toEqual([{ name: "scoped", transport: "stdio", command: "scoped" }]);
+  });
+
   it("resolves through the TaskStore-compatible settings split seam", async () => {
     const { resolveMcpServersForStore } = await import("../mcp/mcp-resolution.js");
     const result = await resolveMcpServersForStore({

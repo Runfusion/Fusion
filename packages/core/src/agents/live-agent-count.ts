@@ -13,7 +13,7 @@ export type ColumnTerminalKind = "none" | "complete" | "archived";
  * The deliberately small, pure shape used by all top-level live-agent counts.
  * Store- and board-backed callers must attach trait-derived fields first.
  */
-export type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused" | "userPaused" | "sessionFile" | "checkedOutBy"> & {
+export type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused" | "userPaused" | "sessionFile" | "checkedOutBy"> & Partial<Pick<Task, "workflowStepResults">> & {
   columnTerminalKind?: ColumnTerminalKind;
   /** Trait-derived intake/hold membership, used by {@link isWaitingAgentTask}. */
   columnIsIntakeOrHold?: boolean;
@@ -88,6 +88,19 @@ export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskS
   };
 }
 
+/*
+FNXC:ConcurrencyIndicators 2026-07-22-05:45:
+Lane-owned optional gates (Code Review / Browser Verification / Plan Review) run their reviewer
+session with task.status left null — the durable live signal is the step's `pending`
+workflow-step-result lease (U3/KTD-4; FN-8492 fails orphaned leases, so pending ≈ live).
+Without counting it, an In Review column with one MERGING task and one live CODE REVIEW task
+showed 1/2 processing, and admission under-counted the live reviewer. A pending lease on an
+unpaused, non-terminal row counts as Running everywhere the shared predicate is used.
+*/
+function hasLiveWorkflowStepLease(task: RunningAgentTaskShape): boolean {
+  return task.workflowStepResults?.some((result) => result.status === "pending") === true;
+}
+
 function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   // Legacy literals are intentionally fixture-only degradation when workflow IR is unavailable.
   return task.columnTerminalKind ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
@@ -98,6 +111,8 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
  * Planning may run in any non-terminal workflow column. Unpaused WIP columns
  * count as execute holders (sessionFile is not on the board/DB row path).
  * Active review/merge statuses count only in review/merge columns.
+ * A live `pending` workflow-step lease (e.g. an in-flight Code Review gate)
+ * counts in any non-terminal column, since gate sessions run with null status.
  */
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
@@ -106,6 +121,8 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (ACTIVE_IN_REVIEW_AGENT_STATUSES.has(String(task.status ?? ""))) {
     return task.columnIsReviewOrMerge ?? task.column === "in-review";
   }
+  // A live gate-session lease (pending step result) is Running even with a null status.
+  if (hasLiveWorkflowStepLease(task)) return true;
   const isWip = task.columnCountsTowardWip ?? task.column === "in-progress";
   return isWip;
 }

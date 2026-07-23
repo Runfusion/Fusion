@@ -13,8 +13,8 @@
  * gate (test:pg-gate).
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
-import { sql } from "drizzle-orm";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { eq, sql } from "drizzle-orm";
 
 import {
   pgDescribe,
@@ -242,6 +242,111 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const unlinked = await m.unlinkFeatureFromTask(feature.id);
     expect(unlinked.taskId).toBeUndefined();
     expect(unlinked.status).toBe("defined");
+  });
+
+  /*
+  FNXC:MissionReconciliation 2026-07-20-08:34:
+  Regression coverage exercises every terminal-evidence representation through the real PostgreSQL store. Reconciliation must never route through ordinary triage linking, mutate loop attempts or mission controls, or partially commit when the transaction fails.
+  */
+  it("atomically reconciles live done evidence and remains idempotent", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Parked repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Delivered" });
+    const task = await h.store().createTask({ description: "shipped", column: "done" });
+    const taskCount = (await h.store().listTasks()).length;
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done", loopState: "idle", implementationAttemptCount: 0 });
+    expect(await m.getSlice(slice.id)).toMatchObject({ status: "complete" });
+    expect(await m.getMilestone(milestone.id)).toMatchObject({ status: "complete" });
+    expect(await m.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
+    expect(await h.store().getTask(task.id)).toMatchObject({ missionId: mission.id, sliceId: slice.id, column: "done" });
+    expect((await h.store().listTasks()).length).toBe(taskCount);
+
+    const firstUpdatedAt = reconciled.updatedAt;
+    const idempotent = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+    expect(idempotent.updatedAt).toBe(firstUpdatedAt);
+    expect(idempotent).toEqual(reconciled);
+
+    const duplicate = await m.addFeature(slice.id, { title: "Corrupt duplicate" });
+    await m.updateFeature(duplicate.id, { taskId: task.id });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id)).rejects.toMatchObject({ code: "TASK_FEATURE_CONFLICT" });
+    expect(await m.getFeature(feature.id)).toEqual(reconciled);
+  });
+
+  it("accepts a supported archived tombstone without resurrecting or back-linking it", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Archived repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Archived delivery" });
+    const task = await h.store().createTask({ description: "archived shipped work", column: "done" });
+    await h.store().archiveTask(task.id, { cleanup: false });
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done", loopState: "idle", implementationAttemptCount: 0 });
+    expect(await h.store().getTask(task.id)).toMatchObject({ column: "archived" });
+    const tombstones = await h.layer().db
+      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt, missionId: schema.project.tasks.missionId, sliceId: schema.project.tasks.sliceId })
+      .from(schema.project.tasks)
+      .where(eq(schema.project.tasks.id, task.id));
+    expect(tombstones).toEqual([{ column: "archived", deletedAt: expect.any(String), missionId: null, sliceId: null }]);
+    expect(await m.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
+  });
+
+  it("rejects missing, nonterminal, invalid-deleted, feature mismatch, and duplicate task links without mutation", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Guarded repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const [feature, other] = await Promise.all([
+      m.addFeature(slice.id, { title: "Canonical" }),
+      m.addFeature(slice.id, { title: "Other" }),
+    ]);
+    const nonterminal = await h.store().createTask({ description: "active", column: "todo" });
+    const invalidDeleted = await h.store().createTask({ description: "deleted without archive", column: "done" });
+    await h.layer().db.update(schema.project.tasks).set({ deletedAt: new Date().toISOString() })
+      .where(eq(schema.project.tasks.id, invalidDeleted.id));
+    const linkedTask = await h.store().createTask({ description: "already linked", column: "done" });
+    await m.reconcileFeatureDoneWithTerminalTask(other.id, linkedTask.id);
+
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, "FN-MISSING")).rejects.toMatchObject({ code: "TASK_NOT_FOUND" });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, nonterminal.id)).rejects.toMatchObject({ code: "TASK_NOT_TERMINAL" });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, invalidDeleted.id)).rejects.toMatchObject({ code: "TASK_ARCHIVE_INVALID" });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, linkedTask.id)).rejects.toMatchObject({ code: "TASK_FEATURE_CONFLICT" });
+
+    const canonicalTask = await h.store().createTask({ description: "canonical", column: "done" });
+    await m.linkFeatureToTask(feature.id, nonterminal.id);
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, canonicalTask.id)).rejects.toMatchObject({ code: "FEATURE_TASK_CONFLICT" });
+    expect(await m.getFeature(feature.id)).toMatchObject({ taskId: nonterminal.id, status: "triaged", loopState: "implementing" });
+    expect(await m.getMission(mission.id)).toMatchObject({ autopilotEnabled: false, autoAdvance: false });
+  });
+
+  it("rolls back feature linkage and rollups when reconciliation fails after its writes", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Rollback repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Rollback" });
+    const task = await h.store().createTask({ description: "done", column: "done" });
+    const layer = h.layer();
+    const original = layer.transactionImmediate.bind(layer);
+    const transaction = vi.spyOn(layer, "transactionImmediate").mockImplementation(async (callback) => original(async (tx) => {
+      await callback(tx);
+      throw new Error("injected post-write failure");
+    }));
+
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id)).rejects.toThrow("injected post-write failure");
+    transaction.mockRestore();
+
+    expect(await m.getFeature(feature.id)).toMatchObject({ taskId: undefined, status: "defined", loopState: "idle", implementationAttemptCount: 0 });
+    expect(await m.getSlice(slice.id)).toMatchObject({ status: "pending" });
+    expect(await m.getMilestone(milestone.id)).toMatchObject({ status: "planning" });
+    expect(await h.store().getTask(task.id)).toMatchObject({ missionId: undefined, sliceId: undefined });
   });
 
   it("addContractAssertion appears in listContractAssertions", async () => {

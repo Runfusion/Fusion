@@ -83,6 +83,7 @@ export const tasks = projectSchema.table("tasks", {
   paused: integer("paused").default(0),
   userPaused: integer("user_paused").default(0),
   pausedReason: text("paused_reason"),
+  wedgeNotification: text("wedge_notification"),
   baseBranch: text("base_branch"),
   branch: text("branch"),
   autoMerge: integer("auto_merge"),

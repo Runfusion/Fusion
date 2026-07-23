@@ -16,6 +16,10 @@ describe("inferProviderIconKey", () => {
     ["omp-cli/MiniMax-M2.5", "omp-cli"],
     ["omp/claude-sonnet-4", "omp-cli"],
     ["Oh My Pi", "omp-cli"],
+    ["xiaomi", "xiaomi"],
+    ["Xiaomi", "xiaomi"],
+    ["xiaomi/MiMo-V2-Flash", "xiaomi"],
+    ["MiMo-V2-Flash", "xiaomi"],
     ["ollama/llama3", "ollama"],
     ["minimax-text-01", "minimax"],
     ["zhipu-glm-4", "zai"],
@@ -38,6 +42,11 @@ describe("inferProviderIconKey", () => {
   it("does not attribute bare model ids to OMP", () => {
     expect(inferProviderIconKey("MiniMax-M2.5")).toBe("minimax");
     expect(inferProviderIconKey("claude-sonnet-4")).not.toBe("omp-cli");
+  });
+
+  it("does not infer Xiaomi from near-match custom names", () => {
+    expect(inferProviderIconKey("mimosa-v1")).toBe("mimosa-v1");
+    expect(inferProviderIconKey("custom-mimoized-model")).toBe("custom-mimoized-model");
   });
 
   it("returns unknown ids unchanged so ProviderIcon can render its fallback", () => {

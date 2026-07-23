@@ -93,6 +93,7 @@ export type NtfyNotificationEvent =
   | "in-review"
   | "merged"
   | "failed"
+  | "task-wedged"
   | "awaiting-approval"
   | "awaiting-user-review"
   | "planning-awaiting-input"
@@ -115,6 +116,7 @@ export const NOTIFICATION_EVENTS = [
   "in-review",
   "merged",
   "failed",
+  "task-wedged",
   "awaiting-approval",
   "awaiting-user-review",
   "planning-awaiting-input",

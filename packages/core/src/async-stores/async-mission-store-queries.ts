@@ -42,7 +42,7 @@
  *   These helpers are the production MissionStore persistence path and program
  *   against AsyncDataLayer rather than a synchronous SQLite database.
  */
-import { and, asc, desc, eq, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { normalizeMissionAssertionType } from "../missions/mission-types.js";
@@ -1050,6 +1050,24 @@ export async function deleteFeature(handle: QueryHandle, id: string): Promise<bo
   return result.length > 0;
 }
 
+/** Return a different feature already using the task, if one exists. */
+export async function getConflictingFeatureByTaskId(
+  handle: QueryHandle,
+  taskId: string,
+  featureId: string,
+): Promise<MissionFeature | undefined> {
+  const rows = await handle
+    .select(featureColumns)
+    .from(schema.project.missionFeatures)
+    .where(and(
+      missionProjectScope(schema.project.missionFeatures.projectId),
+      eq(schema.project.missionFeatures.taskId, taskId),
+      ne(schema.project.missionFeatures.id, featureId),
+    ))
+    .limit(1);
+  return rows[0] ? rowToFeature(rows[0] as FeatureRow) : undefined;
+}
+
 /** Get a feature by its linked taskId (null if no feature is linked). */
 export async function getFeatureByTaskId(handle: QueryHandle, taskId: string): Promise<MissionFeature | undefined> {
   const rows = await handle
@@ -2051,6 +2069,46 @@ export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string
       ),
     );
   return new Set(rows.map((row) => row.id));
+}
+
+export type TerminalTaskEvidence =
+  | { kind: "done"; id: string; column: "done" }
+  | { kind: "archived"; id: string; column: "archived" }
+  | { kind: "nonterminal"; id: string; column: string }
+  | { kind: "invalid-deleted"; id: string; column?: string }
+  | { kind: "missing" };
+
+/**
+ * FNXC:MissionReconciliation 2026-07-20-08:34:
+ * Terminal evidence repair must distinguish a supported archive (the retained archived task tombstone plus its project-scoped cold snapshot) from an arbitrary soft/hard deletion. Read both representations on the caller's transaction handle so validation and feature linkage share one snapshot.
+ */
+export async function getTerminalTaskEvidence(handle: QueryHandle, taskId: string): Promise<TerminalTaskEvidence> {
+  const taskRows = await handle
+    .select({
+      id: schema.project.tasks.id,
+      column: schema.project.tasks.column,
+      deletedAt: schema.project.tasks.deletedAt,
+    })
+    .from(schema.project.tasks)
+    .where(and(missionProjectScope(schema.project.tasks.projectId), eq(schema.project.tasks.id, taskId)))
+    .limit(1);
+  const archiveRows = await handle
+    .select({ id: schema.archive.archivedTasks.id })
+    .from(schema.archive.archivedTasks)
+    .where(and(missionProjectScope(schema.archive.archivedTasks.projectId), eq(schema.archive.archivedTasks.id, taskId)))
+    .limit(1);
+  const task = taskRows[0];
+  const hasArchiveSnapshot = archiveRows.length > 0;
+
+  if (!task) return hasArchiveSnapshot ? { kind: "invalid-deleted", id: taskId } : { kind: "missing" };
+  if (task.deletedAt === null && task.column === "done") return { kind: "done", id: task.id, column: "done" };
+  if (task.deletedAt !== null && task.column === "archived" && hasArchiveSnapshot) {
+    return { kind: "archived", id: task.id, column: "archived" };
+  }
+  if (task.deletedAt !== null || task.column === "archived") {
+    return { kind: "invalid-deleted", id: task.id, column: task.column };
+  }
+  return { kind: "nonterminal", id: task.id, column: task.column };
 }
 
 /** Get a live (non-deleted) task's id + column, or undefined. */

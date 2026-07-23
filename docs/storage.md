@@ -8,8 +8,16 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 
 - During a first-boot cutover, `fn dashboard`, `fn serve`, and `fn daemon --port <port>` keep their known HTTP port available with a migration holding page. Open dashboard tabs poll `/api/health` and show the migration banner with live progress.
 - After a successful cutover, the usual dismissible data-migrated notice may appear. If the durable cutover marker remains `running` or `failed`, real-server `/api/health` reports `status: "degraded"` with migration detail and the dashboard keeps the migration banner visible. Do not delete retained legacy `.fusion/fusion.db` backups; check logs and run `fn db migrate` after fixing a failure.
+- Retained `fusion.db`, `archive.db`, and `fusion-central.db` files are migration inputs and operator backups only. Startup reads a source only while its matching `fusion_sqlite_migrations` key is incomplete: `project:<projectId>` gates core/archive/identity work, `central:legacy-sqlite` gates central work, and `project-plugins:<canonical project path>` independently gates plugin adoption. A completed core marker never suppresses a still-incomplete plugin bridge.
+- Root-directory startup resolves a core key from an explicit project ID or the PostgreSQL `central.projects` rootDir mapping before using the deterministic fallback. A migration that learns an ID from legacy central SQLite must first materialize the same canonical rootDir-to-ID mapping in PostgreSQL before recording completion, so future boots never need the retained database to rediscover identity.
 
 ## Embedded PostgreSQL startup resources
+
+### Windows owned-cluster recovery (FN-8522)
+
+- Windows readiness uses bounded TCP probes. Runner-log reads are diagnostic open/read/close snapshots only; Fusion keeps no persistent runner-log handle, so PostgreSQL can retain its own `pg_ctl` log without a Fusion-induced sharing-violation retry.
+- Each Windows PostgreSQL child gets the bundled native `bin` directory prepended to its own case-insensitive `PATH`; Fusion does not mutate the dashboard process environment.
+- After readiness, an **owned** cluster that logs the complete `0xC0000142` backend exception plus PostgreSQL shutdown sequence gets one lifecycle-scoped restart on the same initialized data directory and port. Joiners are never restarted or stopped. A second incident, shutdown, or failed recovery is terminal and leaves the original data directory intact.
 
 - The zero-config embedded PostgreSQL lifecycle uses mmap-backed primary shared memory to avoid exhausted SysV shared-memory IDs on constrained hosts.
 - The supported, tested constrained-host floor is **64MB `/dev/shm`**. Both `fn serve` and boot smoke inherit this lifecycle default; an explicit later PostgreSQL `-c shared_memory_type=…` flag remains an operator override.

@@ -51,6 +51,37 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const bootSmokeScriptPath = path.join(scriptDir, "boot-smoke.mjs");
 const artifactBootstrapScriptPath = path.join(scriptDir, "ensure-test-artifacts.mjs");
+const packageManifestPath = path.join(repoRoot, "package.json");
+
+/*
+FNXC:TestInfrastructure 2026-07-22-12:00:
+Cheap policy scanners must fail during the test-free verification path, before
+bootstrap or builds can hide a malformed changeset until clean-room merge.
+Read the canonical root pretest composition rather than duplicating validator
+rules or maintaining a second list; default invocations are read-only and never
+use a validator's mutation flags (such as check-routes-modular --update).
+*/
+export function readPretestStaticCheckScripts(manifestPath = packageManifestPath) {
+  const pretest = JSON.parse(readFileSync(manifestPath, "utf8")).scripts?.pretest;
+  if (typeof pretest !== "string" || !pretest.trim()) {
+    throw new Error("package.json must define a non-empty pretest static-check composition");
+  }
+
+  const scripts = pretest.split("&&").map((command) => {
+    const match = /^\s*node\s+(scripts\/check-[\w-]+\.mjs)\s*$/.exec(command);
+    if (!match) {
+      throw new Error(`pretest contains a non-static-check command: ${command.trim()}`);
+    }
+    return match[1];
+  });
+
+  if (scripts.length === 0) {
+    throw new Error("package.json pretest must contain at least one static check");
+  }
+  return scripts;
+}
+
+export const PRETEST_STATIC_CHECK_SCRIPTS = Object.freeze(readPretestStaticCheckScripts());
 
 /*
 FNXC:TestInfrastructure 2026-06-25-00:00:
@@ -127,25 +158,49 @@ export function buildArtifactBootstrapStep(bootstrapScriptPath, nodeBin = proces
 }
 
 /**
- * Pure planner: turn the affected package set into an ordered step list.
- * bootstrap missing/stale dist artifacts → typecheck (all eligible) → build
- * (eligible with a build script) → required boot-smoke build prerequisites →
- * boot smoke. With no eligible packages this still builds the source-checkout
- * CLI before the smoke so fresh worktrees have `packages/cli/dist/bin.js`.
+ * Build one canonical, read-only root pretest validator invocation.
+ *
+ * @param {string} checkScript repo-relative check script path
+ * @param {string} [root]
+ * @param {string} [nodeBin]
+ */
+export function buildStaticCheckStep(checkScript, root = repoRoot, nodeBin = process.execPath) {
+  const name = path.basename(checkScript, ".mjs");
+  return {
+    id: `static-check:${name}`,
+    kind: "static-check",
+    pkg: null,
+    label: `static check ${name}`,
+    command: nodeBin,
+    args: [path.join(root, checkScript)],
+    klass: "changed",
+  };
+}
+
+/**
+ * Pure planner: turn canonical static checks and the affected package set into
+ * an ordered step list. Static checks → bootstrap missing/stale dist artifacts
+ * → typecheck (all eligible) → build (eligible with a build script) → required
+ * boot-smoke build prerequisites → boot smoke. With no eligible packages this
+ * still builds the source-checkout CLI before the smoke so fresh worktrees have
+ * `packages/cli/dist/bin.js`.
  *
  * @param {object} opts
- * @param {string[]} [opts.packages]  affected package names
+ * @param {string[]} [opts.packages] affected package names
  * @param {Map<string, { dir?: string, hasTypecheck?: boolean, hasTsconfig?: boolean, hasBuild?: boolean }>} [opts.packageMeta]
+ * @param {string[]} [opts.staticCheckScripts] repo-relative canonical pretest validator paths
+ * @param {string} [opts.staticCheckRoot]
  * @param {string} opts.bootSmokeScriptPath
  * @param {string} [opts.artifactBootstrapScriptPath]
  * @param {string} [opts.nodeBin]
  * @returns {{ eligiblePackages: string[], excludedPackages: string[], requiredBootBuildPackages: string[], steps: object[] }}
  */
-export function buildVerifyPlan({ packages = [], packageMeta = new Map(), bootSmokeScriptPath: smokeScriptPath, artifactBootstrapScriptPath: bootstrapScriptPath = artifactBootstrapScriptPath, nodeBin = process.execPath } = {}) {
+export function buildVerifyPlan({ packages = [], packageMeta = new Map(), staticCheckScripts = PRETEST_STATIC_CHECK_SCRIPTS, staticCheckRoot = repoRoot, bootSmokeScriptPath: smokeScriptPath, artifactBootstrapScriptPath: bootstrapScriptPath = artifactBootstrapScriptPath, nodeBin = process.execPath } = {}) {
   const eligiblePackages = packages.filter((pkg) => !VERIFY_EXCLUDED_PACKAGES.has(pkg));
   const excludedPackages = packages.filter((pkg) => VERIFY_EXCLUDED_PACKAGES.has(pkg));
 
-  const steps = [buildArtifactBootstrapStep(bootstrapScriptPath, nodeBin)];
+  const steps = staticCheckScripts.map((checkScript) => buildStaticCheckStep(checkScript, staticCheckRoot, nodeBin));
+  steps.push(buildArtifactBootstrapStep(bootstrapScriptPath, nodeBin));
   for (const pkg of eligiblePackages) {
     const meta = packageMeta.get(pkg) ?? {};
     /*
@@ -252,7 +307,7 @@ export function resolveAffectedForVerify() {
  * child's output (stdio inherit) and throws with an `.exitCode` on the first
  * failure/timeout/signal so the caller exits nonzero immediately.
  */
-export async function runStep(step, { spawnFn = spawn, log = console.log, errLog = console.error } = {}) {
+export async function runStep(step, { spawnFn = spawn, log = console.log, errLog = console.error, cwd = repoRoot } = {}) {
   const budgetMs = deriveBudgetMs({ klass: step.klass ?? "changed" });
   log(`\n[verify:fast] -> ${step.label}`);
   log(`[verify:fast]    ${step.command} ${step.args.join(" ")}  (budget ${Math.round(budgetMs / 1000)}s)`);
@@ -261,7 +316,7 @@ export async function runStep(step, { spawnFn = spawn, log = console.log, errLog
     command: step.command,
     args: step.args,
     env: process.env,
-    cwd: repoRoot,
+    cwd,
     budgetMs,
     label: step.label,
     log: errLog,
@@ -275,6 +330,13 @@ export async function runStep(step, { spawnFn = spawn, log = console.log, errLog
     throw error;
   }
   log(`[verify:fast]    OK ${step.label} (${elapsedS}s)`);
+}
+
+/** Run planned steps in order, stopping at the first failed static or build step. */
+export async function runVerifyPlan(steps, { run = runStep } = {}) {
+  for (const step of steps) {
+    await run(step);
+  }
 }
 
 export async function main() {
@@ -305,9 +367,7 @@ export async function main() {
   }
   console.log(`[verify:fast] plan: ${steps.map((s) => s.id).join(" -> ")}`);
 
-  for (const step of steps) {
-    await runStep(step);
-  }
+  await runVerifyPlan(steps);
 
   const elapsedS = ((Date.now() - overallStart) / 1000).toFixed(1);
   console.log(`\n[verify:fast] PASS — ${steps.length} step(s) green in ${elapsedS}s (no tests run).`);

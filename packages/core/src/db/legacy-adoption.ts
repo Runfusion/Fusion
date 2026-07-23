@@ -9,10 +9,12 @@ fails the build if any lacks an adoption row here. So a status added during the
 cutover window fails the build instead of mass-parking rows `paused` at upgrade.
 
 Adoption action per legacy status (KTD-8), for the FOUNDATIONAL targets (U9 scope A):
-  - resume-graph   : clear the legacy triage-owned status so the graph re-enters
-                     cleanly at the owning node (planning → planning node,
-                     needs-replan → plan-replan, plan-review-unavailable →
-                     plan-review retry, queued/triaged → scheduler re-pickup).
+  - resume-graph   : clear a legacy status whose writers the cutover DELETED so the
+                     graph re-enters cleanly at the owning node
+                     (plan-review-unavailable → plan-review retry,
+                     triaged → scheduler re-pickup). NEVER a status with a live
+                     post-cutover writer — those are `preserve` (see the FN-8504
+                     incident note on the table).
   - preserve       : a live human/terminal gate the graph must NOT disturb
                      (awaiting-approval, awaiting-user-input, failed, error,
                      blocked, done, cancelled). Pausing is NOT a status: it is
@@ -54,17 +56,44 @@ export interface LegacyAdoptionAction {
  * build. `null`/`undefined` (no status) needs no row (nothing to adopt).
  */
 export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionAction>> = {
+  /*
+  FNXC:LegacyAdoption 2026-07-22-18:20 (FN-8504 incident — generalizes FN-8498):
+  A status with a LIVE post-cutover writer is NOT legacy and must be `preserve`, never
+  resume-graph/clear. The adoption sweep runs on EVERY store open (a DB with any active
+  task never records the drained marker — a mutating cycle withholds it), so a clearing
+  action races live lanes: FN-8504's replan planner wrote status:"planning" and ~100ms
+  later a store-open adoption cleared it (audit: task:reconcile-legacy-adoption,
+  priorStatus "planning"), leaving a live planner rendered as an idle "Ready" card and
+  invisible to every Running count. Live-writer statuses each have their own crash-
+  recovery owner, so preserve loses nothing:
+    - planning        → triage's startup stale-planning sweep clears crashed planners
+    - queued          → the scheduler re-evaluates queued rows every poll
+    - merging/-pr/-fix→ self-healing recoverInterruptedMergingTasks / stale-merge recovery
+    - stuck-killed    → restart-recovery-coordinator owns kill-park resume
+  Only statuses with NO live task-row writer may keep a clearing action
+  (plan-review-unavailable, triaged).
+  */
+  "planning": { kind: "preserve", note: "live triage planner status — triage's stale-planning sweep owns crash recovery" },
   // ── Triage plan-review statuses whose writers U3 deleted → graph re-entry ──
-  "planning": { kind: "resume-graph", note: "re-enter planning node" },
-  "needs-replan": { kind: "resume-graph", note: "re-enter plan-replan node" },
   "plan-review-unavailable": { kind: "resume-graph", note: "plan-review retry (leased)" },
-  // ── Scheduler / dispatch transient states → re-pickup ─────────────────────
-  "queued": { kind: "resume-graph", note: "scheduler re-queue" },
+  // ── Live graph signals with post-cutover writers — preserve, never clear ───
+  /*
+  FNXC:LegacyAdoption 2026-07-22-15:55 (FN-8498 incident):
+  `needs-replan` is NOT legacy — post-U3 it is written live by the graph's own plan-replan
+  seam (executor.ts / scheduler.ts) and CONSUMED by triage's todo-rediscovery, which only
+  re-admits a planned todo task when status === "needs-replan". The original resume-graph
+  mapping cleared it on every engine restart, deleting the exact signal its consumer keys
+  on and stranding replan-loop tasks in `todo` forever (FN-8498 sat "ready" for 80 minutes
+  after a restart). Preserve it: the status is self-resuming — triage picks it up as-is.
+  */
+  "needs-replan": { kind: "preserve", note: "live graph replan signal — triage todo-rediscovery consumes it" },
+  // ── Scheduler / dispatch states — queued has live writers → preserve ──────
+  "queued": { kind: "preserve", note: "live scheduler capacity/dependency marker — scheduler re-evaluates each poll" },
   "triaged": { kind: "resume-graph", note: "scheduler re-pickup" },
-  // ── Merge substates (execute-seam/merge refinement DEFERRED to U9b) ───────
-  "merging": { kind: "resume-graph", note: "resume merge node (U9b refines)" },
-  "merging-pr": { kind: "resume-graph", note: "resume merge-pr node (U9b refines)" },
-  "merging-fix": { kind: "resume-graph", note: "resume merge-fix node (U9b refines)" },
+  // ── Merge substates — live merger writers → preserve (FN-8504 incident) ───
+  "merging": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
+  "merging-pr": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
+  "merging-fix": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
   // ── Live human / terminal gates — do NOT disturb ──────────────────────────
   "awaiting-approval": { kind: "preserve", note: "manual plan approval gate" },
   "awaiting-user-input": { kind: "preserve", note: "awaiting operator input" },
@@ -77,7 +106,8 @@ export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionActio
   "cancelled": { kind: "preserve", note: "operator-cancelled" },
   // ── Transient in-flight → clear so normal dispatch resumes ────────────────
   "cancelling": { kind: "clear", note: "transient cancel — clear on restart" },
-  "stuck-killed": { kind: "resume-graph", note: "stuck-detector kill — clear and re-dispatch" },
+  // stuck-killed has live writers (self-healing kill, restart-recovery-coordinator) → preserve.
+  "stuck-killed": { kind: "preserve", note: "live stuck-detector kill park — restart-recovery owns re-dispatch" },
 };
 
 /**
@@ -240,22 +270,32 @@ export function planLegacyAdoption(
 
 /*
 FNXC:LegacyAdoption 2026-07-19-04:00 (U9b / KTD-8):
-Orphaned `pending` workflow-step results. A pre-cutover crash can leave a step result
-`pending` with no live session behind it; the graph will wait on it forever. Clear those,
-but ONLY when the caller proves no live session holds the step — a leased/live one is real
-work in flight and must survive. Pure: the caller supplies liveness.
+Orphaned `pending` workflow-step results. A crash/restart can leave a step result
+`pending` with no live session behind it; the graph will wait on it forever. Act only
+when the caller proves no live session holds the step — a leased/live one is real work
+in flight and must survive. Pure: the caller supplies liveness and the orphan mark.
+
+FNXC:OrphanedPendingSteps 2026-07-22-16:35 (FN-8492 review follow-up):
+The original U9b shape DELETED the orphaned entry. Review of the shipped consumer proved
+deletion is a severity inversion: the merge gate blocks on pending/failed results, not on
+an enabled step with NO result, so deleting a dead Code Review's pending entry silently
+SATISFIED the gate and the task merged with its review skipped (FN-8492 landed unreviewed
+minutes after an equivalent manual clear). Orphans are now REWRITTEN to status:"failed"
+instead — the merge gate stays closed and the existing failed-pre-merge-steps recovery /
+FN-7720 operator-bypass paths own the re-run-or-bypass decision. Never delete.
 */
 export function resolveOrphanedPendingStepResults<T extends { stepIndex?: number; status?: string }>(
   results: readonly T[] | null | undefined,
   isLive: (result: T) => boolean,
-): { cleared: T[]; clearedCount: number } {
-  if (!results || results.length === 0) return { cleared: [], clearedCount: 0 };
-  let clearedCount = 0;
-  const cleared = results.filter((result) => {
-    if (result.status !== "pending") return true;
-    if (isLive(result)) return true;
-    clearedCount++;
-    return false;
+  orphanMark?: { output?: string; completedAt?: string },
+): { results: T[]; orphanedCount: number } {
+  if (!results || results.length === 0) return { results: [], orphanedCount: 0 };
+  let orphanedCount = 0;
+  const next = results.map((result) => {
+    if (result.status !== "pending") return result;
+    if (isLive(result)) return result;
+    orphanedCount++;
+    return { ...result, status: "failed", ...(orphanMark ?? {}) } as T;
   });
-  return { cleared, clearedCount };
+  return { results: next, orphanedCount };
 }

@@ -475,6 +475,8 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     id: "planReviewMaxRevisions",
     name: "Plan Review revision cap",
     type: "number",
+    minimum: 0,
+    integer: true,
     /*
      * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
      * Built-in Plan Review/spec remediation is unbounded when this workflow value is unset. Operators can store a non-negative integer per workflow to cap automatic replans, and `0` disables automatic Plan Review revision entirely without duplicating a read-only built-in workflow.
@@ -486,6 +488,8 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     id: "codeReviewMaxRevisions",
     name: "Code Review revision cap",
     type: "number",
+    minimum: 0,
+    integer: true,
     /*
      * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
      * Built-in Code Review remediation is unbounded when this workflow value is unset. Operators can store a non-negative integer per workflow to cap automatic code-fix passes, and `0` disables automatic Code Review remediation for that workflow.

@@ -950,6 +950,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   column={columnDef.id as ColumnType}
                   workflowMode
                   columnDisplayName={columnDef.name}
+                  columnDescription={columnDef.description}
                   columnFlags={columnDef.flags}
                   taskContextMenuColumnsByTaskId={taskContextMenuColumnsByTaskId}
                   tasks={aggregateTasksByColumn[columnDef.id] ?? []}
@@ -1031,6 +1032,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 workflowMode
                 workflowId={selectedWorkflow.id}
                 columnDisplayName={columnDef.name}
+                columnDescription={columnDef.description}
                 columnFlags={columnDef.flags}
                 workflowContextMenuColumns={selectedWorkflowContextMenuColumns}
                 tasks={selectedWorkflowTasksByColumn[columnDef.id] ?? []}
@@ -1090,6 +1092,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               workflowMode
               workflowId={selectedWorkflow.id}
               columnDisplayName={selectedWorkflowArchivedColumn.name}
+              columnDescription={selectedWorkflowArchivedColumn.description}
               columnFlags={selectedWorkflowArchivedColumn.flags}
               workflowContextMenuColumns={selectedWorkflowContextMenuColumns}
               tasks={selectedWorkflowTasksByColumn[selectedWorkflowArchivedColumn.id] ?? []}

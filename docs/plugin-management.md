@@ -135,7 +135,7 @@ Expected outcome: Plugin is enabled or disabled by ID.
 
 ### Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid)
 
-Built-in runtime plugins always expose an interactive enable/disable toggle in **Built-in Plugins**, even before the plugin has been explicitly installed (no `plugin_installs` record yet). Disabling a not-yet-installed runtime registers it (mirroring the same lazy-install path used elsewhere) and then disables it in one step, so the decision persists. A user-disabled built-in runtime is never silently re-enabled or re-activated by Fusion on the next restart — startup auto-activation only loads plugins whose project state is enabled. The **Runtimes** settings cards (Hermes/OpenClaw/Paperclip) reflect this state and show "Disabled in Plugin Manager" instead of a stale detected/connected status when the runtime has been turned off.
+Built-in runtime rows without a `plugin_installs` record expose **Install** only. After installation, their project-scoped **Enable/Disable** toggle and management/uninstall controls become available. Installing and enabling are separate actions: changing enabled state never registers or reinstalls a runtime. The **Runtimes** settings cards (Hermes/OpenClaw/Paperclip) reflect the installed plugin state and show "Disabled in Plugin Manager" when an installed runtime has been turned off.
 
 ## 5) Configure plugin settings
 

@@ -1435,6 +1435,15 @@ function validateColumns(ir: WorkflowIrV2): void {
       throw new WorkflowIrError(`Workflow IR has duplicate column id '${column.id}'`);
     }
     seen.add(column.id);
+    /*
+    FNXC:WorkflowColumnDescriptions 2026-07-22-12:00:
+    FN-8526 makes column explanatory copy first-class workflow metadata. Keep
+    its absent form as omission (not null) so existing definitions retain board
+    lifecycle-description fallback while arbitrary author string content round-trips.
+    */
+    if (column.description !== undefined && typeof column.description !== "string") {
+      throw new WorkflowIrError(`Workflow IR column '${column.id}' description must be a string`);
+    }
     if (!Array.isArray(column.traits)) {
       throw new WorkflowIrError(`Workflow IR column '${column.id}' traits must be an array`);
     }

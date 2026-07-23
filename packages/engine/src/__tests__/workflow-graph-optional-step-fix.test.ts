@@ -1,5 +1,8 @@
 import "./executor-test-helpers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Task } from "@fusion/core";
 
 import { TaskExecutor } from "../executor.js";
@@ -219,6 +222,9 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         testCase.feedback,
         testCase.stepName,
         expect.stringContaining("requested revision"),
+        true,
+        false,
+        { attempt: 1, max: 3 },
       );
     }
   });
@@ -274,6 +280,9 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       "packages/engine/src/example.ts:1 needs a guard",
       "Code Review",
       expect.stringContaining("requested revision"),
+      true,
+      false,
+      { attempt: 1, max: 2 },
     );
     expect(store.updateTask.mock.invocationCallOrder[0]).toBeLessThan(sendBack.mock.invocationCallOrder[0]);
   });
@@ -638,6 +647,132 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     }
 
     expect(sendBackCalls).toEqual([0, 1, 2]);
+  });
+
+  it("keeps graph-owned Code Review remediation unbounded past the legacy three-pass display cap", async () => {
+    for (const count of [0, 1, 2, 3, 4, 5, 6]) {
+      const store = createMockStore();
+      const liveTask = task({
+        postReviewFixCount: count,
+        log: Array.from({ length: count }, (_, index) => revisionLog("Code Review", "code-review", index + 1)),
+      });
+      store.getTask.mockResolvedValue(liveTask);
+      // The generic optional-gate fallback stays three; the graph-owned Code Review
+      // node must not inherit it when the workflow-specific value is unset.
+      store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+      await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+        ...reviseInfo,
+        nodeId: "code-review",
+      })).resolves.toBe(true);
+
+      expect(store.logEntry).toHaveBeenCalledWith(
+        liveTask.id,
+        expect.stringContaining(`attempt ${count + 1}/unbounded`),
+        expect.stringContaining("Workflow revision key: code-review"),
+        undefined,
+      );
+      expect(sendBack).toHaveBeenCalledWith(
+        liveTask,
+        liveTask.worktree,
+        reviseInfo.feedback,
+        reviseInfo.stepName,
+        expect.any(String),
+        true,
+        false,
+        { attempt: count + 1, max: undefined },
+      );
+    }
+  });
+
+  it("keeps the retry presentation aligned with the next attempt during failed-step recovery", async () => {
+    const store = createMockStore();
+    const liveTask = task({
+      column: "in-review",
+      log: Array.from({ length: 3 }, (_, index) => revisionLog("Code Review", "code-review", index + 1)),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        output: "Fix the review finding.",
+        completedAt: new Date().toISOString(),
+      }],
+    });
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(true);
+
+    expect(sendBack).toHaveBeenCalledWith(
+      liveTask,
+      liveTask.worktree,
+      "Fix the review finding.",
+      "Code Review",
+      expect.any(String),
+      true,
+      false,
+      { attempt: 4, max: undefined },
+    );
+  });
+
+  /*
+   * FNXC:WorkflowRevisionBudget 2026-07-22-18:30:
+   * Self-healing calls the failed-step recovery seam directly. It must not
+   * bypass an operator's finite Code Review cap merely because the candidate
+   * filter was skipped or raced; unlimited remains eligible by default.
+   */
+  it.each([
+    { label: "zero automatic remediations", codeReviewMaxRevisions: 0, attempts: 0 },
+    { label: "an exhausted finite cap", codeReviewMaxRevisions: 2, attempts: 2 },
+  ])("does not recover Code Review after $label", async ({ codeReviewMaxRevisions, attempts }) => {
+    const store = createMockStore();
+    const liveTask = task({
+      column: "in-review",
+      log: Array.from({ length: attempts }, (_, index) => revisionLog("Code Review", "code-review", index + 1)),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        output: "Fix the review finding.",
+        completedAt: new Date().toISOString(),
+      }],
+    });
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3, codeReviewMaxRevisions });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(false);
+
+    expect(sendBack).not.toHaveBeenCalled();
+  });
+
+  it("writes an unbounded retry label into Code Review remediation instructions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fn-8503-"));
+    const fusionDir = join(root, ".fusion");
+    const promptPath = join(fusionDir, "tasks", "FN-7066", "PROMPT.md");
+    try {
+      await mkdir(join(fusionDir, "tasks", "FN-7066"), { recursive: true });
+      await writeFile(promptPath, "# Task\n\n## Steps\n- Fix it\n");
+      const store = createMockStore();
+      store.getFusionDir.mockReturnValue(fusionDir);
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      await (executor as any).injectWorkflowStepFailureInstructions(
+        task(),
+        "Address the Code Review finding.",
+        "Code Review",
+        { attempt: 6, max: undefined },
+      );
+
+      await expect(readFile(promptPath, "utf8")).resolves.toContain("**Retry:** 6/unbounded (unlimited remaining)");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("lets per-step maxRevisions override the global budget", async () => {

@@ -12,6 +12,7 @@ export {
 export {
   wrapAuthStorageWithApiKeyProviders,
   mergeAuthStorageReads,
+  BUILT_IN_API_KEY_PROVIDERS,
   createReadOnlyAuthFileStorage,
   type LoginCallbacks,
   type DashboardAuthStorage,
