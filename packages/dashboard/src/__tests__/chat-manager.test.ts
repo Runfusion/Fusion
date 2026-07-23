@@ -2711,6 +2711,7 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions.systemPrompt).toContain("Be calm and precise.");
     expect(createOptions.systemPrompt).toContain("Your chat reply is the primary response to the user.");
     expect(createOptions.systemPrompt).toContain("Use `fn_send_message` only when either (a) the user explicitly asks");
+    expect(createOptions.systemPrompt).toContain(CHAT_CODEBASE_ACCURACY_GUIDANCE);
   });
 
   it("includes guidance to avoid double-sending mailbox copies by default", async () => {
@@ -3794,7 +3795,7 @@ describe("ChatManager generation isolation", () => {
     ]);
     mockAgentStore.getAgent.mockResolvedValue({ id: "agent-001", name: "Avery", role: "executor", state: "idle" });
 
-    __setCreateResolvedAgentSession(async () => ({
+    const createResolvedSession = vi.fn(async () => ({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
@@ -3804,6 +3805,7 @@ describe("ChatManager generation isolation", () => {
       model: "test",
       fallbackInfo: undefined,
     } as any));
+    __setCreateResolvedAgentSession(createResolvedSession);
 
     const chatManager = createChatManager();
     await chatManager.sendRoomMessage("room-1", "hello @Avery");
@@ -3817,6 +3819,11 @@ describe("ChatManager generation isolation", () => {
       senderAgentId: "agent-001",
       content: "Room answer",
     });
+    /*
+    FNXC:ChatCodebaseAccuracy 2026-07-23-05:20:
+    Room responder assembly must keep the investigate-first contract; capture the system prompt so the append site cannot regress unnoticed (PR #2416 review).
+    */
+    expect(createResolvedSession.mock.calls[0]?.[0]?.systemPrompt).toContain(CHAT_CODEBASE_ACCURACY_GUIDANCE);
   });
 
   it("sendRoomMessage still resolves room member responders when listAgents is unavailable", async () => {

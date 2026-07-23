@@ -1,7 +1,7 @@
 ---
-"@runfusion/fusion": patch
+"@runfusion/fusion": minor
 ---
 
 summary: Agent chat now investigates the live codebase with tools before answering architecture and code questions.
 category: feature
-dev: Adds CHAT_CODEBASE_ACCURACY_GUIDANCE and appends it in direct and room chat system-prompt assembly; response-length policy yields to path/symbol evidence on repo questions.
+dev: Adds CHAT_CODEBASE_ACCURACY_GUIDANCE and appends it in direct and room chat system-prompt assembly; response-length policy yields to path/symbol evidence on repo questions. Mailbox long-form path is conditional when fn_send_message is registered; find is bounded to the project checkout.

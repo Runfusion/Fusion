@@ -67,6 +67,23 @@ describe("chat codebase accuracy guidance", () => {
     expect(lower).toContain("trust the tools");
   });
 
+  it("bounds find to the project checkout and forbids OS temp-root walks", () => {
+    const lower = CHAT_CODEBASE_ACCURACY_GUIDANCE.toLowerCase();
+    expect(lower).toContain("restrict `find`");
+    expect(lower).toContain("project checkout");
+    expect(lower).toContain("never recurse through the os temp root");
+    expect(CHAT_CODEBASE_ACCURACY_GUIDANCE).toContain("$TMPDIR");
+  });
+
+  it("makes long-form mailbox guidance conditional on fn_send_message availability", () => {
+    const lower = CHAT_CODEBASE_ACCURACY_GUIDANCE.toLowerCase();
+    expect(lower).toContain("if `fn_send_message` is available in this session");
+    expect(lower).toContain("if it is not available");
+    expect(lower).toContain("instead of calling a missing tool");
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain("when `fn_send_message` is available in this session");
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain("when that tool is not available");
+  });
+
   it("keeps conversational brevity for non-code questions", () => {
     expect(CHAT_CODEBASE_ACCURACY_GUIDANCE.toLowerCase()).toContain("conversational");
     expect(CHAT_CODEBASE_ACCURACY_GUIDANCE.toLowerCase()).toContain("short/crisp");
