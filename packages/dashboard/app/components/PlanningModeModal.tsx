@@ -166,7 +166,16 @@ type ViewState =
   | { type: "task_created"; taskId: string; task?: Task }
   | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
-  | { type: "loading" };
+  | { type: "loading" }
+  /*
+  FNXC:PlanningMode 2026-07-23-00:00:
+  Fetching a persisted session from the database is not generation. `session_loading` renders a
+  neutral "Loading session…" spinner during that fetch; the `loading` state (with its
+  "Generating…" copy, Stop button, elapsed timer, and 8s missed-SSE watchdog) is reserved for
+  turns the server is actually generating. Before this split, every reload/reopen flashed
+  "Generating initial plan…" while merely hydrating from the DB.
+  */
+  | { type: "session_loading" };
 
 type PlanningGenerationActivity = "initial_plan" | "plan_update" | "question";
 
@@ -1621,8 +1630,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setIsRefiningSummary(false);
       refineSummaryInFlightRef.current = false;
       setGenerationStartTime(null);
-      viewRef.current = { type: "loading" };
-      setView({ type: "loading" });
+      // FNXC:PlanningMode 2026-07-23-00:00: hydrate-from-DB shows the neutral session loader,
+      // not the generation pane — only a fetched status of "generating" enters `loading` below.
+      viewRef.current = { type: "session_loading" };
+      setView({ type: "session_loading" });
 
       try {
         const session = await fetchAiSession(sessionId);
@@ -1817,6 +1828,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           // thinkingOutput — the stream replay reconstructs the loading view exactly once;
           // seeding here and then replaying doubled the visible output on every reload.
           connectToPlanningStream(sessionId);
+        } else {
+          // FNXC:PlanningMode 2026-07-23-00:00: a persisted row none of the branches above
+          // recognize (e.g. awaiting_input with neither question nor summary, or complete
+          // without a result) used to strand the modal on the generation spinner forever.
+          // Surface it as a retryable error instead of an indefinite loader.
+          setView({
+            type: "error",
+            session: { sessionId, currentQuestion: null, summary: persistedRunningSummary },
+            errorMessage: t("planning.sessionUnrecoverableState", "This session could not be restored. Retry to continue the interview."),
+          });
         }
       } catch (err) {
         if (planningSessionLoadEpochRef.current !== loadEpoch || currentSessionIdRef.current !== sessionId) return;
@@ -3082,7 +3103,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             Header icon mirrors MissionManager's <Target size={20} className="mission-manager__header-icon" />: same size (20) and same var(--todo) tint + flex-shrink:0, applied via the scoped .planning-modal--embedded .modal-header--embedded .detail-title-row > svg rule (it overrides the shared icon-triage brown so the two headers read as siblings).
             */}
             <Lightbulb size={20} className="icon-triage" />
-            {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
+            {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
               <input
                 className="input planning-session-title-input"
                 aria-label={t("planning.renameSession", "Rename session")}
@@ -3093,8 +3114,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 autoFocus
               />
             ) : (
-              <><h3>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</h3>
-              {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error") && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
+              <><h3>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</h3>
+              {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
             )}
           </div>
           {/*
@@ -3103,7 +3124,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           title-row Back control on every viewport, avoiding a duplicate Sessions toggle and keeping
           compact list/detail state synchronized through one handler.
           */}
-          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") && (
+          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") && (
             <div className="planning-header-controls">
               <button
                 ref={historyTriggerRef}
@@ -3406,6 +3427,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   {t("planning.startPlanning", "Start Planning")}
                 </button>
               </div>
+            </div>
+          )}
+
+          {view.type === "session_loading" && (
+            <div className="planning-loading" data-testid="planning-session-loading" role="status" aria-live="polite">
+              <Loader2 size={40} className="spin icon-todo" />
+              <p>{t("planning.loadingSession", "Loading session…")}</p>
             </div>
           )}
 

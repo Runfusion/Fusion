@@ -720,6 +720,31 @@ describe("PlanningModeModal sequential flow", () => {
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith("session-1", { refine: true, focus: "Add migration sequencing and ask about rollout risks." }, "project-1"));
     expect(await screen.findByText("Which migration risk should come first?")).toBeInTheDocument();
   });
+  /*
+  FNXC:PlanningMode 2026-07-23-00:00:
+  Hydrating a persisted session from the database is not generation. While the fetch is in
+  flight the modal must show the neutral session loader; the "Generating…" copy (and its Stop
+  affordance) is reserved for sessions the server reports as actually generating.
+  */
+  it("shows a session loader, not generating copy, while a persisted session hydrates", async () => {
+    let resolveFetch!: (session: Record<string, unknown>) => void;
+    mockFetchAiSession.mockReturnValue(new Promise((resolve) => { resolveFetch = resolve; }));
+    renderSession();
+
+    expect(await screen.findByTestId("planning-session-loading")).toHaveTextContent("Loading session…");
+    expect(screen.queryByText(/Generating/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+
+    resolveFetch({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-1", type: "text", question: "What should the plan prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    expect(await screen.findByText("What should the plan prioritize?")).toBeInTheDocument();
+    expect(screen.queryByTestId("planning-session-loading")).toBeNull();
+  });
   it("restores the updating-plan progress state after refresh", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "generating", currentQuestion: null, result: JSON.stringify(summaryWithRefinements), inputPayload: JSON.stringify({ generationPurpose: "plan_update" }) });
     renderSession();
@@ -819,6 +844,14 @@ describe("PlanningModeModal sequential flow", () => {
     renderSession();
 
     fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    /*
+    FNXC:PlanningMode 2026-07-23-00:00:
+    Wait for the stop to settle into plan review before grabbing Refine. Clicking the workspace
+    pane's Refine while the stop transition remounts the plan pane dispatches on a detached node
+    and the refinement menu never opens.
+    */
+    await waitFor(() => expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-1", "project-1"));
+    await screen.findByTestId("planning-plan-review");
     fireEvent.click(await screen.findByRole("button", { name: "Refine" }));
     fireEvent.change(screen.getByLabelText("Refinement instructions"), { target: { value: "Focus the next questions on rollout." } });
     fireEvent.click(screen.getByRole("button", { name: "Apply refinement" }));
