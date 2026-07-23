@@ -11,6 +11,7 @@
 // resolves only to this file (types.ts), not the package barrel, so the types must
 // be re-exported here (type-only — no engine/runtime code crosses into the browser
 // bundle) rather than requiring dashboard code to import the source module path.
+
 export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner/planner-overseer-state.js";
 export type { ExecutorEscalationTarget, InReviewStallCode, InReviewStallSignal, ProviderErrorClassification } from "./tasks/in-review-stall.js";
 export type { InReviewStalledCode, InReviewStalledSignal } from "./tasks/in-review-stalled.js";
@@ -359,7 +360,9 @@ import type {
   SteeringComment,
   TaskComment,
   TaskCommentInput,
+
 } from "./types/task/task-log.js";
+
 export type {
   StepStatus,
   WorkflowTransitionNotificationKind,
@@ -523,7 +526,9 @@ import {
   CheckoutConflictError,
   WorkspaceTaskMergeError,
   DUPLICATE_OF_METADATA_KEY,
+
 } from "./types/task/task-core.js";
+
 export {
   assertNotWorkspaceTaskMerge,
   isWorkspaceTask,
@@ -573,7 +578,9 @@ import type {
   TaskDetail,
   InboxTask,
   TaskCreateInput,
+
 } from "./types/task/task-core.js";
+
 export type {
   SourceType,
   TaskBranchGroupSource,
@@ -622,7 +629,9 @@ export type {
 
 import {
   SHARED_STATE_SNAPSHOT_VERSION,
+
 } from "./types/task/todo-list.js";
+
 export {
   SHARED_STATE_SNAPSHOT_VERSION,
 };
@@ -635,7 +644,9 @@ import type {
   TodoItemCreateInput,
   TodoItemUpdateInput,
   TodoListWithItems,
+
 } from "./types/task/todo-list.js";
+
 export type {
   TodoList,
   TodoItem,
@@ -666,7 +677,9 @@ import {
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,
+
 } from "./types/settings/settings-scope.js";
+
 export {
   isMcpSecretRef,
   DEFAULT_GLOBAL_SETTINGS,
@@ -735,7 +748,9 @@ import type {
   SecretsEnvSettings,
   ProjectSettings,
   Settings,
+
 } from "./types/settings/settings-scope.js";
+
 export type {
   SettingsScope,
   WebSearchBackend,
@@ -794,7 +809,9 @@ import {
   COLUMN_LABELS,
   COLUMN_DESCRIPTIONS,
   VALID_TRANSITIONS,
+
 } from "./types/board/board-config.js";
+
 export {
   COLUMN_LABELS,
   COLUMN_DESCRIPTIONS,
@@ -818,7 +835,9 @@ import type {
   MergeResult,
   TaskCommitAssociation,
   CommitAssociationDiffBackfillReport,
+
 } from "./types/board/board-config.js";
+
 export type {
   AutostashOutcome,
   TaskCommitAssociationMatchSource,
@@ -845,7 +864,9 @@ import {
   formatPlanningPlanMd,
   validateDockerNodeConfig,
   sanitizeDockerNodeConfigForResponse,
+
 } from "./types/mesh/archive-planning.js";
+
 export {
   formatPlanningPlanMd,
   validateDockerNodeConfig,
@@ -931,7 +952,9 @@ import type {
   DockerNodeResourceConfig,
   DockerProvisionInput,
   DockerProvisionResult,
+
 } from "./types/mesh/archive-planning.js";
+
 export type {
   PlanningQuestionType,
   IsolationMode,
@@ -1089,7 +1112,9 @@ export interface AgentPromptsConfig {
 import type {
   PluginActivation,
   PluginActivationInput,
+
 } from "./types/plugins/plugin-activation.js";
+
 export type {
   PluginActivation,
   PluginActivationInput,
@@ -1319,7 +1344,9 @@ import type {
   SetupCompletionResult,
   MigrationOptions,
   MigrationResult,
+
 } from "./types/mesh/multiproject-setup.js";
+
 export type {
   DetectedProject,
   SetupState,

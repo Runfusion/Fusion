@@ -79,6 +79,16 @@ const PLANNING_SIDEBAR_MAX_WIDTH = 560;
 const PLANNING_SIDEBAR_STORAGE_KEY = "fusion:planning-sidebar-width";
 
 const MAX_PLANNING_AUTO_RETRIES = 3;
+
+/*
+FNXC:PlanningRetry 2026-07-22-21:00:
+The auto-retry budget must survive remounts. Every app-tab switch unmounts the Planning view,
+and a ref-scoped budget was re-granted on each return, so a session stuck in a persisted error
+state regenerated its full turn (agent rebuild + history replay) on every visit — the reported
+"leave and come back duplicates the generation infinitely". Attempts are tracked per session in
+module scope; success paths (question/summary/new session) still clear the entry.
+*/
+const planningAutoRetryAttemptsBySession = new Map<string, number>();
 const MAX_PLANNING_CREATE_CLAIM_RETRIES = 20;
 
 function isPlanningCreateClaimConflict(error: unknown): boolean {
@@ -516,6 +526,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   const resetPlanningAutoRetryAttempts = useCallback(() => {
     planningAutoRetryAttemptRef.current = 0;
+    // Clear the remount-durable budget too, so successful progress re-arms auto-retry.
+    const sessionId = currentSessionIdRef.current;
+    if (sessionId) planningAutoRetryAttemptsBySession.delete(sessionId);
     setAutoRetryAttempt(0);
     setIsAutoRetrying(false);
   }, []);
@@ -1054,6 +1067,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     (sessionId: string) => {
       const streamEpoch = ++streamConnectionEpochRef.current;
       streamConnectionRef.current?.close();
+      /*
+      FNXC:PlanningStreamCatchup 2026-07-22-21:00:
+      A brand-new stream connection replays the session's buffered thinking from the start
+      (the buffer is sized to hold a full turn). Whatever is currently on screen is a subset
+      of that replay, so it must be cleared first — appending the replay onto existing output
+      duplicated the visible generation on every reconnect (mobile tab switches unmount this
+      view, so this happened constantly).
+      */
+      setStreamingOutput("");
+      streamingOutputRef.current = "";
       // Guard handlers against late events from a connection the user has
       // already navigated away from (e.g. clicked "New Session" while the
       // previous SSE flushed a buffered question). currentSessionIdRef is
@@ -1243,7 +1266,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         let retryError: unknown = err;
         const retryErrorMessage = getErrorMessage(err) || "";
 
-        if (retryErrorMessage.includes("not in an error state")) {
+        // FNXC:PlanningTurnAdmission 2026-07-22-21:00: a retry rejected because another turn
+        // already holds the session's turn slot means work is in progress — rejoin it via the
+        // same session-refresh path instead of surfacing a terminal error.
+        if (retryErrorMessage.includes("not in an error state") || retryErrorMessage.includes("already in progress")) {
           try {
             const session = await fetchAiSession(retryTarget.sessionId);
             if (!session) {
@@ -1254,7 +1280,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             currentSessionIdRef.current = session.id;
 
             if (session.status === "generating") {
-              setStreamingOutput(session.thinkingOutput ?? "");
+              // FNXC:PlanningStreamCatchup 2026-07-22-21:00: rejoin through a clean stream
+              // (clear + buffered replay) instead of seeding persisted thinking alongside the
+              // in-flight replay, which raced and duplicated the visible output.
+              connectToPlanningStream(session.id);
               setView({ type: "loading" });
             } else if (session.status === "awaiting_input") {
               if (!session.currentQuestion) {
@@ -1322,7 +1351,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         if (!retryStillOwnsSession()) return;
         streamConnectionRef.current?.close();
         streamConnectionRef.current = null;
-        if (options.auto && planningAutoRetryAttemptRef.current < MAX_PLANNING_AUTO_RETRIES) {
+        if (options.auto && (planningAutoRetryAttemptsBySession.get(retryTarget.sessionId) ?? 0) < MAX_PLANNING_AUTO_RETRIES) {
           viewRef.current = { type: "loading" };
           setView({ type: "loading" });
           setIsAutoRetrying(true);
@@ -1359,13 +1388,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         return true;
       }
       if (viewRef.current.type === "error") return false;
-      if (planningAutoRetryAttemptRef.current >= MAX_PLANNING_AUTO_RETRIES) {
+      // FNXC:PlanningRetry 2026-07-22-21:00: budget is per-session and survives remounts.
+      const priorAttempts = planningAutoRetryAttemptsBySession.get(sessionId) ?? 0;
+      if (priorAttempts >= MAX_PLANNING_AUTO_RETRIES) {
         setIsAutoRetrying(false);
         return false;
       }
 
-      const attempt = planningAutoRetryAttemptRef.current + 1;
+      const attempt = priorAttempts + 1;
       const retryToken = Symbol(`planning-auto-retry:${sessionId}:${attempt}`);
+      planningAutoRetryAttemptsBySession.set(sessionId, attempt);
       planningAutoRetryAttemptRef.current = attempt;
       planningAutoRetryOwnerRef.current = { sessionId, token: retryToken };
       setAutoRetryAttempt(attempt);
@@ -1622,10 +1654,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           through the same generation retry path used by live stream failures while preserving the
           hydrated running plan and the existing bounded single-flight protection.
           */
+          /*
+          FNXC:PlanningRetry 2026-07-22-21:00:
+          Do NOT reset the auto-retry budget here. Loading an errored session happens on every
+          remount (each app-tab switch unmounts this view), and a per-mount reset turned the
+          bounded three-attempt budget into an unbounded regeneration loop. The module-scoped
+          per-session budget carries across remounts; only real progress clears it.
+          */
           if (planningAutoRetryOwnerRef.current?.sessionId !== sessionId) {
-            resetPlanningAutoRetryAttempts();
+            planningAutoRetryAttemptRef.current = planningAutoRetryAttemptsBySession.get(sessionId) ?? 0;
+            setAutoRetryAttempt(planningAutoRetryAttemptRef.current);
           }
-          await startPlanningAutoRetry(sessionId);
+          const autoRetryStarted = await startPlanningAutoRetry(sessionId);
+          if (!autoRetryStarted) {
+            // Budget exhausted: surface the persisted error with a manual Retry affordance.
+            setView({
+              type: "error",
+              session: { sessionId, currentQuestion: null, summary: persistedRunningSummary },
+              errorMessage: session.error || t("planning.sessionFailed", "Session failed while contacting the AI."),
+            });
+          }
           return;
         }
 
@@ -1708,7 +1756,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           }
         } else if (session.status === "generating") {
           setView({ type: "loading" });
-          if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
+          // FNXC:PlanningStreamCatchup 2026-07-22-21:00: no pre-seed from persisted
+          // thinkingOutput — the stream replay reconstructs the loading view exactly once;
+          // seeding here and then replaying doubled the visible output on every reload.
           connectToPlanningStream(sessionId);
         }
       } catch (err) {
