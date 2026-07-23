@@ -540,6 +540,7 @@ function requiresExecutionModeReplan(column: Task["column"]): boolean {
 
 interface ProvenanceDisplay {
   label: string;
+  labelHref?: string;
   parentTaskId?: string;
   contextInfo?: string;
   contextHref?: string;
@@ -555,19 +556,6 @@ interface ProvenanceLabelOptions {
 function getIssueUrlFromMetadata(metadata: Task["sourceMetadata"]): string | undefined {
   const issueUrl = metadata?.issueUrl;
   return isStringValue(issueUrl) && issueUrl.length > 0 ? issueUrl : undefined;
-}
-
-function parseGithubIssueLabel(url: string): { label: string; href: string } | null {
-  const match = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(issues|pull)\/(\d+)(?:$|[/?#])/);
-  if (!match) {
-    return null;
-  }
-
-  const [, owner, repo, , number] = match;
-  return {
-    label: `${owner}/${repo}#${number}`,
-    href: url,
-  };
 }
 
 function getResearchContextInfo(metadata: Task["sourceMetadata"]): string | undefined {
@@ -606,12 +594,13 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
       return { label: tr ? tr("taskDetail.provenance.workflowStep", "Workflow Step") : "Workflow Step" };
     case "github_import": {
       const issueUrl = getIssueUrlFromMetadata(task.sourceMetadata);
-      const parsedIssue = issueUrl ? parseGithubIssueLabel(issueUrl) : null;
+      /*
+      FNXC:TaskProvenance 2026-07-23-12:20:
+      GitHub import provenance owns its source-issue link on the visible GitHub Import label. Do not restore a parsed repository/issue suffix: a missing URL must remain plain text, while a usable URL gets the sole external click target.
+      */
       return {
         label: tr ? tr("taskDetail.provenance.githubImport", "GitHub Import") : "GitHub Import",
-        contextInfo: issueUrl ? (parsedIssue?.label ?? (tr ? tr("taskDetail.provenance.openIssue", "Open issue") : "Open issue")) : undefined,
-        contextHref: issueUrl,
-        contextInfoFull: issueUrl,
+        labelHref: issueUrl,
       };
     }
     case "research": {
@@ -4688,7 +4677,20 @@ export function TaskDetailContent({
                           )}
                         </>
                       ) : (
-                        <>{t("taskDetail.provenance.createdVia", "Created via")} {provenanceDisplay.label}</>
+                        <>
+                          {t("taskDetail.provenance.createdVia", "Created via")} {provenanceDisplay.labelHref ? (
+                            <a
+                              className="detail-provenance-link"
+                              href={provenanceDisplay.labelHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {provenanceDisplay.label}
+                            </a>
+                          ) : (
+                            provenanceDisplay.label
+                          )}
+                        </>
                       )}
                       {provenanceDisplay.parentTaskId && (
                         <>
