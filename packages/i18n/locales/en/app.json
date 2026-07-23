@@ -6854,10 +6854,11 @@
       "allProjectResetSuccess": "All project settings reset to defaults"
     },
     "database": {
-      "embeddedConnectionCapHelp": "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.",
+      "embeddedConnectionCapHelp": "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Unset by default — Fusion picks 500, or 150 on Windows where each connection is a separate process and higher caps can crash backends. External PostgreSQL uses its provider's connection limit.",
       "embeddedConnectionCap": "Embedded PostgreSQL connection cap",
       "embeddedConnectionCapError": "Enter a value between 32 and 2,000.",
-      "advanced": "Advanced database settings"
+      "advanced": "Advanced database settings",
+      "embeddedConnectionCapPlaceholder": "auto"
     },
     "configVersions": {
       "title": "Configuration versions",
@@ -7861,9 +7862,14 @@
     "provenance": {
       "createdBy": "Created by",
       "createdVia": "Created via",
+      "creatingAgent": "Creating agent",
+      "importedFrom": "Imported from",
+      "nearDuplicateOf": "Flagged near-duplicate of",
+      "parentTask": "Parent task",
       "parentTaskOf": "of",
       "createdToUndo": "Created to undo",
-      "undoTask": "Undo task"
+      "undoTask": "Undo task",
+      "title": "Provenance"
     },
     "recoveryState": "Recovery state",
     "refine": {

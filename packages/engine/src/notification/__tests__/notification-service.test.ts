@@ -98,6 +98,35 @@ describe("NotificationService deferred failure notifications", () => {
     await service.stop();
   });
 
+  it("delivers a new wedge episode when an opaque terminal failure gains a specific cause", async () => {
+    const { store, service, sendNotification } = await setup();
+    const genericFailure = task({ id: "FN-wedge", status: "failed", error: "unexpected failure" });
+    store.setTask(genericFailure);
+    store.emit("task:updated", genericFailure);
+
+    const wedge = task({
+      id: "FN-wedge",
+      status: "failed",
+      column: "in-review",
+      error: "merge verification failed: check:changeset-format",
+    });
+    store.setTask(wedge);
+    store.emit("task:updated", wedge);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(sendNotification).toHaveBeenCalledTimes(2);
+    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
+      taskId: "FN-wedge",
+      metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
+    }));
+    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
+      taskId: "FN-wedge",
+      metadata: expect.objectContaining({ wedgeReason: "merge-blocked:changeset-format" }),
+    }));
+    expect(service.getPendingFailureCount()).toBe(0);
+    await service.stop();
+  });
+
   it("FN-5627: suppresses notification for transient lease-handoff-target-not-queued failures", async () => {
     const { store, service, sendNotification } = await setup();
     store.setTask(task({
@@ -140,7 +169,10 @@ describe("NotificationService deferred failure notifications", () => {
     await vi.advanceTimersByTimeAsync(500);
 
     expect(sendNotification).toHaveBeenCalledTimes(1);
-    expect(sendNotification).toHaveBeenCalledWith("failed", expect.objectContaining({ taskId: "FN-genuine" }));
+    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
+      taskId: "FN-genuine",
+      metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
+    }));
     await service.stop();
   });
 

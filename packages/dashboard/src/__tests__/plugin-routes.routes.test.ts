@@ -1326,10 +1326,14 @@ describe("DELETE /plugins/:id", () => {
 });
 
 describe("plugin-defined route dispatch", () => {
-  it("registers PATCH routes from plugins", () => {
+  it("dispatches PATCH routes from plugins", async () => {
+    // FNXC:PluginRoutes 2026-07-22-20:30: plugin routes are dispatched dynamically per
+    // request now, so assert observable dispatch behavior instead of inspecting the
+    // boot-time Express router stack (which no longer contains plugin routes).
+    const patchHandler = vi.fn().mockResolvedValue({ patched: true });
     const pluginRunner = {
       getPluginRoutes: vi.fn().mockReturnValue([
-        { pluginId: "fusion-plugin-roadmap", route: { method: "PATCH", path: "/roadmaps/x", handler: vi.fn() } },
+        { pluginId: "fusion-plugin-roadmap", route: { method: "PATCH", path: "/roadmaps/x", handler: patchHandler } },
       ]),
     };
 
@@ -1345,9 +1349,14 @@ describe("plugin-defined route dispatch", () => {
       getPlugin: vi.fn().mockReturnValue({ manifest: { id: "fusion-plugin-roadmap" } }),
     } as any), pluginRunner as any, createMockTaskStore());
 
-    const stack = (router as any).stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>;
-    const patchRoute = stack.find((layer) => layer.route?.path === "/fusion-plugin-roadmap/roadmaps/x");
-    expect(patchRoute?.route?.methods.patch).toBe(true);
+    const app = express();
+    app.use(express.json());
+    app.use("/api/plugins", router);
+
+    const res = await REQUEST(app, "PATCH", "/api/plugins/fusion-plugin-roadmap/roadmaps/x", {});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ patched: true });
+    expect(patchHandler).toHaveBeenCalled();
   });
 
   it("passes scoped taskStore and createAiSession through pluginLoader.createRouteContext", async () => {

@@ -248,6 +248,10 @@ Separation of concerns:
 - `permissionPolicy` determines how sensitive runtime actions are gated (`allow`, `block`, `require-approval`) once the capability path is in play. `require-approval` creates an approval request with the permanent or ephemeral actor identity, pauses the associated task safely, and resumes through the existing approval lifecycle.
 - Dashboard persona presets (`packages/dashboard/app/components/agent-presets/`) are UI templates for identity/behavior and are **not** the source of truth for permission-policy enforcement.
 
+### Task wedge operator notifications
+
+When a task is terminally blocked (for example, by a merge gate, exhausted execution retries, or a completion blocker), Fusion posts a system message to the dashboard mailbox and sends a `task-wedged` notification through configured providers. The message identifies the task, bounded reason/gate when known, and a recovery action. The active/resolved episode is persisted with the task, so it is sent once per active reason across service restarts; retrying or otherwise restoring progress clears the episode, so a later recurrence is visible again.
+
 ### CLI agent permission prompts and notifications
 
 CLI-agent adapters keep their own autonomy posture and tool-permission handling separate from permanent-agent `permissionPolicy`. When an adapter reports a permission/input prompt (`PermissionRequest`, `Notification`, or a conservative approval-prompt heuristic), the CLI session moves to `waitingOnInput`; the dashboard shows the session banner, and Fusion dispatches the `cli-agent-awaiting-input` notification event through enabled ntfy/webhook providers. Repeated waiting events for the same CLI session are de-duplicated before provider delivery, while the in-app banner continues to reflect the live session state.

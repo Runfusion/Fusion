@@ -51,7 +51,10 @@ beforeEach(() => {
   const esInstance = {
     readyState: 1,
     close: vi.fn(),
-    addEventListener: vi.fn(),
+    addEventListener: vi.fn((event: string, handler: (event: MessageEvent) => void) => {
+      (esInstance as { handlers?: Record<string, (event: MessageEvent) => void> }).handlers ??= {};
+      (esInstance as { handlers: Record<string, (event: MessageEvent) => void> }).handlers[event] = handler;
+    }),
     removeEventListener: vi.fn(),
     onerror: null,
     onopen: null,
@@ -64,12 +67,14 @@ beforeEach(() => {
   (MockES as unknown as { CONNECTING: number; OPEN: number; CLOSED: number }).OPEN = 1;
   (MockES as unknown as { CONNECTING: number; OPEN: number; CLOSED: number }).CLOSED = 2;
   vi.stubGlobal("EventSource", MockES);
+  (globalThis as { __testEventSourceInstance?: typeof esInstance }).__testEventSourceInstance = esInstance;
 });
 
 afterEach(() => {
   cleanup();
   document.querySelector('[data-test-id="all-app-css"]')?.remove();
   vi.restoreAllMocks();
+  delete (globalThis as { __testEventSourceInstance?: unknown }).__testEventSourceInstance;
 });
 
 function builtinPlugin(id: string, enabled: boolean) {
@@ -174,57 +179,44 @@ describe("PluginManager toggle switch", () => {
 });
 
 /*
- * FNXC:PluginManager 2026-07-07-00:00:
- * FN-7629 — regression coverage for the durable built-in runtime enable/disable control.
- * Symptom: with no plugin_installs row for Hermes/Paperclip/OpenClaw/Droid (fetchPlugins -> []),
- * the built-in runtime rows dead-ended at a static "Built-in metadata only"/install-only CTA and
- * offered no way to disable the runtime. Assert every runtime built-in exposes an interactive
- * toggle in every data state, and clicking disable on a not-installed runtime persists via
- * installPlugin + disablePlugin (the durable register-then-disable path).
+ * FNXC:PluginManager 2026-07-22-20:41:
+ * FN-8521 prevents the post-uninstall toggle from re-registering a runtime. A missing
+ * PluginInstallation has exactly one action (Install); only installed records expose toggles.
  */
-describe("PluginManager built-in runtime enable/disable toggle (FN-7629)", () => {
+describe("PluginManager built-in runtime install and enable controls (FN-8521)", () => {
   const RUNTIME_BUILTINS = BUILTIN_PLUGINS.filter((p) => p.category === "runtime");
 
   async function builtinSection() {
     return within(await screen.findByLabelText("Built-in plugin recommendations"));
   }
 
-  it("renders an interactive, checked toggle for every runtime built-in when not installed", async () => {
+  it("shows every uninstalled runtime's Install action without a toggle or orphaned toggle shell", async () => {
     vi.mocked(fetchPlugins).mockResolvedValue([]);
 
     render(<PluginManager addToast={addToast} />);
     const section = await builtinSection();
 
     for (const runtime of RUNTIME_BUILTINS) {
-      const toggle = await section.findByRole("checkbox", { name: `Disable ${runtime.name}` });
-      expect(toggle).toBeChecked();
-      expect(toggle.closest("label.toggle-switch")).not.toBeNull();
-    }
-
-    // No dead-end "Built-in metadata only" label for any runtime built-in row
-    // (the metadata-only dead-end may still legitimately appear for non-runtime
-    // built-ins like Agent Browser, which this task does not change).
-    for (const runtime of RUNTIME_BUILTINS) {
       const row = section.getByText(runtime.name).closest(".plugin-builtins-item") as HTMLElement;
-      expect(within(row).queryByText("Built-in metadata only")).not.toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: `Install ${runtime.name}` })).toBeVisible();
+      expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(row.querySelector("label.toggle-switch")).toBeNull();
+      expect(row.querySelector(".toggle-slider")).toBeNull();
     }
   });
 
-  it("disabling a not-installed runtime built-in registers it then disables it (durable path)", async () => {
+  it("uses Install as the only transition from an uninstalled runtime", async () => {
     vi.mocked(fetchPlugins).mockResolvedValue([]);
-    vi.mocked(installPlugin).mockResolvedValue(builtinPlugin("fusion-plugin-hermes-runtime", true));
 
     render(<PluginManager addToast={addToast} />);
-
-    const toggle = await (await builtinSection()).findByRole("checkbox", { name: "Disable Hermes Runtime" });
-    await userEvent.click(toggle.closest("label.toggle-switch") as HTMLLabelElement);
+    const hermes = (await builtinSection()).getByText("Hermes Runtime").closest(".plugin-builtins-item") as HTMLElement;
+    await userEvent.click(within(hermes).getByRole("button", { name: "Install Hermes Runtime" }));
 
     await waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-hermes-runtime" }, undefined);
     });
-    await waitFor(() => {
-      expect(disablePlugin).toHaveBeenCalledWith("fusion-plugin-hermes-runtime", undefined);
-    });
+    expect(disablePlugin).not.toHaveBeenCalled();
+    expect(enablePlugin).not.toHaveBeenCalled();
   });
 
   it("toggles an installed, enabled runtime built-in via the standard disable path (no re-install)", async () => {
@@ -241,7 +233,7 @@ describe("PluginManager built-in runtime enable/disable toggle (FN-7629)", () =>
     expect(installPlugin).not.toHaveBeenCalled();
   });
 
-  it("toggles an installed, disabled runtime built-in back on via the standard enable path", async () => {
+  it("toggles an installed, disabled runtime built-in back on via the standard enable path without installing", async () => {
     vi.mocked(fetchPlugins).mockResolvedValue([builtinPlugin("fusion-plugin-openclaw-runtime", false)]);
 
     render(<PluginManager addToast={addToast} />);
@@ -253,5 +245,6 @@ describe("PluginManager built-in runtime enable/disable toggle (FN-7629)", () =>
     await waitFor(() => {
       expect(enablePlugin).toHaveBeenCalledWith("fusion-plugin-openclaw-runtime", undefined);
     });
+    expect(installPlugin).not.toHaveBeenCalled();
   });
 });

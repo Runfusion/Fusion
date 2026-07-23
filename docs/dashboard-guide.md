@@ -50,7 +50,7 @@ The Settings footer includes a **Reset Settings** button, next to Import/Export,
 
 Both actions are irreversible; there is no undo after confirming. The dialog closes and the form refreshes to show the reset values immediately after a successful reset.
 
-**Excluded sections.** Some sections are not a simple settings form and are intentionally excluded from **Reset this menu** (the button is disabled with an explanatory tooltip when one of these is the active section), because each already has its own dedicated management flow: **Secrets**, **MCP Servers** (global and project), **Plugins**, **Memory**, **Authentication**, **Prompts**, **CLI Agents**, and the **Hermes**/**OpenClaw**/**Paperclip** runtime sections. **Reset all project settings** is unaffected by this exclusion list since it resets the underlying project settings values directly, not through any of those sections' own flows.
+**Excluded sections.** Some sections are not a simple settings form and are intentionally excluded from **Reset this menu** (the button is disabled with an explanatory tooltip when one of these is the active section), because each already has its own dedicated management flow: **Secrets**, **MCP Servers** (global and project), **Plugins**, **Memory**, **Authentication**, **Prompts**, **CLI Agents**, and the **Hermes**/**OpenClaw**/**Paperclip** runtime sections. Runtime pages appear only when their runtime plugin is installed; an installed but disabled runtime stays visible so it can be inspected or re-enabled. Settings hides runtime pages while its installed-plugin list is loading or unavailable, then refreshes the navigation after plugin lifecycle changes while Settings remains open. **Reset all project settings** is unaffected by this exclusion list since it resets the underlying project settings values directly, not through any of those sections' own flows.
 
 ## Keyboard shortcuts
 
@@ -567,16 +567,16 @@ Create requests never send an explicit `column`. The task store resolves the lan
 
 Optional workflow steps declared by the active workflow are available from the quick-add action row and the **New Task** dialog's inline quick buttons. For example, the coding workflow's browser verification option appears as a quick drop-down when that workflow is active; each option is seeded from the workflow step's `defaultOn` setting and is sent with the task's `enabledWorkflowSteps` payload at creation time.
 
-<!-- FNXC:QuickAddAttachments 2026-07-16-00:00: Quick Add attachments use a compact icon-only paperclip while keeping the Attach action and pending image count in accessible labels. The same pending preview/upload path accepts image selection, paste, and direct drag/drop onto the Quick Add box. Compact pending-image thumbnails are accessible open controls that show the full image in a movable/resizable window, which becomes a full-screen sheet on mobile. -->
+<!-- FNXC:QuickAddAttachments 2026-08-03-00:00: Quick Add's compact paperclip accepts the same task-store-supported photos and files through picker, paste, and drag/drop. Images retain accessible floating previews; non-image files expose a filename and remove action without an empty open control. -->
 <!-- FNXC:QuickAddPriorityIndicator 2026-07-10-21:45: Quick Add keeps status controls in the bottom action cluster: GitHub tracking sits beside the paperclip attach button, Priority is icon-only with low/down, normal/flag, high/up, urgent/alert glyphs, and Fast is an icon-only lightning button.
 FNXC:PriorityColorCoding 2026-07-11-00:00: Priority glyphs share urgency colors across Quick Add, the New Task inline row, and task-card badges: low=info/blue, normal=muted, high=warning/amber, urgent=error/red. -->
 Quick Add and Inline Create model selection include Plan, Executor, Reviewer, and Merger lanes. Each lane can inherit its default or select a task-specific model; Plan, Reviewer, and Merger also provide independent thinking-level overrides.
 
-<!-- FNXC:QuickAddStart 2026-07-22-16:10: Quick Add Start is intentionally a gesture-only enhancement: ordinary Save and Enter remain create-only. -->
+<!-- FNXC:QuickAddStart 2026-07-22-17:45: Coding (Ideas) Start is an atomic Todo create, while ordinary Save and Enter remain create-only in Ideas. -->
 
-Quick Add **Save** supports a **Start** menu on touch/pen long-press or mouse right-click only when the exact selected workflow has complete runtime metadata: a real non-sentinel id, nonempty ordered columns with unique nonblank ids, and an object `flags` value on every column. It is eligible only for validated `builtin:coding-ideas` or a validated workflow whose first visible column is a hold. Start snapshots that exact definition and id before duplicate confirmation and submits it unchanged; later selection or metadata refreshes cannot alter promotion. A returned create result that is absent, malformed, missing an id/column/workflow id, or mismatched to the submitted workflow is still a successful create-only result. For a matching result, Start moves through the host Board/List move path only to the first later visible working column, skipping intake, hold, and complete columns; no forward target also remains create-only.
+Quick Add **Save** supports a **Start** menu on touch/pen long-press or mouse right-click only when the exact selected workflow has complete runtime metadata: a real non-sentinel id, nonempty ordered columns with unique nonblank ids, and an object `flags` value on every column. It is eligible only for validated `builtin:coding-ideas` or a validated workflow whose first visible column is a hold. Start snapshots that exact definition and id before duplicate confirmation and submits it unchanged; later selection or metadata refreshes cannot alter routing. For Coding (Ideas), Start proves that visible ordered metadata places a non-intake, non-complete **Todo** after **Ideas**, then includes Todo in the original Board/List create request—there is no follow-up move. Missing, hidden, malformed, reordered, or ambiguous metadata fails closed to create-only behavior. Ordinary Save and Enter still create in Ideas. Other eligible hold workflows retain their matching-returned-task promotion through the host Board/List move path only to the first later visible working column, skipping intake, hold, and complete columns; no forward target also remains create-only.
 
-Quick Add image attachments use the paperclip icon button in the action row. Supported image files (`png`, `jpeg`, `gif`, `webp`) can be selected from that control, pasted into the Quick Add input, or dragged onto the Quick Add box; all three paths show compact pending previews before task creation and upload the images to the created task afterward. Select a pending preview to inspect the full image in a movable, resizable window (a full-screen sheet on mobile); close it with Escape or the close control to return to the preview. The same bottom action row places the GitHub tracking override beside the paperclip; Priority is an icon-only control whose glyph changes by selected level (down arrow for low, flag for normal, up arrow for high, alert for urgent) and is color-coded by urgency (low blue/info, normal muted, high amber/warning, urgent red/error), and Fast is an icon-only lightning control. These icon-only controls keep accessible labels and the same create-payload behavior as the previous text chips.
+Quick Add's paperclip accepts supported photos and files: PNG, JPEG, GIF, WebP, MP4, WebM, QuickTime video, plain text, Markdown, JSON, YAML, TOML, CSV, and XML. Select files, paste them into the Quick Add input, or drag them onto the box; pending attachments upload to the newly created task sequentially. Image attachments show compact previews that open in a movable, resizable window (a full-screen sheet on mobile); file attachments show an accessible filename and remove action without an image-open control. Unsupported selections are ignored, and if one upload fails after task creation, the task remains created while Quick Add reports the filenames that need retrying. The same bottom action row places the GitHub tracking override beside the paperclip; Priority is an icon-only control whose glyph changes by selected level (down arrow for low, flag for normal, up arrow for high, alert for urgent) and is color-coded by urgency (low blue/info, normal muted, high amber/warning, urgent red/error), and Fast is an icon-only lightning control. These icon-only controls keep accessible labels and the same create-payload behavior as the previous text chips.
 
 Quick entry, inline quick-create, and the full **New Task** dialog all check for similar active tasks before creating. When possible duplicates exist, the warning lists each match by task description (falling back to title, then “No description”) and lets you open an existing task, cancel, or create anyway with the duplicates acknowledged.
 
@@ -652,6 +652,7 @@ Chat view provides project-scoped conversations with agents.
 - Assistant question tool calls now render as a shared in-chat response card instead of a generic tool-call disclosure. The card recognizes provider-native question tools and Fusion's `fn_ask_question`, supports select, multi-select, text, and yes/no prompts, sends the formatted answer back into the same direct or room thread, and renders historical answered questions read-only.
 - The desktop Chat view toggle and mobile Chat tab now show an unread-response indicator when a live assistant reply arrives for a visible direct or room chat after you leave Chat; opening Chat clears it immediately. Task-detail planner Chat replies stay task-local and do not light up the global Chat unread indicator while those sessions are hidden from the common Chat feed.
 - Agent-backed chat sessions now expose the same mailbox messaging tools (`fn_send_message`, `fn_read_messages`) used by runtime execution/heartbeat flows whenever the engine `MessageStore` is available; model-only chats continue to run without mailbox tools.
+- Main Chat and Chat Rooms accept the same supported photos and files as Quick Add through the paperclip, clipboard paste, or drag/drop. Pending images retain their preview/open behavior, while non-image files remain removable filename chips; failed sends preserve staged attachments for retry.
 - Chat attachments are included in agent-visible prompts for both direct sessions and rooms: supported text attachments are appended under an `Attachments` prompt section, and supported images (`png`, `jpeg`, `gif`, `webp`) are passed as image inputs to the model.
 - Chat attachments can be sent without accompanying text in both Quick Chat and Main Chat; fully empty sends with no text and no attachments are still blocked.
 <!-- FNXC:ChatMessageEdit 2026-07-12-23:20: Document the message-edit affordance and its resume-from-edit ("forget everything after") semantics, including the model-loop-only scope and inline timestamp placement. -->
@@ -1384,7 +1385,7 @@ Features:
 - Enable/disable plugins, reload active plugins, and uninstall plugins
 - Inspect plugin runtime state and transition feedback
 - Edit and save plugin-defined settings schemas from the same panel
-- Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid) always expose an interactive enable/disable toggle in the Built-in Plugins list, even before install. Disabling one registers it and disables it in the same action, and the decision survives restarts — a disabled runtime is not re-activated on the next startup. The Runtimes settings cards mirror this state instead of showing a stale detected/connected status.
+- A built-in runtime without an installed plugin record offers **Install** only. Once installed, it exposes project-scoped Enable/Disable, management, and uninstall controls; toggling never installs or reinstalls a runtime. The Runtimes settings cards mirror the installed runtime state instead of showing a stale detected/connected status.
 
 For full plugin lifecycle workflows (discovery, install, enable/disable, configure, update, uninstall, troubleshooting), see [Plugin Management](./plugin-management.md). For plugin-related settings and experimental toggles, see [Settings reference](./settings-reference.md).
 
@@ -1962,6 +1963,79 @@ Command Center chart surfaces are a stricter token-only zone: `CommandCenter.css
 
 Non-Command-Center dashboard CSS uses `--text` as the canonical primary text token. The undefined `--text-primary` alias is forbidden outside `components/command-center/**` and guarded by `packages/dashboard/app/__tests__/text-token-canonicalization.test.ts`.
 
+### Stable theme token contract (integrators & plugins)
+
+The following curated tokens are the supported dashboard theming contract for integrations and plugin-rendered UI. Each token is defined by `styles.css`; use these names rather than depending on internal or theme-data-only variables.
+
+<!-- fusion-theme-token-contract:start -->
+| Token | Stable meaning |
+|---|---|
+| `--space-xs` | Extra-small spacing step |
+| `--space-sm` | Small spacing step |
+| `--space-md` | Medium spacing step |
+| `--space-lg` | Large spacing step |
+| `--space-xl` | Extra-large spacing step |
+| `--space-2xl` | Largest shared spacing step |
+| `--radius-sm` | Small corner radius |
+| `--radius-md` | Medium corner radius |
+| `--radius-lg` | Large corner radius |
+| `--radius-xl` | Extra-large corner radius |
+| `--radius-pill` | Pill-shaped corner radius |
+| `--font-primary` | Dashboard UI font stack |
+| `--font-mono` | Dashboard monospace font stack |
+| `--font-size-xs` | Caption and help text size |
+| `--font-size-base` | Default body text size |
+| `--shadow-sm` | Subtle elevation shadow |
+| `--shadow-md` | Standard elevation shadow |
+| `--shadow-lg` | High elevation shadow |
+| `--focus-ring` | Subtle focus indicator shadow |
+| `--focus-ring-strong` | Emphasized focus indicator shadow |
+| `--duration-instant` | Instant motion duration |
+| `--duration-fast` | Fast motion duration |
+| `--duration-normal` | Standard motion duration |
+| `--duration-slow` | Slow motion duration |
+| `--transition-instant` | Instant duration and easing shorthand |
+| `--transition-fast` | Fast duration and easing shorthand |
+| `--transition-normal` | Standard duration and easing shorthand |
+| `--transition-slow` | Slow duration and easing shorthand |
+| `--bg` | Primary application background |
+| `--surface` | Primary raised surface |
+| `--card` | Card surface |
+| `--card-hover` | Hovered card surface |
+| `--surface-hover` | Neutral hovered surface |
+| `--bg-secondary` | Secondary application background |
+| `--bg-tertiary` | Tertiary application background |
+| `--border` | Default border color |
+| `--border-subtle` | Low-contrast border color |
+| `--border-strong` | High-contrast border color |
+| `--text` | Primary text color |
+| `--text-muted` | Secondary text color |
+| `--text-dim` | De-emphasized text color |
+| `--triage` | Triage workflow status color |
+| `--todo` | To-do workflow status color |
+| `--in-progress` | In-progress workflow status color |
+| `--in-review` | In-review workflow status color |
+| `--done` | Done workflow status color |
+| `--color-success` | Semantic success color |
+| `--color-error` | Semantic error color |
+| `--color-warning` | Semantic warning color |
+| `--color-info` | Semantic informational color |
+| `--color-muted` | Semantic muted color |
+| `--fusion-max-z` | Live dashboard floating-layer ceiling |
+<!-- fusion-theme-token-contract:end -->
+
+Color tokens resolve to raw color strings (e.g. `#161b22`), not shadcn-style HSL triples, so a token can be used directly as a `color`, `background`, or `border` value without wrapping it in `hsl(...)`.
+
+#### Overlay layering contract
+
+`--fusion-max-z` is always at least as high as the dashboard-managed floating layers covered by this contract: the page overlay/popover band at 10000–10001, the session-monotonic floating-utility stack starting at 10100, the reserved toast/feedback ceiling at 10500, and the body-portaled model-combobox dropdown at 11000. Its CSS boot value is 11001, one above the tallest static layer. `floatingWindowStack.ts` raises the inline value on `document.documentElement` whenever the utility stack grows beyond that floor, and CSS `var()` references re-resolve automatically. The separate task-detail popup band starting at 220 is intentionally not a source for updates because it remains below the utility band.
+
+For the simplest integration, append overlay content to `#plugin-overlay-root`. This fixed, viewport-sized mount point uses `z-index: calc(var(--fusion-max-z) + 1)` and is click-through by default; interactive children must set `pointer-events: auto`. A plugin that owns another root stacking context can apply the same z-index expression directly.
+
+A static mount-point z-index would eventually be overtaken by the unbounded, session-monotonic utility counter. The live custom property is therefore the layering primitive; the mount point is an inert convenience consumer. When empty, it does not alter layout, scrolling, or pointer behavior.
+
+Tokens in the table are stable. Renaming or removing one requires a deprecation note and a changeset; `theme-token-contract-docs.test.ts` guards that every documented token still has a CSS definition.
+
 ### Theme system
 
 <!-- FNXC:DashboardTheming 2026-06-21-00:00: FN-6840 synced the user-facing theme docs to the shipped expanded Shadcn family, the Shadcn Custom color-picker preset, and the sidebar accent behavior that follows each theme's --accent token. -->
@@ -2176,3 +2250,7 @@ Chat can queue `fn_task_request_verification` for an **in-progress** task that h
 
 
 Productivity duration uses total agent-active time: planning (`cumulativePlanningMs`) plus execution (`cumulativeActiveMs`); queued column dwell is not included.
+
+### Custom workflow column descriptions
+
+Custom workflow authors can add optional explanatory copy beneath each column name in the workflow editor. The description appears on selected, aggregate, and archived workflow board columns. Clearing it removes the custom metadata; columns then continue to use the standard lifecycle description when one exists.

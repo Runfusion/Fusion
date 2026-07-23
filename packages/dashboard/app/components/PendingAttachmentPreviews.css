@@ -1,0 +1,60 @@
+/*
+FNXC:QuickAddAttachments 2026-08-03-00:00:
+Images retain the compact thumbnail affordance; non-images use the same shell with a readable,
+wrapping filename and no empty open target. Token sizing keeps attachment controls usable at the
+existing mobile breakpoint without introducing a second responsive layout system.
+*/
+.pending-image-preview__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pending-image-preview__open:focus-visible {
+  outline: var(--focus-ring-width, thin) solid var(--focus-ring, var(--color-primary));
+  outline-offset: calc(var(--space-xs) * -1);
+}
+
+.inline-create-preview--file {
+  width: auto;
+  max-width: calc(var(--space-2xl) * 4);
+  height: auto;
+  min-height: var(--space-2xl);
+}
+
+.pending-attachment-preview__file {
+  display: block;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-xl) var(--space-xs) var(--space-sm);
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
+.pending-image-preview__modal-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 100%;
+  min-height: 100%;
+  padding: var(--space-md);
+}
+
+.pending-image-preview__modal-content img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+
+@media (max-width: 768px) {
+  .pending-attachment-preview__file {
+    padding: var(--space-sm);
+  }
+}

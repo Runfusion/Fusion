@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveQuickAddStartTargetColumn, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart } from "../quickAddStart";
+import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart } from "../quickAddStart";
 
 const workflow = (overrides: Record<string, unknown> = {}) => ({
   id: "custom",
@@ -21,6 +21,29 @@ describe("quick add Start workflow guards", () => {
     expect(validateQuickAddStartWorkflow(workflow({ columns: [{ id: "", flags: {} }] }))).toBeNull();
     expect(validateQuickAddStartWorkflow(workflow({ columns: [{ id: "a", flags: {} }, { id: "a", flags: {} }] }))).toBeNull();
     expect(validateQuickAddStartWorkflow(workflow({ columns: [{ id: "a", flags: null }] }))).toBeNull();
+  });
+
+  it("derives Todo only from a captured, visible Coding Ideas definition", () => {
+    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas" }));
+    expect(canonical).not.toBeNull();
+    expect(resolveQuickAddStartInitialColumn(canonical!)).toBe("todo");
+
+    for (const columns of [
+      [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { hiddenFromBoard: true } }],
+      [{ id: "todo", flags: {} }, { id: "ideas", flags: { hold: true } }],
+      [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { intake: true } }],
+      [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { complete: true } }],
+    ]) {
+      const invalidTarget = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas", columns }));
+      expect(invalidTarget).not.toBeNull();
+      expect(resolveQuickAddStartInitialColumn(invalidTarget!)).toBeNull();
+    }
+
+    expect(resolveQuickAddStartInitialColumn(validateQuickAddStartWorkflow(workflow())!)).toBeNull();
+    expect(validateQuickAddStartWorkflow(workflow({
+      id: "builtin:coding-ideas",
+      columns: [{ id: "ideas", flags: {} }, { id: "todo", flags: {} }, { id: "todo", flags: {} }],
+    }))).toBeNull();
   });
 
   it("only chooses a later visible working destination", () => {

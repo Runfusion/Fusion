@@ -57,7 +57,7 @@ vi.mock("../QuickEntryBox", () => ({
     defaultWorkflowId,
     onMoveTask,
   }: {
-    onCreate?: (input: { description: string; workflowId?: string | null }) => Promise<unknown>;
+    onCreate?: (input: { description: string; workflowId?: string | null; column?: string }) => Promise<unknown>;
     addToast: (message: string, type?: "error" | "success" | "info" | "warning") => void;
     onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
     onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
@@ -146,6 +146,9 @@ vi.mock("../QuickEntryBox", () => ({
           <span data-testid="quick-entry-workflow-props" data-workflow-id={workflowId ?? ""} data-default-workflow-id={defaultWorkflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((option) => option.id))} />
           <button type="button" data-testid="quick-entry-save" onClick={() => void submit()}>
             Save
+          </button>
+          <button type="button" data-testid="quick-entry-start" onClick={() => void onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>
+            Start
           </button>
           <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>
             Move
@@ -3673,6 +3676,32 @@ describe("ListView Quick Entry", () => {
     expect(quickEntryArea?.contains(quickEntry)).toBe(true);
     // QuickEntryBox should be inside the table container (parent of quick-entry area)
     expect(tableContainer?.contains(quickEntry)).toBe(true);
+  });
+
+  it("preserves the explicit Coding Ideas Start column through the list host", async () => {
+    const onQuickCreate = vi.fn().mockResolvedValue(createMockTask({ id: "FN-started", column: "todo" }));
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding-ideas",
+      workflows: [{
+        id: "builtin:coding-ideas",
+        name: "Coding (Ideas)",
+        columns: [
+          { id: "ideas", name: "Ideas", flags: { intake: true } },
+          { id: "todo", name: "Todo", flags: { hold: true } },
+        ],
+      }],
+      taskWorkflowIds: {},
+    });
+    renderListView({ onQuickCreate });
+    await screen.findByTestId("quick-entry-box");
+    fireEvent.click(screen.getByTestId("quick-entry-start"));
+
+    await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Started task",
+      workflowId: "builtin:coding-ideas",
+      column: "todo",
+    })));
   });
 
   it("wires QuickEntry Start moves through the list host callback", async () => {

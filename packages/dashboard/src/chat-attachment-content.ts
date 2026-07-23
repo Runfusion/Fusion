@@ -46,7 +46,9 @@ const IMAGE_MIME_TYPES = new Set([
 ]);
 
 const TEXT_MIME_TYPES = new Set(
-  [...CHAT_ALLOWED_MIME_TYPES].filter((mimeType) => !IMAGE_MIME_TYPES.has(mimeType)),
+  [...CHAT_ALLOWED_MIME_TYPES].filter(
+    (mimeType) => !IMAGE_MIME_TYPES.has(mimeType) && !mimeType.startsWith("video/"),
+  ),
 );
 
 export const CHAT_TEXT_INLINE_LIMIT = 50 * 1024;

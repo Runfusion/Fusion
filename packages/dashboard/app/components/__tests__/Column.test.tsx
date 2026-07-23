@@ -34,7 +34,7 @@ vi.mock("../WorktreeGroup", () => ({
   ),
 }));
 vi.mock("../QuickEntryBox", () => ({
-  QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand, onCreate, onMoveTask }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean; onCreate?: (input: { description: string }) => void; onMoveTask?: (id: string, column: string) => Promise<unknown> }) => (
+  QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand, onCreate, onMoveTask }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean; onCreate?: (input: { description: string; workflowId?: string; column?: string }) => void; onMoveTask?: (id: string, column: string) => Promise<unknown> }) => (
     <div
       data-testid="quick-entry-box"
       data-favorite-providers={JSON.stringify(favoriteProviders ?? [])}
@@ -44,6 +44,7 @@ vi.mock("../QuickEntryBox", () => ({
       data-auto-expand={autoExpand === false ? "false" : "true"}
     >
       <button type="button" onClick={() => onCreate?.({ description: "Quick task" })}>create</button>
+      <button type="button" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>start</button>
       <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>move</button>
     </div>
   ),
@@ -289,6 +290,25 @@ describe("Column legacy descriptions", () => {
 });
 
 describe("Column workflow mode (U9)", () => {
+  it("preserves multiline workflow descriptions and uses overflow-safe board styling", () => {
+    const description = `Send work to this lane.\nhttps://example.test/${"unbroken-token-".repeat(24)}`;
+    render(
+      <Column
+        {...defaultProps}
+        column={"custom-col" as ColumnType}
+        workflowMode
+        columnDisplayName="Custom lane"
+        columnDescription={description}
+        tasks={[]}
+      />,
+    );
+
+    const descriptionElement = document.querySelector(".column-desc");
+    expect(descriptionElement?.textContent).toBe(description);
+    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.column-desc\s*\{[\s\S]*white-space:\s*pre-wrap;[\s\S]*overflow-wrap:\s*anywhere;/);
+  });
+
   it("uses the workflow column display name instead of the legacy label", () => {
     render(
       <Column
@@ -696,6 +716,19 @@ describe("Column QuickEntryBox", () => {
     render(<Column {...defaultProps} tasks={[]} onQuickCreate={vi.fn()} onMoveTask={onMoveTask} />);
     fireEvent.click(screen.getByTestId("quick-entry-move"));
     await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-created", "todo"));
+  });
+
+  it("preserves the explicit Coding Ideas Start column in workflow mode", async () => {
+    const onQuickCreate = vi.fn().mockResolvedValue({});
+    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas" tasks={[]} onQuickCreate={onQuickCreate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+
+    await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith({
+      description: "Started task",
+      workflowId: "builtin:coding-ideas",
+      column: "todo",
+    }));
   });
 
   it("preserves selected built-in workflow id when quick-creating in workflow mode", async () => {

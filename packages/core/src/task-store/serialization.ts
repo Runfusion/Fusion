@@ -78,6 +78,7 @@ export function rowToTask(row: TaskRow): Task {
     overlapBlockedBy: row.overlapBlockedBy || undefined,
     paused: row.paused ? true : undefined,
     pausedReason: row.pausedReason || undefined,
+    wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,
     userPaused: row.userPaused ? true : undefined,
     baseBranch: row.baseBranch || undefined,
     executionStartBranch: row.executionStartBranch || undefined,

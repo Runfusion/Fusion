@@ -151,8 +151,10 @@ describe("ChatView core interactions", () => {
       expect(clickSpy).toHaveBeenCalled();
     });
 
-    it("allows attaching an image and sends with attachments only", async () => {
-      const sendMessage = vi.fn();
+    it("allows attaching an image and clears it after attachment-only delivery", async () => {
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onDelivered?: () => void }) => {
+        callbacks?.onDelivered?.();
+      });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
@@ -168,8 +170,29 @@ describe("ChatView core interactions", () => {
       expect(sendButton).not.toBeDisabled();
 
       await userEvent.click(sendButton);
-      expect(sendMessage).toHaveBeenCalledWith("", [imageFile]);
-      expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();
+      expect(sendMessage).toHaveBeenCalledWith("", [imageFile], expect.objectContaining({
+        onDelivered: expect.any(Function),
+        onFailed: expect.any(Function),
+      }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();
+      });
+    });
+
+    it("retains direct-chat attachments after a failed upload for retry", async () => {
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onFailed?: () => void }) => {
+        callbacks?.onFailed?.();
+      });
+      setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const textFile = new File(["retry"], "retry.txt", { type: "text/plain" });
+      fireEvent.change(fileInput, { target: { files: [textFile] } });
+      await userEvent.click(screen.getByTestId("chat-send-btn"));
+
+      expect(sendMessage).toHaveBeenCalledWith("", [textFile], expect.any(Object));
+      expect(await screen.findByText("retry.txt")).toBeInTheDocument();
     });
 
     it("accepts non-image files and renders filename preview", async () => {
@@ -184,26 +207,46 @@ describe("ChatView core interactions", () => {
       expect(mockCreateObjectURL).not.toHaveBeenCalled();
     });
 
-    it("adds image attachments from paste events", async () => {
+    it("accepts the task attachment MIME set and rejects server-unsupported logs", async () => {
+      setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const video = new File(["video"], "demo.mp4", { type: "video/mp4" });
+      const toml = new File(["key = 'value'"], "config.toml", { type: "text/x-toml" });
+      const unsupportedLog = new File(["log"], "server.log", { type: "text/x-log" });
+      fireEvent.change(fileInput, { target: { files: [video, toml, unsupportedLog] } });
+
+      expect(fileInput).toHaveAttribute("accept", expect.stringContaining("video/mp4"));
+      expect(fileInput).toHaveAttribute("accept", expect.stringContaining(".toml"));
+      expect(await screen.findByText("demo.mp4")).toBeInTheDocument();
+      expect(screen.getByText("config.toml")).toBeInTheDocument();
+      expect(screen.queryByText("server.log")).not.toBeInTheDocument();
+    });
+
+    it("accepts mixed image and supported text attachments from paste events", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       const imageFile = new File(["image"], "paste.png", { type: "image/png" });
-      fireEvent.paste(textarea, { clipboardData: { files: [imageFile] } });
+      const textFile = new File(["note"], "paste.txt", { type: "text/plain" });
+      fireEvent.paste(textarea, { clipboardData: { files: [imageFile, textFile] } });
 
       expect(await screen.findByTestId("chat-attachment-previews")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-attachment-preview-0").querySelector("img")).toBeTruthy();
+      expect(screen.getByText("paste.txt")).toBeInTheDocument();
     });
 
-    it("adds attachments from drag-and-drop", async () => {
+    it("adds supported text attachments from drag-and-drop", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const wrapper = document.querySelector(".chat-input-wrapper") as HTMLElement;
-      const textFile = new File(["log"], "drop.log", { type: "text/x-log" });
+      const textFile = new File(["log"], "drop.txt", { type: "text/plain" });
       fireEvent.drop(wrapper, { dataTransfer: { files: [textFile] } });
 
-      expect(await screen.findByText("drop.log")).toBeInTheDocument();
+      expect(await screen.findByText("drop.txt")).toBeInTheDocument();
     });
 
     it("removes pending attachments and revokes preview urls", async () => {

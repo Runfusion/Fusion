@@ -44,8 +44,13 @@ continuations at workflow column boundaries.
 FNXC:LegacyAdoption 2026-07-21-17:30:
 SCHEMA_BASELINE_VERSION advances to 0032 for fusion_runtime SELECT +
 SECURITY DEFINER write access to the legacy-adoption drained marker.
+
+FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+Advance the PostgreSQL schema ceiling for the durable wedge episode column. The
+forward migration must run before TaskStore writes the new field on fresh and
+upgraded databases.
 */
-export const SCHEMA_BASELINE_VERSION = "0032";
+export const SCHEMA_BASELINE_VERSION = "0033";
 /** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -139,6 +144,8 @@ export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
 export const WORKFLOW_TASK_CONTINUATIONS_VERSION = "0031";
 /** FNXC:LegacyAdoption 2026-07-21-17:30: runtime role needs drained-marker read + restricted write. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION = "0032";
+/** FNXC:TaskWedgeNotifications 2026-10-19-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
+export const TASK_WEDGE_NOTIFICATION_VERSION = "0033";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -339,6 +346,10 @@ const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_PATH = join(
   MIGRATIONS_DIR,
   "0032_legacy_adoption_drained_marker_runtime_grants.sql",
 );
+const TASK_WEDGE_NOTIFICATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0033_fn-8505_wedge_notification.sql",
+);
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -441,6 +452,7 @@ export async function applySchemaBaseline(
     const legacyAdoptionDrainedMarkerRuntimeGrantsAlreadyApplied = applied.includes(
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
     );
+    const taskWedgeNotificationAlreadyApplied = applied.includes(TASK_WEDGE_NOTIFICATION_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -908,6 +920,21 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+    PostgreSQL migrations are explicitly registered rather than discovered.
+    Apply the wedge episode column before persistence writes it, including on
+    databases that already recorded the prior schema ceiling.
+    */
+    if (!taskWedgeNotificationAlreadyApplied) {
+      const migrationSql = await readFile(TASK_WEDGE_NOTIFICATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_WEDGE_NOTIFICATION_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

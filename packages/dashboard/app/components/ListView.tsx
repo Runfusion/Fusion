@@ -772,6 +772,11 @@ export function ListView({
     const workflow = boardWorkflows?.workflows.find((candidate) => candidate.id === targetWorkflowId);
     if (!workflow) return undefined;
     const visibleColumns = workflow.columns.filter((column) => !column.flags.archived && !column.flags.hiddenFromBoard);
+    /*
+    FNXC:QuickAddStart 2026-07-22-17:45:
+    Preserve a Quick Add Start column only when the selected workflow's visible metadata
+    still validates it. Ordinary Save omits the preference and retains list intake routing.
+    */
     const preferredColumn = preferredColumnId ? visibleColumns.find((column) => column.id === preferredColumnId) : undefined;
     const column = preferredColumn
       ?? visibleColumns.find((candidate) => candidate.flags.intake)

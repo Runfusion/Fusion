@@ -4989,6 +4989,9 @@ export class TaskExecutor {
       info.feedback,
       info.stepName,
       `Pre-merge optional workflow step "${info.stepName}" requested revision`,
+      true,
+      false,
+      { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
     );
     return true;
   }
@@ -5087,9 +5090,9 @@ export class TaskExecutor {
    *
    * Picks the latest failed pre-merge workflow step result (there is usually only
    * one, but if several ran we want the most recent), injects its feedback into
-   * `PROMPT.md`, resets steps, and schedules todo → in-progress. The call site
-   * is responsible for enforcing the `maxPostReviewFixes` budget before invoking
-   * this method — this method itself does no accounting.
+   * `PROMPT.md`, resets steps, and schedules todo → in-progress. The caller may
+   * account for a scheduled retry, but this method independently enforces the
+   * effective finite-or-unlimited revision budget before it can reopen work.
    *
    * @returns true when the task was sent back, false when no eligible failed
    *          step exists (caller should skip).
@@ -5123,6 +5126,18 @@ export class TaskExecutor {
 
       const feedback = target.output?.trim() || "(no feedback captured)";
       const stepName = target.workflowStepName || target.workflowStepId || "Unknown";
+      const budget = await this.resolveFailedPreMergeWorkflowStepBudget(task, target);
+      /*
+       * FNXC:WorkflowRevisionBudget 2026-07-22-18:30:
+       * Failed-step recovery is also a remediation entry point, not merely a
+       * retry-label formatter. Enforce the same finite Code Review budget here
+       * as live and restart-local graph remediation: an unset policy remains
+       * unlimited, while zero or an exhausted explicit cap cannot silently send
+       * work back for another fix. Progress-loop termination stays owned by the
+       * graph executor's signature guard rather than this budget check.
+       */
+      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+      if (!budget.unbounded && budget.attempts >= budget.max) return false;
 
       await this.sendTaskBackForFix(
         task,
@@ -5130,6 +5145,9 @@ export class TaskExecutor {
         feedback,
         stepName,
         `Auto-revived from in-review: pre-merge workflow step "${stepName}" had failed`,
+        true,
+        false,
+        { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
       );
       return true;
     } catch (err: unknown) {
@@ -16084,6 +16102,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     reason: string,
     preserveResumeState: boolean = true,
     mergeVerificationFailure: boolean = false,
+    retryPresentation?: { attempt: number; max?: number },
   ): Promise<void> {
     const taskId = task.id;
     this.clearCompletedTaskWatchdog(taskId);
@@ -16103,9 +16122,20 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       `${reason} — moved back to in-progress for remediation`,
     );
 
-    // 3. Inject failure feedback into PROMPT.md using the existing method
-    // Pass MAX_WORKFLOW_STEP_RETRIES to indicate retries are exhausted (shows "3/3 (0 remaining)")
-    await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, MAX_WORKFLOW_STEP_RETRIES);
+    /*
+     * FNXC:CodeReviewRetryBudget 2026-07-22-00:00:
+     * A graph-owned Code Review REVISE is not a workflow-step hard-failure retry.
+     * Preserve its resolved per-step budget in PROMPT.md: unset Code Review policy
+     * is unlimited, while an explicit finite value (including zero at the gate)
+     * remains operator-visible. The execute requeue progress-signature guard, not
+     * this display, remains the safety boundary for unchanged remediation loops.
+     */
+    await this.injectWorkflowStepFailureInstructions(
+      task,
+      failureFeedback,
+      stepName,
+      retryPresentation ?? { attempt: MAX_WORKFLOW_STEP_RETRIES, max: MAX_WORKFLOW_STEP_RETRIES },
+    );
 
     // 4. Re-open only the last step for a single in-place fix pass. Earlier
     // done steps stay done so the executor doesn't redo finished work.
@@ -16145,7 +16175,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     task: Task,
     failureFeedback: string,
     stepName: string,
-    retryCount: number,
+    retry: { attempt: number; max?: number },
   ): Promise<void> {
     const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
 
@@ -16158,7 +16188,8 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       return;
     }
 
-    const remainingRetries = MAX_WORKFLOW_STEP_RETRIES - retryCount;
+    const retryLabel = retry.max === undefined ? "unbounded" : String(retry.max);
+    const remainingRetries = retry.max === undefined ? "unlimited" : String(Math.max(0, retry.max - retry.attempt));
     const failureSectionHeader = "## Workflow Step Failure";
     const scopeGuard = this.buildWorkflowFailureScopeGuard(task, content);
     const failureSectionContent = `${failureSectionHeader}
@@ -16172,7 +16203,7 @@ ${failureFeedback}
 
 ${scopeGuard}
 
-**Retry:** ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (${remainingRetries} remaining)
+**Retry:** ${retry.attempt}/${retryLabel} (${remainingRetries} remaining)
 
 **Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task has been sent back to in-progress for remediation. The executor will attempt to fix the issues on the next pass.
 
@@ -16215,7 +16246,7 @@ ${scopeGuard}
     // Write updated content
     try {
       await writeFile(promptPath, newContent);
-      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
+      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retry.attempt}/${retryLabel})`);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       executorLog.error(`${task.id}: failed to inject workflow step failure instructions: ${errorMessage}`);

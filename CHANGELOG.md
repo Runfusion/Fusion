@@ -2,6 +2,60 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.73.0-beta.3
+
+### Highlights
+- Planning Mode is rebuilt as an ongoing interview you validate explicitly — no more automatic checkpoint finalizing a plan for you
+- Report screenshots and activity traces are scrubbed of paths and tokens before anything is filed
+- Pick your update track: beta or stable release channels, selectable in Settings or via `fn update --channel`
+- Boards now move cards through your own custom workflow's columns instead of a fixed six-column set
+- Quality hub can show task verification videos and richer review-deliverable galleries when review artifacts are enabled
+
+### New
+- Beta and stable update channels, with per-channel update checks
+- Boards driven entirely by your workflow's own columns and traits, not a hardcoded set
+- Quality hub verification videos and review artifact controls with deliverable galleries
+- Mission auto-merge override so a mission's features share one branch and one PR
+- Mailbox approval flow for ephemeral agent follow-up tasks
+- Guided in-app Bug, Feedback, Idea, and Help reporting, filed to GitHub Issues or Discussions with optional screenshots and dedup against the roadmap
+- Persisted ideation sessions with one-click Mission handoff
+- Request and observe task E2E verification directly from chat
+- Preview missions, findings, evals, goals, and roadmap items inline in chat and Mail
+- Photo and file attachments in Quick Add and Main Chat
+- Configuration revision history and rollback, now in Settings
+- Portable, secret-scrubbed org export/import commands (`fn org-export` / `fn org-import`)
+- New Aurora, Calm, and Dawn dashboard color themes, filterable by name
+- Embedded PostgreSQL connection cap is now configurable in Advanced Settings
+- Unified max concurrency across planning, execution, and review with simplified capacity indicators
+- Gesture-only Quick Add Start action for eligible workflows
+- Optional Task Chat progress feed for steps, failures, reviews, and rollbacks
+- Plugins can now declare their own project MCP servers
+
+### Fixed
+- Mobile board swipes/flings now settle reliably on exactly one column
+- Planning Mode: resumes correctly after reload, drafts a plan immediately, keeps questions and plan in sync, and works on mobile/tablet
+- Dashboard now shows SQLite→PostgreSQL migration status while cutover is in progress
+- Orphaned in-review steps from a restart are recovered instead of silently skipped or stranded
+- Duplicate follow-up tasks naming the same failing file now converge instead of piling up
+- Fixed a crash where chat/mailbox messages containing a raw NUL byte aborted the conversation
+- Workflows without a merge step now finish in their completion column instead of stalling
+- Custom Merging columns now correctly receive cards at merge time
+- Grok and OMP CLI model fallbacks now engage only when actually needed
+- Task-card and task-detail icon sizing made consistent across themes and breakpoints
+- Board column counts now include Code Review, Plan Review, and other active gate sessions
+- Fixed Windows update reliability and restored Compound Engineering personas in npm installs
+- Various Chinese-locale translation fixes restored
+
+### Breaking
+- Removed the Planning Mode deepening checkpoint and fixed interview depth caps; plans are now validated explicitly by you rather than auto-finalized
+
+### Security
+- Scrubbed top-level report activity traces of paths and tokens before filing
+
+### Internal
+- Review gates (plan/code/browser) now run exclusively as workflow graph nodes; the in-session step reviewer tool is removed
+- Bumped bundled pi runtime to 0.81.1 for newer models, providers, and session reliability
+
 ## 0.73.0-beta.2
 
 ### Highlights

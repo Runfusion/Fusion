@@ -96,6 +96,7 @@ import type { GhostBugDecision } from "./triage-preflight.js";
 import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
+import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
 
 export {
   COMPLETED_BLOCKED_PAUSE_REASON,
@@ -1073,6 +1074,22 @@ export class SelfHealingManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log.warn(`[${stage}] ${task.id}: no-action audit emission failed: ${message}`);
+    }
+
+    /*
+    FNXC:TaskWedgeNotifications 2026-07-22-14:30:
+    No-action reconciles do not always write `failed` or `paused`, so task-updated
+    classification cannot see them. Deliver only the bounded ownerless stages
+    through NotificationService; its durable CAS suppresses repeated sweeps.
+    */
+    const descriptor = describeSelfHealingNoActionWedge(task, stage, proof.metadata);
+    if (descriptor) {
+      try {
+        await getActiveNotificationService()?.notifyTaskWedge(task, descriptor);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn(`[${stage}] ${task.id}: wedge notification failed: ${message}`);
+      }
     }
     log.log(`[${stage}] ${task.id}: triple-proof not satisfied — no action (operator-decides)`);
   }

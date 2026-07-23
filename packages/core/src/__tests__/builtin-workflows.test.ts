@@ -73,9 +73,11 @@ describe("built-in workflows", () => {
       expect(ir.settings?.find((setting) => setting.id === "planReviewMaxRevisions"), workflow.id).not.toHaveProperty(
         "default",
       );
-      expect(ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions"), workflow.id).not.toHaveProperty(
-        "default",
-      );
+      const codeReviewCap = ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions");
+      expect(codeReviewCap, workflow.id).not.toHaveProperty("default");
+      // Empty is the canonical unlimited policy; stored numeric values must be
+      // non-negative whole numbers so `0` has the documented disable semantics.
+      expect(codeReviewCap, workflow.id).toMatchObject({ type: "number", minimum: 0, integer: true });
     }
   });
 

@@ -197,6 +197,53 @@ describe("FN-6599 ChatView streaming prior thread", () => {
   it.each([
     ["desktop", 1280],
     ["mobile", 390],
+  ])("FN-8504 restores the authoritative in-flight bubble after leaving and re-entering on %s", async (_label, width) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    const generatingSession = makeSession({
+      id: "session-reentry",
+      agentId: "agent-001",
+      title: "Re-entry",
+      isGenerating: true,
+      inFlightGeneration: {
+        status: "generating" as const,
+        streamingText: "authoritative partial response",
+        streamingThinking: "authoritative reasoning",
+        toolCalls: [{ toolName: "read", status: "running" as const, isError: false, args: { path: "README.md" } }],
+        replayFromEventId: 23,
+        updatedAt: "2026-07-20T19:15:00.000Z",
+      },
+    });
+    const priorMessage = makeMessage({ id: "msg-prior", sessionId: generatingSession.id, role: "user", content: "Prior question" });
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [generatingSession] });
+    mockFetchChatSession.mockResolvedValue({ session: generatingSession });
+    mockFetchChatMessages.mockResolvedValue({ messages: [priorMessage] });
+
+    const firstView = render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await screen.findByText("authoritative partial response");
+    firstView.unmount();
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("authoritative partial response")).toBeInTheDocument();
+      expect(screen.getByText("Thinking")).toBeInTheDocument();
+      expect(screen.getByText("read")).toBeInTheDocument();
+      expect(screen.getByText("running")).toBeInTheDocument();
+      expect(screen.getByText("Prior question")).toBeInTheDocument();
+      expect(mockAttachChatStream).toHaveBeenLastCalledWith(
+        generatingSession.id,
+        expect.any(Object),
+        "proj-123",
+        { lastEventId: 23 },
+      );
+    });
+    expect(mockAttachChatStream).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["desktop", 1280],
+    ["mobile", 390],
   ])("FN-7853 keeps cached multi-turn prior thread visible across mid-turn churn on %s", async (_label, width) => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     window.dispatchEvent(new Event("resize"));

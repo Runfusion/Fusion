@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { AutomationStore, PluginLoader, RoutineStore, isWebhookTrigger, resolvePluginEntryPath, type RoutineTriggerType, type ScheduleType } from "@fusion/core";
+import { AutomationStore, RoutineStore, isWebhookTrigger, resolvePluginEntryPath, type RoutineTriggerType, type ScheduleType } from "@fusion/core";
 import { ApiError, badRequest, conflict, internalError, notFound } from "../api-error.js";
 import { verifyWebhookSignature } from "../github-webhooks.js";
 import { resolvePluginManifest } from "../plugin-routes.js";
@@ -21,58 +21,16 @@ FNXC:PluginsAutomationRoutes 2026-07-19-12:00:
 Automation, routine, and plugin-management endpoints live in this registrar so routes.ts remains an orchestrator. Preserve registration order: Express parameter matching makes operation paths and the registry pass-through precedence-sensitive.
 */
 export function registerPluginsAutomationRoutes(ctx: ApiRoutesContext, deps: PluginsAutomationRouteDependencies): void {
-  const { router, options, parseScopeParam, resolveAutomationStore, resolveRoutineStore, resolveRoutineRunner, getScopedStore, getProjectContext, rethrowAsApiError, runtimeLogger } = ctx;
+  const { router, options, parseScopeParam, resolveAutomationStore, resolveRoutineStore, resolveRoutineRunner, getScopedStore, getProjectContext, getProjectPluginLoader, rethrowAsApiError, runtimeLogger } = ctx;
   const makeRunStreamHandler = createAutomationRunStreamHandlerFactory({ parseScopeParam, rethrowAsApiError, ...deps });
 
   /*
-  FNXC:PluginEnablementScope 2026-07-21-12:00:
-  Plugin installation metadata is global, but every enabled/state decision belongs to the
-  TaskStore selected for the request's project. A dashboard launched from project A must not
-  use A's host loader after mutating project B: that loader reads A's project_plugin_states row
-  and can immediately report B's newly enabled plugin as disabled. Prefer B's running engine
-  loader; only reuse the host loader when it owns the same PluginStore, otherwise bind a loader
-  directly to B's TaskStore.
+  FNXC:PluginEnablementScope 2026-07-22-20:30:
+  getProjectPluginLoader moved to routes/context.ts so plugin-defined HTTP route dispatch
+  (plugin-routes.ts) shares the same project-scoped loader cache as the management and
+  introspection routes below. Do not re-introduce a registrar-local loader cache: split
+  caches are how dashboard-views could show a plugin whose API routes 404'd.
   */
-  /*
-  FNXC:PluginEnablementScope 2026-07-21-15:30:
-  A project without a live engine still needs one loader for its dashboard lifetime.
-  Creating one per request starts a plugin in enable(), then loses that instance before
-  disable(), UI-slot, contribution, and runtime reads. Cache by the resolved TaskStore so
-  all fallback readers share the same project_plugin_states key and loaded plugin instance.
-  */
-  const fallbackProjectLoaders = new WeakMap<import("@fusion/core").TaskStore, {
-    loader: PluginLoader;
-    initialized: Promise<void>;
-  }>();
-
-  const getProjectPluginLoader = async (
-    scopedStore: import("@fusion/core").TaskStore,
-    engine?: { getPluginRunner?: () => { getLoader?: () => PluginLoader } | undefined },
-  ): Promise<PluginLoader | undefined> => {
-    const engineLoader = engine?.getPluginRunner?.()?.getLoader?.();
-    if (engineLoader) return engineLoader;
-
-    const scopedPluginStore = scopedStore.getPluginStore();
-    if (scopedPluginStore === options?.pluginStore) return options?.pluginLoader;
-
-    let fallback = fallbackProjectLoaders.get(scopedStore);
-    if (!fallback) {
-      const loader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: scopedStore });
-      /*
-      FNXC:PluginEnablementScope 2026-07-21-20:15:
-      Dashboard-only projects lack an engine startup pass, so initialize their persistent scoped
-      loader once before introspection. Reusing this promise prevents ui-slots, contributions,
-      runtimes, and views from observing an empty loader after a dashboard restart.
-      */
-      fallback = {
-        loader,
-        initialized: loader.loadAllPlugins().then(() => undefined),
-      };
-      fallbackProjectLoaders.set(scopedStore, fallback);
-    }
-    await fallback.initialized;
-    return fallback.loader;
-  };
 
   // ── Automation / Scheduled Task Routes ────────────────────────────
   //

@@ -35,7 +35,7 @@ export function workflowSupportsQuickAddStart(workflow: ValidatedQuickAddWorkflo
 
 /**
  * FNXC:QuickAddStart 2026-07-22-16:10:
- * A valid Start promotion uses the returned task's actual column and moves forward only to
+ * Custom hold-workflow Start promotion uses the returned task's actual column and moves forward only to
  * a later working column. Missing data, holds, complete lanes, or no later destination are
  * successful create-only outcomes; Quick Add never guesses `todo` or moves backwards.
  */
@@ -48,4 +48,23 @@ export function resolveQuickAddStartTargetColumn(workflow: ValidatedQuickAddWork
     if (!column.flags.intake && !column.flags.hold && !column.flags.complete) return column.id;
   }
   return null;
+}
+
+/**
+ * FNXC:QuickAddStart 2026-07-22-17:45:
+ * Coding (Ideas) Start must atomically create in Todo, while ordinary Save/Enter still create
+ * in Ideas. Prove the destination from the captured, ordered visible definition: Ideas must
+ * precede one non-intake, non-complete Todo lane. Missing, hidden, reordered, or malformed
+ * metadata fails closed rather than guessing a transition.
+ */
+export function resolveQuickAddStartInitialColumn(workflow: ValidatedQuickAddWorkflow): string | null {
+  if (workflow.id !== "builtin:coding-ideas") return null;
+  const columns = visibleColumns(workflow);
+  const ideasIndex = columns.findIndex((column) => column.id === "ideas");
+  const todoIndex = columns.findIndex((column) => column.id === "todo");
+  if (ideasIndex < 0 || todoIndex <= ideasIndex) return null;
+
+  const todo = columns[todoIndex];
+  if (!todo || todo.flags.intake || todo.flags.complete) return null;
+  return todo.id;
 }

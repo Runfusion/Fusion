@@ -1240,6 +1240,26 @@ describe("NotificationService", () => {
     });
   });
 
+  it("does not claim a wedge episode for a transient failed merge", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const claimTaskWedgeNotificationEpisode = vi.fn();
+    (store as any).claimTaskWedgeNotificationEpisode = claimTaskWedgeNotificationEpisode;
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as any);
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
+    await service.start();
+
+    const failed = task({ id: "FN-5627", status: "failed", column: "in-review", error: "spawn git ENOENT" });
+    store.setTask(failed);
+    store.emit("task:updated", failed);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(claimTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalledWith("task-wedged", expect.anything());
+    await service.stop();
+  });
+
   it("suppresses transient failed notification after Auto-recovered status clear", async () => {
     vi.useFakeTimers();
     const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "sticky-only", failureNotificationDelayMs: 50 });

@@ -6839,10 +6839,11 @@
       "allProjectResetSuccess": ""
     },
     "database": {
-      "embeddedConnectionCapHelp": "Nombre maximal de connexions serveur pour le PostgreSQL embarqué de Fusion. Appliqué après redémarrage de Fusion. Plage : 32–2 000. Par défaut : 500. PostgreSQL externe utilise la limite de son fournisseur.",
+      "embeddedConnectionCapHelp": "Nombre maximal de connexions serveur pour le PostgreSQL embarqué de Fusion. Appliqué après redémarrage de Fusion. Plage : 32–2 000. Non défini par défaut — Fusion choisit 500, ou 150 sous Windows où chaque connexion est un processus séparé et des plafonds plus élevés peuvent faire planter les backends. PostgreSQL externe utilise la limite de son fournisseur.",
       "embeddedConnectionCap": "Plafond de connexions PostgreSQL embarqué",
       "embeddedConnectionCapError": "Saisissez une valeur entre 32 et 2 000.",
-      "advanced": "Paramètres de base de données avancés"
+      "advanced": "Paramètres de base de données avancés",
+      "embeddedConnectionCapPlaceholder": "auto"
     },
     "configVersions": {
       "title": "Versions de configuration",

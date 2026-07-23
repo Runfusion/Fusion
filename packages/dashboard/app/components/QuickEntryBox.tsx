@@ -17,16 +17,32 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
-import { PendingImagePreviews } from "./PendingImagePreviews";
+import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
-import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
+import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  "text/yaml",
+  "text/x-toml",
+  "text/csv",
+  "application/xml",
+]);
+const TASK_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.txt,.md,.json,.yaml,.yml,.toml,.csv,.xml";
 
-interface PendingImage {
+interface PendingAttachment {
   file: File;
-  previewUrl: string;
+  previewUrl?: string;
 }
 
 interface QuickEntryBoxProps {
@@ -165,8 +181,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [startMenuPosition, setStartMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const justResetRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const pendingImagesRef = useRef<PendingImage[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const dragDepthRef = useRef(0);
 
@@ -356,7 +372,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const selectedQuickEntryWorkflowIcon = selectedQuickEntryWorkflow?.icon;
   const selectedWorkflowForCreate = workflowId === undefined ? undefined : quickEntryWorkflowId;
   const validatedStartWorkflow = useMemo(() => validateQuickAddStartWorkflow(selectedQuickEntryWorkflow), [selectedQuickEntryWorkflow]);
-  const canQuickAddStart = Boolean(onMoveTask && validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow));
+  const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
+  const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && (startInitialColumn || onMoveTask));
   const canOpenQuickAddStartMenu = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
 
   useEffect(() => {
@@ -484,6 +501,17 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     previousProjectIdRef.current = projectId;
     setAgents([]);
     setAgentsProjectId(undefined);
+    /*
+    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    Pending files belong to the project where they were selected. Clear them on a project switch so
+    an attachment cannot be uploaded into the next project's newly created task, and release image URLs.
+    */
+    setPendingAttachments((pending) => {
+      for (const attachment of pending) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      return [];
+    });
     setSelectedAgentId(null);
     setShowAgentPicker(false);
     setAgentPickerPosition(null);
@@ -497,13 +525,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   useEffect(() => {
-    pendingImagesRef.current = pendingImages;
-  }, [pendingImages]);
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
 
-  // Cleanup image preview URLs on unmount
+  // Clean up image preview URLs on unmount
   useEffect(() => {
     return () => {
-      pendingImagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      pendingAttachmentsRef.current.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
     };
   }, []);
 
@@ -628,8 +656,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, [showWorkflowPicker]);
 
   const resetForm = useCallback(() => {
-    pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
-    setPendingImages([]);
+    pendingAttachments.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
+    setPendingAttachments([]);
     dragDepthRef.current = 0;
     setIsFileDragOver(false);
     if (fileInputRef.current) {
@@ -676,21 +704,22 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     if (typeof window !== "undefined") {
       removeScopedItem(STORAGE_KEY, projectId);
     }
-  }, [pendingImages, projectId, optionalSteps]);
+  }, [pendingAttachments, projectId, optionalSteps]);
 
-  const handleImageFiles = useCallback((files: FileList | File[] | null | undefined) => {
+  const handleAttachmentFiles = useCallback((files: FileList | File[] | null | undefined) => {
     if (!files || files.length === 0) return;
 
-    const newImages: PendingImage[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (ALLOWED_IMAGE_TYPES.includes(file.type)) {
-        newImages.push({ file, previewUrl: URL.createObjectURL(file) });
-      }
+    const newAttachments: PendingAttachment[] = [];
+    for (const file of Array.from(files)) {
+      if (!ALLOWED_TASK_ATTACHMENT_TYPES.has(file.type)) continue;
+      newAttachments.push({
+        file,
+        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
+      });
     }
 
-    if (newImages.length > 0) {
-      setPendingImages((prev) => [...prev, ...newImages]);
+    if (newAttachments.length > 0) {
+      setPendingAttachments((prev) => [...prev, ...newAttachments]);
     }
   }, []);
 
@@ -700,12 +729,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   /*
-  FNXC:QuickAddAttachments 2026-06-30-00:00:
-  Quick Add uses an icon-only paperclip to keep the action row compact, so the accessible name and title carry the Attach action plus pending-image count. The same image intake path handles file input, paste, and file drag/drop so previews and post-create uploads stay consistent.
+  FNXC:QuickAddAttachments 2026-08-03-00:00:
+  Quick Add must accept exactly the task-store attachment MIME set through picker, paste, and drop.
+  Only images receive object URLs and preview controls; all other accepted files remain uploadable file chips.
   */
-  const attachLabel = pendingImages.length > 0
-    ? t("tasks.attachImagesCount", "Attach images ({{count}} pending)", { count: pendingImages.length })
-    : t("tasks.attachImages", "Attach images");
+  const attachLabel = pendingAttachments.length > 0
+    ? t("tasks.attachFilesCount", "Attach photos or files ({{count}} pending)", { count: pendingAttachments.length })
+    : t("tasks.attachFiles", "Attach photos or files");
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!isFileDrag(e.dataTransfer)) return;
@@ -740,19 +770,19 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     e.preventDefault();
     clearFileDragState();
     if (isSubmitting) return;
-    handleImageFiles(e.dataTransfer.files);
-  }, [clearFileDragState, handleImageFiles, isFileDrag, isSubmitting]);
+    handleAttachmentFiles(e.dataTransfer.files);
+  }, [clearFileDragState, handleAttachmentFiles, isFileDrag, isSubmitting]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (isSubmitting) return;
-    handleImageFiles(e.clipboardData?.files);
-  }, [handleImageFiles, isSubmitting]);
+    handleAttachmentFiles(e.clipboardData?.files);
+  }, [handleAttachmentFiles, isSubmitting]);
 
-  const removeImage = useCallback((index: number) => {
-    setPendingImages((prev) => {
+  const removeAttachment = useCallback((index: number) => {
+    setPendingAttachments((prev) => {
       const removed = prev[index];
       if (removed) {
-        URL.revokeObjectURL(removed.previewUrl);
+        if (removed.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       }
       return prev.filter((_, i) => i !== index);
     });
@@ -765,6 +795,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
     const originalDescription = description;
     const startWorkflow = startIntentRef.current;
+    const startInitialColumn = startWorkflow ? resolveQuickAddStartInitialColumn(startWorkflow) : null;
     setDescription("");
     try {
       /*
@@ -774,6 +805,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       const createdTask = await onCreate({
         description: trimmed,
         ...(startWorkflow ? { workflowId: startWorkflow.id } : selectedWorkflowForCreate !== undefined ? { workflowId: selectedWorkflowForCreate } : {}),
+        ...(startInitialColumn ? { column: startInitialColumn as ColumnId } : {}),
         dependencies: dependencies.length ? dependencies : undefined,
         ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: selectedPresetId,
@@ -803,12 +835,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
       });
       /*
-      FNXC:QuickAddStart 2026-07-22-16:10:
-      Start snapshots the exact validated workflow before duplicate confirmation. A returned task
-      must prove its id, column, and matching workflow identity before host promotion; otherwise
-      creation remains successful and Save/Enter behavior is unchanged.
+      FNXC:QuickAddStart 2026-07-22-17:45:
+      Coding (Ideas) Start submits its validated Todo destination in the original create request.
+      Custom hold workflows retain their returned-task promotion path; unprovable targets stay
+      create-only, so Save/Enter and malformed metadata never guess a transition.
       */
-      if (startWorkflow && createdTask && typeof createdTask === "object"
+      if (startWorkflow && !startInitialColumn && createdTask && typeof createdTask === "object"
         && typeof createdTask.id === "string" && createdTask.id.trim()
         && typeof createdTask.column === "string" && createdTask.column.trim()
         && typeof (createdTask as Task & { workflowId?: unknown }).workflowId === "string"
@@ -823,13 +855,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           }
         }
       }
-      if (createdTask && typeof createdTask.id === "string" && createdTask.id.trim() && pendingImages.length > 0) {
+      if (createdTask && typeof createdTask.id === "string" && createdTask.id.trim() && pendingAttachments.length > 0) {
         const failures: string[] = [];
-        for (const pendingImage of pendingImages) {
+        for (const pendingAttachment of pendingAttachments) {
           try {
-            await uploadAttachment(createdTask.id, pendingImage.file, projectId);
+            await uploadAttachment(createdTask.id, pendingAttachment.file, projectId);
           } catch {
-            failures.push(pendingImage.file.name);
+            failures.push(pendingAttachment.file.name);
           }
         }
 
@@ -871,7 +903,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     sessionAdvisorOverride,
     priority,
     effectiveNodeId,
-    pendingImages,
+    pendingAttachments,
     projectId,
     addToast,
     resetForm,
@@ -1821,7 +1853,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       {isFileDragOver && (
         <div className="quick-entry-drop-target" data-testid="quick-entry-drop-target" aria-hidden="true">
           <Paperclip size={16} aria-hidden="true" />
-          <span>{t("tasks.dropImagesToAttach", "Drop images to attach")}</span>
+          <span>{t("tasks.dropFilesToAttach", "Drop photos or files to attach")}</span>
         </div>
       )}
       <div className="description-with-refine">
@@ -2336,8 +2368,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 title={attachLabel}
               >
                 <Paperclip size={12} aria-hidden="true" />
-                {pendingImages.length > 0 && (
-                  <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
+                {pendingAttachments.length > 0 && (
+                  <span className="quick-entry-attach-count" aria-hidden="true">{pendingAttachments.length}</span>
                 )}
               </button>
 
@@ -2499,11 +2531,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           </div>
         )}
 
-        <PendingImagePreviews
-          images={pendingImages}
-          onRemove={removeImage}
+        <PendingAttachmentPreviews
+          attachments={pendingAttachments}
+          onRemove={removeAttachment}
           disabled={isSubmitting}
-          removeLabel={t("tasks.removeImage", "Remove image")}
+          removeLabel={t("tasks.removeAttachment", "Remove image")}
           testIdPrefix="quick-entry-preview"
         />
         {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
@@ -2643,11 +2675,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={TASK_ATTACHMENT_ACCEPT}
           multiple
           style={{ display: "none" }}
           onChange={(e) => {
-            handleImageFiles(e.target.files);
+            handleAttachmentFiles(e.target.files);
             e.currentTarget.value = "";
           }}
           data-testid="quick-entry-file-input"
