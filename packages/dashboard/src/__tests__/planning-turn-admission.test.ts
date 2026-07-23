@@ -220,6 +220,7 @@ describe("planning single-turn admission", () => {
     planningStreamManager.consumeInitialTurn(sessionId)?.();
     await waitFor(() => scripted.agent.session.prompt.mock.calls.length > 0);
 
+    // FNXC:PlanningTurnAdmission 2026-07-23-10:10:
     // Two racing duplicate starts must BOTH be quiet no-ops — the pre-fix code let the
     // second reach registerInitialTurn and throw "Initial planning turn already registered".
     const results = await Promise.allSettled([
@@ -243,16 +244,20 @@ describe("planning single-turn admission", () => {
     const submit = submitResponse(sessionId, { [question.id]: "option-1" });
     await waitFor(() => scripted.agent.session.prompt.mock.calls.length > 1);
 
-    // Rewind aborts the in-flight turn, waits for its owner to release the turn slot,
-    // then republishes the answered question as awaiting input.
-    const rewound = await rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE);
+    /*
+    FNXC:PlanningTurnAdmission 2026-07-23-10:10:
+    Rewind aborts the in-flight turn, waits for its owner to release the turn slot AND for
+    the cancelled operation (the held provider prompt) to settle, then republishes the
+    answered question as awaiting input. The prompt is released after rewind starts so the
+    settle-wait resolves deterministically; awaiting `submit` afterwards proves the cancelled
+    turn's post-prompt abort checks bail out without corrupting the rewound state.
+    */
+    const rewindPromise = rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE);
+    scripted.releasePrompt();
+    const rewound = await rewindPromise;
     expect(rewound.currentQuestion.id).toBe(question.id);
 
-    // Late-resolving provider prompt from the cancelled turn must not corrupt the
-    // rewound state (its post-prompt abort checks bail out).
-    scripted.releasePrompt();
     await submit;
-    await new Promise((resolve) => setTimeout(resolve, 10));
 
     const session = await getSession(sessionId);
     expect(session?.currentQuestion?.id).toBe(question.id);

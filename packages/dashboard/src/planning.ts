@@ -512,6 +512,51 @@ Deleting the active-generation record without waiting left both admission sets e
 aborted turn was still unwinding, so a concurrent submit/retry could interleave with rewind's
 own awaits and corrupt question/history/agent state (review finding on PR #2417).
 */
+/*
+FNXC:PlanningTurnAdmission 2026-07-23-10:10:
+The turn reservation is released as soon as the abort wins runGenerationWithTimeout's race,
+but the generation OPERATION (which holds the raw provider prompt) can still be pending if the
+provider ignores the AbortSignal. User-takes-control paths (rewind) must also wait — bounded —
+for that operation to settle before disposing/replacing the agent, or a slow provider callback
+could still be running against the mutable session while the rewound state is published
+(review finding on PR #2417). Tracked separately from reservations because settlement can
+outlive the owner's release.
+*/
+const settlingTurnOperations = new Map<string, Promise<void>>();
+
+function trackTurnOperationSettled(sessionId: string, operationPromise: Promise<unknown>): void {
+  const settled = operationPromise.then(
+    () => {},
+    () => {},
+  );
+  settlingTurnOperations.set(sessionId, settled);
+  void settled.then(() => {
+    if (settlingTurnOperations.get(sessionId) === settled) {
+      settlingTurnOperations.delete(sessionId);
+    }
+  });
+}
+
+/**
+ * Bounded wait for a cancelled turn's operation (including its provider prompt) to settle.
+ * Returns false on timeout — callers proceed anyway: agent disposal is the backstop, the
+ * cancelled closure's post-prompt abort checks prevent state writes, and blocking a user's
+ * rewind forever on an unresponsive provider would be worse.
+ */
+async function waitForTurnOperationSettled(sessionId: string, timeoutMs = 2000): Promise<boolean> {
+  const settling = settlingTurnOperations.get(sessionId);
+  if (!settling) return true;
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = await Promise.race([
+    settling.then(() => false),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return !timedOut;
+}
+
 async function waitForPlanningTurnRelease(sessionId: string, timeoutMs = 2000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (isPlanningTurnActive(sessionId)) {
@@ -2257,7 +2302,11 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   });
 
   try {
-    return await Promise.race([operation(abortController.signal), abortPromise]);
+    // Track the operation's own settlement: on abort the race settles immediately while the
+    // operation (and its provider prompt) may still be pending — rewind waits on this.
+    const operationPromise = operation(abortController.signal);
+    trackTurnOperationSettled(session.id, operationPromise);
+    return await Promise.race([operationPromise, abortPromise]);
   } finally {
     clearTimeout(generationRecord.timer);
     if (activeGenerations.get(session.id) === generationRecord) {
@@ -3205,6 +3254,22 @@ export async function rewindSession(
   const releaseTurn = reservePlanningTurn(session.id);
 
   try {
+    /*
+    FNXC:PlanningTurnAdmission 2026-07-23-10:10:
+    Also wait — bounded — for the cancelled turn's OPERATION (including its raw provider
+    prompt) to settle before disposing/replacing the agent. The reservation releases as soon
+    as the abort wins the race, but a provider that ignores the signal can leave its prompt
+    callback live; publishing the rewound state under it was the residual PR #2417 finding.
+    On timeout we proceed anyway: disposal is the backstop and the cancelled closure's
+    post-prompt abort checks prevent state writes.
+    */
+    if (!(await waitForTurnOperationSettled(session.id))) {
+      diagnostics.warn("Rewinding past a provider prompt that has not settled after abort", {
+        sessionId: session.id,
+        operation: "rewind-unsettled-prompt",
+      });
+    }
+
     // Resolve the rewind target only after admission: a turn that completed while we
     // waited may have appended to history, so an index computed earlier would be stale.
     const rewindIndex = questionId
@@ -3793,6 +3858,7 @@ export function __resetPlanningState(): void {
   planningStreamManager.reset();
   activeGenerations.clear();
   pendingTurnReservations.clear();
+  settlingTurnOperations.clear();
 
   if (_aiSessionStore && _aiSessionDeletedListener) {
     _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);
