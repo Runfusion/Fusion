@@ -40,6 +40,8 @@ import type {
   ContractAssertionUpdateInput,
   FeatureLoopState,
   ValidationDiagnostics,
+  MissionTransitionActor,
+  MissionUpdateOptions,
 } from "./mission-types.js";
 import type { Goal } from "./goal-types.js";
 import {
@@ -531,18 +533,66 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return getMissionEventsPage(this.db, missionId, options);
   }
 
-  async updateMission(id: string, updates: Partial<Mission>): Promise<Mission> {
-    const mission = await getMission(this.db, id);
-    if (!mission) throw new Error(`Mission ${id} not found`);
-    const updated: Mission = {
-      ...mission,
-      ...updates,
-      id,
-      createdAt: mission.createdAt,
-      updatedAt: new Date().toISOString(),
+  /**
+   * FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+   * A status or `autopilotEnabled` change can arm autonomous remediation.
+   * Persist its before/after audit event in the same PostgreSQL transaction as
+   * the mutation; callers that predate attribution receive a conservative
+   * system identity instead of silently creating an unaudited transition.
+   */
+  async updateMission(id: string, updates: Partial<Mission>, options: MissionUpdateOptions = {}): Promise<Mission> {
+    const actor: MissionTransitionActor = options.actor ?? {
+      type: "system",
+      id: "mission-store",
+      displayName: "Mission store",
+      source: "mission-store",
     };
-    await updateMission(this.db, updated);
+    const { updated, events } = await this.layer.transactionImmediate(async (tx) => {
+      const mission = await getMission(tx, id);
+      if (!mission) throw new Error(`Mission ${id} not found`);
+      const updated: Mission = {
+        ...mission,
+        ...updates,
+        id,
+        createdAt: mission.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+      const transitions: Array<{ eventType: MissionEventType; description: string; metadata: Record<string, unknown> }> = [];
+      if (mission.status !== updated.status) {
+        transitions.push({
+          eventType: "mission_status_changed",
+          description: `Mission status changed from ${mission.status} to ${updated.status}`,
+          metadata: { source: actor.source, actor, field: "status", from: mission.status, to: updated.status },
+        });
+      }
+      // FNXC:MissionAutonomyAudit 2026-07-23-14:20: Legacy rows may omit this
+      // flag; undefined and false are the same disabled autonomy state and must
+      // not fabricate a transition event when a caller normalizes storage.
+      const wasAutopilotEnabled = mission.autopilotEnabled === true;
+      const isAutopilotEnabled = updated.autopilotEnabled === true;
+      if (wasAutopilotEnabled !== isAutopilotEnabled) {
+        transitions.push({
+          eventType: isAutopilotEnabled ? "autopilot_enabled" : "autopilot_disabled",
+          description: `Autopilot ${isAutopilotEnabled ? "enabled" : "disabled"}`,
+          metadata: { source: actor.source, actor, field: "autopilotEnabled", from: wasAutopilotEnabled, to: isAutopilotEnabled },
+        });
+      }
+      await updateMission(tx, updated);
+      if (transitions.length === 0) return { updated, events: [] as MissionEvent[] };
+      let seq = await getMaxEventSeq(tx);
+      const events = await Promise.all(transitions.map(async (transition) => {
+        const event: MissionEvent = {
+          id: this.generateId("ME"), missionId: id, eventType: transition.eventType,
+          description: transition.description, metadata: transition.metadata,
+          timestamp: new Date().toISOString(), seq: ++seq,
+        };
+        await insertMissionEvent(tx, event);
+        return event;
+      }));
+      return { updated, events };
+    });
     this.emit("mission:updated", updated);
+    for (const event of events) this.emit("mission:event", event);
     return updated;
   }
 

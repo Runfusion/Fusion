@@ -120,6 +120,33 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect((await readProject("project-b")).missions.map(({ title }) => title)).toEqual(["Project B mission"]);
   });
 
+  it("atomically audits status and autopilot transitions with attributed before/after values", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Audited transitions" });
+    const actor = { type: "operator" as const, id: "user-42", displayName: "Operator", source: "dashboard" };
+
+    await m.updateMission(mission.id, { status: "active", autopilotEnabled: true }, { actor });
+    // Unchanged sensitive values must not add noise to the activity feed.
+    await m.updateMission(mission.id, { status: "active", autopilotEnabled: true }, { actor });
+    await m.updateMission(mission.id, { status: "blocked", autopilotEnabled: false }, { actor });
+
+    const events = (await m.getMissionEvents(mission.id, { limit: 20 })).events;
+    expect(events).toHaveLength(4);
+    expect(events.map((event) => event.eventType)).toEqual([
+      "autopilot_disabled", "mission_status_changed", "autopilot_enabled", "mission_status_changed",
+    ]);
+    const statusEvents = events.filter((event) => event.eventType === "mission_status_changed");
+    expect(statusEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "status", from: "planning", to: "active", source: "dashboard", actor }),
+      expect.objectContaining({ field: "status", from: "active", to: "blocked", source: "dashboard", actor }),
+    ]));
+    const autopilotEvents = events.filter((event) => event.eventType.startsWith("autopilot_"));
+    expect(autopilotEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "autopilotEnabled", from: false, to: true, actor }),
+      expect.objectContaining({ field: "autopilotEnabled", from: true, to: false, actor }),
+    ]));
+  });
+
   it("createMission → addMilestone → addSlice → addFeature assembles getMissionWithHierarchy tree", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Ship payments" });

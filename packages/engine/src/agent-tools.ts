@@ -3901,7 +3901,31 @@ const updateFields = (params: Record<string, unknown>, fields: string[]) => Obje
 );
 
 /** Create the project-scoped Mission hierarchy surface shared by engine lanes and dashboard chat. */
-export function createMissionTools(store: TaskStore): ToolDefinition[] {
+export interface MissionToolActorContext {
+  agentId?: string;
+  agentName?: string;
+}
+
+/**
+ * FNXC:MissionAutonomyAudit 2026-07-23-16:10:
+ * Mission tool calls may arm remediation through lifecycle changes. Preserve the
+ * runtime agent identity when available; tool surfaces without one remain
+ * explicitly attributable to the engine instead of the generic mission store.
+ */
+function missionToolActor(context: MissionToolActorContext): fusionCore.MissionTransitionActor {
+  if (context.agentId) {
+    return {
+      type: "agent",
+      id: context.agentId,
+      ...(context.agentName ? { displayName: context.agentName } : {}),
+      source: "engine-agent-tool",
+    };
+  }
+  return { type: "system", id: "engine-mission-tools", displayName: "Engine mission tools", source: "engine-agent-tool" };
+}
+
+export function createMissionTools(store: TaskStore, context: MissionToolActorContext = {}): ToolDefinition[] {
+  const actor = missionToolActor(context);
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const tool = (name: string, label: string, description: string, parameters: any, execute: (params: any) => Promise<ReturnType<typeof missionToolResult>>): ToolDefinition => ({
     name, label, description, parameters,
@@ -3911,8 +3935,8 @@ export function createMissionTools(store: TaskStore): ToolDefinition[] {
   return [
     tool("fn_mission_list", "List Missions", "List all missions with their current status.", missionListParams, async () => { const missions = await store.getMissionStore().listMissions(); return missionToolResult(missions.length ? `Missions (${missions.length})\n${missions.map((m) => `- ${m.id}: ${m.title} (${m.status})`).join("\n")}` : "No missions yet.", { missions, count: missions.length }); }),
     tool("fn_mission_show", "Show Mission", "Show a mission with its full milestone, slice, and feature hierarchy.", missionShowParams, async ({ id }) => { const mission = await store.getMissionStore().getMissionWithHierarchy(id); return mission ? missionToolResult(formatMissionHierarchy(mission), { mission }) : missionToolResult(`Mission ${id} not found`, { code: "MISSION_NOT_FOUND", missionId: id }, true); }),
-    tool("fn_mission_create", "Create Mission", "Create a high-level mission.", missionCreateParams, async (p) => { const ms = store.getMissionStore(); const mission = await ms.createMission({ title: p.title.trim(), description: optionalText(p.description), baseBranch: optionalText(p.baseBranch) }); const updated = p.autoAdvance === undefined ? mission : await ms.updateMission(mission.id, { autoAdvance: p.autoAdvance }); return missionToolResult(`Created ${updated.id}: ${updated.title}`, { mission: updated }); }),
-    tool("fn_mission_update", "Update Mission", "Partially update a mission.", missionUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const mission = await store.getMissionStore().updateMission(p.id, updates); return missionToolResult(`Updated ${mission.id}: ${mission.title}`, { mission }); }),
+    tool("fn_mission_create", "Create Mission", "Create a high-level mission.", missionCreateParams, async (p) => { const ms = store.getMissionStore(); const mission = await ms.createMission({ title: p.title.trim(), description: optionalText(p.description), baseBranch: optionalText(p.baseBranch) }); const updated = p.autoAdvance === undefined ? mission : await ms.updateMission(mission.id, { autoAdvance: p.autoAdvance }, { actor }); return missionToolResult(`Created ${updated.id}: ${updated.title}`, { mission: updated }); }),
+    tool("fn_mission_update", "Update Mission", "Partially update a mission.", missionUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const mission = await store.getMissionStore().updateMission(p.id, updates, { actor }); return missionToolResult(`Updated ${mission.id}: ${mission.title}`, { mission }); }),
     tool("fn_mission_delete", "Delete Mission", "Delete a mission and its hierarchy.", missionDeleteParams, async ({ id }) => { await store.getMissionStore().deleteMission(id); return missionToolResult(`Deleted ${id}`, { missionId: id }); }),
     tool("fn_milestone_add", "Add Milestone", "Add a milestone to a mission.", milestoneAddParams, async (p) => { const milestone = await store.getMissionStore().addMilestone(p.missionId, { title: p.title.trim(), description: optionalText(p.description) }); return missionToolResult(`Added ${milestone.id}`, { milestone }); }),
     tool("fn_milestone_update", "Update Milestone", "Partially update a milestone.", milestoneUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description", "acceptanceCriteria"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const milestone = await store.getMissionStore().updateMilestone(p.id, updates); return missionToolResult(`Updated ${milestone.id}`, { milestone }); }),

@@ -118,6 +118,21 @@ describe("createMissionTools", () => {
     const store = { getMissionStore: () => ({ updateMission }) } as never;
     const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_update")!;
     await tool.execute("call", { id: "M-1", description: "   " });
-    expect(updateMission).toHaveBeenCalledWith("M-1", { description: "" });
+    expect(updateMission).toHaveBeenCalledWith("M-1", { description: "" }, {
+      actor: { type: "system", id: "engine-mission-tools", displayName: "Engine mission tools", source: "engine-agent-tool" },
+    });
+  });
+
+  it("forwards the runtime agent identity into mission mutations", async () => {
+    const updateMission = vi.fn().mockResolvedValue({ id: "M-1", title: "Mission" });
+    const store = { getMissionStore: () => ({ updateMission }) } as never;
+    const tool = createMissionTools(store, { agentId: "agent-7", agentName: "Planner" })
+      .find((candidate) => candidate.name === "fn_mission_update")!;
+
+    await tool.execute("call", { id: "M-1", title: "Updated mission" });
+
+    expect(updateMission).toHaveBeenCalledWith("M-1", { title: "Updated mission" }, {
+      actor: { type: "agent", id: "agent-7", displayName: "Planner", source: "engine-agent-tool" },
+    });
   });
 });

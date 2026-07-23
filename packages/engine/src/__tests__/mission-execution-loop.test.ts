@@ -1933,6 +1933,27 @@ describe("MissionExecutionLoop", () => {
   // ── handleValidationFail ──────────────────────────────────────────────────
 
   describe("handleValidationFail", () => {
+    it("persists failed validation report-only without minting remediation when autonomy is off", async () => {
+      const feature = createMockFeature({ id: "F-REPORT", loopState: "validating", implementationAttemptCount: 1 });
+      missionStore._setFeature(feature);
+      missionStore._setMission(createMockMission({ autopilotEnabled: false, autoAdvance: false }));
+      const run = missionStore.startValidatorRun(feature.id, "task_completion");
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+
+      await (loop as any).handleValidationFail(feature.id, run.id, {
+        status: "fail",
+        assertions: [{ assertionId: "CA-REPORT", verdict: "fail", passed: false, message: "Expected outcome missing" }],
+        summary: "failed",
+      });
+
+      expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(run.id, "failed", "failed");
+      expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
+      expect(missionStore.triageFeature).not.toHaveBeenCalled();
+      expect(missionStore.logMissionEvent).toHaveBeenCalledWith(
+        "M-TEST1", "warning", expect.stringContaining("report-only"), expect.objectContaining({ code: "validation_report_only" }),
+      );
+    });
+
     it("should generate fix feature and record failures", async () => {
       const assertions: MissionContractAssertion[] = [
         {

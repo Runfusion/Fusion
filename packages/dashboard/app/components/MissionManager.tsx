@@ -514,6 +514,7 @@ const TASK_EVENT_TYPES: MissionEventType[] = ["feature_triaged", "feature_comple
 const SLICE_EVENT_TYPES: MissionEventType[] = ["slice_activated", "slice_completed", "milestone_completed"];
 const STATE_CHANGE_EVENT_TYPES: MissionEventType[] = [
   "mission_started",
+  "mission_status_changed",
   "mission_paused",
   "mission_resumed",
   "mission_completed",

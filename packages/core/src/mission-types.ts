@@ -207,6 +207,7 @@ export const MISSION_EVENT_TYPES = [
   "milestone_completed",
   "mission_completed",
   "mission_started",
+  "mission_status_changed",
   "mission_paused",
   "mission_resumed",
   "autopilot_enabled",
@@ -218,6 +219,27 @@ export const MISSION_EVENT_TYPES = [
   "warning",
 ] as const;
 export type MissionEventType = (typeof MISSION_EVENT_TYPES)[number];
+
+/**
+ * FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+ * Status and autonomy switches arm behavior that can create and dispatch work.
+ * Record a bounded, attributable caller identity with every such transition so
+ * operator, tool, and internal-autopilot actions remain distinguishable.
+ */
+export const MISSION_TRANSITION_ACTOR_TYPES = ["operator", "agent", "system"] as const;
+export type MissionTransitionActorType = (typeof MISSION_TRANSITION_ACTOR_TYPES)[number];
+
+export interface MissionTransitionActor {
+  type: MissionTransitionActorType;
+  id: string;
+  displayName?: string;
+  source: string;
+}
+
+/** Optional attribution supplied to a mission mutation that can arm autonomy. */
+export interface MissionUpdateOptions {
+  actor?: MissionTransitionActor;
+}
 
 /** Autopilot status for a mission */
 export interface AutopilotStatus {

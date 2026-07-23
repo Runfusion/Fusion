@@ -350,6 +350,8 @@ Typical flow:
 
 If validation cannot run (unexpected loop state, duplicate trigger, blocked validation, or validator error), Fusion logs a mission `warning`/`error` event with structured metadata so the stuck state is visible in mission events.
 
+Mission `status` and `autopilotEnabled` transitions are atomically written with a mission activity event. The event records stable actor type/id, optional display name, source, and before/after values; unchanged values create no transition event. Dashboard controls identify an operator, tools identify an agent when they expose a sensitive mutation, and autonomous engine paths identify the system/autopilot.
+
 ## `autopilotEnabled` vs `autoAdvance`
 
 - **`autopilotEnabled`**: primary control for autopilot behavior — enables background monitoring, orchestration, and automatic slice activation when a slice completes. Also triggers auto-planning (converting features to tasks) when a slice is activated.
@@ -569,7 +571,11 @@ interface MissionValidatorRun {
 
 ### Phase 5: Fix-Feature Retries
 
-When validation fails, `MissionStore.createGeneratedFixFeature()` creates a fix feature with lineage tracking:
+Validation always records failed runs and diagnostics. Remediation is separately opt-in: Fusion creates and auto-triages a Fix Feature only when `autopilotEnabled === true || autoAdvance === true`. With both flags false or unset, validation is **report-only**: the failed validator run and `validation_failed`/`validation_report_only` mission events remain visible, but Fusion does not mint a Fix Feature, create or plan a task, triage work, or dispatch remediation. This same predicate applies to completion, startup recovery, and periodic recovery, so a restart cannot bypass supervised mode.
+
+`autoAdvance` remains the legacy compatible opt-in. New missions should prefer `autopilotEnabled`.
+
+When the opt-in is enabled and validation fails, `MissionStore.createGeneratedFixFeature()` creates a fix feature with lineage tracking:
 
 ```typescript
 interface MissionFixFeatureLineage {
@@ -580,7 +586,7 @@ interface MissionFixFeatureLineage {
 }
 ```
 
-The fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
+An authorized fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
 
 **Default retry budget:** 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`). When `implementationAttemptCount >= maxRetryBudget`, the feature transitions to `blocked`.
 

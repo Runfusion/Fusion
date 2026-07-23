@@ -1679,9 +1679,29 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         outcome: "fail",
       });
 
-      // Create fix feature
-      try {
-        const fixFeature = await this.missionStore.createGeneratedFixFeature(
+      /*
+      FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+      Validation remains active in supervised missions, but a failed verdict must
+      not mint or triage remediation unless canonical autopilot or legacy
+      autoAdvance explicitly opted in. Re-resolve immediately before the side
+      effect so completion and recovery paths share the same authorization gate.
+      */
+      const currentFeature = await this.missionStore.getFeature(featureId);
+      const mission = currentFeature ? await this.resolveFeatureMission(currentFeature) : undefined;
+      const autoFixAuthorized = mission?.autopilotEnabled === true || mission?.autoAdvance === true;
+      if (!autoFixAuthorized) {
+        await this.logFeatureMissionEvent(featureId, "warning", "validation_report_only", "Validation failed in report-only mode; remediation was not created.", {
+          runId: runId ?? null,
+          outcome: "fail",
+          autopilotEnabled: mission?.autopilotEnabled ?? false,
+          autoAdvance: mission?.autoAdvance ?? false,
+          reason: mission ? "autonomy-not-enabled" : "mission-not-resolved",
+        });
+        this.emit("validation:failed", { featureId, runId, failures });
+      } else {
+        // Create fix feature
+        try {
+          const fixFeature = await this.missionStore.createGeneratedFixFeature(
           featureId,
           runId || "unknown",
           failures.map((f) => f.assertionId),
@@ -1719,13 +1739,13 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           });
         }
 
-        this.emit("validation:failed", {
-          featureId,
-          runId,
-          failures,
-          fixFeatureId: fixFeature.id,
-        });
-      } catch (fixErr) {
+          this.emit("validation:failed", {
+            featureId,
+            runId,
+            failures,
+            fixFeatureId: fixFeature.id,
+          });
+        } catch (fixErr) {
         const message = fixErr instanceof Error ? fixErr.message : String(fixErr);
         if (message.includes("retry budget exhausted") || message.includes("exhausted its retry budget")) {
           loopLog.warn(`Feature ${featureId} retry budget exhausted; marking as blocked`);
@@ -1738,10 +1758,11 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         } else {
           loopLog.error(`Error creating fix feature for ${featureId}:`, message);
           // R16 — a swallowed Fix-Feature creation error is durably recorded.
-          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_needs_attention", `Validation remediation could not be created for feature ${featureId}. Inspect the validator run and retry validation or triage.`, {
-            runId: runId ?? null,
-            state: "remediation-creation-failed",
-          });
+            await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_needs_attention", `Validation remediation could not be created for feature ${featureId}. Inspect the validator run and retry validation or triage.`, {
+              runId: runId ?? null,
+              state: "remediation-creation-failed",
+            });
+          }
         }
       }
 

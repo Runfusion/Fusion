@@ -52,6 +52,8 @@ import type {
   ValidatorRunStatus,
   FeatureLoopState,
   ValidationDiagnostics,
+  MissionTransitionActor,
+  MissionUpdateOptions,
 } from "./mission-types.js";
 import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from "./duplicate-guard.js";
 import { resolveEntryPointBranchAssignment } from "./branch-assignment.js";
@@ -1291,53 +1293,80 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The updated mission
    * @throws Error if mission not found
    */
-  updateMission(id: string, updates: Partial<Mission>): Mission {
-    const mission = this.getMission(id);
-    if (!mission) {
-      throw new Error(`Mission ${id} not found`);
-    }
-
-    const updated: Mission = {
-      ...mission,
-      ...updates,
-      id, // Prevent changing ID
-      createdAt: mission.createdAt, // Prevent changing creation time
-      updatedAt: new Date().toISOString(),
+  /**
+   * FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+   * SQLite is a supported mission mutation surface. Keep status and autonomy
+   * changes, including their attributed before/after audit events, in one
+   * transaction so its contract matches the PostgreSQL store.
+   */
+  updateMission(id: string, updates: Partial<Mission>, options: MissionUpdateOptions = {}): Mission {
+    const actor: MissionTransitionActor = options.actor ?? {
+      type: "system",
+      id: "mission-store",
+      displayName: "Mission store",
+      source: "mission-store",
     };
+    const { updated, events } = this.db.transactionImmediate(() => {
+      const mission = this.getMission(id);
+      if (!mission) {
+        throw new Error(`Mission ${id} not found`);
+      }
 
-    this.db.prepare(`
-      UPDATE missions SET
-        title = ?,
-        description = ?,
-        status = ?,
-        interviewState = ?,
-        baseBranch = ?,
-        branchStrategy = ?,
-        autoMerge = ?,
-        autoAdvance = ?,
-        autopilotEnabled = ?,
-        autopilotState = ?,
-        lastAutopilotActivityAt = ?,
-        updatedAt = ?
-      WHERE id = ?
-    `).run(
-      updated.title,
-      updated.description ?? null,
-      updated.status,
-      updated.interviewState,
-      updated.baseBranch ?? null,
-      updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
-      updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0),
-      updated.autoAdvance ? 1 : 0,
-      updated.autopilotEnabled ? 1 : 0,
-      updated.autopilotState ?? "inactive",
-      updated.lastAutopilotActivityAt ?? null,
-      updated.updatedAt,
-      updated.id,
-    );
+      const updated: Mission = {
+        ...mission,
+        ...updates,
+        id, // Prevent changing ID
+        createdAt: mission.createdAt, // Prevent changing creation time
+        updatedAt: new Date().toISOString(),
+      };
+      const transitions: Array<{ eventType: MissionEventType; description: string; metadata: Record<string, unknown> }> = [];
+      if (mission.status !== updated.status) {
+        transitions.push({
+          eventType: "mission_status_changed",
+          description: `Mission status changed from ${mission.status} to ${updated.status}`,
+          metadata: { source: actor.source, actor, field: "status", from: mission.status, to: updated.status },
+        });
+      }
+      const wasAutopilotEnabled = mission.autopilotEnabled === true;
+      const isAutopilotEnabled = updated.autopilotEnabled === true;
+      if (wasAutopilotEnabled !== isAutopilotEnabled) {
+        transitions.push({
+          eventType: isAutopilotEnabled ? "autopilot_enabled" : "autopilot_disabled",
+          description: `Autopilot ${isAutopilotEnabled ? "enabled" : "disabled"}`,
+          metadata: { source: actor.source, actor, field: "autopilotEnabled", from: wasAutopilotEnabled, to: isAutopilotEnabled },
+        });
+      }
+
+      this.db.prepare(`
+        UPDATE missions SET
+          title = ?, description = ?, status = ?, interviewState = ?, baseBranch = ?, branchStrategy = ?,
+          autoMerge = ?, autoAdvance = ?, autopilotEnabled = ?, autopilotState = ?,
+          lastAutopilotActivityAt = ?, updatedAt = ? WHERE id = ?
+      `).run(
+        updated.title, updated.description ?? null, updated.status, updated.interviewState,
+        updated.baseBranch ?? null, updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
+        updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0), updated.autoAdvance ? 1 : 0,
+        updated.autopilotEnabled ? 1 : 0, updated.autopilotState ?? "inactive",
+        updated.lastAutopilotActivityAt ?? null, updated.updatedAt, updated.id,
+      );
+
+      const events = transitions.map((transition) => {
+        const event: MissionEvent = {
+          id: this.generateMissionEventId(), missionId: id, eventType: transition.eventType,
+          description: transition.description, metadata: transition.metadata,
+          timestamp: new Date().toISOString(), seq: ++this._eventSeq,
+        };
+        this.db.prepare(`INSERT INTO mission_events (id, missionId, eventType, description, metadata, timestamp, seq) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          event.id, event.missionId, event.eventType, event.description, toJsonNullable(event.metadata), event.timestamp, event.seq,
+        );
+        return event;
+      });
+      return { updated, events };
+    });
 
     this.db.bumpLastModified();
     this.emit("mission:updated", updated);
+    for (const event of events) this.emit("mission:event", event);
     return updated;
   }
 
