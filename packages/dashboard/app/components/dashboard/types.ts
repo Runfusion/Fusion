@@ -102,7 +102,6 @@ export interface MainContentProps {
   remoteData: UseRemoteNodeDataResult;
   tasks: Task[];
   /** Active planning sessions loaded by App before the Planning view mounts. */
-  bgPlanningSessions: AiSessionSummary[];
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (
     pluginId: string,
@@ -156,8 +155,6 @@ export interface MainContentProps {
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
   openWorkflowEditorWithNav: (workflowId?: string) => void;
-  handlePlanningTaskCreated: (task: Task) => void;
-  handlePlanningTasksCreated: (tasks: Task[]) => void;
   handleGitHubImport: (task: Task) => void;
   devServerEnabled: boolean;
   mainPanelDetailTask: Task | TaskDetail | null;

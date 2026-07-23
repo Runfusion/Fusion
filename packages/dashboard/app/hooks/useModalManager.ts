@@ -51,6 +51,11 @@ export interface ModalManager {
   planningInitialPlan: string | null;
   planningResumeSessionId: string | undefined;
   planningWorkflowId: string | null | undefined;
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:20:
+  Monotonic counter bumped by every payload-carrying planning entry point (initial plan handoff, resume/session open). The kept-alive embedded Planning instance keys on it so explicit handoffs remount with the pre-keep-alive fresh-open semantics (auto-start, session load), while plain sidebar navigation (openPlanning/closePlanning) leaves it untouched and restores the live instance.
+  */
+  planningEntryGeneration: number;
   isSubtaskOpen: boolean;
   subtaskInitialDescription: string | null;
   subtaskResumeSessionId: string | undefined;
@@ -183,6 +188,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
   const [planningResumeSessionId, setPlanningResumeSessionId] = useState<string | undefined>(undefined);
   const [planningWorkflowId, setPlanningWorkflowId] = useState<string | null | undefined>(undefined);
+  // FNXC:PlanningKeepAlive 2026-07-22-12:20: see ModalManager.planningEntryGeneration.
+  const [planningEntryGeneration, setPlanningEntryGeneration] = useState(0);
   const [isSubtaskOpen, setIsSubtaskOpen] = useState(false);
   const [subtaskInitialDescription, setSubtaskInitialDescription] = useState<string | null>(null);
   const [subtaskResumeSessionId, setSubtaskResumeSessionId] = useState<string | undefined>(undefined);
@@ -284,6 +291,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setPlanningResumeSessionId(undefined);
     setPlanningInitialPlan(initialPlan);
     setPlanningWorkflowId(workflowId);
+    // FNXC:PlanningKeepAlive 2026-07-22-12:20: payload-carrying entries bump the generation so the kept-alive instance remounts with fresh-open semantics.
+    setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
   }, []);
   const resumePlanning = useCallback(() => {
@@ -291,11 +300,13 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     if (!session) return;
     setPlanningWorkflowId(undefined);
     setPlanningResumeSessionId(session.id);
+    setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
   }, [planningSessions]);
   const openPlanningWithSession = useCallback((sessionId: string) => {
     setPlanningWorkflowId(undefined);
     setPlanningResumeSessionId(sessionId);
+    setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
   }, []);
   const closePlanning = useCallback(() => {
@@ -501,6 +512,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     planningInitialPlan,
     planningResumeSessionId,
     planningWorkflowId,
+    planningEntryGeneration,
     isSubtaskOpen,
     subtaskInitialDescription,
     subtaskResumeSessionId,

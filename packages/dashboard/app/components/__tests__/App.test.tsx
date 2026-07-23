@@ -3122,10 +3122,50 @@ describe("App Planning Mode", () => {
 
     fireEvent.click(screen.getByLabelText("Close"));
 
+    /*
+    FNXC:PlanningKeepAlive 2026-07-22-12:40:
+    Closing the embedded Planning view returns to Board, but the planning subtree now stays mounted-but-hidden (keep-alive) instead of unmounting — the assertion moved from "not in DOM" to "hidden and inert" (aria-hidden wrapper) so the setting's intent (planning is not visible/interactive on other views) still holds.
+    */
     await waitFor(() => {
-      expect(screen.queryByText("Transform your idea into a detailed task")).toBeNull();
+      expect(screen.getByTestId("planning-keep-alive")).toHaveAttribute("aria-hidden", "true");
       expect(screen.getByTestId("sidebar-nav-board").getAttribute("aria-current")).toBe("page");
     });
+  });
+
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:40:
+  FN remount-churn fix R5: Planning mounts lazily on first open, then survives sidebar navigation mounted-but-hidden; returning reveals the same subtree instead of remounting it.
+  */
+  it("keeps Planning Mode mounted-but-hidden across navigation round-trips", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    vi.mocked(fetchSettings).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: true },
+    });
+    render(<App />);
+
+    // First-mount laziness: before Planning is ever opened, no kept-alive planning subtree exists.
+    await screen.findByTestId("sidebar-nav-planning");
+    expect(screen.queryByTestId("planning-keep-alive")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-view")).toBeTruthy();
+    });
+    expect(screen.getByTestId("planning-keep-alive")).not.toHaveAttribute("aria-hidden");
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-board"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    });
+    // Mounted-but-hidden: the planning subtree is still in the DOM while Board is active.
+    expect(screen.getByTestId("planning-view")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).not.toHaveAttribute("aria-hidden");
+    });
+    expect(screen.getByTestId("planning-view")).toBeTruthy();
   });
 
   it("renders planning embedded view with correct initial state", async () => {

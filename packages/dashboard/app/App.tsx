@@ -115,6 +115,7 @@ export {
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
+import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
 import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
 import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
@@ -671,6 +672,25 @@ function AppInner() {
       setQuickChatEverOpenedProjectId(projectId);
     }
   }, [currentProject?.id, quickChatOpen]);
+
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:30:
+  Planning Mode mounts only after its first open for the current project, then stays mounted-but-hidden across sidebar navigation so the interview survives round-trips (FN remount-churn fix R5). This mirrors Quick Chat's quickChatEverOpenedProjectId latch above: reset on project change so one project's kept-alive interview can never leak into another; the PlanningKeepAlive key supplies the matching React identity boundary.
+  */
+  const [planningEverOpenedProjectId, setPlanningEverOpenedProjectId] = useState<string | null>(null);
+  const planningLatchProjectIdRef = useRef<string | undefined>(undefined);
+  const planningViewActive = taskView === "planning";
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (planningLatchProjectIdRef.current !== projectId) {
+      planningLatchProjectIdRef.current = projectId;
+      setPlanningEverOpenedProjectId(planningViewActive && projectId ? projectId : null);
+      return;
+    }
+    if (planningViewActive && projectId) {
+      setPlanningEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, planningViewActive]);
 
   /*
   FNXC:GitHubImportChat 2026-07-30-12:00:
@@ -1561,7 +1581,6 @@ function AppInner() {
     isRemote,
     remoteData,
     tasks,
-    bgPlanningSessions,
     workflowSteps,
     subscribePluginEvents,
     openDetailTask,
@@ -1607,8 +1626,6 @@ function AppInner() {
     ingestCreatedTasks,
     nodesEnabled,
     openWorkflowEditorWithNav,
-    handlePlanningTaskCreated,
-    handlePlanningTasksCreated,
     handleGitHubImport,
     devServerEnabled,
     mainPanelDetailTask,
@@ -1862,6 +1879,25 @@ function AppInner() {
           className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
+          {/*
+          FNXC:PlanningKeepAlive 2026-07-22-12:30:
+          Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
+          */}
+          {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
+            <PlanningKeepAlive
+              key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
+              active={planningViewActive}
+              projectId={currentProject.id}
+              tasks={tasks}
+              bgPlanningSessions={bgPlanningSessions}
+              modalManager={modalManager}
+              handleChangeTaskView={handleTaskViewChange}
+              handlePlanningTaskCreated={handlePlanningTaskCreated}
+              handlePlanningTasksCreated={handlePlanningTasksCreated}
+              openBoardTaskDetail={openBoardTaskDetail}
+              openWorkflowEditorWithNav={openWorkflowEditorWithNav}
+            />
+          )}
         </div>
         {rightDock.dock}
       </div>
