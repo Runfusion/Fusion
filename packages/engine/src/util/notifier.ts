@@ -1,7 +1,13 @@
 import type { Task, Settings, NtfyNotificationEvent } from "@fusion/core";
 import type { GridlockEvent } from "../healing/gridlock-detector.js";
 import { schedulerLog } from "../logger.js";
-import { NotificationService } from "../index.js";
+/*
+ * FNXC:CodeOrganization 2026-07-23-16:40:
+ * Import NotificationService from the notification domain — never from the
+ * engine package root. Loading ../index.js registers createFnAgent DI and
+ * breaks gate tests that expect getFnAgent() to stay unset until engine boot.
+ */
+import { NotificationService } from "../notification/notification-service.js";
 
 export interface NtfyNotifierOptions {
   /** Base URL for ntfy.sh. Default: https://ntfy.sh */

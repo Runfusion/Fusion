@@ -193,7 +193,7 @@ vi.mock("../agents/agent-session-helpers.js", async () => {
   };
 });
 vi.mock("../worktree/worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree-names.js");
+  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree/worktree-names.js");
   return {
     ...actual,
     generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
