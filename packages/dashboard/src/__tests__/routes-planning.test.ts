@@ -2633,6 +2633,76 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).toHaveBeenCalled();
       });
 
+      it("terminalizes a not-yet-validated session when Proceed with plan creates its task", async () => {
+        /*
+        FNXC:PlanningMode 2026-07-23-12:10:
+        Proceed with plan calls create-task directly, without the legacy /validate step. The
+        persisted session must still leave awaiting_input on task creation; otherwise the
+        session list and the needs-input banner keep advertising a finished session.
+        */
+        const mockStore = new MockAiSessionStore();
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-777",
+          description: "Proceed-with-plan task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+
+        // Precondition: mid-interview session, never validated.
+        expect((await mockStore.get(sessionId))?.status).toBe("awaiting_input");
+
+        const summary = {
+          title: "Auth running plan",
+          description: "Running plan accepted via Proceed with plan",
+          suggestedSize: "M",
+          suggestedDependencies: [],
+          keyDeliverables: ["Implementation"],
+        };
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(201);
+
+        // Invariant: a session whose one task exists is terminal for every store reader
+        // (sidebar session-list label, needs-input banner count, recoverable-session sweep).
+        expect((await mockStore.get(sessionId))?.status).toBe("complete");
+
+        // The alreadyCreated reconciliation replay must keep the terminal status.
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+          { id: "FN-777", proposalClaimId: `planning-session:${sessionId}` },
+        ]);
+        const replay = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" }
+        );
+        expect(replay.status).toBe(200);
+        expect(replay.body.alreadyCreated).toBe(true);
+        expect((await mockStore.get(sessionId))?.status).toBe("complete");
+      });
+
       it("uses summary override when provided", async () => {
         (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
           id: "FN-099",

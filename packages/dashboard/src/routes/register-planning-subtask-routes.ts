@@ -1187,6 +1187,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         finalizePlanningTaskCreation,
         reconcilePlanningTaskCreation,
         releasePlanningTaskCreation,
+        validateSession,
       } = await import("../planning.js");
 
       let session = await getSession(sessionId);
@@ -1257,10 +1258,29 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const proposalClaimId = `planning-session:${sessionId}`;
       const findCreatedTask = async () =>
         (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+      /*
+      FNXC:PlanningMode 2026-07-23-12:10:
+      A planning session whose task exists is done: the claim model allows exactly one task per
+      session, so after creation the session must stop advertising awaiting_input in the session
+      list/banner. The Proceed-with-plan flow calls this route without the legacy /validate step,
+      so terminalize here through validateSession (the sole terminal transition) on every path
+      that ends with a created task, including alreadyCreated reconciliation. Best-effort: a
+      failure to terminalize must not fail the task creation itself.
+      */
+      const markSessionComplete = () =>
+        runPlanningCreateSideEffect(
+          "Planning create-task session completion failed",
+          async () => {
+            const current = await getSession(sessionId);
+            if (current && !current.validated) await validateSession(sessionId);
+          },
+          { sessionId },
+        );
       const returnLinkedTask = async (candidate = session) => {
         if (!candidate?.createdTaskId) return false;
         const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
         if (!linkedTask) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        await markSessionComplete();
         res.status(200).json({ task: linkedTask, alreadyCreated: true });
         return true;
       };
@@ -1269,6 +1289,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const existingTask = await findCreatedTask();
       if (existingTask) {
         await reconcilePlanningTaskCreation(sessionId, existingTask.id);
+        await markSessionComplete();
         res.status(200).json({ task: existingTask, alreadyCreated: true });
         return;
       }
@@ -1295,6 +1316,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         const recoveredTask = await findCreatedTask();
         if (recoveredTask) {
           await reconcilePlanningTaskCreation(sessionId, recoveredTask.id);
+          await markSessionComplete();
           res.status(200).json({ task: recoveredTask, alreadyCreated: true });
           return;
         }
@@ -1381,6 +1403,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       } else if (session) {
         await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
       }
+
+      await markSessionComplete();
 
       res.status(201).json({ task, alreadyCreated: false });
     } catch (err: unknown) {

@@ -41,6 +41,8 @@ vi.mock("../planning.js", () => ({
   finalizePlanningTaskCreation: vi.fn(async () => undefined),
   reconcilePlanningTaskCreation: vi.fn(async () => undefined),
   releasePlanningTaskCreation: vi.fn(async () => undefined),
+  // FNXC:PlanningMode 2026-07-23-12:10: create-task terminalizes the session after creation.
+  validateSession: vi.fn(async () => undefined),
 }));
 
 function deferred<T>() {
