@@ -297,6 +297,68 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
     ).toBe(true);
   });
 
+  /*
+  FNXC:CIGateSpeed 2026-07-23-00:05:
+  The Build job taps the gate's incremental dist cache RESTORE-ONLY: it runs full CLI
+  packaging (CI=true), and saving that shape would swap the cache's canonical fast-CLI
+  contents out from under the Gate job. Pin restore-only, path parity with the gate block,
+  and that the Build step does NOT opt out of full CLI packaging (that coverage is this
+  job's distinctive value — ensureFullPackageCliPlanned force-plans the CLI in full mode
+  regardless of cache state).
+  */
+  it("build job restores the gate dist cache without saving and keeps full CLI packaging", () => {
+    const buildSteps = workflow.jobs?.build?.steps ?? [];
+    const restoreStep = buildSteps.find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(restoreStep).toBeDefined();
+    expect(restoreStep.uses).toContain("actions/cache/restore");
+    expect(restoreStep.with?.key).toContain("gate-dist-");
+    expect(restoreStep.with?.["restore-keys"]).toContain("gate-dist-");
+
+    const gateCache = (workflow.jobs?.gate?.steps ?? []).find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(restoreStep.with?.path).toBe(gateCache?.with?.path);
+
+    const buildStep = buildSteps.find(
+      (step: any) => step.name === "Build" && typeof step.run === "string" && step.run.includes("pnpm build"),
+    );
+    expect(buildStep).toBeDefined();
+    expect(buildStep.env?.FUSION_CLI_FULL_PACKAGE).toBeUndefined();
+    expect(buildSteps.indexOf(buildStep)).toBeGreaterThan(buildSteps.indexOf(restoreStep));
+  });
+
+  /*
+  FNXC:CIGateSpeed 2026-07-23-00:05:
+  Typecheck caches tsc incremental buildinfo. Restored buildinfo is self-validating (tsc
+  re-checks every input that changed), so restore-keys is correctness-neutral. The cache
+  only works if the dashboard's TWO typecheck programs (tsconfig.json + tsconfig.app.json)
+  keep DISTINCT tsBuildInfoFile paths — both inherit ${configDir}/dist/.tsbuildinfo from
+  tsconfig.base.json otherwise and clobber each other, silently re-checking the full
+  program every run. Pin the cache shape and the distinct app buildinfo path together.
+  */
+  it("typecheck job caches self-validating tsc buildinfo with distinct dashboard paths", () => {
+    const typecheckSteps = workflow.jobs?.typecheck?.steps ?? [];
+    const cacheStep = typecheckSteps.find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(cacheStep).toBeDefined();
+    expect(cacheStep.with?.key).toContain("typecheck-tsbuildinfo-");
+    expect(cacheStep.with?.["restore-keys"]).toContain("typecheck-tsbuildinfo-");
+    expect(cacheStep.with?.path).toContain("packages/*/dist/.tsbuildinfo");
+    expect(cacheStep.with?.path).toContain("packages/dashboard/dist/.tsbuildinfo-app");
+    expect(cacheStep.with?.path).toContain("plugins/*/dist/.tsbuildinfo");
+
+    const typecheckIndex = typecheckSteps.findIndex(
+      (step: any) => typeof step.run === "string" && step.run.includes("pnpm typecheck"),
+    );
+    expect(typecheckIndex).toBeGreaterThan(typecheckSteps.indexOf(cacheStep));
+
+    const appTsconfig = readFileSync(join(workspaceRoot, "packages", "dashboard", "tsconfig.app.json"), "utf-8");
+    expect(appTsconfig).toContain('.tsbuildinfo-app');
+  });
+
   it("keeps contributing docs aligned with the gate contract", () => {
     expect(contributingContent).toContain("pnpm test:full` must be runnable in a clean worktree without requiring a prior `pnpm build`.");
     expect(contributingContent).toContain("`pnpm test:gate` is the merge gate");
@@ -429,6 +491,39 @@ describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
     );
     expect(warmBuild).toBeDefined();
     expect(warmBuild.env?.FUSION_CLI_FULL_PACKAGE).toBe("0");
+  });
+
+  /*
+  FNXC:CIGateSpeed 2026-07-23-00:05:
+  The warm job also warms the Typecheck job's tsc buildinfo cache (PR caches are
+  invisible to other PRs, so main must seed first-run PRs). Path parity with the
+  Typecheck job's block is load-bearing for the same actions/cache versioning reason
+  as the dist cache.
+  */
+  it("warms the typecheck buildinfo cache from main with a path list identical to the typecheck job's", () => {
+    const warmSteps = workflow.jobs?.["warm-gate-build-cache"]?.steps ?? [];
+    const warmTsCache = warmSteps.find(
+      (step: any) =>
+        typeof step.uses === "string" &&
+        step.uses.startsWith("actions/cache") &&
+        typeof step.with?.key === "string" &&
+        step.with.key.includes("typecheck-tsbuildinfo-"),
+    );
+    expect(warmTsCache).toBeDefined();
+    expect(warmTsCache.with?.["restore-keys"]).toContain("typecheck-tsbuildinfo-");
+
+    const gateWorkflow = loadWorkflow("pr-checks.yml").parsed;
+    const typecheckCache = (gateWorkflow.jobs?.typecheck?.steps ?? []).find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(warmTsCache.with?.path).toBe(typecheckCache?.with?.path);
+    expect(warmTsCache.with?.key).toBe(typecheckCache?.with?.key);
+
+    const warmTypecheck = warmSteps.find(
+      (step: any) => typeof step.run === "string" && step.run.includes("pnpm typecheck"),
+    );
+    expect(warmTypecheck).toBeDefined();
+    expect(warmSteps.indexOf(warmTypecheck)).toBeGreaterThan(warmSteps.indexOf(warmTsCache));
   });
 });
 

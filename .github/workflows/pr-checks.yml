@@ -61,6 +61,27 @@ jobs:
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
+      # FNXC:CIGateSpeed 2026-07-23-00:05:
+      # tsc incremental buildinfo cache. tsconfig.base.json enables
+      # `incremental` with per-package dist/.tsbuildinfo; a restored buildinfo
+      # is SELF-VALIDATING (tsc hashes every input against it and re-checks
+      # whatever changed), so restore-keys can never let a stale check through
+      # — it only shrinks the re-checked set. Cold typecheck was ~4 min of the
+      # PR critical path. Keyed by SHA so every commit saves a fresh snapshot;
+      # restore-keys picks the nearest prior one (same PR, or main via the
+      # warm-gate-build-cache job in full-suite.yml, which must keep an
+      # identical path list — actions/cache versions caches by path list).
+      - name: Cache TypeScript incremental buildinfo
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist/.tsbuildinfo
+            packages/dashboard/dist/.tsbuildinfo-app
+            plugins/*/dist/.tsbuildinfo
+          key: typecheck-tsbuildinfo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-tsbuildinfo-${{ runner.os }}-
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -74,6 +95,39 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:CIGateSpeed 2026-07-23-00:05:
+      # RESTORE-ONLY tap of the gate's incremental dist cache (see the gate
+      # job's cache block for the full safety rationale: `pnpm build` always
+      # runs and reconciles a near-match restore per package by content hash).
+      # Restore-only (actions/cache/restore, never save) because this job runs
+      # FULL CLI packaging (CI=true → desktop + bundled plugins + DTS), and
+      # saving that shape would swap the cache's canonical fast-CLI contents
+      # out from under the Gate job. Full CLI packaging itself is never skipped
+      # regardless of cache state (ensureFullPackageCliPlanned force-plans the
+      # CLI in full mode), so this job's distinctive coverage is preserved.
+      # Path list must stay byte-identical to the gate job's block.
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore built dist artifacts (incremental, restore-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            packages/cli/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+            .fusion/cache/plugin-build-cache.json
+          key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+          restore-keys: |
+            gate-dist-${{ runner.os }}-
 
       - name: Build
         run: pnpm build

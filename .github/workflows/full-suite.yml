@@ -297,3 +297,23 @@ jobs:
         run: pnpm build
         env:
           FUSION_CLI_FULL_PACKAGE: "0"
+
+      # FNXC:CIGateSpeed 2026-07-23-00:05:
+      # Also warm the Typecheck job's tsc incremental buildinfo cache from main
+      # (same PR-invisibility rationale as the dist cache above). The path list
+      # must stay byte-identical to the Typecheck job's cache block in
+      # pr-checks.yml. Restored buildinfo is self-validating — tsc re-checks
+      # anything that changed — so restore-keys is correctness-neutral.
+      - name: Cache TypeScript incremental buildinfo
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist/.tsbuildinfo
+            packages/dashboard/dist/.tsbuildinfo-app
+            plugins/*/dist/.tsbuildinfo
+          key: typecheck-tsbuildinfo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-tsbuildinfo-${{ runner.os }}-
+
+      - name: Typecheck (warms incremental buildinfo)
+        run: pnpm typecheck
