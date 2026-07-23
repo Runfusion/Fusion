@@ -17,7 +17,7 @@ import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
-import { PendingImagePreviews } from "./PendingImagePreviews";
+import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const STORAGE_KEY = "kb-inline-create-text";
@@ -890,8 +890,8 @@ export function InlineCreateCard({
           />
         )}
       </div>
-      <PendingImagePreviews
-        images={pendingImages}
+      <PendingAttachmentPreviews
+        attachments={pendingImages}
         onRemove={removeImage}
         disabled={submitting}
         removeLabel={t("inline.removeImage", "Remove image")}

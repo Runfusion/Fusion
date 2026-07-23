@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.73.0-beta.2",
+  "version": "0.73.0-beta.3",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -21,7 +21,7 @@
     "check:changesets": "node scripts/check-changeset-format.mjs",
     "check:quarantine-ledger": "node scripts/check-quarantine-ledger.mjs",
     "check:mock-completeness": "node scripts/check-mock-completeness.mjs",
-    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-getdatabase.mjs && node scripts/check-no-node-only-core-imports-in-dashboard.mjs && node scripts/check-pi-versions-pinned.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs && node scripts/check-mock-completeness.mjs && pnpm --filter @fusion/engine test:core && pnpm --filter @fusion/core test:pg-gate && pnpm --filter @runfusion/fusion test:ci-shape",
+    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-getdatabase.mjs && node scripts/check-no-node-only-core-imports-in-dashboard.mjs && node scripts/check-pi-versions-pinned.mjs && node scripts/check-no-test-timeout-appeasement.mjs && node scripts/check-changeset-format.mjs && node scripts/check-mock-completeness.mjs && sh -c 'pnpm --filter @fusion/engine test:core & engine_pid=$!; pnpm --filter @fusion/core test:pg-gate & pg_pid=$!; status=0; wait $engine_pid || status=1; wait $pg_pid || status=1; exit $status' && pnpm --filter @runfusion/fusion test:ci-shape",
     "smoke:boot": "node scripts/boot-smoke.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",

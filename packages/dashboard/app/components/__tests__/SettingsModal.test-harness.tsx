@@ -78,6 +78,7 @@ export const mockFetchRemoteQr = vi.fn();
 export const mockFetchRemoteUrl = vi.fn();
 export const mockTriggerMemoryDreams = vi.fn();
 export const mockFetchPluginUiSlots = vi.fn();
+export const mockFetchPlugins = vi.fn();
 export const mockFetchDroidCliStatus = vi.fn();
 export const mockSetDroidCliEnabled = vi.fn();
 export const mockFetchCursorCliStatus = vi.fn();
@@ -452,6 +453,7 @@ export function installSettingsModalEnv(options?: { advancedSettings?: boolean }
     mockFetchRemoteUrl.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null });
     mockTriggerMemoryDreams.mockResolvedValue({ success: true, summary: "done" });
     mockFetchPluginUiSlots.mockResolvedValue([]);
+    mockFetchPlugins.mockResolvedValue([]);
     mockFetchDroidCliStatus.mockResolvedValue({
       binary: { available: true, version: "1.2.3", binaryPath: "/usr/local/bin/droid", probeDurationMs: 9 },
       enabled: false,

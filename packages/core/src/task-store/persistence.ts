@@ -28,6 +28,7 @@ export interface TaskRow {
   overlapBlockedBy: string | null;
   paused: number | null;
   pausedReason: string | null;
+  wedgeNotification: string | null;
   userPaused: number | null;
   baseBranch: string | null;
   executionStartBranch: string | null;
@@ -228,6 +229,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("overlapBlockedBy", (task) => task.overlapBlockedBy ?? null),
   defineTaskColumn("paused", (task) => task.paused ? 1 : 0),
   defineTaskColumn("pausedReason", (task) => task.pausedReason ?? null),
+  defineTaskColumn("wedgeNotification", (task) => toJsonNullable(task.wedgeNotification)),
   defineTaskColumn("userPaused", (task) => task.userPaused ? 1 : 0),
   defineTaskColumn("baseBranch", (task) => task.baseBranch ?? null),
   defineTaskColumn("branch", (task) => task.branch ?? null),

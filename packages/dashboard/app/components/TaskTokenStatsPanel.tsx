@@ -36,6 +36,10 @@ interface TaskTokenStatsPanelProps {
     | "planningStartedAt"
     | "column"
     | "columnMovedAt"
+    | "sourceType"
+    | "sourceAgentId"
+    | "sourceParentTaskId"
+    | "sourceMetadata"
   >;
 }
 
@@ -267,6 +271,75 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
           </div>
         </dl>
       </div>
+
+      {/*
+      FNXC:TaskStatsProvenance 2026-07-22-14:45:
+      Operators triaging duplicate follow-up tasks (FN-8510/8511/8513/8514 incident) need to see
+      WHO filed a task without querying the DB: the Stats sub-tab surfaces creation provenance —
+      source type, the parent task whose executor called fn_task_create, the creating agent, and
+      the triage near-duplicate marker (canonical task id) when one was recorded.
+      Rows with no value are omitted rather than rendered empty.
+      */}
+      {task?.sourceType ? (
+        <div className="task-token-stats-panel__section">
+          {/*
+          FNXC:TaskStatsProvenance 2026-07-22-14:45:
+          `taskDetail.provenance` is a nested locale OBJECT (Summary-tab provenance labels);
+          calling t() on it returns an object and crashes the render (issue #1863 pattern).
+          All keys here must be leaves under that namespace, e.g. `taskDetail.provenance.title`.
+          */}
+          <h5>{t("taskDetail.provenance.title", "Provenance")}</h5>
+          <dl className="task-token-stats-panel__details">
+            <div className="task-token-stats-panel__detail-row">
+              <dt>{t("taskDetail.provenance.createdVia", "Created via")}</dt>
+              <dd>{task.sourceType}</dd>
+            </div>
+            {task.sourceParentTaskId ? (
+              <div className="task-token-stats-panel__detail-row">
+                <dt>{t("taskDetail.provenance.parentTask", "Parent task")}</dt>
+                <dd>{task.sourceParentTaskId}</dd>
+              </div>
+            ) : null}
+            {task.sourceAgentId ? (
+              <div className="task-token-stats-panel__detail-row">
+                <dt>{t("taskDetail.provenance.creatingAgent", "Creating agent")}</dt>
+                <dd>{task.sourceAgentId}</dd>
+              </div>
+            ) : null}
+            {/*
+            FNXC:TaskStatsProvenance 2026-07-22-15:20:
+            sourceMetadata is writable through the task-creation API, so issueUrl is untrusted:
+            only http(s) URLs may render as a link (blocks javascript:-scheme injection);
+            anything else renders as plain text.
+            */}
+            {typeof task.sourceMetadata?.issueUrl === "string" ? (
+              <div className="task-token-stats-panel__detail-row">
+                <dt>{t("taskDetail.provenance.importedFrom", "Imported from")}</dt>
+                <dd>
+                  {/^https?:\/\//i.test(task.sourceMetadata.issueUrl) ? (
+                    /*
+                    FNXC:TaskStatsProvenance 2026-07-22-21:47:
+                    Imported-source links use the active accent rather than the browser default so the
+                    shared Stats panel remains theme-aware on desktop and narrow/mobile task detail.
+                    */
+                    <a className="task-token-stats-panel__imported-source-link" href={task.sourceMetadata.issueUrl} target="_blank" rel="noreferrer">
+                      {task.sourceMetadata.issueUrl}
+                    </a>
+                  ) : (
+                    task.sourceMetadata.issueUrl
+                  )}
+                </dd>
+              </div>
+            ) : null}
+            {typeof task.sourceMetadata?.nearDuplicateOf === "string" ? (
+              <div className="task-token-stats-panel__detail-row">
+                <dt>{t("taskDetail.provenance.nearDuplicateOf", "Flagged near-duplicate of")}</dt>
+                <dd>{task.sourceMetadata.nearDuplicateOf}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : null}
 
       <div className="task-token-stats-panel__section">
         <h5>{t("taskDetail.tokenUsage", "Token Usage")}</h5>

@@ -1927,7 +1927,7 @@ describe("useChat", () => {
     });
   });
 
-  it("FN-5104 does not reattach after stopStreaming cancels active generation", async () => {
+  it("FN-5104 does not reattach after an authoritative idle response", async () => {
     const session = {
       ...makeSession({ id: "session-001", agentId: "agent-001" }),
       isGenerating: true,
@@ -1954,17 +1954,17 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+      // A stale list row must not reopen a generation that the authoritative endpoint says ended.
+      expect(result.current.isStreaming).toBe(false);
+      expect(mockAttachChatStream).not.toHaveBeenCalled();
     });
 
     act(() => {
       result.current.stopStreaming();
     });
 
-    await waitFor(() => {
-      expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
-      expect(result.current.isStreaming).toBe(false);
-    });
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
   });
 
   it("FN-7656 reattaches and shows working state on refresh reporting isGenerating with no inFlightGeneration snapshot yet (pre-first-delta)", async () => {
@@ -2078,6 +2078,145 @@ describe("useChat", () => {
     expect(mockAttachChatStream).not.toHaveBeenCalled();
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.activeSession?.id).toBe("session-002");
+  });
+
+  it("FN-8504 waits for the authoritative re-entry snapshot before attaching from its cursor", async () => {
+    const staleListSession = {
+      ...makeSession({ id: "session-stale-cursor", agentId: "agent-001" }),
+      isGenerating: true,
+      inFlightGeneration: {
+        status: "generating" as const,
+        streamingText: "stale partial",
+        streamingThinking: "stale reasoning",
+        toolCalls: [],
+        replayFromEventId: 17,
+        updatedAt: "2026-07-20T19:00:00.000Z",
+      },
+    };
+    const authoritativeRefresh = createDeferredPromise<{ session: ChatSession }>();
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [staleListSession] });
+    mockFetchChatSession.mockReturnValueOnce(authoritativeRefresh.promise);
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+    act(() => {
+      result.current.selectSession(staleListSession.id);
+    });
+
+    await waitFor(() => {
+      expect(mockFetchChatSession).toHaveBeenCalledWith(staleListSession.id, undefined);
+    });
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+
+    await act(async () => {
+      authoritativeRefresh.resolve({
+        session: {
+          ...staleListSession,
+          inFlightGeneration: {
+            ...staleListSession.inFlightGeneration,
+            streamingText: "authoritative partial",
+            streamingThinking: "authoritative reasoning",
+            replayFromEventId: 23,
+          },
+        },
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+      expect(mockAttachChatStream).toHaveBeenCalledWith(
+        staleListSession.id,
+        expect.any(Object),
+        undefined,
+        { lastEventId: 23 },
+      );
+      expect(result.current.streamingText).toBe("authoritative partial");
+      expect(result.current.streamingThinking).toBe("authoritative reasoning");
+    });
+  });
+
+  it("FN-8504 ignores an earlier A refresh after rapid A → B → A re-entry", async () => {
+    const sessionA = {
+      ...makeSession({ id: "session-001", agentId: "agent-001" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    const sessionB = {
+      ...makeSession({ id: "session-002", agentId: "agent-002" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    const oldARefresh = createDeferredPromise<{ session: ChatSession }>();
+    const currentARefresh = createDeferredPromise<{ session: ChatSession }>();
+    let aFetches = 0;
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [sessionA, sessionB] });
+    mockFetchChatSession.mockImplementation((id) => {
+      if (id === sessionA.id) {
+        aFetches += 1;
+        return aFetches === 1 ? oldARefresh.promise : currentARefresh.promise;
+      }
+      return Promise.resolve({ session: sessionB });
+    });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    act(() => {
+      result.current.selectSession(sessionA.id);
+      result.current.selectSession(sessionB.id);
+      result.current.selectSession(sessionA.id);
+    });
+
+    await waitFor(() => expect(aFetches).toBe(2));
+
+    await act(async () => {
+      oldARefresh.resolve({
+        session: {
+          ...sessionA,
+          isGenerating: true,
+          inFlightGeneration: {
+            status: "generating",
+            streamingText: "obsolete partial",
+            streamingThinking: "obsolete reasoning",
+            toolCalls: [],
+            replayFromEventId: 31,
+            updatedAt: "2026-07-20T18:00:00.000Z",
+          },
+        },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+
+    await act(async () => {
+      currentARefresh.resolve({
+        session: {
+          ...sessionA,
+          isGenerating: true,
+          inFlightGeneration: {
+            status: "generating",
+            streamingText: "current partial",
+            streamingThinking: "current reasoning",
+            toolCalls: [],
+            replayFromEventId: 32,
+            updatedAt: "2026-07-20T18:01:00.000Z",
+          },
+        },
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+      expect(mockAttachChatStream).toHaveBeenCalledWith(sessionA.id, expect.any(Object), undefined, { lastEventId: 32 });
+      expect(result.current.streamingText).toBe("current partial");
+      expect(result.current.streamingThinking).toBe("current reasoning");
+    });
   });
 
   it("fetches session on visible return only when no live stream and swallows reconnect failures", async () => {
@@ -2708,9 +2847,9 @@ describe("useChat", () => {
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
       mockFetchChatMessages.mockResolvedValue({ messages: [] });
       mockAttachChatStream.mockReturnValue(null as never);
-      mockFetchChatSession.mockResolvedValue({
-        session: { ...session, isGenerating: false },
-      });
+      mockFetchChatSession
+        .mockResolvedValueOnce({ session })
+        .mockResolvedValue({ session: { ...session, isGenerating: false } });
 
       const { result } = renderHook(() => useChat("proj-123"));
 
@@ -3775,6 +3914,69 @@ describe("useChat", () => {
       });
     });
 
+    it("FN-8504 waits for the authoritative cursor when an SSE update races session re-entry", async () => {
+      const staleSession = {
+        ...makeSession({ id: "session-reentry-race", agentId: "agent-001" }),
+        isGenerating: false,
+        inFlightGeneration: null,
+      };
+      const staleSseSession = {
+        ...staleSession,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "stale partial",
+          streamingThinking: "",
+          toolCalls: [],
+          replayFromEventId: 4,
+          updatedAt: "2026-07-22T19:05:00.000Z",
+        },
+      };
+      const authoritativeSession = {
+        ...staleSseSession,
+        inFlightGeneration: {
+          ...staleSseSession.inFlightGeneration,
+          streamingText: "authoritative partial",
+          streamingThinking: "authoritative reasoning",
+          replayFromEventId: 23,
+        },
+      };
+      const refresh = createDeferredPromise<{ session: ChatSession }>();
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [staleSession] });
+      mockFetchChatSession.mockReturnValueOnce(refresh.promise);
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+      act(() => result.current.selectSession(staleSession.id));
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(staleSseSession),
+        } as MessageEvent);
+      });
+
+      expect(mockAttachChatStream).not.toHaveBeenCalled();
+      expect(result.current.isStreaming).toBe(false);
+
+      await act(async () => {
+        refresh.resolve({ session: authoritativeSession });
+        await refresh.promise;
+      });
+
+      await waitFor(() => {
+        expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          staleSession.id,
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 23 },
+        );
+        expect(result.current.streamingText).toBe("authoritative partial");
+        expect(result.current.streamingThinking).toBe("authoritative reasoning");
+      });
+    });
+
     it("FN-6599 keeps restored main-chat prior thread visible during selectSession recovery attach", async () => {
       const generatingSession = {
         ...makeSession({
@@ -3801,6 +4003,7 @@ describe("useChat", () => {
 
       mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession] });
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
       mockFetchChatMessages.mockResolvedValueOnce({ messages: priorThreadNewestFirst });
 
       const { result } = renderHook(() => useChat("proj-123"));
@@ -3873,6 +4076,7 @@ describe("useChat", () => {
       cacheMessages("proj-123", generatingSession.id, [priorUser, laterAssistant]);
       mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession] });
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
       mockFetchChatMessages.mockResolvedValueOnce({ messages: [laterAssistant, persistedUser, priorUser] });
 
       const { result } = renderHook(() => useChat("proj-123"));
@@ -4187,6 +4391,7 @@ describe("useChat", () => {
       };
       let attachedHandlers: StreamAppendHandlers | undefined;
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
       mockFetchChatMessages.mockResolvedValue({ messages: [] });
       mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
         attachedHandlers = handlers;
@@ -5171,6 +5376,7 @@ describe("useChat", () => {
   describe("FN-3336: streaming state recovery on reload", () => {
     it("does not re-select and reset active session on subsequent session refreshes", async () => {
       const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      mockFetchChatSession.mockResolvedValueOnce({ session });
       mockGetScopedItem.mockReturnValue("session-001");
       mockFetchChatSessions
         .mockResolvedValueOnce({ sessions: [session] })
@@ -5183,7 +5389,9 @@ describe("useChat", () => {
         expect(result.current.activeSession?.id).toBe("session-001");
       });
 
-      expect(mockFetchChatMessages).toHaveBeenCalledTimes(1);
+      // Authoritative re-entry reuses the attach transcript load, then later session-list
+      // refreshes must not select/reset the active thread again.
+      expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
 
       await act(async () => {
         await result.current.refreshSessions();
@@ -5194,7 +5402,7 @@ describe("useChat", () => {
       });
 
       // A sessions refresh should not auto-reselect/reset the active thread.
-      expect(mockFetchChatMessages).toHaveBeenCalledTimes(1);
+      expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
     });
 
     it("preserves streaming text/thinking/tool state across sessions refresh", async () => {
@@ -5265,6 +5473,7 @@ describe("useChat", () => {
         },
       };
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatSession.mockResolvedValueOnce({ session });
       mockFetchChatMessages.mockResolvedValue({ messages: [] });
 
       const { result } = renderHook(() => useChat("proj-123"));
@@ -5308,7 +5517,20 @@ describe("useChat", () => {
       const otherSession = makeSession({ id: "session-002", agentId: "agent-002", title: "Other" });
       const handlers: StreamAppendHandlers[] = [];
       const closeFirstStream = vi.fn();
+      const resumedGeneration = {
+        ...generatingSession,
+        inFlightGeneration: {
+          ...generatingSession.inFlightGeneration,
+          streamingText: "Hello world",
+          streamingThinking: "plan next ",
+          replayFromEventId: 6,
+        },
+      };
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession, otherSession] });
+      mockFetchChatSession
+        .mockResolvedValueOnce({ session: generatingSession })
+        .mockResolvedValueOnce({ session: otherSession })
+        .mockResolvedValueOnce({ session: resumedGeneration });
       mockFetchChatMessages.mockResolvedValue({ messages: [] });
       mockAttachChatStream.mockImplementation((_sessionId, nextHandlers) => {
         handlers.push(nextHandlers);
@@ -5390,6 +5612,7 @@ describe("useChat", () => {
     it("sets isStreaming=true when selecting a session with isGenerating=true", async () => {
       const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
       mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatSession.mockResolvedValueOnce({ session });
       mockFetchChatMessages.mockResolvedValue({ messages: [] });
 
       const { result } = renderHook(() => useChat("proj-123"));

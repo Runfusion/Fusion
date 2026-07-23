@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
-import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, ThinkingLevel } from "@fusion/core";
+import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, ThinkingLevel, ColumnId } from "@fusion/core";
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
@@ -17,19 +17,38 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
-import { PendingImagePreviews } from "./PendingImagePreviews";
+import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
+import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  "text/yaml",
+  "text/x-toml",
+  "text/csv",
+  "application/xml",
+]);
+const TASK_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.txt,.md,.json,.yaml,.yml,.toml,.csv,.xml";
 
-interface PendingImage {
+interface PendingAttachment {
   file: File;
-  previewUrl: string;
+  previewUrl?: string;
 }
 
 interface QuickEntryBoxProps {
   onCreate?: (input: CreateTaskInput) => Promise<Task | void>;
+  /** Host-owned state-updating move path; Quick Add never calls the raw API. */
+  onMoveTask?: (taskId: string, column: ColumnId) => Promise<unknown>;
   addToast: (message: string, type?: ToastType) => void;
   tasks?: Task[];
   availableModels?: ModelInfo[];
@@ -135,7 +154,7 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
   return nodes.length > 1 || nodes.some((node) => node.type !== "local");
 }
 
-export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onSubtaskBreakdown, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, onSubtaskBreakdown, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
   const [description, setDescription] = useState(() => {
     if (typeof window !== "undefined") {
@@ -153,10 +172,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const startIntentRef = useRef<ValidatedQuickAddWorkflow | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const suppressSaveClickRef = useRef(false);
+  const [showStartMenu, setShowStartMenu] = useState(false);
+  const [startMenuPosition, setStartMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const justResetRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const pendingImagesRef = useRef<PendingImage[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const dragDepthRef = useRef(0);
 
@@ -345,6 +371,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const quickEntryWorkflowLabel = selectedQuickEntryWorkflow?.name ?? t("tasks.workflow", "Workflow");
   const selectedQuickEntryWorkflowIcon = selectedQuickEntryWorkflow?.icon;
   const selectedWorkflowForCreate = workflowId === undefined ? undefined : quickEntryWorkflowId;
+  const validatedStartWorkflow = useMemo(() => validateQuickAddStartWorkflow(selectedQuickEntryWorkflow), [selectedQuickEntryWorkflow]);
+  const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
+  const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && (startInitialColumn || onMoveTask));
+  const canOpenQuickAddStartMenu = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
+
+  useEffect(() => {
+    if (!canOpenQuickAddStartMenu) {
+      setShowStartMenu(false);
+      setStartMenuPosition(null);
+    }
+  }, [canOpenQuickAddStartMenu]);
 
   useEffect(() => {
     const parentChanged = previousWorkflowDefaultRef.current.workflowId !== workflowId
@@ -464,6 +501,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     previousProjectIdRef.current = projectId;
     setAgents([]);
     setAgentsProjectId(undefined);
+    /*
+    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    Pending files belong to the project where they were selected. Clear them on a project switch so
+    an attachment cannot be uploaded into the next project's newly created task, and release image URLs.
+    */
+    setPendingAttachments((pending) => {
+      for (const attachment of pending) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      return [];
+    });
     setSelectedAgentId(null);
     setShowAgentPicker(false);
     setAgentPickerPosition(null);
@@ -477,13 +525,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, []);
 
   useEffect(() => {
-    pendingImagesRef.current = pendingImages;
-  }, [pendingImages]);
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
 
-  // Cleanup image preview URLs on unmount
+  // Clean up image preview URLs on unmount
   useEffect(() => {
     return () => {
-      pendingImagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      pendingAttachmentsRef.current.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
     };
   }, []);
 
@@ -608,8 +656,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [showWorkflowPicker]);
 
   const resetForm = useCallback(() => {
-    pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
-    setPendingImages([]);
+    pendingAttachments.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
+    setPendingAttachments([]);
     dragDepthRef.current = 0;
     setIsFileDragOver(false);
     if (fileInputRef.current) {
@@ -656,21 +704,22 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (typeof window !== "undefined") {
       removeScopedItem(STORAGE_KEY, projectId);
     }
-  }, [pendingImages, projectId, optionalSteps]);
+  }, [pendingAttachments, projectId, optionalSteps]);
 
-  const handleImageFiles = useCallback((files: FileList | File[] | null | undefined) => {
+  const handleAttachmentFiles = useCallback((files: FileList | File[] | null | undefined) => {
     if (!files || files.length === 0) return;
 
-    const newImages: PendingImage[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (ALLOWED_IMAGE_TYPES.includes(file.type)) {
-        newImages.push({ file, previewUrl: URL.createObjectURL(file) });
-      }
+    const newAttachments: PendingAttachment[] = [];
+    for (const file of Array.from(files)) {
+      if (!ALLOWED_TASK_ATTACHMENT_TYPES.has(file.type)) continue;
+      newAttachments.push({
+        file,
+        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
+      });
     }
 
-    if (newImages.length > 0) {
-      setPendingImages((prev) => [...prev, ...newImages]);
+    if (newAttachments.length > 0) {
+      setPendingAttachments((prev) => [...prev, ...newAttachments]);
     }
   }, []);
 
@@ -680,12 +729,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, []);
 
   /*
-  FNXC:QuickAddAttachments 2026-06-30-00:00:
-  Quick Add uses an icon-only paperclip to keep the action row compact, so the accessible name and title carry the Attach action plus pending-image count. The same image intake path handles file input, paste, and file drag/drop so previews and post-create uploads stay consistent.
+  FNXC:QuickAddAttachments 2026-08-03-00:00:
+  Quick Add must accept exactly the task-store attachment MIME set through picker, paste, and drop.
+  Only images receive object URLs and preview controls; all other accepted files remain uploadable file chips.
   */
-  const attachLabel = pendingImages.length > 0
-    ? t("tasks.attachImagesCount", "Attach images ({{count}} pending)", { count: pendingImages.length })
-    : t("tasks.attachImages", "Attach images");
+  const attachLabel = pendingAttachments.length > 0
+    ? t("tasks.attachFilesCount", "Attach photos or files ({{count}} pending)", { count: pendingAttachments.length })
+    : t("tasks.attachFiles", "Attach photos or files");
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!isFileDrag(e.dataTransfer)) return;
@@ -720,19 +770,19 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     e.preventDefault();
     clearFileDragState();
     if (isSubmitting) return;
-    handleImageFiles(e.dataTransfer.files);
-  }, [clearFileDragState, handleImageFiles, isFileDrag, isSubmitting]);
+    handleAttachmentFiles(e.dataTransfer.files);
+  }, [clearFileDragState, handleAttachmentFiles, isFileDrag, isSubmitting]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (isSubmitting) return;
-    handleImageFiles(e.clipboardData?.files);
-  }, [handleImageFiles, isSubmitting]);
+    handleAttachmentFiles(e.clipboardData?.files);
+  }, [handleAttachmentFiles, isSubmitting]);
 
-  const removeImage = useCallback((index: number) => {
-    setPendingImages((prev) => {
+  const removeAttachment = useCallback((index: number) => {
+    setPendingAttachments((prev) => {
       const removed = prev[index];
       if (removed) {
-        URL.revokeObjectURL(removed.previewUrl);
+        if (removed.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       }
       return prev.filter((_, i) => i !== index);
     });
@@ -744,6 +794,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
 
     const originalDescription = description;
+    const startWorkflow = startIntentRef.current;
+    const startInitialColumn = startWorkflow ? resolveQuickAddStartInitialColumn(startWorkflow) : null;
     setDescription("");
     try {
       /*
@@ -752,7 +804,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       */
       const createdTask = await onCreate({
         description: trimmed,
-        ...(selectedWorkflowForCreate !== undefined ? { workflowId: selectedWorkflowForCreate } : {}),
+        ...(startWorkflow ? { workflowId: startWorkflow.id } : selectedWorkflowForCreate !== undefined ? { workflowId: selectedWorkflowForCreate } : {}),
+        ...(startInitialColumn ? { column: startInitialColumn as ColumnId } : {}),
         dependencies: dependencies.length ? dependencies : undefined,
         ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: selectedPresetId,
@@ -781,13 +834,34 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         nodeId: effectiveNodeId,
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
       });
-      if (createdTask && pendingImages.length > 0) {
-        const failures: string[] = [];
-        for (const pendingImage of pendingImages) {
+      /*
+      FNXC:QuickAddStart 2026-07-22-17:45:
+      Coding (Ideas) Start submits its validated Todo destination in the original create request.
+      Custom hold workflows retain their returned-task promotion path; unprovable targets stay
+      create-only, so Save/Enter and malformed metadata never guess a transition.
+      */
+      if (startWorkflow && !startInitialColumn && createdTask && typeof createdTask === "object"
+        && typeof createdTask.id === "string" && createdTask.id.trim()
+        && typeof createdTask.column === "string" && createdTask.column.trim()
+        && typeof (createdTask as Task & { workflowId?: unknown }).workflowId === "string"
+        && (createdTask as Task & { workflowId?: string }).workflowId === startWorkflow.id) {
+        const target = resolveQuickAddStartTargetColumn(startWorkflow, createdTask.column);
+        if (target && onMoveTask) {
           try {
-            await uploadAttachment(createdTask.id, pendingImage.file, projectId);
+            await onMoveTask(createdTask.id, target as ColumnId);
+            addToast(t("tasks.startedPlanning", "Started planning {{taskId}}", { taskId: createdTask.id }), "success");
+          } catch (moveError) {
+            addToast(getErrorMessage(moveError) || t("tasks.createFailed", "Failed to create task"), "error");
+          }
+        }
+      }
+      if (createdTask && typeof createdTask.id === "string" && createdTask.id.trim() && pendingAttachments.length > 0) {
+        const failures: string[] = [];
+        for (const pendingAttachment of pendingAttachments) {
+          try {
+            await uploadAttachment(createdTask.id, pendingAttachment.file, projectId);
           } catch {
-            failures.push(pendingImage.file.name);
+            failures.push(pendingAttachment.file.name);
           }
         }
 
@@ -800,11 +874,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       setDescription(originalDescription);
       addToast(getErrorMessage(err) || t("tasks.createFailed", "Failed to create task"), "error");
     } finally {
+      startIntentRef.current = null;
       submitInFlightRef.current = false;
       setIsSubmitting(false);
     }
   }, [
     onCreate,
+    onMoveTask,
     description,
     dependencies,
     selectedWorkflowForCreate,
@@ -827,10 +903,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     sessionAdvisorOverride,
     priority,
     effectiveNodeId,
-    pendingImages,
+    pendingAttachments,
     projectId,
     addToast,
     resetForm,
+    t,
   ]);
 
   const handleSubmit = useCallback(async () => {
@@ -896,6 +973,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [description, duplicateMatches, submitCreateTask]);
 
   const handleDuplicateCancel = useCallback(() => {
+    /*
+    FNXC:QuickAddStart 2026-07-22-16:10:
+    Cancelling duplicate confirmation discards the saved Start intent. A later ordinary Save
+    must remain create-only rather than reusing a promotion snapshot from the cancelled action.
+    */
+    startIntentRef.current = null;
     setDuplicateMatches(null);
     submitInFlightRef.current = false;
     setIsSubmitting(false);
@@ -1610,10 +1693,51 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     resetForm();
   }, [description, onSubtaskBreakdown, selectedWorkflowForCreate, addToast, resetForm]);
 
+  const openStartMenu = useCallback(() => {
+    if (!canOpenQuickAddStartMenu) return;
+    const rect = saveButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setStartMenuPosition({ top: Math.min(rect.bottom + 4, window.innerHeight - 40), left: Math.max(8, Math.min(rect.right - 120, window.innerWidth - 128)) });
+    setShowStartMenu(true);
+  }, [canOpenQuickAddStartMenu]);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+    longPressStartRef.current = null;
+  }, []);
+
+  const handleSavePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!canQuickAddStart || (event.pointerType !== "touch" && event.pointerType !== "pen")) return;
+    clearLongPress();
+    longPressStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    longPressTimerRef.current = setTimeout(() => {
+      suppressSaveClickRef.current = true;
+      clearLongPress();
+      openStartMenu();
+    }, 550);
+  }, [canQuickAddStart, clearLongPress, openStartMenu]);
+
+  const handleSavePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const start = longPressStartRef.current;
+    if (start && start.pointerId === event.pointerId && (Math.abs(start.x - event.clientX) > 10 || Math.abs(start.y - event.clientY) > 10)) clearLongPress();
+  }, [clearLongPress]);
+
   const handleSaveClick = useCallback(() => {
-    // Save button now creates the task (same as Enter key)
+    if (suppressSaveClickRef.current) {
+      suppressSaveClickRef.current = false;
+      return;
+    }
     handleSubmit();
   }, [handleSubmit]);
+
+  const handleStartClick = useCallback(() => {
+    if (!canOpenQuickAddStartMenu || !validatedStartWorkflow) return;
+    startIntentRef.current = validatedStartWorkflow;
+    setShowStartMenu(false);
+    setStartMenuPosition(null);
+    handleSubmit();
+  }, [canOpenQuickAddStartMenu, handleSubmit, validatedStartWorkflow]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
@@ -1729,7 +1853,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       {isFileDragOver && (
         <div className="quick-entry-drop-target" data-testid="quick-entry-drop-target" aria-hidden="true">
           <Paperclip size={16} aria-hidden="true" />
-          <span>{t("tasks.dropImagesToAttach", "Drop images to attach")}</span>
+          <span>{t("tasks.dropFilesToAttach", "Drop photos or files to attach")}</span>
         </div>
       )}
       <div className="description-with-refine">
@@ -2244,8 +2368,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 title={attachLabel}
               >
                 <Paperclip size={12} aria-hidden="true" />
-                {pendingImages.length > 0 && (
-                  <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
+                {pendingAttachments.length > 0 && (
+                  <span className="quick-entry-attach-count" aria-hidden="true">{pendingAttachments.length}</span>
                 )}
               </button>
 
@@ -2379,26 +2503,39 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               </button>
 
               <button
+                ref={saveButtonRef}
                 type="button"
                 className="btn btn-task-create btn-sm"
                 onClick={handleSaveClick}
+                onContextMenu={(event) => { if (canOpenQuickAddStartMenu) { event.preventDefault(); openStartMenu(); } }}
+                onPointerDown={handleSavePointerDown}
+                onPointerMove={handleSavePointerMove}
+                onPointerLeave={clearLongPress}
+                onPointerUp={clearLongPress}
+                onPointerCancel={clearLongPress}
                 onMouseDown={(e) => e.preventDefault()}
                 disabled={!description.trim() || isSubmitting}
+                aria-haspopup={canOpenQuickAddStartMenu ? "menu" : undefined}
                 data-testid="quick-entry-save"
                 title={t("tasks.createTaskTitle", "Create task")}
               >
                 <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
                 {t("tasks.save", "Save")}
               </button>
+              {showStartMenu && canOpenQuickAddStartMenu && portalRoot && startMenuPosition && createPortal(
+                <div className="quick-entry-start-menu" role="menu" data-testid="quick-entry-save-start" style={{ position: "fixed", top: startMenuPosition.top, left: startMenuPosition.left }}>
+                  <button type="button" role="menuitem" onClick={handleStartClick}>{t("tasks.start", "Start")}</button>
+                </div>, portalRoot,
+              )}
             </div>
           </div>
         )}
 
-        <PendingImagePreviews
-          images={pendingImages}
-          onRemove={removeImage}
+        <PendingAttachmentPreviews
+          attachments={pendingAttachments}
+          onRemove={removeAttachment}
           disabled={isSubmitting}
-          removeLabel={t("tasks.removeImage", "Remove image")}
+          removeLabel={t("tasks.removeAttachment", "Remove image")}
           testIdPrefix="quick-entry-preview"
         />
         {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
@@ -2538,11 +2675,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={TASK_ATTACHMENT_ACCEPT}
           multiple
           style={{ display: "none" }}
           onChange={(e) => {
-            handleImageFiles(e.target.files);
+            handleAttachmentFiles(e.target.files);
             e.currentTarget.value = "";
           }}
           data-testid="quick-entry-file-input"

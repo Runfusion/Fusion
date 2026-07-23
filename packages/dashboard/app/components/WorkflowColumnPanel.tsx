@@ -163,6 +163,25 @@ export function WorkflowColumnPanel({
     [columns, onChange],
   );
 
+  const setColumnDescription = useCallback(
+    (id: string, description: string) => {
+      onChange(columns.map((column) => {
+        if (column.id !== id) return column;
+        /*
+        FNXC:WorkflowColumnDescriptions 2026-07-22-12:30:
+        A whitespace-only editor value has no explanatory content. Omit it so
+        board lifecycle fallback remains available instead of rendering a blank shell.
+        */
+        if (!description.trim()) {
+          const { description: _omit, ...withoutDescription } = column;
+          return withoutDescription;
+        }
+        return { ...column, description };
+      }));
+    },
+    [columns, onChange],
+  );
+
   const removeColumn = useCallback(
     (id: string) => {
       onChange(columns.filter((c) => c.id !== id));
@@ -294,6 +313,18 @@ export function WorkflowColumnPanel({
                     </button>
                   </div>
                 </div>
+
+                <label className="wf-column-description-field">
+                  <span>{t("workflowColumns.description", "Description")}</span>
+                  <textarea
+                    className="wf-column-description"
+                    aria-label={t("workflowColumns.descriptionLabel", "Column description")}
+                    value={col.description ?? ""}
+                    disabled={readOnly}
+                    placeholder={t("workflowColumns.descriptionPlaceholder", "Optional explanation for this column")}
+                    onChange={(event) => setColumnDescription(col.id, event.target.value)}
+                  />
+                </label>
 
                 {colViolations.map((v, i) => (
                   <p key={`${v.code}-${i}`} className="wf-column-violation" role="alert">

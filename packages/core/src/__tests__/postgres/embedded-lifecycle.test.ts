@@ -35,6 +35,9 @@ import {
   DEFAULT_START_TIMEOUT_MS,
   DEFAULT_EMBEDDED_POSTGRES_FLAGS,
   defaultEmbeddedPostgresFlagsFor,
+  resolveEmbeddedMaxConnections,
+  DEFAULT_EMBEDDED_MAX_CONNECTIONS,
+  DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
@@ -490,12 +493,16 @@ describe("embedded-lifecycle: macOS dylib compatibility links", () => {
       writeFileSync(join(libDir, "libzstd.1.5.7.dylib"), "");
       writeFileSync(join(libDir, "liblz4.1.10.0.dylib"), "");
       writeFileSync(join(libDir, "libz.1.3.2.dylib"), "");
+      // This is the loader-name pair in the packaged Darwin payload: i18n
+      // requests the ABI-specific uc name rather than the unversioned link.
       writeFileSync(join(libDir, "libicui18n.68.2.dylib"), "");
+      writeFileSync(join(libDir, "libicuuc.68.2.dylib"), "");
 
       const created = normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
 
       expect(created.map((link) => link.expected).sort()).toEqual([
         "libicui18n.dylib",
+        "libicuuc.68.dylib",
         "liblz4.1.dylib",
         "libpq.5.dylib",
         "libz.1.dylib",
@@ -503,6 +510,7 @@ describe("embedded-lifecycle: macOS dylib compatibility links", () => {
       ]);
       expect(readlinkSync(join(libDir, "libpq.5.dylib"))).toBe("libpq.5.15.dylib");
       expect(readlinkSync(join(libDir, "libzstd.1.dylib"))).toBe("libzstd.1.5.7.dylib");
+      expect(readlinkSync(join(libDir, "libicuuc.68.dylib"))).toBe("libicuuc.68.2.dylib");
 
       // Idempotent: the second pass sees the compatibility names and creates nothing.
       expect(normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot)).toEqual([]);
@@ -511,20 +519,37 @@ describe("embedded-lifecycle: macOS dylib compatibility links", () => {
     }
   });
 
-  it("replaces stale broken compatibility-name symlinks", () => {
+  it("selects the highest matching ICU patch and repairs a dangling loader-name link", () => {
     const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-native-"));
     try {
       const libDir = join(nativeRoot, "lib");
       mkdirSync(libDir, { recursive: true });
-      writeFileSync(join(libDir, "libpq.5.16.dylib"), "");
-      symlinkSync("libpq.5.15.dylib", join(libDir, "libpq.5.dylib"));
+      writeFileSync(join(libDir, "libicuuc.68.2.dylib"), "");
+      writeFileSync(join(libDir, "libicuuc.68.12.dylib"), "");
+      symlinkSync("libicuuc.68.1.dylib", join(libDir, "libicuuc.68.dylib"));
 
       const created = normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
 
       expect(created).toEqual([
-        { expected: "libpq.5.dylib", target: "libpq.5.16.dylib", created: true },
+        { expected: "libicuuc.68.dylib", target: "libicuuc.68.12.dylib", created: true },
       ]);
-      expect(readlinkSync(join(libDir, "libpq.5.dylib"))).toBe("libpq.5.16.dylib");
+      expect(readlinkSync(join(libDir, "libicuuc.68.dylib"))).toBe("libicuuc.68.12.dylib");
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a valid ICU compatibility link and treats absent library trees as no-ops", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-native-"));
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(join(libDir, "libicuuc.68.2.dylib"), "");
+      symlinkSync("libicuuc.68.2.dylib", join(libDir, "libicuuc.68.dylib"));
+
+      expect(normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot)).toEqual([]);
+      expect(readlinkSync(join(libDir, "libicuuc.68.dylib"))).toBe("libicuuc.68.2.dylib");
+      expect(normalizeMacosEmbeddedPostgresDylibSymlinks(join(nativeRoot, "missing"))).toEqual([]);
     } finally {
       rmSync(nativeRoot, { recursive: true, force: true });
     }
@@ -1026,6 +1051,93 @@ describe("embedded-lifecycle: startup timeout (P1 #24)", () => {
   });
 });
 
+describe("embedded-lifecycle: Windows fatal recovery", () => {
+  it("restarts an owned cluster on its resolved port when no port was configured", async () => {
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    const records: Record<string, unknown>[] = [];
+    const logs: string[] = [];
+    class RecordingEmbeddedPostgres {
+      constructor(options: Record<string, unknown>) {
+        records.push(options);
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {});
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(RecordingEmbeddedPostgres as never);
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      ...baseOptions(dataDir),
+      startTimeoutMs: 100,
+      onLog: (message) => logs.push(message),
+    });
+    const internal = lifecycle as unknown as {
+      running: boolean;
+      ownsProcess: boolean;
+      resolvedPort: number;
+      pg: { stop: () => Promise<void> };
+      ensureDatabase: () => Promise<void>;
+      recoverWindowsFatalOnce: () => Promise<void>;
+    };
+    internal.running = true;
+    internal.ownsProcess = true;
+    internal.resolvedPort = 55491;
+    internal.pg = { stop: vi.fn(async () => {}) };
+    internal.ensureDatabase = async () => {};
+
+    try {
+      await internal.recoverWindowsFatalOnce();
+      expect(records).toHaveLength(1);
+      expect(records[0]?.port).toBe(55491);
+      expect(lifecycle.getConnectionUrl()).toContain(":55491/");
+      expect(logs).toContain("embedded postgres: Windows owned-cluster recovery completed; existing pools may reconnect");
+    } finally {
+      await lifecycle.stop();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the normal startup timeout to report a stalled recovery", async () => {
+    vi.useFakeTimers();
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    const errors: string[] = [];
+    class StalledEmbeddedPostgres {
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => new Promise<void>(() => {}));
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(StalledEmbeddedPostgres as never);
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      ...baseOptions(dataDir),
+      startTimeoutMs: 25,
+      onError: (message) => errors.push(String(message)),
+    });
+    const internal = lifecycle as unknown as {
+      running: boolean;
+      ownsProcess: boolean;
+      resolvedPort: number;
+      pg: { stop: () => Promise<void> };
+      recoverWindowsFatalOnce: () => Promise<void>;
+    };
+    internal.running = true;
+    internal.ownsProcess = true;
+    internal.resolvedPort = 55492;
+    internal.pg = { stop: vi.fn(async () => {}) };
+
+    try {
+      const recovery = internal.recoverWindowsFatalOnce();
+      await vi.advanceTimersByTimeAsync(25);
+      await recovery;
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/recovery failed after one retry/i);
+      expect(errors[0]).toMatch(/start timed out after 25ms/i);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", () => {
   it("reads the TCP port from PostgreSQL's real line 4 (index 3) postmaster.pid layout", () => {
     const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
@@ -1349,6 +1461,46 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("embedded-lifecycle: platform-aware max_connections default (issue #2411)", () => {
+  /*
+   * FNXC:PostgresEmbedded 2026-07-22-23:55:
+   * Issue #2411: on Windows each connection is a separate postgres.exe process; a
+   * max_connections=500 cap exhausts the non-interactive desktop heap during
+   * backend spawn bursts and forked backends die with 0xC0000142, taking the
+   * cluster (and dashboard) down. The reporter confirmed stability after lowering
+   * the cap. The UNSET default must therefore be lower on win32 (150) than
+   * elsewhere (500), while an explicit operator setting is honored on every
+   * platform, clamped to [32, 2000].
+   */
+  it.each([
+    ["win32", DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32],
+    ["darwin", DEFAULT_EMBEDDED_MAX_CONNECTIONS],
+    ["linux", DEFAULT_EMBEDDED_MAX_CONNECTIONS],
+  ] as const)("unset resolves the platform default on %s", (platform, expected) => {
+    expect(resolveEmbeddedMaxConnections(undefined, platform)).toBe(expected);
+  });
+
+  it("keeps the win32 default materially below the general default", () => {
+    expect(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32).toBeLessThan(DEFAULT_EMBEDDED_MAX_CONNECTIONS);
+    expect(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32).toBeLessThanOrEqual(150);
+  });
+
+  it.each(["win32", "darwin", "linux"] as const)(
+    "an explicit operator setting is honored and clamped to [32, 2000] on %s",
+    (platform) => {
+      expect(resolveEmbeddedMaxConnections(100, platform)).toBe(100);
+      expect(resolveEmbeddedMaxConnections(500, platform)).toBe(500);
+      expect(resolveEmbeddedMaxConnections(5, platform)).toBe(32);
+      expect(resolveEmbeddedMaxConnections(9_999, platform)).toBe(2_000);
+    },
+  );
+
+  it("treats non-integer configured values as unset", () => {
+    expect(resolveEmbeddedMaxConnections(Number.NaN, "win32")).toBe(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32);
+    expect(resolveEmbeddedMaxConnections(250.5, "linux")).toBe(DEFAULT_EMBEDDED_MAX_CONNECTIONS);
   });
 });
 

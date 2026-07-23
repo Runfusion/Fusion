@@ -562,6 +562,13 @@ export interface ExecutorOverseerSignalMemory {
   observedAt: number;
 }
 
+export interface TaskWedgeNotificationState {
+  reasonKey: string;
+  episodeId: string;
+  status: "active" | "resolved";
+  transitionedAt: string;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
@@ -640,6 +647,13 @@ export interface Task {
   userPaused?: boolean;
   /** Optional machine-readable reason for automated pauses (for example dispatch-storm). */
   pausedReason?: string;
+  /*
+  FNXC:TaskWedgeNotifications 2026-07-22-14:00:
+  A terminal wedge is an episode, not a permanently suppressed error. Persist its
+  normalized reason and opaque episode id so delivery remains quiet across restart
+  until an authoritative lifecycle update resolves the episode.
+  */
+  wedgeNotification?: TaskWedgeNotificationState;
   /** ISO timestamp set when the task first crossed the soft token budget cap. */
   tokenBudgetSoftAlertedAt?: string;
   /** ISO timestamp marking first one-shot alert when worktrunk failed and fell back to native backend. */

@@ -51,6 +51,8 @@ export interface BoardWorkflowColumnFlags {
 export interface BoardWorkflowColumn {
   id: string;
   name: string;
+  /** Optional author-defined explanatory copy from the workflow IR. */
+  description?: string;
   flags: BoardWorkflowColumnFlags;
 }
 

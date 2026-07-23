@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PendingImagePreviews } from "../components/PendingImagePreviews";
+import { PendingAttachmentPreviews } from "../components/PendingAttachmentPreviews";
 
 const image = {
   file: new File(["image"], "preview.png", { type: "image/png" }),
   previewUrl: "blob:preview",
 };
 
-describe("pending task image previews", () => {
+describe("pending task attachment previews", () => {
   it.each([
     "quick-entry-preview",
     "task-form-preview",
@@ -17,8 +17,8 @@ describe("pending task image previews", () => {
     const user = userEvent.setup();
     const onRemove = vi.fn();
     render(
-      <PendingImagePreviews
-        images={[image]}
+      <PendingAttachmentPreviews
+        attachments={[image]}
         onRemove={onRemove}
         removeLabel="Remove image"
         testIdPrefix={testIdPrefix}
@@ -44,10 +44,46 @@ describe("pending task image previews", () => {
     expect(screen.queryByTestId("floating-window-pending-image-preview")).toBeNull();
   });
 
-  it("renders no preview shells without pending images", () => {
+  it("renders a non-image filename with removal but no image-open button", () => {
+    const onRemove = vi.fn();
+    render(
+      <PendingAttachmentPreviews
+        attachments={[{ file: new File(["note"], "notes.txt", { type: "text/plain" }) }]}
+        onRemove={onRemove}
+        removeLabel="Remove attachment"
+        testIdPrefix="quick-entry-preview"
+      />,
+    );
+
+    expect(screen.getByTestId("quick-entry-preview-file-0")).toHaveTextContent("notes.txt");
+    expect(screen.queryByTestId("quick-entry-preview-open-0")).toBeNull();
+    expect(screen.getByTestId("quick-entry-preview-remove-0")).toHaveAccessibleName("Remove attachment: notes.txt");
+    fireEvent.click(screen.getByTestId("quick-entry-preview-remove-0"));
+    expect(onRemove).toHaveBeenCalledWith(0);
+  });
+
+  it("renders mixed attachments without empty preview controls and disables removals when requested", () => {
+    render(
+      <PendingAttachmentPreviews
+        attachments={[image, { file: new File(["{}"], "data.json", { type: "application/json" }) }]}
+        onRemove={vi.fn()}
+        disabled
+        removeLabel="Remove attachment"
+        testIdPrefix="quick-entry-preview"
+      />,
+    );
+
+    expect(screen.getByTestId("quick-entry-preview-open-0")).toBeInTheDocument();
+    expect(screen.getByTestId("quick-entry-preview-file-1")).toHaveTextContent("data.json");
+    expect(screen.queryByTestId("quick-entry-preview-open-1")).toBeNull();
+    expect(screen.getByTestId("quick-entry-preview-remove-0")).toBeDisabled();
+    expect(screen.getByTestId("quick-entry-preview-remove-1")).toBeDisabled();
+  });
+
+  it("renders no preview shells without pending attachments", () => {
     const { container } = render(
-      <PendingImagePreviews
-        images={[]}
+      <PendingAttachmentPreviews
+        attachments={[]}
         onRemove={vi.fn()}
         removeLabel="Remove image"
         testIdPrefix="quick-entry-preview"

@@ -40,6 +40,26 @@ describe("live agent count predicates", () => {
     expect(isRunningAgentTask(task({ column: "working", columnCountsTowardWip: true, columnTerminalKind: "none" }))).toBe(true);
   });
 
+  it("counts a live pending workflow-step gate lease as running in any non-terminal lane", () => {
+    const pendingCodeReview = [{ workflowStepId: "code-review", workflowStepName: "Code Review", status: "pending" as const, startedAt: "2026-07-22T05:00:00.000Z" }];
+    // In Review: MERGING task + live CODE REVIEW gate must both count (was 1/2).
+    expect(isRunningAgentTask(task({ column: "in-review", columnIsReviewOrMerge: true, workflowStepResults: pendingCodeReview }))).toBe(true);
+    // Planning-lane gate (plan-review) with status cleared to null also counts.
+    const pendingPlanReview = [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending" as const, startedAt: "2026-07-22T05:00:00.000Z" }];
+    expect(isRunningAgentTask(task({ column: "todo", columnIsIntakeOrHold: true, workflowStepResults: pendingPlanReview }))).toBe(true);
+    // A running gate is never Waiting.
+    expect(isWaitingAgentTask(task({ column: "todo", columnIsIntakeOrHold: true, workflowStepResults: pendingPlanReview }))).toBe(false);
+    // Pause and terminal columns still dominate.
+    expect(isRunningAgentTask(task({ column: "in-review", columnIsReviewOrMerge: true, workflowStepResults: pendingCodeReview, paused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "in-review", columnIsReviewOrMerge: true, workflowStepResults: pendingCodeReview, userPaused: true }))).toBe(false);
+    expect(isRunningAgentTask(task({ column: "done", columnTerminalKind: "complete", workflowStepResults: pendingCodeReview }))).toBe(false);
+    // Terminal step records are not live leases.
+    const passed = [{ workflowStepId: "code-review", workflowStepName: "Code Review", status: "passed" as const, completedAt: "2026-07-22T05:10:00.000Z" }];
+    expect(isRunningAgentTask(task({ column: "in-review", columnIsReviewOrMerge: true, workflowStepResults: passed }))).toBe(false);
+    const failed = [{ workflowStepId: "code-review", workflowStepName: "Code Review", status: "failed" as const, completedAt: "2026-07-22T05:10:00.000Z" }];
+    expect(isRunningAgentTask(task({ column: "in-review", columnIsReviewOrMerge: true, workflowStepResults: failed }))).toBe(false);
+  });
+
   it("enriches terminal, waiting, and WIP traits from board flags", () => {
     const complete = enrichRunningAgentTaskShapeFromFlags(task({ column: "shipped", sessionFile: "/tmp/stale" }), { complete: true, countsTowardWip: true });
     expect(complete.columnTerminalKind).toBe("complete");

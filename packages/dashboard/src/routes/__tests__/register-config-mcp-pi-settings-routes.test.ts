@@ -7,12 +7,16 @@ import { request } from "../../test-request.js";
 import { registerConfigMcpPiSettingsRoutes } from "../register-config-mcp-pi-settings-routes.js";
 import type { ApiRoutesContext } from "../types.js";
 
-function createApp(settings = { maxConcurrent: 6, maxTriageConcurrent: 3, maxWorktrees: 2 }) {
+function createApp(
+  settings = { maxConcurrent: 6, maxTriageConcurrent: 3, maxWorktrees: 2 },
+  pluginServers: Array<{ pluginId: string; server: unknown }> = [],
+) {
   const app = express();
   app.use(express.json());
   const store = {
     getRootDir: () => "/workspace",
     getSettingsFast: async () => settings,
+    getProjectScopedPluginMcpServers: async () => pluginServers,
   };
   const context = {
     router: app,
@@ -43,6 +47,18 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ maxConcurrent: 9, maxTriageConcurrent: 2, maxWorktrees: 4, rootDir: "/workspace" });
+  });
+
+  it("lists only provider-filtered valid project plugin MCP contributions", async () => {
+    const response = await request(createApp(undefined, [
+      { pluginId: "enabled", server: { name: "navigator", transport: "stdio", command: "roslyn" } },
+      { pluginId: "malformed", server: null },
+    ]), "GET", "/mcp/plugin-servers?projectId=project-a");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ servers: [
+      { pluginId: "enabled", server: { name: "navigator", transport: "stdio", command: "roslyn" } },
+    ] });
   });
 
   it("rejects malformed MCP validation bodies", async () => {

@@ -132,6 +132,21 @@
   font-size: calc(var(--space-sm) + var(--space-xs));
 }
 
+.task-token-stats-panel__imported-source-link {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.task-token-stats-panel__imported-source-link:hover {
+  text-decoration: underline;
+}
+
+.task-token-stats-panel__imported-source-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 .task-token-stats-panel__cache-ratio {
   color: var(--text);
   font-size: calc(var(--space-sm) + var(--space-xs));

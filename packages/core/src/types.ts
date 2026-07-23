@@ -30,7 +30,7 @@ export {
 export type { CapacityRiskSignal } from "./capacity.js";
 
 // FNXC:McpConfig 2026-06-26-02:10: The dashboard Vite build aliases @fusion/core to this browser-safe module, so the pure MCP config helpers are re-exported here for Settings UI import/export, validation, and project-over-global resolution without pulling Node-only stores into the client bundle.
-export { exportMcpServersJson, importMcpServersJson, resolveEffectiveMcpServers } from "./mcp-config.js";
+export { exportMcpServersJson, importMcpServersJson, mapPluginMcpServerContribution, resolveEffectiveMcpServers } from "./mcp-config.js";
 export {
   DEFAULT_GITLAB_API_BASE_URL,
   DEFAULT_GITLAB_INSTANCE_URL,
@@ -566,6 +566,7 @@ import type {
   PrEntityUpdate,
   PrThreadState,
   ExecutorOverseerSignalMemory,
+  TaskWedgeNotificationState,
   Task,
   TaskVerificationResultSummary,
   TaskVerificationRequest,
@@ -607,6 +608,7 @@ export type {
   PrEntityUpdate,
   PrThreadState,
   ExecutorOverseerSignalMemory,
+  TaskWedgeNotificationState,
   Task,
   TaskVerificationResultSummary,
   TaskVerificationRequest,

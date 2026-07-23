@@ -55,14 +55,16 @@ vi.mock("../QuickEntryBox", () => ({
     workflowId,
     workflowOptions,
     defaultWorkflowId,
+    onMoveTask,
   }: {
-    onCreate?: (input: { description: string; workflowId?: string | null }) => Promise<unknown>;
+    onCreate?: (input: { description: string; workflowId?: string | null; column?: string }) => Promise<unknown>;
     addToast: (message: string, type?: "error" | "success" | "info" | "warning") => void;
     onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
     onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
     workflowId?: string | null;
     workflowOptions?: { id: string; name: string }[];
     defaultWorkflowId?: string | null;
+    onMoveTask?: (id: string, column: string) => Promise<unknown>;
   }) => {
     const [value, setValue] = useState("");
     const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null | undefined>(
@@ -144,6 +146,12 @@ vi.mock("../QuickEntryBox", () => ({
           <span data-testid="quick-entry-workflow-props" data-workflow-id={workflowId ?? ""} data-default-workflow-id={defaultWorkflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((option) => option.id))} />
           <button type="button" data-testid="quick-entry-save" onClick={() => void submit()}>
             Save
+          </button>
+          <button type="button" data-testid="quick-entry-start" onClick={() => void onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>
+            Start
+          </button>
+          <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>
+            Move
           </button>
         </div>
         {modelMenuOpen ? (
@@ -2248,6 +2256,8 @@ describe("ListView", () => {
   it.each([
     { status: "executing", column: "in-progress" as const, label: "executing" },
     { status: "merging-fix", column: "in-review" as const, label: "Merging fixes…" },
+    { status: "needs-replan", column: "triage" as const, label: "Revising" },
+    { status: "needs-replan", column: "todo" as const, label: "Revising" },
   ])("renders agent-active tasks with static highlight styling for $status", ({ status, column, label }) => {
     const tasks = [
       createMockTask({
@@ -3666,6 +3676,39 @@ describe("ListView Quick Entry", () => {
     expect(quickEntryArea?.contains(quickEntry)).toBe(true);
     // QuickEntryBox should be inside the table container (parent of quick-entry area)
     expect(tableContainer?.contains(quickEntry)).toBe(true);
+  });
+
+  it("preserves the explicit Coding Ideas Start column through the list host", async () => {
+    const onQuickCreate = vi.fn().mockResolvedValue(createMockTask({ id: "FN-started", column: "todo" }));
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding-ideas",
+      workflows: [{
+        id: "builtin:coding-ideas",
+        name: "Coding (Ideas)",
+        columns: [
+          { id: "ideas", name: "Ideas", flags: { intake: true } },
+          { id: "todo", name: "Todo", flags: { hold: true } },
+        ],
+      }],
+      taskWorkflowIds: {},
+    });
+    renderListView({ onQuickCreate });
+    await screen.findByTestId("quick-entry-box");
+    fireEvent.click(screen.getByTestId("quick-entry-start"));
+
+    await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Started task",
+      workflowId: "builtin:coding-ideas",
+      column: "todo",
+    })));
+  });
+
+  it("wires QuickEntry Start moves through the list host callback", async () => {
+    const onMoveTask = vi.fn().mockResolvedValue(createMockTask({ id: "FN-created", column: "todo" }));
+    renderListView({ onQuickCreate: vi.fn(), onMoveTask });
+    fireEvent.click(screen.getByTestId("quick-entry-move"));
+    await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-created", "todo"));
   });
 
   it("shows model selector control when QuickEntryBox is expanded", async () => {
@@ -5378,6 +5421,8 @@ describe("ListView - Bulk Selection", () => {
     it.each([
       { status: "executing", column: "in-progress" as const },
       { status: "merging-fix", column: "in-review" as const },
+      { status: "needs-replan", column: "triage" as const },
+      { status: "needs-replan", column: "todo" as const },
     ])("applies agent-active class to mobile cards for active states (%s)", ({ status, column }) => {
       mockMobileViewport();
 

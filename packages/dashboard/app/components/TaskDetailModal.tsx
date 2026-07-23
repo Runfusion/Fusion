@@ -6334,7 +6334,9 @@ export function TaskDetailContent({
                     aria-haspopup="menu"
                     aria-expanded={showActionsMenu}
                   >
-                    {t("taskDetail.actions.menuBtn", "Actions")}
+                    <span className="detail-footer-button-label">
+                      {t("taskDetail.actions.menuBtn", "Actions")}
+                    </span>
                     <ChevronDown size={12} />
                   </button>
                   {showActionsMenu && (
@@ -6407,7 +6409,9 @@ export function TaskDetailContent({
                         onClick={reviewAction.onSelect}
                         disabled={reviewAction.disabled}
                       >
-                        {reviewAction.label}
+                        <span className="detail-footer-button-label">
+                          {reviewAction.label}
+                        </span>
                       </button>
                     )}
                   </div>

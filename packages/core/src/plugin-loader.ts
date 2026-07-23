@@ -31,6 +31,7 @@ import type {
   PluginInstallation,
   PluginManifest,
   PluginSkillContribution,
+  PluginMcpServerContribution,
   PluginWorkflowStepContribution,
   PluginTraitContribution,
   PluginPromptContribution,
@@ -1521,6 +1522,29 @@ export class PluginLoader extends EventEmitter<{
       }
     }
     return skills;
+  }
+
+  /**
+   * Get raw MCP contributions from loaded plugins. Consumers must still apply
+   * project_plugin_states before session or UI use.
+   *
+   * FNXC:PluginMcpServers 2026-07-22-12:00:
+   * FN-8491 keeps loader enumeration intentionally raw so one project-scoped
+   * provider can enforce enablement consistently for every caller.
+   */
+  getPluginMcpServers(): Array<{ pluginId: string; server: PluginMcpServerContribution }> {
+    const servers: Array<{ pluginId: string; server: PluginMcpServerContribution }> = [];
+    for (const [pluginId, plugin] of this.plugins) {
+      /*
+       * FNXC:PluginMcpServers 2026-07-22-15:35:
+       * FN-8491 must isolate malformed runtime plugin contribution containers;
+       * only arrays are iterable, while individual malformed servers are
+       * filtered by the shared mapper later in MCP resolution.
+       */
+      if (!Array.isArray(plugin.mcpServers)) continue;
+      for (const server of plugin.mcpServers) servers.push({ pluginId, server });
+    }
+    return servers;
   }
 
   /**

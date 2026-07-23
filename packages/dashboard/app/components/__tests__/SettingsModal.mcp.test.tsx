@@ -38,9 +38,12 @@ function discoveredResponse(scope: McpSettingsScope) {
   };
 }
 
-function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable" | "error"; message: string }> = {}, discoveryByScope?: Partial<Record<McpSettingsScope, unknown>>) {
+function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable" | "error"; message: string }> = {}, discoveryByScope?: Partial<Record<McpSettingsScope, unknown>>, pluginServers: unknown[] = []) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith("/api/mcp/plugin-servers")) {
+      return new Response(JSON.stringify({ servers: pluginServers }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.startsWith("/api/mcp/discovered")) {
       const scope = (new URL(url, "https://fusion.test").searchParams.get("scope") === "global" ? "global" : "project") as McpSettingsScope;
       return new Response(JSON.stringify(discoveryByScope?.[scope] ?? { sources: [], servers: [], errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -71,7 +74,7 @@ function expectButtonIconSize(button: HTMLElement, size: "14" | "16") {
   expect(icon).toHaveAttribute("height", size);
 }
 
-function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalSettings?: Pick<GlobalSettings, "mcpServers"> | null }) {
+function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalSettings?: Pick<GlobalSettings, "mcpServers"> | null; pluginServers?: Array<{ pluginId: string; server: { name: string; transport: "stdio"; command: string; enabledByDefault?: boolean } }> }) {
   let currentForm: Settings = options.form ?? ({} as Settings);
   const addToast = vi.fn();
   function Harness() {
@@ -82,6 +85,7 @@ function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalS
         scope={options.scope}
         form={form}
         globalSettings={options.globalSettings}
+        pluginServers={options.pluginServers}
         addToast={addToast}
         setForm={(next) => {
           setFormState((previous) => {
@@ -149,6 +153,15 @@ describe("MCP Settings UI", () => {
     render(<ProjectMcpSection form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
     expect(await screen.findByTestId("mcp-servers-card-project")).toBeInTheDocument();
     expect(screen.getByText("No MCP servers configured.")).toBeInTheDocument();
+  });
+
+  it("loads active-project plugin servers into the project MCP card", async () => {
+    mockFetch({}, undefined, [{ pluginId: "roslyn", server: { name: "navigator", transport: "stdio", command: "plugin-command" } }]);
+    render(<ProjectMcpSection form={{ mcpServers: { enabled: true, servers: [] } } as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} projectId="project-a" addToast={vi.fn()} />);
+
+    const row = await screen.findByTestId("mcp-server-row-navigator");
+    expect(row).toHaveTextContent("plugin-command");
+    expect(screen.getByTestId("mcp-plugin-provenance-navigator")).toHaveTextContent("plugin:roslyn");
   });
 
   it.each(["global", "project"] as const)("sizes MCP card inline button icons in %s scope", async (scope) => {
@@ -222,6 +235,23 @@ describe("MCP Settings UI", () => {
 
     await addServer("local-only", "stdio");
     expect(screen.getByTestId("mcp-server-row-local-only")).toHaveTextContent("project local");
+  });
+
+  it("displays the plugin winner when plugin and global servers share a name", async () => {
+    const { getForm } = renderCard({
+      scope: "project",
+      form: {} as Settings,
+      globalSettings: { mcpServers: { enabled: true, servers: [{ name: "navigator", transport: "stdio", command: "global-command" }] } },
+      pluginServers: [{ pluginId: "roslyn", server: { name: "navigator", transport: "stdio", command: "plugin-command" } }],
+    });
+
+    const row = await screen.findByTestId("mcp-server-row-navigator");
+    expect(row).toHaveTextContent("plugin-command");
+    expect(row).not.toHaveTextContent("global-command");
+    expect(row).toHaveTextContent("plugin");
+    expect(screen.getByTestId("mcp-plugin-provenance-navigator")).toHaveTextContent("plugin:roslyn");
+    fireEvent.click(within(row).getByRole("button", { name: /Disable/i }));
+    expect(getForm().mcpServers?.servers).toEqual([{ name: "navigator", enabled: false, transport: "stdio", command: "plugin-command" }]);
   });
 
   it("validates servers and renders valid, unreachable, and error status surfaces", async () => {

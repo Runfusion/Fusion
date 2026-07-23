@@ -130,11 +130,13 @@ export {
 } from "./worktrunk-settings.js";
 export {
   resolveEffectiveMcpServers,
+  mapPluginMcpServerContribution,
   materializeMcpServerSecrets,
   materializeMcpServersSecrets,
   importMcpServersJson,
   exportMcpServersJson,
 } from "./mcp-config.js";
+export { createProjectScopedPluginMcpProvider } from "./plugin-mcp-servers.js";
 export type {
   McpSecretReaderIdentity,
   McpSecretReader,
@@ -1252,6 +1254,7 @@ export type {
   CreateInteractiveAiSessionFactory,
   PluginLogger,
   PluginSkillContribution,
+  PluginMcpServerContribution,
   PluginWorkflowStepContribution,
   PluginTraitContribution,
   PluginTraitHookDescriptor,

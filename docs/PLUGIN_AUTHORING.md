@@ -12,6 +12,7 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 6. [Registering Routes](#6-registering-routes)
 7. [Registering UI Slots](#7-registering-ui-slots)
 8. [Registering Top-Level Dashboard Views](#8-registering-top-level-dashboard-views)
+   - [Theming & Overlay Layering for Dashboard Views](#theming--overlay-layering-for-dashboard-views)
 9. [Registering Agent Runtimes](#9-registering-agent-runtimes)
 10. [Plugin Context API Reference](#10-plugin-context-api-reference)
 11. [Plugin Lifecycle States](#11-plugin-lifecycle-states)
@@ -814,6 +815,33 @@ Project-scoped UI state guidance:
 - Persist plugin view layout/state in browser storage using a plugin-owned base key and the shared project-scoped pattern (`kb:${projectId}:${baseKey}`).
 - For dependency graph layout, the canonical base key is `fusion-plugin-dependency-graph:positions`.
 - Do not persist plugin UI state in task metadata or server-side task records.
+
+### Theming & Overlay Layering for Dashboard Views
+
+Use only the [stable theme token contract](./dashboard-guide.md#stable-theme-token-contract-integrators--plugins) for plugin UI. It provides supported surface, text, spacing, status, motion, and layering variables; internal CSS names may change without notice.
+
+```css
+.my-plugin-panel {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.my-plugin-owned-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--fusion-max-z) + 1);
+  pointer-events: auto;
+}
+```
+
+For overlays that should share Fusion's root stacking context, append the plugin element to the supported `#plugin-overlay-root` mount point:
+
+```ts
+const overlayRoot = document.querySelector("#plugin-overlay-root");
+overlayRoot?.append(pluginOverlayElement);
+```
+
+The mount point is fixed and click-through; set `pointer-events: auto` on interactive plugin children. Its layer follows `--fusion-max-z` as Fusion's monotonic floating-window stack rises, so plugins do not need to track dashboard window focus in JavaScript.
 
 ---
 
@@ -1894,3 +1922,20 @@ const setupHooks: PluginSetupHooks = {
 ```
 
 `checkSetup` is required. `install` and `uninstall` are optional.
+
+## Declarative MCP servers
+
+Plugins may declare MCP servers with `mcpServers`. Declarations are active only in projects where the plugin is enabled; Fusion does not install the referenced binary.
+
+```ts
+mcpServers: [{
+  name: "roslyn-navigator",
+  transport: "stdio",
+  command: "cwm-roslyn-navigator",
+  args: [],
+  env: { TOKEN: { secretRef: "roslyn-token", scope: "project" } },
+  enabledByDefault: true,
+}]
+```
+
+`enabledByDefault` defaults to `true`. Plugin declarations cannot set `enabled`: project settings own enablement. Effective precedence is global settings, enabled plugin declarations, then project settings by name. A project definition overrides a plugin declaration and a same-named project `enabled:false` entry tombstones it. Use Fusion secret references for sensitive `env` or `headers`; never ship plaintext credentials. Missing commands retain normal per-server MCP spawn-failure isolation.

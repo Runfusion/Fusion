@@ -42,6 +42,8 @@ export interface ElevatedServerHandle {
    * starter; a caller that lost a startup race must use {@link stopWrapperOnly}.
    */
   stop(): Promise<void>;
+  /** Stop bounded runner-log observation without affecting PostgreSQL. */
+  stopMonitoring(): void;
   /**
    * Reap only what this handle launched, never the postmaster named by the
    * shared data dir.
@@ -54,6 +56,40 @@ export interface ElevatedServerHandle {
    * (which must never kill the race winner) stays shape-compatible.
    */
   stopWrapperOnly(): Promise<void>;
+}
+
+/**
+ * Stateful, bounded detector for PostgreSQL's Windows DLL-init shutdown chain.
+ *
+ * FNXC:PostgresEmbedded 2026-07-22-16:25:
+ * Restart only after the exact ordered PostgreSQL backend-crash shutdown chain.
+ * A lone Windows exception, an ordinary shutdown following an earlier exception,
+ * or a repeated log snapshot is not permission to restart a live cluster.
+ *
+ * FNXC:PostgresEmbedded 2026-07-22-22:21:
+ * Issue #2411 recovery is reserved for PostgreSQL's ordered DLL-init failure:
+ * backend 0xC0000142, peer termination, startup-process failure, then shutdown.
+ * Do not infer a cluster crash from unordered snippets because an operator or an
+ * external owner can shut down a cluster after an unrelated Windows exception.
+ */
+export class WindowsPostgresFatalDetector {
+  private buffer = "";
+  private matched = false;
+
+  push(chunk: string): boolean {
+    if (this.matched || !chunk) return false;
+    this.buffer = (this.buffer + chunk).slice(-16_384);
+    const text = this.buffer.toLowerCase();
+    if (
+      /server process(?:\s+\(pid\s+\d+\))?\s+was terminated by exception\s+0xc0000142[\s\S]*?terminating any other active server processes[\s\S]*?shutting down due to startup process failure[\s\S]*?database system is shut down/.test(
+        text,
+      )
+    ) {
+      this.matched = true;
+      return true;
+    }
+    return false;
+  }
 }
 
 export interface ElevatedStartOptions {
@@ -152,6 +188,33 @@ export function buildPgCtlStartArgs(dataDir: string, logFile: string, optionsStr
   return ["-D", dataDir, "-o", optionsString, "-l", logFile, "-W", "start"];
 }
 
+/**
+ * Build a child-only Windows environment with the bundled PostgreSQL bin first.
+ *
+ * FNXC:PostgresEmbedded 2026-07-22-16:10:
+ * PostgreSQL backend children inherit the environment used for `pg_ctl`/`postgres`.
+ * Keep the resolved native `bin` directory first in that child PATH so DLL lookup
+ * cannot depend on the dashboard's install shape. Windows PATH keys are
+ * case-insensitive; preserve the caller's spelling and every other variable.
+ */
+export function withWindowsNativeBinPath(
+  environment: NodeJS.ProcessEnv,
+  nativeRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (platform !== "win32") return environment;
+  const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  // `node:path` follows the host platform, while tests and cross-compiled
+  // packaging can construct a Windows child environment from a non-Windows host.
+  const bin = nativeRoot.replace(/[\\/]+$/, "") + "\\bin";
+  const normalize = (value: string) => value.replace(/\//g, "\\").toLowerCase();
+  const inherited = environment[pathKey] ?? "";
+  const segments = inherited.split(";").filter(Boolean);
+  const normalizedBin = normalize(bin);
+  const deduplicated = segments.filter((segment) => normalize(segment) !== normalizedBin);
+  return { ...environment, [pathKey]: [bin, ...deduplicated].join(";") };
+}
+
 function readPostgresPid(dataDir: string): number | null {
   try {
     const lines = readFileSync(join(dataDir, "postmaster.pid"), "utf-8").split("\n");
@@ -231,7 +294,13 @@ export async function startServerElevatedRestricted(
   );
 
   let stopped = false;
+  let logMonitor: NodeJS.Timeout | null = null;
+  const stopMonitoring = (): void => {
+    if (logMonitor) clearInterval(logMonitor);
+    logMonitor = null;
+  };
   const killAll = (): void => {
+    stopMonitoring();
     if (stopped) return;
     stopped = true;
     const r = spawnSync(pgCtl, ["-D", opts.dataDir, "-m", "fast", "-t", "30", "-w", "stop"], {
@@ -273,9 +342,11 @@ export async function startServerElevatedRestricted(
       killAll();
       await waitForDown();
     },
+    stopMonitoring,
     async stopWrapperOnly() {
       // No wrapper exists on this path; a lock-race loser postmaster exits on
       // its own. Only mark stopped so a later stop() cannot kill a race winner.
+      stopMonitoring();
       stopped = true;
     },
   };
@@ -296,7 +367,12 @@ export async function startServerElevatedRestricted(
   // until the outer timeout). Output captured before exit is still reported.
   const launch = await new Promise<{ status: number | null; output: () => string }>(
     (resolve, reject) => {
-      const child = spawn(pgCtl, args, { windowsHide: true });
+      const child = spawn(pgCtl, args, {
+        windowsHide: true,
+        // Do not mutate process.env: sibling dashboard/engine children must
+        // retain their inherited environment unchanged.
+        env: withWindowsNativeBinPath(process.env, opts.nativeRoot),
+      });
       let output = "";
       child.stdout.on("data", (d: Buffer) => (output += d.toString()));
       child.stderr.on("data", (d: Buffer) => (output += d.toString()));
@@ -325,18 +401,18 @@ export async function startServerElevatedRestricted(
       killAll();
       throw new Error("embedded postgres: elevated launch cancelled before ready.");
     }
+    // TCP is the readiness authority. The old reader inspected pg_ctl's `-l`
+    // file on every poll and made that implementation detail part of startup.
+    // Diagnostic snapshots are still bounded/open-read-close only; they never
+    // retain a descriptor or delay readiness when Windows reports EBUSY.
+    if (await probeTcpPort(opts.port, 500)) {
+      ready = true;
+      break;
+    }
     const tail = readTail(logFile, 3000);
     if (tail !== lastSnapshot) {
       lastSnapshot = tail;
-      opts.onLog(`elevated poll pg={${tail.slice(-400)}}`);
-    }
-    if (/database system is ready to accept connections/.test(tail)) {
-      // Log readiness alone is not enough: confirm TCP accept on 127.0.0.1 so
-      // ensureDatabase cannot hang on a connect that never completes.
-      if (await probeTcpPort(opts.port, 500)) {
-        ready = true;
-        break;
-      }
+      opts.onLog(`elevated diagnostic pg={${tail.slice(-400)}}`);
     }
     if (/\bFATAL\b|\bPANIC\b|could not (bind|start|create|access|connect|load)|not permitted|Permission denied|is not the owner/i.test(tail)) {
       killAll();
@@ -371,6 +447,29 @@ export async function startServerElevatedRestricted(
   opts.onLog(
     `embedded postgres: elevated server ready on 127.0.0.1:${opts.port} (pid ${postgresPid ?? 0}, restricted token)`,
   );
+
+  /*
+  FNXC:PostgresEmbedded 2026-07-22-23:05:
+  pg_ctl exits before its restricted-token postmaster, so readiness cannot end
+  observation of its bounded runner log. Poll open/read/close snapshots only
+  while this owned handle exists; stop, detach, and race cleanup release the
+  timer. This forwards a post-ready 0xC0000142 shutdown chain to the lifecycle
+  without retaining an exclusive Windows file handle.
+  */
+  let lastLogSnapshot = "";
+  const observePostReadyLog = (): void => {
+    if (stopped) return;
+    const snapshot = readTail(logFile, 16_384);
+    if (snapshot === "(no log file)" || snapshot === lastLogSnapshot) return;
+    const next = snapshot.startsWith(lastLogSnapshot)
+      ? snapshot.slice(lastLogSnapshot.length)
+      : snapshot;
+    lastLogSnapshot = snapshot;
+    if (next) opts.onLog(next);
+  };
+  observePostReadyLog();
+  logMonitor = setInterval(observePostReadyLog, 250);
+  if (typeof logMonitor.unref === "function") logMonitor.unref();
   return handle;
 }
 

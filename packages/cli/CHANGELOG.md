@@ -1,5 +1,145 @@
 # @runfusion/fusion
 
+## 0.73.0-beta.3
+
+### Minor Changes
+
+- cd51e1c: summary: Filter dashboard color themes by name in Settings and Command Center.
+  category: feature
+  dev: Uses the shared ThemeDropdown filter without changing persisted theme IDs or selection behavior.
+- 53e3063: summary: Honor skill-executor config on foreach step-execute sessions so per-step skills load like top-level nodes.
+  category: feature
+  dev: Threads config.executor/skillName from step-execute into StepSessionExecutor requestedSkillNames + additionalSkillPaths with FN-8461 skill-load parity (issue #2402).
+- da616e1: summary: Add a gesture-only Quick Add Start action for eligible workflows.
+  category: feature
+  dev: Validates submitted workflow metadata and promotes only matching created tasks forward.
+- 1cd0674: summary: Add photo and file attachments to Quick Add and Main Chat.
+  category: feature
+  dev: Quick Add now aligns picker, paste, and drop MIME intake with task-store attachment support.
+- 227281d: summary: Keep default Code Review remediation retries unlimited and show the active policy.
+  category: feature
+  dev: Code Review retry prompts now preserve resolved unlimited or finite workflow revision budgets.
+- f21d3ce: summary: Add conditional task-document writes that reject stale publishers without changing revision history.
+  category: feature
+  dev: Runtime tools and dashboard clients can compare expected revision and exact-content SHA-256 hash.
+- f21d3ce: summary: Add authenticated append-only corrections for documents retained on archived tasks.
+  category: feature
+  dev: Adds project-scoped revision/hash CAS publication and archived direct document reads.
+- 3cd023f: summary: Let enabled plugins declaratively provide project MCP servers.
+  category: feature
+  dev: Plugin `mcpServers` resolve between global and project settings; project overrides and tombstones win.
+- 085f7b9: summary: Task Stats tab now shows creation provenance — source type, parent task, creating agent, and duplicate flags.
+  category: feature
+  dev: New Provenance section in `TaskTokenStatsPanel` reading the task's flat source fields and `sourceMetadata.nearDuplicateOf`/`issueUrl`.
+
+### Patch Changes
+
+- 3f7c6e4: summary: Board column headers now count REVISING (replan) cards and other visibly active cards in the processing count.
+  category: fix
+  dev: Column header count = shared Running predicate ∪ card activity-chrome predicate (isTaskAgentActive); footer/admission keep live-agent-only semantics.
+- 241a5c9: summary: Bump the bundled pi runtime to 0.81.1 for newer models, providers, and session reliability.
+  category: internal
+  dev: Pins @earendil-works/pi-ai and @earendil-works/pi-coding-agent from 0.80.10 to 0.81.1 (exact matched set + pnpm-workspace overrides). Brings Qwen Token Plan, expanded usage accounting, resilient compaction retries, and provider/catalog fixes.
+- 4413699: summary: Recover in-review tasks stranded by a restart that killed an in-flight review step, instead of failing them.
+  category: fix
+  dev: New startup sweep `reconcileOrphanedPendingStepResults` wires the previously caller-less `resolveOrphanedPendingStepResults` helper; emits `task:reconcile-orphaned-pending-step-results` run-audit events.
+- 085f7b9: summary: Duplicate follow-up tasks naming the same failing file now converge at creation across parent tasks.
+  category: fix
+  dev: `computeCrossParentDiagnosticClaim` gains file-path/slug fallback objects and wider action/failure gates (exceeds, oversized, blocks, "so X passes"); FN-8510/8511/8513/8514 incident.
+- f630478: summary: Allow freeform chat task creation without mission lineage.
+  category: fix
+  dev: `fn_task_create` / `fn_delegate_task` only hard-require approved `mission_lineage` when registered with `requireMissionLineage` (idle heartbeat patrol). User-directed chat/create paths may omit lineage; gates no longer pre-block missing lineage so freeform intake remains policy-governed.
+- e68c48d: summary: Restore the Coding Ideas board header color indicator.
+  category: fix
+  dev: Maps the Ideas intake column dot to the shared triage token.
+- 82b8b02: summary: Remove excess right padding from task popups on tablets.
+  category: fix
+  dev: Tablet task popups no longer reserve desktop resize-handle scrollbar clearance.
+- 69bd64d: summary: Show Planning status badges for active Coding Ideas Todo tasks.
+  category: fix
+  dev: Removes the column-only Todo/In-progress planning badge suppression so Board and List views use the task's real status.
+- 8ab4241: summary: Restore the Coding Ideas detail action to move parked ideas to Todo.
+  category: fix
+  dev: Detail workflow move targets now resolve independently from supplied custom-field definitions.
+- 0ade154: summary: Show Planning (not Triage) in task activity model-using logs.
+  category: fix
+  dev: Engine planning lane emits Planning using model:; dashboard parsers dual-accept legacy Triage using model: rows.
+- 93b693c: summary: Remove redundant readiness descriptions from Todo and In Review board headers.
+  category: fix
+  dev: Todo and In Review omit legacy COLUMN_DESCRIPTIONS entries so no empty description shell renders.
+- ddb5c5e: summary: Let operators enable or disable GitHub tracking from Coding Ideas task details.
+  category: feature
+  dev: GitHub tracking eligibility now recognizes the Ideas intake column and `builtin:coding-ideas` workflow ID.
+- a9de6b2: summary: Remove ellipses from merging status badges on task cards.
+  category: fix
+  dev: Keeps shared non-card merge-status labels unchanged.
+- 57af249: summary: Mobile board swipes always settle on a single centered column, never between columns.
+  category: fix
+  dev: Hardens useColumnScrollSnap settle to nearest/directional column center; keeps CSS proximity snap (no mandatory).
+- e24fb37: summary: Keep task detail footer actions on a single row on mobile.
+  category: fix
+  dev: Mobile TaskDetailModal `.modal-actions` nowrap + tokenized compression so Actions/Move/Merge fit without overflow (FN-8492).
+- 395f136: summary: Show Revising instead of Replan on needs-replan task status badges.
+  category: fix
+  dev: getTaskStatusBadgeLabel maps needs-replan to Revising; EN tasks.statusReplan updated.
+- b6135f4: summary: Keep task-card active glow during replan and revise while agents work.
+  category: fix
+  dev: isTaskAgentActive treats needs-replan (and plan-in-place replan freshness) as agent-active for board/list chrome; lock policy documented in taskActivity FNXC.
+- b9ce662: summary: Mobile board pan/fling always settles on one centered column, never between.
+  category: fix
+  dev: Closes residual useColumnScrollSnap settle race after FN-8489; keeps proximity snap and pin-until-next-touch.
+- d0d10aa: summary: Fix macOS embedded PostgreSQL startup when bundled ICU compatibility links are missing.
+  category: fix
+  dev: Repair the libicuuc loader-name symlink before initdb starts.
+- c469f90: summary: Show Xiaomi branding for Xiaomi and MiMo provider labels.
+  category: feature
+  dev: Adds a tokenized shared ProviderIcon mark and boundary-safe MiMo inference.
+- 295226e: summary: Align mobile task-detail Move actions with the footer edge.
+  category: fix
+  dev: The Task Detail spacer now owns mobile footer surplus width.
+- 8814925: summary: Restore active chat thinking and partial response state when returning to a conversation.
+  category: fix
+  dev: Guards direct-chat re-entry refreshes and late stream terminal callbacks by session selection ownership.
+- fd9e4b2: summary: Create Coding Ideas Start tasks directly in Todo.
+  category: fix
+  dev: Validates the captured workflow metadata and preserves Todo through Board and List quick-add hosts.
+- 8e6985a: summary: Reconcile completed mission features safely against archived delivery tasks.
+  category: fix
+  dev: Adds an atomic PostgreSQL terminal-evidence repair path with conflict and archive-tombstone validation.
+- d36059b: summary: Grok CLI fallback models now engage only when the primary model actually fails, instead of replacing it up front.
+  category: fix
+  dev: The FN-7758 no-visible-key seam no longer promotes a grok-cli fallback to primary at session start; only a grok-cli primary auto-routes to the Grok CLI runtime. A fallback-only grok-cli pair without a visible GROK_API_KEY is deferred: the session runs the configured primary, and on the first retryable model failure it swaps onto the Grok CLI runtime with the fallback model (audited as `session:grok-cli-fallback-engaged`). If the Grok runtime plugin is unavailable the pair is dropped with `grokCliFallbackDropped: true`. `session:runtime-resolved` now records the post-transform provider/model pair the session actually runs.
+- 2f014f5: summary: Install the agent-browser binary with Fusion on Windows, Linux, and macOS.
+  category: fix
+  dev: Pins agent-browser and publishes a top-level bin shim that forwards to its native platform binary.
+- edaa793: summary: Stop the legacy-adoption sweep from clearing live task statuses (planning, queued, merging, stuck-killed) on store open.
+  category: fix
+  dev: LEGACY_STATUS_ADOPTION now preserves statuses with live post-cutover writers; only writer-less statuses (plan-review-unavailable, triaged) keep resume-graph. Generalizes the FN-8498 needs-replan fix after FN-8504's live planner status was cleared mid-session.
+- e9ff8a5: summary: Board column and footer running counts now include live Code Review, Plan Review, and other gate sessions.
+  category: fix
+  dev: `isRunningAgentTask` treats a `pending` workflow-step-result lease as Running; shared by column headers, footer stats, admission, and CLI counts.
+- 1bda76d: summary: Fix mobile board snapping after interrupted swipes, flings, and vertical card scrolling.
+  category: fix
+  dev: useColumnScrollSnap now ignores pointercancel while the touch stream is live, settles to nearest-with-min-progress (resolveSettleTargetIndex), requires horizontal-dominant finger travel for pan intent, and lets a gesture begun mid-transit settle to plain nearest so a corrective drag wins.
+- d194290: summary: Prevent executors from starting ordered task steps before their required predecessors finish.
+  category: fix
+  dev: Applies dependency-aware ordering to both in-progress and done step transitions.
+- 1dd36ed: summary: Orphaned in-flight review steps are now marked failed for re-review instead of silently skipped at merge.
+  category: fix
+  dev: `resolveOrphanedPendingStepResults` rewrites orphans to `status:"failed"` (never deletes — deletion satisfied the merge gate and skipped review); the sweep also runs in periodic maintenance, skips `in-progress` rows, re-reads before writing, and the audit event is registered in `DatabaseMutationType` with metadata `{taskId, column, orphanedCount, resultCount}`.
+- f389a64: summary: Fix engine restarts stranding replan-loop tasks in To Do by clearing their needs-replan signal.
+  category: fix
+  dev: The KTD-8 legacy-adoption table now maps `needs-replan` to `preserve` instead of `resume-graph`; it is a live graph signal written by the plan-replan seam and consumed by triage todo-rediscovery, not un-migrated legacy state.
+- e514e13: summary: Apply project workflow model lanes to every workflow ahead of global and workflow values.
+  category: fix
+  dev: Resolution is task override, project baseline, global lane, selected-workflow value, then default model.
+- 0818fc1: summary: Keep manually parked tasks out of scheduler and remembered-owner dispatch until explicitly unpaused.
+  category: fix
+  dev: Treats either paused flag as a dispatch stop and invalidates scheduler candidacy when userPaused changes.
+- fee920d: summary: Open task card files-changed links in the task popup when Open tasks as popups is enabled.
+  category: fix
+  dev: Board TaskCard deep-tab opens (changes/retries/workflow) honor openMobileTasksInPopup and pass initialTab into FloatingWindow TaskDetailContent.
+
 ## 0.73.0-beta.2
 
 ### Patch Changes

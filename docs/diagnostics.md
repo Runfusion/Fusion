@@ -77,6 +77,16 @@ Operator interpretation:
 - `ageBucket: "aging"` → review blocker progress.
 - `ageBucket: "stale"` → emerging stall; escalate/unblock blocker.
 
+## Windows embedded PostgreSQL recovery (`[postgres-embedded]`, FN-8522)
+
+When a Fusion-owned Windows embedded cluster reports the exact `0xC0000142` backend DLL-initialization failure followed by PostgreSQL's shutdown chain, the existing startup/System diagnostic sink records:
+
+- `detected Windows DLL initialization shutdown; attempting one owned-cluster recovery`
+- `Windows owned-cluster recovery completed; existing pools may reconnect`, or
+- `Windows DLL initialization recovery failed after one retry; restart Fusion and inspect the System log`
+
+The recovery budget is one per lifecycle and applies only to a post-readiness cluster Fusion started. It never restarts a joined cluster. On the terminal message, restart Fusion; if it repeats, retain the System log and bundled-runtime version for support rather than deleting the data directory.
+
 ## Process supervisor (`[process-supervisor]`)
 
 The process supervisor logs when it registers a supervised child, starts teardown, expires the grace window, escalates to `SIGKILL`, or observes a natural child exit.

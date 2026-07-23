@@ -48,6 +48,12 @@ describe("isTaskAgentActive", () => {
     expect(isTaskAgentActive(taskWithRunningWorkflowStep())).toBe(true);
   });
 
+  it("keeps durable replan cards active without changing lock statuses", () => {
+    expect(ACTIVE_STATUSES.has("needs-replan")).toBe(false);
+    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "triage" }))).toBe(true);
+    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "todo" }))).toBe(true);
+  });
+
   it("does not treat a status-null task without a running item as active", () => {
     expect(isTaskAgentActive(makeTask())).toBe(false);
   });
@@ -62,6 +68,17 @@ describe("isTaskAgentActive", () => {
     expect(isTaskAgentActive(makeTask({
       recentAgentActivityAt: "2026-07-28T11:59:00.000Z",
     }))).toBe(false);
+  });
+
+  it("extends fresh planner activity to plan-in-place todo replans", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T09:25:30.000Z"));
+
+    expect(isTaskAgentActive(makeTask({
+      column: "todo",
+      status: "needs-replan",
+      recentAgentActivityAt: "2026-07-22T09:25:00.000Z",
+    }))).toBe(true);
   });
 
   it.each([
@@ -85,6 +102,12 @@ describe("isTaskAgentActive", () => {
     ["archived column with fresh planner log", makeTask({ column: "archived", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["awaiting approval with fresh planner log", makeTask({ status: "awaiting-approval", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["awaiting user input with fresh planner log", makeTask({ status: "awaiting-user-input", recentAgentActivityAt: new Date().toISOString() }), {}],
+    ["queued replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { queued: true }],
+    ["derived stuck replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { isStuck: true }],
+    ["global pause replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { globalPaused: true }],
+    ["paused replan", makeTask({ status: "needs-replan", paused: true, recentAgentActivityAt: new Date().toISOString() }), {}],
+    ["failed replan", makeTask({ status: "failed", recentAgentActivityAt: new Date().toISOString() }), {}],
+    ["done-column replan", makeTask({ column: "done", status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), {}],
   ] as const)("rejects %s before running workflow activity", (_name, task, options) => {
     expect(isTaskAgentActive(task, options)).toBe(false);
   });

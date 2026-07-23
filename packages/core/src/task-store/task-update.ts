@@ -206,6 +206,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.pausedReason !== undefined) {
         task.pausedReason = updates.pausedReason;
       }
+      if (updates.wedgeNotification === null) {
+        task.wedgeNotification = undefined;
+      } else if (updates.wedgeNotification !== undefined) {
+        task.wedgeNotification = updates.wedgeNotification;
+      }
       if (updates.tokenBudgetSoftAlertedAt === null) {
         task.tokenBudgetSoftAlertedAt = undefined;
       } else if (updates.tokenBudgetSoftAlertedAt !== undefined) {

@@ -8,6 +8,7 @@ import type {
   McpStreamableHttpTransport,
   ProjectSettings,
 } from "./types.js";
+import type { PluginMcpServerContribution } from "./plugin-types.js";
 import { isMcpSecretRef } from "./types.js";
 import type { SecretScope } from "./secrets-store.js";
 import { validateMcpServerDefinition } from "./settings-validation.js";
@@ -74,20 +75,31 @@ function normalizeMcpServersSettings(settings?: McpServersSettings): McpServersS
 }
 
 function validServers(settings?: McpServersSettings): McpServerDefinition[] {
-  return (
-    normalizeMcpServersSettings(settings).servers
-      ?.map(validateMcpServerDefinition)
-      .filter((server): server is McpServerDefinition => Boolean(server)) ?? []
-  );
+  return normalizeMcpServersSettings(settings).servers
+    ?.map(validateMcpServerDefinition)
+    .filter((server): server is McpServerDefinition => Boolean(server)) ?? [];
+}
+
+/** Converts a declarative plugin contribution into a validated settings-shaped server. */
+export function mapPluginMcpServerContribution(server: PluginMcpServerContribution | unknown): McpServerDefinition | undefined {
+  if (!server || typeof server !== "object" || Array.isArray(server)) return undefined;
+  const input = server as Record<string, unknown>;
+  // Plugin declarations have no enabled field: project settings own per-project
+  // enablement. Reject malformed runtime values individually before reading them.
+  if ("enabled" in input || (input.enabledByDefault !== undefined && typeof input.enabledByDefault !== "boolean")) return undefined;
+  return validateMcpServerDefinition(input);
 }
 
 /**
  * FNXC:McpConfig 2026-06-25-00:00:
- * Effective MCP configuration is project-over-global by server name. A project server with enabled:false removes the inherited global declaration, while a project enabled declaration replaces it. The resolver is pure and never throws so settings reads cannot break task scheduling.
+ * FN-8491 / #2401 resolves global → enabled plugin → project by server name.
+ * A project enabled:false tombstone removes inherited global or plugin declarations;
+ * invalid plugin entries are ignored and this pure resolver never throws.
  */
 export function resolveEffectiveMcpServers(
   globalSettings?: Pick<GlobalSettings, "mcpServers"> | null,
   projectSettings?: Pick<ProjectSettings, "mcpServers"> | null,
+  pluginServers: Array<{ pluginId: string; server: PluginMcpServerContribution }> = [],
 ): McpServerDefinition[] {
   try {
     const globalMcp = normalizeMcpServersSettings(globalSettings?.mcpServers);
@@ -99,6 +111,19 @@ export function resolveEffectiveMcpServers(
     for (const server of validServers(globalSettings?.mcpServers)) {
       if (server.enabled === false) continue;
       byName.set(server.name, server);
+    }
+    // Plugin order is deterministic at the scoped-provider boundary; later plugins win
+    // duplicate names just as later project settings win inherited definitions.
+    for (const contribution of pluginServers) {
+      // Runtime plugin output is untrusted even though TypeScript callers use the
+      // public contribution type. A malformed entry must not disable healthy
+      // global/project MCP servers (FN-8491 / #2401).
+      if (!contribution || typeof contribution !== "object" || Array.isArray(contribution)) continue;
+      const rawServer = (contribution as { server?: unknown }).server;
+      if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
+      if ((rawServer as { enabledByDefault?: unknown }).enabledByDefault === false) continue;
+      const server = mapPluginMcpServerContribution(rawServer);
+      if (server) byName.set(server.name, server);
     }
     for (const server of validServers(projectMcp)) {
       if (server.enabled === false) {
