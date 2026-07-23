@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
 vi.mock("../agent-session-helpers.js", async (importOriginal) => {
@@ -154,12 +154,11 @@ function expectNoRebaseWorktree(repoDir: string): void {
     .map((line) => line.slice("worktree ".length));
   for (const worktree of worktrees) {
     for (const name of ["rebase-merge", "rebase-apply"] as const) {
-      // Linked worktrees keep `.git` as a file (`gitdir: ...` pointer), not a
-      // directory, so the rebase-state path must be resolved via git's
-      // worktree-specific git-path mechanism, matching isRebaseInProgress in
-      // merger.ts. `git rev-parse --git-path` may return an absolute or
-      // relative path, so `resolve` (not `join`) here mirrors that function.
-      const gitPath = execSync(`git rev-parse --git-path ${name}`, { cwd: worktree, encoding: "utf-8" }).trim();
+      /*
+      FNXC:MergePush 2026-07-23-11:45:
+      Linked worktrees keep `.git` as a file (`gitdir: …` pointer), not a directory, so rebase state must be resolved via git's worktree-specific git-path mechanism, matching isRebaseInProgress in merger.ts. `git rev-parse --git-path` may return an absolute or relative path, so `resolve` (not `join`) mirrors that function. Argument-based execFileSync (not interpolated execSync) keeps the fixed `name` literal off the shell.
+      */
+      const gitPath = execFileSync("git", ["rev-parse", "--git-path", name], { cwd: worktree, encoding: "utf-8" }).trim();
       expect(existsSync(resolve(worktree, gitPath))).toBe(false);
     }
   }
