@@ -1839,14 +1839,6 @@ FN-7825 makes .settings-navigation the sole owner of Settings rail width and rem
 }
 
 
-/* Scope indicators in sidebar nav items */
-.settings-scope-icon {
-  margin-right: 6px;
-  display: inline-flex;
-  vertical-align: middle;
-  color: var(--text-muted);
-}
-
 /* Scope banner above section content */
 
 /* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
@@ -3844,10 +3836,6 @@ Toast text must contrast its status background across every dashboard theme and 
   /* Hide group headers on mobile - they don't fit well in horizontal scroll row */
   .settings-group-header {
     display: none;
-  }
-
-  .settings-scope-icon {
-    margin-right: 0;
   }
 
   .settings-content {
