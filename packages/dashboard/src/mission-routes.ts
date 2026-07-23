@@ -80,6 +80,19 @@ export function resolveMissionInterviewThinkingLevel(
 
 // ── Validation Utilities ────────────────────────────────────────────────────
 
+/*
+FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+Dashboard lifecycle controls represent a human/operator intent. Pass the stable
+actor through the store so status and autopilot transitions are atomically
+attributed instead of relying on unaudited route-local side effects.
+*/
+const DASHBOARD_MISSION_ACTOR = {
+  type: "operator" as const,
+  id: "dashboard",
+  displayName: "Dashboard operator",
+  source: "dashboard",
+};
+
 function validateMissionId(id: string): boolean {
   // Accept generated format: M-{base36timestamp}-{random} (e.g. M-LZ7DN0-A2B5)
   // and legacy numeric format: M-{digits} (e.g. M-001)
@@ -1157,7 +1170,7 @@ export function createMissionRouter(
       try {
         const existingMission = await missionStore.getMission(missionId);
         const mission = Object.keys(updates).length > 0
-          ? await missionStore.updateMission(missionId, updates)
+          ? await missionStore.updateMission(missionId, updates, { actor: DASHBOARD_MISSION_ACTOR })
           : await requireMission(missionId);
         if (missionAutopilot && updates.autopilotEnabled === true && existingMission?.autopilotEnabled !== true) {
           missionAutopilot.watchMission(missionId);
@@ -2920,7 +2933,7 @@ export function createMissionRouter(
         throw badRequest("Mission is already paused (blocked)");
       }
 
-      const updated = await missionStore.updateMission(missionId, { status: "blocked" });
+      const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
       res.json(updated);
     })
   );
@@ -2947,7 +2960,7 @@ export function createMissionRouter(
         throw badRequest("Mission is not paused (status must be 'blocked' to resume)");
       }
 
-      await missionStore.updateMission(missionId, { status: "active" });
+      await missionStore.updateMission(missionId, { status: "active" }, { actor: DASHBOARD_MISSION_ACTOR });
 
       // Re-engage autopilot if enabled and autopilot instance is available.
       // The autopilot may have been stopped or the mission unwatched during
@@ -2985,7 +2998,7 @@ export function createMissionRouter(
       }
 
       // Set mission status to blocked
-      const updated = await missionStore.updateMission(missionId, { status: "blocked" });
+      const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
 
       // Pause all tasks linked to features in this mission
       const pausedTaskIds: string[] = [];
@@ -3067,7 +3080,7 @@ export function createMissionRouter(
         autopilotEnabled: true,
         autoAdvance: true, // kept for backward compat with existing mission data
         status: "active",
-      });
+      }, { actor: DASHBOARD_MISSION_ACTOR });
 
       // Activate the first pending slice (triggers auto-triage via activateSlice)
       await missionStore.activateSlice(nextSlice.id);
@@ -3141,7 +3154,7 @@ export function createMissionRouter(
       }
 
       // Update the mission's autopilotEnabled field
-      await missionStore.updateMission(missionId, { autopilotEnabled: enabled });
+      await missionStore.updateMission(missionId, { autopilotEnabled: enabled }, { actor: DASHBOARD_MISSION_ACTOR });
 
       if (missionAutopilot) {
         if (enabled) {

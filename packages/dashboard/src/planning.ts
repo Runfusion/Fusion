@@ -28,12 +28,6 @@ import {
   TASK_PRIORITIES,
   THINKING_LEVELS,
   summarizeTitle,
-  builtinSeamPrompt,
-  renderTriagePolicyPlaceholders,
-  resolveAgentPrompt,
-  resolveEffectivePlannerHeartbeatPatrolEnabled,
-  resolvePlanningPromptFromIr,
-  resolveWorkflowIrById,
   type PromptOverrideMap,
 } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
@@ -233,29 +227,34 @@ async function ensureNtfyHelpersReady(): Promise<void> {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /*
-FNXC:PlanningMode 2026-07-20-00:55:
-Planning Mode is user-terminated: each answered turn must produce one consequential, novel question with alternatives and trade-offs.
-The model may update the running plan but must never infer completion; only the visible Proceed with plan action can make a session terminal.
+FNXC:PlanningMode 2026-07-23-14:00:
+Planning Mode is a collaborative, user-terminated discovery session, not task triage. Its dedicated prompt must not inherit workflow or assigned-triage execution instructions, because those instructions can turn exploratory responses into executor specifications and child-task directives.
+
+A selected direction is a durable plan-backbone decision: every affected running-plan field must be rebuilt around accumulated selections, then exactly one repository-grounded question must narrow that direction another consequential level. The model may update the running plan but must never infer completion; only the visible Proceed with plan action can make a session terminal.
 */
-/** Planning system prompt for the AI agent */
-export const PLANNING_SYSTEM_PROMPT = `## Planning Mode interaction adapter
+/** Self-contained system prompt for the separate collaborative Planning Mode. */
+export const PLANNING_SYSTEM_PROMPT = `## Collaborative Planning Mode
 
-First analyze the codebase and active board with the available readonly tools, fn_task_list, and fn_task_show. Treat the workflow planning template above as the quality bar and PROMPT.md structure for the evolving plan, but do not write PROMPT.md or use write tools during this interview.
+Help the operator iteratively turn an idea into a clear, useful plan. First investigate relevant repository and active-board context with the available readonly tools, fn_task_list, and fn_task_show when that context can reduce uncertainty. Explore the problem before assuming a solution: identify assumptions, unknowns, constraints, affected surfaces, and meaningful risks. Compare viable approaches and their trade-offs. Discuss decomposition when it clarifies scope, sequencing, ownership, or deliverables, but do not automatically split work or direct the creation of child tasks.
 
-Start by producing a concrete initial plan and exactly one high-impact question. Author the operator-facing plan in Markdown: write the description as concise GitHub-flavored Markdown, while the structured change, acceptance, dependency, and deliverable fields become its Markdown sections and lists. After every answer, regenerate the plan and ask exactly one consequential next question. A refine turn uses the selected or free-text focus to choose that next question. The model never validates or terminates the session. Only the user can validate it through the visible Proceed with plan action.
+Build an evolving operator-facing plan, not an executor-ready task specification. Focus on intended outcomes, concrete deliverables, alternatives considered, and observable acceptance criteria. Do not produce task-specification bookkeeping or execution-process instructions such as task-size policy, commit guidance, no-code-change caveats, or task-creation directives. Author the operator-facing plan in Markdown: write the description as concise GitHub-flavored Markdown, while the structured change, acceptance, dependency, and deliverable fields become its Markdown sections and lists.
+
+Use a deliberate iterative narrowing loop: analyze → concrete options → operator selection → plan rebuild → one deeper question. When the opener is vague, subjective, preference-based, or symptom-only, inspect the relevant implementation surface before proposing at least two materially distinct actionable directions grounded in those findings, plus exactly one Other option. Do not ask a generic clarification question or silently select a direction. Keep the provisional plan honest about unselected alternatives.
+
+After every selected option, multi-selection, or free-text Other answer, treat the choice as a durable decision and rebuild every affected running-plan field around all accumulated decisions. The title, description, proposedChanges, acceptanceCriteria, keyDeliverables, and suggestedRefinements must make the selected direction—not the original vague complaint or an unselected alternative—the central intended outcome. Preserve Other text verbatim as steering. Then inspect the selected direction and relevant repository context and ask exactly one consequential next question that narrows it one level further with concrete, materially distinct options. A refine turn uses the selected or free-text focus to choose that next question. Continue this loop until the operator chooses Proceed with plan. The model never validates or terminates the session. Only the user can validate it through the visible Proceed with plan action.
 
 For every initial, answer, or refine turn respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","proposedChanges":["specific change"],"acceptanceCriteria":["observable outcome"],"suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"],"suggestedRefinements":["next focus 1","next focus 2"]}}}.
 
-Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Do not put PROMPT.md sections (Mission, Before → After, Steps, File Scope, Review Level, Completion Criteria, or Do NOT) in runningPlan or free text: triage writes PROMPT.md only after the operator proceeds with the plan. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
+Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
 /*
-FNXC:PlanningMode 2026-07-20-14:30:
-Planning Mode must use the same workflow planning seam as triage for a newly added task, then layer its infinite JSON interview contract over that template. A catalog defaultContent is Settings UI documentation, not proof that an operator explicitly replaced the full system prompt.
+FNXC:PlanningMode 2026-07-23-11:35:
+The separate Planning Mode prompt has sole default authority. Workflow selection still resolves models and task creation, but workflow planning seams and triage assignments remain execution-task concerns and must never leak into collaborative planning turns.
 */
 export async function resolvePlanningModeSystemPrompt(
   store: TaskStore,
   promptOverrides?: PromptOverrideMap,
-  workflowId?: string,
+  _workflowId?: string,
 ): Promise<string> {
   const settings: Partial<Settings> = (await store.getSettings().catch(() => ({}))) ?? {};
   const overrides = promptOverrides ?? settings.promptOverrides;
@@ -264,23 +263,8 @@ export async function resolvePlanningModeSystemPrompt(
     && overrides["planning-system"].trim().length > 0
     ? overrides["planning-system"]
     : undefined;
-  if (explicitOverride) return explicitOverride;
 
-  const plannerHeartbeatPatrolEnabled = resolveEffectivePlannerHeartbeatPatrolEnabled(settings);
-  const assignedTriagePrompt = settings.agentPrompts?.roleAssignments?.triage
-    ? resolveAgentPrompt("triage", settings.agentPrompts, { plannerHeartbeatPatrolEnabled })
-    : "";
-  let workflowPrompt: string | undefined;
-  try {
-    const ir = await resolveWorkflowIrById(store, workflowId || settings.defaultWorkflowId || "builtin:coding");
-    workflowPrompt = resolvePlanningPromptFromIr(ir);
-  } catch {
-    // Resolve fail-soft below so a missing custom workflow cannot prevent planning.
-  }
-  const fallback = builtinSeamPrompt("planning")
-    || resolveAgentPrompt("triage", undefined, { plannerHeartbeatPatrolEnabled });
-  const base = assignedTriagePrompt || workflowPrompt || fallback;
-  return `${renderTriagePolicyPlaceholders(base, settings)}\n\n${PLANNING_SYSTEM_PROMPT}`;
+  return explicitOverride ?? PLANNING_SYSTEM_PROMPT;
 }
 
 
@@ -308,6 +292,8 @@ export interface DraftInputPayload {
   generationPurpose?: "initial_plan" | "plan_update" | "question";
   generationStartedAt?: string;
   generationReturnQuestion?: PlanningQuestion;
+  /** Contextual batch retained until its plan-update generation succeeds, so retry can replay it. */
+  pendingContextualComments?: ContextualComment[];
   clarificationEnabled?: boolean;
   /* FNXC:PlanningMode 2026-07-21-09:15: Keep old payloads source-compatible without reading or writing this retired mailbox dedupe marker. */
   lastMailboxNotifiedQuestionKey?: string;
@@ -414,6 +400,13 @@ interface Session {
   generationStartedAt?: string;
   /** Question restored when the user stops the active turn. */
   generationReturnQuestion?: PlanningQuestion;
+  /**
+   * FNXC:PlanningComments 2026-07-23-13:00:
+   * A contextual batch is a durable pending turn, not UI-only state. Retain its normalized
+   * quote/suggestion pairs until the revised summary is accepted so retry and rehydration replay
+   * precisely the requested plan update after the agent session is disposed.
+   */
+  pendingContextualComments?: ContextualComment[];
   /** Last terminal error for retry UX */
   error?: string;
   /** AI agent session for real-time interaction */
@@ -746,6 +739,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.generationPurpose ? { generationPurpose: session.generationPurpose } : {}),
       ...(session.generationStartedAt ? { generationStartedAt: session.generationStartedAt } : {}),
       ...(session.generationReturnQuestion ? { generationReturnQuestion: session.generationReturnQuestion } : {}),
+      ...(session.pendingContextualComments ? { pendingContextualComments: session.pendingContextualComments } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -906,6 +900,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     generationReturnQuestion: payload.generationReturnQuestion && typeof payload.generationReturnQuestion === "object"
       ? normalizePlanningQuestion(payload.generationReturnQuestion, payload.initialPlan ?? row.title)
       : undefined,
+    pendingContextualComments: getContextualComments({ contextualComments: payload.pendingContextualComments }) ?? undefined,
     history,
     currentQuestion,
     lastNotifiedQuestionKey: currentQuestion ? `${row.id}:${currentQuestion.id}` : undefined,
@@ -2074,7 +2069,7 @@ function buildHistoryReplayPrompt(
   return [
     "Previous conversation summary:",
     interviewSummary,
-    "Use this as context for the next response. Do not repeat prior questions unless necessary.",
+    "Treat every recorded selection and Other answer as an accumulated durable decision. Rebuild affected plan fields around those decisions; do not preserve superseded or unselected alternatives as the plan backbone. Use this as context for the next response. Do not repeat prior questions unless necessary.",
   ].join("\n\n");
 }
 
@@ -2365,8 +2360,9 @@ for both agent entry points because system instructions alone can be displaced b
 export function formatInitialPlanRequestForAgent(initialPlan: string): string {
   return [
     "Create the initial running plan from this operator idea before asking the first interview question.",
+    "If the idea is vague, subjective, preference-based, or symptom-only, first inspect the relevant implementation surface and turn those findings into at least two concrete, materially distinct first-level directions plus exactly one Other option. Do not ask a generic question, invent repository findings, or commit the provisional plan to an unselected direction.",
     "Return only type:\"question\" JSON with a full runningPlan: a work-product title, a concise implementation description, and concrete work-item keyDeliverables derived from the idea.",
-    "Then ask exactly one high-impact clarifying question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
+    "Then ask exactly one high-impact, option-driven question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2377,9 +2373,9 @@ export function formatInitialRunningPlanRequestForAgent(initialPlan: string): st
   return [
     "Create a concrete initial implementation plan from this operator idea.",
     "Author the operator-facing plan in Markdown. Write the description as concise GitHub-flavored Markdown; the structured proposed changes, acceptance criteria, dependencies, and deliverables will render as Markdown sections and lists.",
-    "Inspect the relevant codebase and active-board context before drafting it. Make the description specific about the affected behavior and intended outcome. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
+    "Inspect the relevant codebase and active-board context before drafting it. For a vague, subjective, preference-based, or symptom-only idea, turn that inspection into at least two concrete, materially distinct direction options plus exactly one Other option; do not invent findings or preselect a direction. Make the provisional description specific about the affected behavior and intended outcome without falsely committing to an unselected direction. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
     "Also propose concise suggestedRefinements covering every distinct, high-value unresolved area the operator could explore next; do not cap the list at three.",
-    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact next question. Give that question at least two useful alternatives with pros and cons plus one write-your-own option. Do not validate the plan; only the operator can proceed with it.",
+    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact, option-driven next question. Give that question at least two useful alternatives with pros and cons plus one write-your-own option. Do not validate the plan; only the operator can proceed with it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2533,6 +2529,16 @@ export async function validateSession(sessionId: string): Promise<PlanningSummar
   session.summary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
   session.currentQuestion = undefined;
   session.editingQuestionId = undefined;
+  /*
+  FNXC:PlanningMode 2026-07-23-08:55:
+  Validation is the sole terminal transition, including after a synchronous initial turn left
+  generation metadata behind. Clear that non-terminal metadata so stream replay recognizes the
+  validated session, emits its one terminal complete event, and closes without a synthetic event.
+  */
+  session.generationPurpose = undefined;
+  session.generationStartedAt = undefined;
+  session.generationReturnQuestion = undefined;
+  session.pendingContextualComments = undefined;
   session.validated = true;
   session.error = undefined;
   session.updatedAt = new Date();
@@ -2699,6 +2705,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
       session.generationPurpose = undefined;
       session.generationStartedAt = undefined;
       session.generationReturnQuestion = undefined;
+      // The revised summary is now durable, so a later retry must not reapply this batch.
+      session.pendingContextualComments = undefined;
       session.currentQuestion = coerceQuestionResponse(parsed, session);
       await persistSession(session, "awaiting_input");
       planningStreamManager.broadcast(session.id, { type: "summary", data: session.summary });
@@ -2969,11 +2977,41 @@ function isRefineRequest(responses: Record<string, unknown>): boolean {
   return responses.refine === true;
 }
 
+type ContextualComment = { quote: string; suggestion: string };
+
+function getContextualComments(responses: Record<string, unknown>): ContextualComment[] | null {
+  if (!Array.isArray(responses.contextualComments)
+    || responses.contextualComments.length === 0
+    || responses.contextualComments.length > 20) return null;
+  const comments = responses.contextualComments.map((comment) => {
+    if (!comment || typeof comment !== "object" || Array.isArray(comment)) return null;
+    const { quote, suggestion } = comment as { quote?: unknown; suggestion?: unknown };
+    const normalizedQuote = typeof quote === "string" ? quote.trim() : "";
+    const normalizedSuggestion = typeof suggestion === "string" ? suggestion.trim() : "";
+    return normalizedQuote && normalizedQuote.length <= 4_000 && normalizedSuggestion && normalizedSuggestion.length <= 2_000
+      ? { quote: normalizedQuote, suggestion: normalizedSuggestion }
+      : null;
+  });
+  return comments.every((comment): comment is ContextualComment => comment !== null) ? comments : null;
+}
+
+export function formatContextualCommentsForAgent(summary: PlanningSummary, comments: ContextualComment[]): string {
+  return [
+    "The operator reviewed the running plan and submitted contextual comments.",
+    "Revise the running plan using every comment below, preserve unaffected content, and continue the established Planning Mode response contract. Treat each accepted comment as a durable decision: rebuild every affected plan field around it rather than appending contradictory notes.",
+    "Return the revised plan in Markdown and ask exactly one concrete option-driven next question that narrows the updated direction when more input is needed.",
+    "Current summary:",
+    JSON.stringify(summary),
+    "Contextual comments, in submitted order:",
+    ...comments.flatMap((comment, index) => [`${index + 1}. Selected quote: ${comment.quote}`, `Suggestion: ${comment.suggestion}`]),
+  ].join("\n\n");
+}
+
 function formatRefineRequestForAgent(summary: PlanningSummary, focus?: string): string {
   return [
     "The user clicked Refine Further on the planning summary.",
-    "Continue the planning interview from the existing context.",
-    "Ask exactly one focused, high-impact follow-up question with alternatives and pros/cons.",
+    "Continue the planning interview from the existing context. Rebuild affected plan fields around every accumulated selection, Other answer, and requested focus; do not retain an unselected alternative as the plan backbone.",
+    "Inspect the selected direction and relevant repository context, then ask exactly one focused, high-impact option-driven follow-up question that narrows it one consequential level further with alternatives and pros/cons.",
     "Do not return a completion response: only the user can validate a plan.",
     ...(focus ? ["The operator wants this next question to focus on:", focus] : []),
     "Current summary:",
@@ -3054,7 +3092,21 @@ export async function submitResponse(
   let answeredQuestion: PlanningQuestion | undefined;
 
   try {
-    if (isRefineRequest(responses) && session.summary) {
+    const contextualComments = getContextualComments(responses);
+    if (contextualComments && session.summary) {
+      /*
+      FNXC:PlanningComments 2026-07-23-12:00:
+      Comment batches deliberately reuse the existing session, active-turn reservation, SSE, and
+      plan_update generation. They are not a second review authority or agent lifecycle.
+      */
+      beginPlanningGeneration(session, "plan_update");
+      session.currentQuestion = undefined;
+      session.error = undefined;
+      session.pendingContextualComments = contextualComments;
+      await persistSession(session, "generating");
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await continueAgentConversation(session, formatContextualCommentsForAgent(session.summary, contextualComments));
+    } else if (isRefineRequest(responses) && session.summary) {
       // Refinement steers which question comes next; it is never an answer to the
       // currently displayed question and therefore must not create a history entry.
       beginPlanningGeneration(session, "question");
@@ -3114,7 +3166,7 @@ export async function submitResponse(
         );
       }
       const message = isEditingPriorAnswer
-        ? "An earlier answer was edited. Use the complete preserved interview context above, regenerate the running plan, and ask exactly one next question."
+        ? "An earlier answer was edited. Use the complete preserved interview context above, discard downstream assumptions contradicted by the edit, rebuild every affected running-plan field around the accumulated decisions, and ask exactly one concrete option-driven next question that narrows the selected direction."
         : formatResponseForAgent(currentQuestion, responses);
       await continueAgentConversation(session, message);
     }
@@ -3186,7 +3238,10 @@ export async function retrySession(
     disposeSessionAgentForRetry(session);
 
     session.error = undefined;
-    session.summary = undefined;
+    const pendingContextualComments = session.pendingContextualComments;
+    // Keep the reviewed plan available while replaying a contextual batch; ordinary answer
+    // retries still rebuild their running summary from persisted interview history.
+    if (!pendingContextualComments) session.summary = undefined;
     /*
     FNXC:PlanningRetry 2026-07-14-00:00:
     A retry regenerates the last turn, so no question is awaiting input. Clearing here also
@@ -3198,6 +3253,18 @@ export async function retrySession(
     session.updatedAt = new Date();
     beginPlanningGeneration(session, session.history.length === 0 ? "initial_plan" : "plan_update");
     await persistSession(session, "generating");
+
+    if (pendingContextualComments) {
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await continueAgentConversation(
+        session,
+        formatContextualCommentsForAgent(
+          session.summary ?? buildRunningSummary(session.initialPlan, session.history),
+          pendingContextualComments,
+        ),
+      );
+      return;
+    }
 
     if (session.history.length === 0) {
       await ensureSessionAgent(session, rootDir, [], promptOverrides, store);
@@ -3447,11 +3514,10 @@ export function formatResponseForAgent(
 
   const answerContext = comment.length > 0 ? `${formatted}\n\nAdditional context: ${comment}` : formatted;
   /*
-  FNXC:PlanningMode 2026-07-20-00:55:
-  System prompts can be displaced by long tool/context turns. Repeat the per-answer contract at the invocation boundary
-  so every submitted answer steers the following high-impact question instead of inviting a model-generated completion.
+  FNXC:PlanningMode 2026-07-23-14:10:
+  System prompts can be displaced by long tool/context turns. Repeat the selection-as-plan-backbone contract at the invocation boundary so every submitted option, multi-selection, or Other answer rebuilds the work product before the one deeper question, instead of becoming an append-only note or inviting model-authored completion.
   */
-  return `${answerContext}\n\nRegenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) informed by this answer; do not cap suggestedRefinements at three. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Return type:"question" with that complete runningPlan and ask exactly one next question. Do not validate the plan; only the user can proceed with it.`;
+  return `${answerContext}\n\nThis answer is a durable planning decision, not an append-only note. Regenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) around this selected label/description and every accumulated decision; do not cap suggestedRefinements at three. Rewrite every affected field so the selected direction is the central intended outcome, not the original vague complaint or an unselected alternative. Preserve free-text Other verbatim as steering. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Inspect the selected direction and relevant repository context, return type:"question" with that complete runningPlan, and ask exactly one next question: a deeper concrete option-driven question with materially distinct alternatives and pros/cons. Do not validate the plan; only the user can proceed with it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {

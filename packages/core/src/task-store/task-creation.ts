@@ -8,9 +8,10 @@
  */
 import {TaskStore, storeLog} from "../store.js";
 import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeatingDependency, TombstonedTaskResurrectionError} from "./errors.js";
-import {mkdir, rm, writeFile} from "node:fs/promises";
+import {mkdir, rename, rm, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
+import {randomUUID} from "node:crypto";
 import type {Task, TaskCreateInput, Settings} from "../types.js";
 import "../builtin-traits.js";
 import {applyReviewLevelPreset} from "../tasks/review-level-preset.js";
@@ -29,6 +30,17 @@ import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-contex
 import {resolveCreateDeclaredSymbols} from "../tasks/task-symbol-resolution.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async/async-persistence.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async/async-audit.js";
+import type {DbTransaction} from "../postgres/data-layer.js";
+
+type CreateTaskWithAfterInsert = TaskCreateInput & {
+  /** Internal transaction hook; never persisted in task source metadata. */
+  afterTaskInsert?: (tx: DbTransaction, task: Task) => Promise<void>;
+  /**
+   * Internal bootstrap escape hatch. The caller supplies an equivalent
+   * transactionally-safe duplicate reconciliation after the feature claim.
+   */
+  skipSameAgentDuplicateIntake?: boolean;
+};
 
 function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   /*
@@ -371,49 +383,44 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     }
 
     const dir = store.taskDir(id);
+    const stagingDir = `${dir}.creating-${randomUUID()}`;
+    let ownsStagingDirectory = false;
+    let ownsPromotedTaskDirectory = false;
+    const cleanupPreparedTaskFiles = async () => {
+      if (store.isWatching) store.taskCache.delete(id);
+      if (ownsStagingDirectory && existsSync(stagingDir)) {
+        await rm(stagingDir, { recursive: true, force: true });
+      }
+      // A rollback after promotion removes only this create's final directory.
+      // A conflicting existing row never reaches promotion, so its files survive.
+      if (ownsPromotedTaskDirectory && existsSync(dir)) {
+        await rm(dir, { recursive: true, force: true });
+      }
+    };
 
-    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:30:
-    // Insert the task row via async Drizzle insert inside a transaction.
-    // A duplicate-ID collision raises a unique_violation (23505) which we
-    // catch and surface as "Task ID already exists" (matching the SQLite path).
-    const context = store.createTaskPersistSerializationContext(task);
+    /*
+    FNXC:MissionAdmission 2026-07-23-17:10:
+    Materialize task files before the transaction that inserts and claims a
+    defined feature. Filesystem writes cannot join PostgreSQL; this ordering
+    means a write failure cannot commit a triaged feature pointing at a deleted
+    task, while the database transaction still makes task insert + feature claim
+    indivisible.
+    */
     try {
-      await layer.transactionImmediate(async (tx) => {
-        // FNXC:MultiProjectIsolation 2026-07-10: stamp the bound projectId so the
-        // new task row is attributed to (and later filtered under) this project.
-        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
-      });
-    } catch (error) {
       /*
-      FNXC:EphemeralAgentTaskCreation 2026-07-30-18:30:
-      Proposal creation retries can race after a creation lease is released while
-      the original creator is still inserting. Both attempts deliberately use the
-      same stable proposalClaimId, so the partial unique index is the at-most-once
-      authority. A 23505 for that key returns the committed winner instead of
-      treating it as an ID collision; no loser may continue into task-file or
-      workflow materialization. Other unique violations remain task-ID errors.
+      FNXC:MissionAdmission 2026-07-23-19:00:
+      PostgreSQL ID/proposal collisions are discovered at row insert, while a
+      defined-feature bootstrap needs all task artifacts to be writable before
+      its transaction can commit. Materialize into a unique staging directory;
+      only the successful insert atomically promotes it to the task directory.
+      A losing proposal therefore cannot overwrite its winner's task files.
       */
-      if (input.proposalClaimId && isTaskIdConflictError(error)) {
-        const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
-        if (existing) {
-          options?.onProposalClaimConflict?.(existing);
-          return existing;
-        }
-      }
-      if (isTaskIdConflictError(error)) {
-        throw new Error(`Task ID already exists: ${task.id}`);
-      }
-      throw error;
-    }
+      await mkdir(stagingDir, { recursive: true });
+      ownsStagingDirectory = true;
 
-    // FNXC:ReservationAtomicity 2026-07-12-00:00:
-    // Wrap post-insert filesystem/prompt work so any failure rolls back the
-    // inserted row. Without this, a writeTaskJsonFile or prompt-validation throw
-    // leaves a live row paired with an aborted reservation (FN-7074 invariant).
-    try {
       // Write task.json for backward compatibility and debugging.
       if (store.isWatching) store.taskCache.set(id, { ...task });
-      await store.writeTaskJsonFile(dir, task);
+      await store.writeTaskJsonFile(stagingDir, task);
 
       // Write PROMPT.md (same logic as SQLite path).
       /*
@@ -443,20 +450,73 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
           throw new InvalidFileScopeError(id, validation.invalid);
         }
       }
-      await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "PROMPT.md"), prompt);
+      await writeFile(join(stagingDir, "PROMPT.md"), prompt);
     } catch (error) {
-      // Rollback: soft-delete the inserted row and remove the directory.
-      await softDeleteTaskRowAsync(layer, id, new Date().toISOString());
-      if (store.isWatching) store.taskCache.delete(id);
-      if (existsSync(dir)) {
-        await rm(dir, { recursive: true, force: true });
+      await cleanupPreparedTaskFiles();
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`Task ID already exists: ${task.id}`);
       }
       throw error;
     }
 
-    // Auto-archive dedup (best-effort, same as SQLite path but using async reads).
-    await store._maybeAutoArchiveSameAgentDuplicateBackend(task, input);
+    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:30:
+    // Insert the task row via async Drizzle insert inside a transaction.
+    // A duplicate-ID collision raises a unique_violation (23505) which we
+    // catch and surface as "Task ID already exists" (matching the SQLite path).
+    const context = store.createTaskPersistSerializationContext(task);
+    try {
+      await layer.transactionImmediate(async (tx) => {
+        // FNXC:MultiProjectIsolation 2026-07-10: stamp the bound projectId so the
+        // new task row is attributed to (and later filtered under) this project.
+        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+        /*
+        FNXC:MissionAdmission 2026-07-23-19:00:
+        The row insert establishes this task as the sole winner before its staged
+        artifacts replace any stale directory. Promotion remains inside the same
+        transaction as the defined-feature claim, so a filesystem or claim
+        failure rolls back the row and cleans only this attempt's files.
+        */
+        if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
+        await rename(stagingDir, dir);
+        ownsStagingDirectory = false;
+        ownsPromotedTaskDirectory = true;
+        await (input as CreateTaskWithAfterInsert).afterTaskInsert?.(tx, task);
+      });
+    } catch (error) {
+      await cleanupPreparedTaskFiles();
+      /*
+      FNXC:EphemeralAgentTaskCreation 2026-07-30-18:30:
+      Proposal creation retries can race after a creation lease is released while
+      the original creator is still inserting. Both attempts deliberately use the
+      same stable proposalClaimId, so the partial unique index is the at-most-once
+      authority. A 23505 for that key returns the committed winner instead of
+      treating it as an ID collision; no loser may continue into task-file or
+      workflow materialization. Other unique violations remain task-ID errors.
+      */
+      if (input.proposalClaimId && isTaskIdConflictError(error)) {
+        const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
+        if (existing) {
+          options?.onProposalClaimConflict?.(existing);
+          return existing;
+        }
+      }
+      if (isTaskIdConflictError(error)) {
+        throw new Error(`Task ID already exists: ${task.id}`);
+      }
+      throw error;
+    }
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-20:00:
+    A defined-feature first task has already claimed feature.taskId in the insert
+    transaction. The ordinary same-agent intake may archive that claimed row
+    after commit, so this narrow internal opt-out delegates duplicate resolution
+    to the bootstrap caller, which preserves the claimed canonical atomically.
+    */
+    if (!(input as CreateTaskWithAfterInsert).skipSameAgentDuplicateIntake) {
+      // Auto-archive dedup (best-effort, same as SQLite path but using async reads).
+      await store._maybeAutoArchiveSameAgentDuplicateBackend(task, input);
+    }
 
     store.emitTaskLifecycleEventSafely("task:created", [task]);
     if (options?.invokeTaskCreatedHook !== false) {

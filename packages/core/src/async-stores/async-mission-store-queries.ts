@@ -45,7 +45,7 @@
 import { and, asc, desc, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
-import { normalizeMissionAssertionType } from "../missions/mission-types.js";
+import { normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType } from "../missions/mission-types.js";
 import type {
   Mission,
   MissionBranchStrategy,
@@ -221,6 +221,8 @@ export interface AssertionRow {
   type: string | null;
   orderIndex: number;
   sourceFeatureId: string | null;
+  scope: string | null;
+  origin: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -367,6 +369,8 @@ export const assertionColumns = {
   type: schema.project.missionContractAssertions.type,
   orderIndex: schema.project.missionContractAssertions.orderIndex,
   sourceFeatureId: schema.project.missionContractAssertions.sourceFeatureId,
+  scope: schema.project.missionContractAssertions.scope,
+  origin: schema.project.missionContractAssertions.origin,
   createdAt: schema.project.missionContractAssertions.createdAt,
   updatedAt: schema.project.missionContractAssertions.updatedAt,
 };
@@ -535,6 +539,8 @@ export function rowToAssertion(row: AssertionRow): MissionContractAssertion {
     id: row.id,
     milestoneId: row.milestoneId,
     sourceFeatureId: row.sourceFeatureId ?? undefined,
+    scope: normalizeMissionAssertionScope(row.scope),
+    origin: normalizeMissionAssertionOrigin(row.origin),
     title: row.title,
     assertion: row.assertion,
     status: row.status as MissionContractAssertion["status"],
@@ -1356,6 +1362,8 @@ export async function createContractAssertion(
     type: normalizeMissionAssertionType(assertion.type),
     orderIndex: assertion.orderIndex,
     sourceFeatureId: assertion.sourceFeatureId ?? null,
+    scope: assertion.scope ?? "feature",
+    origin: assertion.origin ?? "authored",
     createdAt: assertion.createdAt,
     updatedAt: assertion.updatedAt,
   });
@@ -2025,7 +2033,12 @@ export async function listAssertionsForFeature(handle: QueryHandle, featureId: s
         eq(schema.project.missionContractAssertions.id, schema.project.missionFeatureAssertions.assertionId),
       ),
     )
-    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), eq(schema.project.missionFeatureAssertions.featureId, featureId)))
+    // FNXC:MissionValidation 2026-07-23-17:20: Ignore legacy milestone links so parent scope cannot re-enter feature grading.
+    .where(and(
+      missionProjectScope(schema.project.missionFeatureAssertions.projectId),
+      eq(schema.project.missionFeatureAssertions.featureId, featureId),
+      sql`${schema.project.missionContractAssertions.scope} <> 'milestone'`,
+    ))
     .orderBy(
       asc(schema.project.missionContractAssertions.orderIndex),
       asc(schema.project.missionContractAssertions.createdAt),

@@ -23,6 +23,14 @@ Mission: Improve Reliability
         Task: FN-214
 ```
 
+## Agent task-creation admission
+
+Mission lineage is an admission requirement only for **autonomous no-task heartbeat** creates and delegations. Those idle patrol calls must supply a valid active Mission → Milestone → Slice → Feature chain; an allow rule for `task_agent_mutation` cannot bypass this requirement. Missing or invalid lineage is rejected before a task is persisted with an explicit mission-lineage remedy.
+
+Interactive/user-supervised, task-scoped heartbeat, executor, triage, and workflow-step calls may create or delegate freeform tasks without lineage. They remain governed by the normal `task_agent_mutation` permission policy, including category and exact-tool allow, approval, and block rules.
+
+A valid active lineage may name a hand-authored `defined` feature only for its first task. Fusion atomically claims the feature, links that exact task, and promotes the feature to `triaged`; an already-linked feature rejects rather than overwriting its canonical task. This bootstrap exception does not make `defined` executable: later scheduler and symbol-lock admission still uses the stricter contract below.
+
 ## Canonical lineage approval for autonomous symbol locks
 
 Before autonomous scheduler work may acquire a symbol lock, it resolves the task's Mission → Milestone → Slice → Feature lineage and evaluates the single `@fusion/core` contract: `evaluateMissionLineageApproval`. Resolution and lock acquisition remain scheduler responsibilities; downstream schedulers must not redefine the approval rule.
@@ -32,7 +40,7 @@ Approval requires every one of these statuses:
 - Mission: `active`
 - Milestone: `active`
 - Slice: `active`
-- Feature: `triaged` or `in-progress`
+- Feature: `triaged` or `in-progress` (never `defined`; defined is only allowed at the first-task bootstrap boundary)
 
 When the scheduler passes `planApprovalRequired: true`, the linked task must also have an `approvedPlanFingerprint` that is a non-empty string after trimming whitespace. The predicate does not recompute the fingerprint; `plan-approval.ts` owns its generation and validation. When plan approval is not required, the fingerprint is ignored.
 
@@ -342,6 +350,8 @@ Typical flow:
 
 If validation cannot run (unexpected loop state, duplicate trigger, blocked validation, or validator error), Fusion logs a mission `warning`/`error` event with structured metadata so the stuck state is visible in mission events.
 
+Mission `status` and `autopilotEnabled` transitions are atomically written with a mission activity event. The event records stable actor type/id, optional display name, source, and before/after values; unchanged values create no transition event. Dashboard controls identify an operator, tools identify an agent when they expose a sensitive mutation, and autonomous engine paths identify the system/autopilot.
+
 ## `autopilotEnabled` vs `autoAdvance`
 
 - **`autopilotEnabled`**: primary control for autopilot behavior — enables background monitoring, orchestration, and automatic slice activation when a slice completes. Also triggers auto-planning (converting features to tasks) when a slice is activated.
@@ -438,6 +448,8 @@ interface MissionContractAssertion {
   id: string;              // e.g., "CA-A3B7CD-E9F2"
   milestoneId: string;     // Parent milestone
   sourceFeatureId?: string;// Store-managed feature assertion owner
+  scope: "feature" | "milestone";
+  origin: "authored" | "imported" | "derived_milestone_acceptance";
   title: string;           // Human-readable title
   assertion: string;       // Behavioral plan
   status: AssertionStatus; // pending | passed | failed | blocked
@@ -476,7 +488,9 @@ interface MilestoneValidationRollup {
 
 #### Completion Gate Contract
 
-Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, but mission autopilot enforcement runs through each feature's **linked contract assertions** (store-managed per-feature assertion plus any additive linked milestone assertions). `milestone.acceptanceCriteria` remains authored milestone pass-bar text for humans, while validator gating/advance decisions follow assertion linkage and outcomes; see [Mission Completion Gate Contract](./missions-completion-contract.md) for the authoritative enforced-vs-informational surface map and zero-assertion behavior.
+Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, and each feature validator derives its verdict only from its **linked feature-scoped assertions**. Model summary prose, milestone prose, and behavioral results that are not mapped to a linked behavioral assertion cannot override that verdict.
+
+Milestone prose is synchronized to one canonical milestone-scoped assertion with `origin: "derived_milestone_acceptance"`. PostgreSQL restricts uniqueness to that derived origin per project/milestone; authored, imported, and migrated legacy milestone assertions stay independent, are never inferred from title/text, and require no feature links. The rollup evaluates all milestone-scoped assertions after feature coverage and feature assertion passes are ready; unmet parent criteria therefore block milestone completion without failing an already-passing feature. See [Mission Completion Gate Contract](./missions-completion-contract.md).
 
 ### Phase 3: Feature Execution Loop
 
@@ -557,7 +571,11 @@ interface MissionValidatorRun {
 
 ### Phase 5: Fix-Feature Retries
 
-When validation fails, `MissionStore.createGeneratedFixFeature()` creates a fix feature with lineage tracking:
+Validation always records failed runs and diagnostics. Remediation is separately opt-in: Fusion creates and auto-triages a Fix Feature only when `autopilotEnabled === true || autoAdvance === true`. With both flags false or unset, validation is **report-only**: the failed validator run and `validation_failed`/`validation_report_only` mission events remain visible, but Fusion does not mint a Fix Feature, create or plan a task, triage work, or dispatch remediation. This same predicate applies to completion, startup recovery, and periodic recovery, so a restart cannot bypass supervised mode.
+
+`autoAdvance` remains the legacy compatible opt-in. New missions should prefer `autopilotEnabled`.
+
+When the opt-in is enabled and validation fails, `MissionStore.createGeneratedFixFeature()` creates a fix feature with lineage tracking:
 
 ```typescript
 interface MissionFixFeatureLineage {
@@ -568,7 +586,7 @@ interface MissionFixFeatureLineage {
 }
 ```
 
-The fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
+An authorized fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
 
 **Default retry budget:** 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`). When `implementationAttemptCount >= maxRetryBudget`, the feature transitions to `blocked`.
 
@@ -657,6 +675,23 @@ interface MissionAssertionFailureRecord {
 
 **Full state snapshots:** `MissionFeatureLoopSnapshot` captures complete loop state including all validator runs and lineage chains for post-mortem analysis.
 
+### Validation failure diagnostics
+
+A `validation_failed` Mission activity event includes `metadata.validationDiagnostics`, the typed source of truth for failure reporting. It contains the validator `runId`, `sourceFeatureId`, overall outcome, next action, and ordered per-assertion verdicts with expected, observed, message, and evidence references. The visible event text is derived from this object—not an AI summary—so a failed event always names failed assertion IDs and labels any separately blocked assertion IDs as blocked (never as failed).
+
+Evidence is secret-redacted before persistence. Each assertion retains at most 16 evidence entries and every message, expected, observed, and evidence text field is capped at 4,096 UTF-8 bytes. Bounded fields carry `truncated: true`, excess evidence is reported as `omittedEvidenceCount`, project paths become project-relative, and external or disposable absolute paths become `[external path omitted]`.
+
+Generated fix features and their triaged tasks include the same **Validation cause** section with source feature, validator run, failed assertion IDs, bounded observations, and evidence. SQLite `MissionStore` and PostgreSQL `AsyncMissionStore` use the shared renderer, so a retry does not produce backend-specific causes or duplicate sections. A fix that is already linked to a canonical task is an idempotent race; otherwise Mission activity tells the operator to inspect and retry triage rather than exposing internal exception/loop-state prose.
+
+The loop state is internal scheduling context, not an operator diagnosis. Its public meanings and actions are:
+
+| Public state | Meaning | Operator action |
+|---|---|---|
+| validating | A validator run is evaluating the landed implementation. | Inspect the run only if it remains active beyond the stale-run window. |
+| needs_fix | A validator found a remediable assertion failure. | Review the event’s Validation diagnostics and triage the generated Fix feature/task. |
+| blocked | Validation could not obtain sufficient proof, or retry budget is exhausted. | Resolve the stated external constraint or root cause, then retry/triage the feature. |
+| implementing | A task is carrying out the feature or its generated remediation. | Follow the linked task; duplicate validator triggers with a canonical task are ignored. |
+
 ### Operator Troubleshooting
 
 | Symptom | Diagnosis | Resolution |
@@ -705,4 +740,4 @@ A completed cited research finding may become a normal Mission Feature. Its feat
 
 ### Autonomous mission admission
 
-Heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link. Missing or invalid lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.
+Autonomous no-task heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. Interactive and task-scoped calls remain governed by `task_agent_mutation` policy as described in [Agent task-creation admission](#agent-task-creation-admission). The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link except at the documented `defined`-feature first-task bootstrap. Missing or invalid autonomous lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.

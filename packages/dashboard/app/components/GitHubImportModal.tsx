@@ -2316,48 +2316,50 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
                     </button>
                   </form>
                 )}
-                {activeTab === "issues" && selectedIssue && !selectedIssueClosed && (
+                <div className="github-import-detail-action-row" data-testid="github-import-detail-action-row">
+                  {activeTab === "issues" && selectedIssue && !selectedIssueClosed && (
+                    <button
+                      className="btn btn-danger github-import-issue-close"
+                      data-testid="github-import-issue-close"
+                      onClick={handleCloseIssue}
+                      disabled={closingIssue}
+                      title={t("git.closeIssueTitle", "Close issue #{{number}}", { number: selectedIssue.number })}
+                    >
+                      {closingIssue ? <Loader2 size={14} className="spin" /> : t("git.closeIssue", "Close issue")}
+                    </button>
+                  )}
+                  {activeTab === "issues" && selectedIssue && onPlanningMode && (
+                    <button
+                      type="button"
+                      className="btn github-import-action"
+                      data-testid="github-import-action-plan"
+                      onClick={handlePlanIssue}
+                      disabled={importing || isUrlImported(selectedIssue.html_url)}
+                    >
+                      {t("git.planIssue", "Plan")}
+                    </button>
+                  )}
+                  {onOpenChatWithPrefill && (activeTab === "issues" ? selectedIssue?.html_url?.trim() : selectedPull?.html_url?.trim()) && (
+                    <button
+                      type="button"
+                      className="btn github-import-action"
+                      data-testid="github-import-action-chat"
+                      onClick={handleChatAboutSelection}
+                    >
+                      {t("git.chatAboutIssue", "Chat")}
+                    </button>
+                  )}
                   <button
-                    className="btn btn-danger github-import-issue-close"
-                    data-testid="github-import-issue-close"
-                    onClick={handleCloseIssue}
-                    disabled={closingIssue}
-                    title={t("git.closeIssueTitle", "Close issue #{{number}}", { number: selectedIssue.number })}
+                    className="btn btn-primary github-import-action"
+                    data-testid="github-import-action-top"
+                    onClick={handleImport}
+                    disabled={
+                      (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
+                    }
                   >
-                    {closingIssue ? <Loader2 size={14} className="spin" /> : t("git.closeIssue", "Close issue")}
+                    {importing ? <Loader2 size={14} className="spin" /> : activeTab === "pulls" ? t("git.resolveFeedback", "Resolve feedback") : t("git.importAsTask", "Import as task")}
                   </button>
-                )}
-                {activeTab === "issues" && selectedIssue && onPlanningMode && (
-                  <button
-                    type="button"
-                    className="btn github-import-action"
-                    data-testid="github-import-action-plan"
-                    onClick={handlePlanIssue}
-                    disabled={importing || isUrlImported(selectedIssue.html_url)}
-                  >
-                    {t("git.planIssue", "Plan")}
-                  </button>
-                )}
-                {onOpenChatWithPrefill && (activeTab === "issues" ? selectedIssue?.html_url?.trim() : selectedPull?.html_url?.trim()) && (
-                  <button
-                    type="button"
-                    className="btn github-import-action"
-                    data-testid="github-import-action-chat"
-                    onClick={handleChatAboutSelection}
-                  >
-                    {t("git.chatAboutIssue", "Chat")}
-                  </button>
-                )}
-                <button
-                  className="btn btn-primary github-import-action"
-                  data-testid="github-import-action-top"
-                  onClick={handleImport}
-                  disabled={
-                    (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
-                  }
-                >
-                  {importing ? <Loader2 size={14} className="spin" /> : activeTab === "pulls" ? t("git.resolveFeedback", "Resolve feedback") : t("git.importAsTask", "Import as task")}
-                </button>
+                </div>
               </div>
               </div>
             </FloatingWindow>

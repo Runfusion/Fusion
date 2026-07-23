@@ -34,7 +34,7 @@ import {
 import type { AsyncMissionStore } from "../../async-stores/async-mission-store.js";
 // Import the autopilot from engine SOURCE (not the @fusion/engine barrel, which resolves
 // to a possibly-stale dist build) so this test exercises the current await-converted port.
-import { MissionAutopilot } from "../../../../engine/src/mission-autopilot.js";
+import { MissionAutopilot } from "../../../../engine/src/missions/mission-autopilot.js";
 
 const pgTest = pgDescribe;
 

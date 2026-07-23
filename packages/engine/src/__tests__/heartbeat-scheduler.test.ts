@@ -232,6 +232,27 @@ describe("HeartbeatTriggerScheduler", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(callback).toHaveBeenCalledWith(agent.id, "timer", expect.objectContaining({ intervalMs: 2_000 }));
 
+      /*
+      FNXC:AgentHeartbeatControls 2026-07-23-14:15:
+      Dashboard heartbeat controls update only runtimeConfig.enabled. Scheduler updates must disarm and re-arm timers without treating that configuration change as a lifecycle pause or resume.
+      */
+      callback.mockClear();
+      const heartbeatDisabled = { ...eventStore.agents.get(agent.id)!, runtimeConfig: { enabled: false, heartbeatIntervalMs: 2_000 } } as Agent;
+      eventStore.agents.set(agent.id, heartbeatDisabled);
+      eventStore.emit("agent:updated", heartbeatDisabled);
+      expect(heartbeatDisabled.state).toBe("active");
+      expect(scheduler.getRegisteredAgents()).not.toContain(agent.id);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(callback).not.toHaveBeenCalled();
+
+      const heartbeatEnabled = { ...heartbeatDisabled, runtimeConfig: { enabled: true, heartbeatIntervalMs: 2_000 } } as Agent;
+      eventStore.agents.set(agent.id, heartbeatEnabled);
+      eventStore.emit("agent:updated", heartbeatEnabled);
+      expect(heartbeatEnabled.state).toBe("active");
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(callback).toHaveBeenCalledWith(agent.id, "timer", expect.objectContaining({ intervalMs: 2_000 }));
+
       callback.mockClear();
       const paused = { ...eventStore.agents.get(agent.id)!, state: "paused" as const };
       eventStore.agents.set(agent.id, paused);

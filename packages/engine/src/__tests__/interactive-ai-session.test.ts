@@ -8,6 +8,7 @@ import {
   type InteractiveAgentResult,
   type InteractiveAgentSession,
 } from "../execution/interactive-ai-session.js";
+import { interactiveSessionLog } from "../logger.js";
 import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
@@ -278,12 +279,16 @@ describe("interactive-ai-session seam", () => {
     expect(JSON.parse(lastPrompt)).toMatchObject({ type: "answer", questionId: question.id, response: answer });
   });
 
-  it("retries once on unparseable output then surfaces an error event (no hang)", async () => {
-    // First turn: garbage. Reformat retry: still garbage. → error.
-    const scripted = makeScriptedAgent(["not json at all", "still not json"]);
+  it("retries twice on unparseable output then surfaces an error event (no hang), logging each failed parse", async () => {
+    const warnSpy = vi.spyOn(interactiveSessionLog, "warn");
+    const errorSpy = vi.spyOn(interactiveSessionLog, "error");
+    // First turn: garbage. Both reformat retries: still garbage. → error.
+    const scripted = makeScriptedAgent(["not json at all", "still not json", "nope"]);
     const { session } = await createInteractiveAiSessionWith(factoryFor(scripted.session), {
       cwd: "/tmp",
       systemPrompt: "protocol",
+      defaultProvider: "openai",
+      defaultModelId: "gpt-5",
     });
 
     await session.prompt("start");
@@ -291,14 +296,38 @@ describe("interactive-ai-session seam", () => {
     expect(ev.type).toBe("error");
     expect(ev.type === "error" && ev.data.message).toMatch(/parse/i);
 
-    // The reformat-retry prompt was actually sent (2 prompts: initial + retry).
-    expect(scripted.promptCalls().length).toBe(2);
+    // Both reformat-retry prompts were actually sent (3 prompts: initial + 2 retries).
+    expect(scripted.promptCalls().length).toBe(3);
+
+    // Every failed parse attempt logged a bounded raw-response snippet with the
+    // resolved provider/model, and the terminal give-up logged at error level.
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[0][0]).toContain("provider=openai, model=gpt-5");
+    expect(warnSpy.mock.calls[0][0]).toContain('"not json at all"');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0][0]).toContain("giving up after 3 parse attempts");
 
     // Terminal: nextEvent keeps returning the error, never hangs.
     expect((await session.nextEvent()).type).toBe("error");
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
-  it("recovers when the reformat retry produces valid JSON", async () => {
+  it("flags an empty assistant message distinctly in the parse-failure log", async () => {
+    const warnSpy = vi.spyOn(interactiveSessionLog, "warn");
+    const scripted = makeScriptedAgent(["", "", ""]);
+    const { session } = await createInteractiveAiSessionWith(factoryFor(scripted.session), {
+      cwd: "/tmp",
+      systemPrompt: "protocol",
+    });
+
+    await session.prompt("start");
+    expect((await session.nextEvent()).type).toBe("error");
+    expect(warnSpy.mock.calls[0][0]).toContain("empty assistant message");
+    warnSpy.mockRestore();
+  });
+
+  it("recovers when the first reformat retry produces valid JSON", async () => {
     const question: PlanningQuestion = { id: "q1", type: "text", question: "?" };
     const scripted = makeScriptedAgent(["garbage", q(question)]);
     const { session } = await createInteractiveAiSessionWith(factoryFor(scripted.session), {
@@ -309,6 +338,20 @@ describe("interactive-ai-session seam", () => {
     await session.prompt("start");
     const ev = await session.nextEvent();
     expect(ev.type).toBe("question");
+  });
+
+  it("recovers when only the second reformat retry produces valid JSON", async () => {
+    const question: PlanningQuestion = { id: "q1", type: "text", question: "?" };
+    const scripted = makeScriptedAgent(["garbage", "still garbage", q(question)]);
+    const { session } = await createInteractiveAiSessionWith(factoryFor(scripted.session), {
+      cwd: "/tmp",
+      systemPrompt: "protocol",
+    });
+
+    await session.prompt("start");
+    const ev = await session.nextEvent();
+    expect(ev.type).toBe("question");
+    expect(scripted.promptCalls().length).toBe(3);
   });
 
   it("surfaces agent prompt errors as an error event without throwing", async () => {

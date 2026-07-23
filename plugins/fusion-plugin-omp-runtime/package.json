@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/omp-runtime",
-  "version": "0.1.6-beta.3",
+  "version": "0.1.6-beta.4",
   "type": "module",
   "description": "Oh My Pi (omp) runtime plugin for Fusion via Agent Client Protocol (omp acp)",
   "keywords": [

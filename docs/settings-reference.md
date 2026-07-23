@@ -531,7 +531,7 @@ Sandbox backend precedence is:
 | `pushAfterMerge` | `boolean` | `false` | Auto-push after successful direct merges only. Pull-request strategy is excluded because PR mode publishes its task branch separately before PR creation. |
 | `pushRemote` | `string` | `"origin"` | Git remote target used when `pushAfterMerge` is enabled. Accepts `remote` (for example `origin`) or `remote branch` (for example `upstream main`). Empty/unset values fall back to `origin` plus the resolved merge integration branch. |
 
-When `pushAfterMerge` is enabled, a completed direct merge first runs `git pull --rebase <remote> <branch>` and then `git push <remote> <branch>`. For remote-only targets, Fusion resolves `<branch>` from the merge integration branch rather than the task worktree's incidental checkout, so reuse-task-worktree and detached-HEAD merge modes still push the intended branch. If the post-merge pull or push fails, the local merge remains completed and the done task records `pushedToRemote: false` with a `pushError` for operator follow-up.
+When `pushAfterMerge` is enabled, Fusion first tries a working-tree-independent ref push to the configured target. If the remote has diverged, Fusion force-updates `fusion/<task-id>-stranded` on that same remote to the approved local squash, rebases in a detached clean-room worktree, resolves conflicts, continues the rebase, and pushes the rebased `HEAD`. The recovery branch is deleted after the target push succeeds; it is intentionally retained as the recovery source when the push fails or is aborted. For remote-only targets, Fusion resolves `<branch>` from the merge integration branch rather than the task worktree's incidental checkout, so reuse-task-worktree and detached-HEAD merge modes still push the intended branch. Push problems remain non-fatal because the merge has already completed: the done task records `pushedToRemote: false` with a `pushError`, writes a durable task-log entry, and emits a non-success `push:origin` run-audit event for operator follow-up.
 | `worktreeInitCommand` | `string` | `undefined` | Shell command run after task worktree creation and in temporary merge worktrees before merge/review verification. In standalone AI merge, this runs inside each fresh `fusion-ai-merge-*` clean-room worktree after `git worktree add`; when unset, Fusion infers a package-manager install from the lockfile and may skip only when the install marker matches. Useful for project-specific setup beyond package install (for example `pnpm install --frozen-lockfile`, `cp .env.local .env`, or codegen/bootstrap scripts). |
 | `worktreeCopyFiles` | `string[]` | `[]` | Repository-root-relative regular files to copy into each newly assigned non-resume task worktree. Configure from Settings → Worktrees with editable rows or Browse (useful for `.env`-style files). Fusion copies these files after fresh creation or pooled-worktree preparation and before `worktreeInitCommand`, secrets-env materialization, and task execution. Blank/duplicate entries are ignored; absolute paths, `..` traversal, missing files, directories, and unreadable/non-regular sources are skipped as non-fatal task-log/audit diagnostics without logging file contents. Resume/existing worktrees are not overwritten. |
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
@@ -855,7 +855,40 @@ Anthropic has three independent authentication/routing paths:
 
 Anthropic can be connected with a raw API key from both Model Onboarding and **Settings → Authentication**. Anthropic API-key auth appears as a separate **Anthropic API Key** card, while Claude subscription OAuth appears as **Anthropic Subscription** with Login/Logout controls. On Fusion desktop, Anthropic Subscription OAuth login URLs are delegated to the operating system browser instead of an Electron child window so the existing polling/callback flow can complete. `/api/auth/status` returns only masked key hints for the API-key card.
 
-### Authentication troubleshooting (mobile OAuth fallback)
+### CLI local OpenAI-compatible registry
+
+`fn onboard` can add a local/custom endpoint to pi's model registry without
+replacing existing fields. It writes to `~/.fusion/agent/models.json`, unless an
+existing legacy `~/.pi/agent/models.json` or `~/.pi/models.json` is selected by
+the compatibility resolver. For an unauthenticated server, omit `apiKey`:
+
+```json
+{
+  "providers": {
+    "local": {
+      "name": "Local server",
+      "api": "openai-completions",
+      "baseUrl": "http://localhost:8080/v1",
+      "models": [{
+        "id": "qwen3",
+        "reasoning": true,
+        "compat": {
+          "thinkingFormat": "qwen-chat-template",
+          "chatTemplateKwargs": {
+            "enable_thinking": { "$var": "thinking.enabled" }
+          }
+        }
+      }]
+    }
+  }
+}
+```
+
+Enable the Qwen option only when the upstream requires
+`chat_template_kwargs.enable_thinking`; the registry uses the schema-valid
+camel-case `compat.chatTemplateKwargs`, never a top-level compatibility field.
+
+## Authentication troubleshooting (mobile OAuth fallback)
 
 #### `/api/auth/login` response shape for device-code providers
 
@@ -1071,6 +1104,8 @@ The three GPT-5.6 codenamed OpenAI Codex variants (`gpt-5.6-luna`, `gpt-5.6-sol`
 5. Project `defaultProviderOverride` + `defaultModelIdOverride`
 6. Global `defaultProvider` + `defaultModelId`
 7. Automatic provider/model resolution
+
+Planning Mode uses this same complete-pair order for both a newly started session and an existing draft. When a workflow is selected in Planning Mode, its effective planning lane is loaded as the selected-workflow value; a complete request-level pair remains first, and incomplete/blank pairs are skipped rather than mixed with another level. Test mode still forces `mock` / `scripted` after resolution.
 
 ### Executor model
 

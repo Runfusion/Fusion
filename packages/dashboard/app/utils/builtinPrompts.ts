@@ -149,12 +149,16 @@ export const PROMPT_KEY_CATALOG: Record<PromptKey, PromptKeyMetadata> = {
     description: "System prompt for refining workflow step descriptions",
     defaultContent: "You are an expert at creating detailed agent prompts...",
   },
+  /*
+  FNXC:PlanningMode 2026-07-23-11:40:
+  Keep the browser catalog synchronized with core: Planning Mode's dedicated collaborative default is independent from triage and workflow seams, while this override replaces that complete prompt.
+  */
   "planning-system": {
     key: "planning-system",
     name: "Planning System",
     roles: ["triage"],
-    description: "Explicit full system-prompt replacement for Planning Mode; otherwise it uses the workflow planning seam plus interview adapter",
-    defaultContent: "Runtime default: selected workflow planning seam plus the user-validated JSON interview adapter.",
+    description: "Explicit full system-prompt replacement for Planning Mode's dedicated collaborative prompt",
+    defaultContent: "Runtime default: a dedicated collaborative Planning Mode prompt with a user-validated JSON interview.",
   },
   "subtask-breakdown-system": {
     key: "subtask-breakdown-system",

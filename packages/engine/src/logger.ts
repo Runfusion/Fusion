@@ -132,6 +132,9 @@ export const autopilotLog = createLogger("autopilot");
 /** Logger for the heartbeat execution subsystem. */
 export const heartbeatLog = createLogger("heartbeat");
 
+/** Logger for the interactive AI session seam (planning / CE stage sessions). */
+export const interactiveSessionLog = createLogger("interactive-session");
+
 /** Logger for remote node runtime/client subsystems. */
 export const remoteNodeLog = createLogger("remote-node");
 

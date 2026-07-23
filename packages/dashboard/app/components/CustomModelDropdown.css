@@ -1,4 +1,8 @@
 /* === Model Combobox Component === */
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+The model combobox is portaled outside Agent Settings but remains part of its runtime control. Its trigger, search, menu, options, favorites, and thinking selector must inherit dashboard tokens for dark, light, disabled, hover, and keyboard-focus states.
+*/
 
 .model-combobox {
   position: relative;
@@ -12,11 +16,11 @@
   width: 100%;
   padding: var(--space-sm) var(--space-md);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
-  font-size: 14px;
-  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
   cursor: pointer;
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -26,13 +30,14 @@
   border-color: var(--text-dim);
 }
 
-.model-combobox-trigger:focus {
+.model-combobox-trigger:focus,
+.model-combobox-trigger:focus-visible {
   border-color: var(--todo);
   box-shadow: var(--focus-ring);
 }
 
 .model-combobox-trigger:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-disabled, 0.6);
   cursor: not-allowed;
 }
 
@@ -52,10 +57,10 @@
 }
 
 .model-combobox-trigger-arrow {
-  font-size: 10px;
+  font-size: var(--space-sm);
   color: var(--text-muted);
-  margin-left: 8px;
-  transition: transform 0.15s;
+  margin-left: var(--space-sm);
+  transition: transform var(--duration-fast);
 }
 
 .model-combobox-trigger[aria-expanded="true"] .model-combobox-trigger-arrow {
@@ -65,12 +70,12 @@
 .model-combobox-dropdown {
   position: fixed;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   /* Must sit above floating dashboard panels and the shared floating-window stack (10100+). */
   z-index: 11000;
-  max-height: 320px;
+  max-height: calc(var(--space-2xl) * 10);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -80,18 +85,18 @@
   position: relative;
   flex-shrink: 0;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .model-combobox-search {
   width: 100%;
-  padding: 10px 36px 10px 12px;
+  padding: var(--space-sm) calc(var(--space-xl) + var(--space-md)) var(--space-sm) var(--space-md);
   background: var(--bg);
   border: none;
   border-radius: var(--radius) var(--radius) 0 0;
   color: var(--text);
-  font-size: 14px;
-  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
   outline: none;
 }
 
@@ -99,22 +104,23 @@
   color: var(--text-dim);
 }
 
-.model-combobox-search:focus {
+.model-combobox-search:focus,
+.model-combobox-search:focus-visible {
   background: var(--card);
 }
 
 .model-combobox-clear {
   position: absolute;
-  right: 10px;
+  right: var(--space-sm);
   top: 50%;
   transform: translateY(-50%);
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: var(--font-size-md);
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0 var(--space-xs);
   transition: color var(--transition-fast);
 }
 
@@ -124,11 +130,11 @@
 
 .model-combobox-results-count {
   flex-shrink: 0;
-  padding: 6px 12px;
+  padding: calc(var(--space-sm) - var(--space-xs) * 0.5) var(--space-md);
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .model-combobox-thinking {
@@ -139,7 +145,7 @@
   flex-shrink: 0;
   padding: var(--space-sm) var(--space-md);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .model-combobox-thinking-label {
@@ -252,7 +258,7 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
   justify-content: space-between;
   padding: var(--space-sm) var(--space-md);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--transition-instant);
   overflow: hidden;
 }
 
@@ -288,7 +294,7 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text);
 }
 
@@ -298,10 +304,10 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
 }
 
 .model-combobox-option-id {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-dim);
   font-family: var(--font-mono);
-  margin-left: 8px;
+  margin-left: var(--space-sm);
   flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -310,7 +316,7 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
 }
 
 .model-combobox-group {
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .model-combobox-group:last-child {
@@ -348,8 +354,8 @@ Provider headers must remain visible while their long model groups scroll in the
 
 /* Provider favorite star (in optgroup header) */
 .model-combobox-optgroup-favorite {
-  padding: 2px 4px;
-  font-size: 14px;
+  padding: calc(var(--space-xs) * 0.5) var(--space-xs);
+  font-size: var(--font-size-sm);
   color: var(--star-idle);
   background: none;
   border: none;
@@ -394,8 +400,8 @@ Provider headers must remain visible while their long model groups scroll in the
 
 /* Model favorite star (inside option row) */
 .model-combobox-option-favorite {
-  padding: 2px 4px;
-  font-size: 12px;
+  padding: calc(var(--space-xs) * 0.5) var(--space-xs);
+  font-size: var(--space-md);
   color: var(--star-idle);
   background: none;
   border: none;
@@ -413,20 +419,20 @@ Provider headers must remain visible while their long model groups scroll in the
 
 /* Favorited model pinned row */
 .model-combobox-option--favorite {
-  padding-left: 12px;
+  padding-left: var(--space-md);
   background: var(--bg-secondary);
 }
 
 .model-combobox-divider {
-  height: 1px;
+  height: var(--btn-border-width);
   background: var(--border);
-  margin: 4px 0;
+  margin: var(--space-xs) 0;
 }
 
 .model-combobox-no-results {
-  padding: 16px 12px;
+  padding: var(--space-lg) var(--space-md);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -436,11 +442,11 @@ Provider headers must remain visible while their long model groups scroll in the
   .model-combobox-dropdown {
     max-height: 50vh;
     max-height: 50dvh; /* Use dynamic viewport height where supported */
-    width: min(360px, calc(100vw - 32px));
+    width: min(calc(var(--space-xl) * 15), calc(100vw - var(--space-2xl)));
   }
 
   .model-combobox-search {
-    font-size: 16px;
+    font-size: var(--space-lg);
   }
 
   .model-combobox-option,
@@ -449,11 +455,11 @@ Provider headers must remain visible while their long model groups scroll in the
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .model-combobox-dropdown {
     max-height: 50vh;
     max-height: 50dvh;
-    width: min(360px, calc(100vw - 32px));
+    width: min(calc(var(--space-xl) * 15), calc(100vw - var(--space-2xl)));
   }
 }
 

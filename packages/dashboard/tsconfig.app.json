@@ -1,6 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    /*
+    FNXC:CIGateSpeed 2026-07-23-00:05:
+    tsconfig.base.json points tsBuildInfoFile at ${configDir}/dist/.tsbuildinfo, and
+    configDir is packages/dashboard for BOTH this config and tsconfig.json — so the two
+    `pnpm typecheck` programs clobbered each other's buildinfo and tsc re-checked the
+    full program on every run. A distinct file restores real incremental typechecking
+    (and lets CI cache both files).
+    */
+    "tsBuildInfoFile": "${configDir}/dist/.tsbuildinfo-app",
     "rootDir": "..",
     "jsx": "react-jsx",
     "moduleResolution": "bundler",

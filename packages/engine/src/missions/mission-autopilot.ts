@@ -19,10 +19,10 @@
  * - `completing` → `inactive`: Mission complete
  */
 
+import { AsyncMissionStore } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
-  AsyncMissionStore,
   AutopilotState,
   AutopilotStatus,
   MissionWithHierarchy,
@@ -464,13 +464,8 @@ export class MissionAutopilot {
     if (mission.status === "planning" && mission.autopilotEnabled) {
       autopilotLog.log(`Starting mission ${missionId} (transitioning from planning to active)`);
 
-      await this.missionStore.updateMission(missionId, { status: "active" });
-      await this.logMissionEventSafe(
-        missionId,
-        "mission_started",
-        `Mission ${mission.title} started by autopilot`,
-        { source: "checkAndStartMission" },
-      );
+      await this.updateMissionWithSystemActor(missionId, { status: "active" }, "checkAndStartMission");
+      await this.logLegacyTransitionEvent(missionId, "mission_started", `Mission ${mission.title} started by autopilot`, { source: "checkAndStartMission" });
       await this.updateActivity(missionId);
 
       // Activate first pending slice
@@ -537,13 +532,8 @@ export class MissionAutopilot {
 
       autopilotLog.log(`Mission ${missionId} is complete!`);
       await this.setAutopilotState(missionId, "completing");
-      await this.missionStore.updateMission(missionId, { status: "complete" });
-      await this.logMissionEventSafe(
-        missionId,
-        "mission_completed",
-        `Mission ${mission.title} marked complete`,
-        { milestoneCount: milestones.length },
-      );
+      await this.updateMissionWithSystemActor(missionId, { status: "complete" }, "checkMissionCompletion");
+      await this.logLegacyTransitionEvent(missionId, "mission_completed", `Mission ${mission.title} marked complete`, { milestoneCount: milestones.length });
       await this.updateActivity(missionId);
       await this.normalizeCompleteMissionAutopilotState(missionId, "checkMissionCompletion");
       return true;
@@ -872,22 +862,14 @@ export class MissionAutopilot {
       return;
     }
 
-    await this.missionStore.updateMission(missionId, {
+    await this.updateMissionWithSystemActor(missionId, {
       autoAdvance: false,
       autopilotEnabled: false,
       autopilotState: "inactive",
-    });
-    await this.logMissionEventSafe(
-      missionId,
-      "autopilot_disabled",
-      `Autopilot disabled for already-complete mission ${mission.title}`,
-      {
-        source,
-        previousAutoAdvance: mission.autoAdvance,
-        previousAutopilotEnabled: mission.autopilotEnabled,
-        previousAutopilotState: mission.autopilotState ?? "inactive",
-      },
-    );
+    }, source);
+    // FNXC:MissionAutonomyAudit 2026-07-23-14:20: updateMission atomically
+    // records the attributed autopilot_disabled transition on both store backends.
+    // Do not append a legacy duplicate after the transaction commits.
   }
 
   private async reconcileMissionConsistency(
@@ -979,6 +961,19 @@ export class MissionAutopilot {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
+
+  private async updateMissionWithSystemActor(missionId: string, updates: Partial<import("@fusion/core").Mission>, source: string): Promise<void> {
+    await this.missionStore.updateMission(missionId, updates, {
+      // FNXC:MissionAutonomyAudit 2026-07-23-14:20: Every store backend must
+      // preserve the autopilot actor/source with its atomic transition audit.
+      actor: { type: "system", id: "mission-autopilot", displayName: "Mission autopilot", source },
+    });
+  }
+
+  /** Async PostgreSQL emits atomic transition events; retain legacy SQLite mirrors only for compatibility. */
+  private async logLegacyTransitionEvent(missionId: string, eventType: MissionEventType, description: string, metadata: Record<string, unknown>): Promise<void> {
+    if (!(this.missionStore instanceof AsyncMissionStore)) await this.logMissionEventSafe(missionId, eventType, description, metadata);
+  }
 
   /**
    * Best-effort mission event logging that must never break autopilot control flow.

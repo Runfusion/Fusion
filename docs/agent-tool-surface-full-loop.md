@@ -1,5 +1,7 @@
 # Full-loop agent tool-surface audit and delivery plan
 
+> **Status:** The mission-hierarchy and persisted-ideation gaps recorded below have been delivered. Current `fn_ideation_*` tools share the persisted factory across engine and eligible chat lanes; show/diverge text includes canonical candidate IDs and provenance so agents can converge an explicit candidate. Remaining entries are the historical delivery audit.
+
 [← Docs index](./README.md)
 
 <!--
@@ -9,7 +11,7 @@ FR-08 requires chat and agent sessions to reach the complete build loop through 
 
 ## Decision summary
 
-Fusion already has useful task, workflow, goal, research, execution, and verification tools. It does **not** yet give an engine agent or dashboard chat session a complete native route from an idea or research result into the execution-oriented mission hierarchy. In particular, `packages/engine/src/agent-tools.ts` has no `fn_mission_*`, `fn_milestone_*`, `fn_slice_*`, or `fn_feature_*` factory, and no ideation diverge/converge tool. Research can be run by qualifying sessions, but its current handoff ends at a task document/task action rather than an attributable roadmap feature.
+Fusion has useful task, workflow, goal, research, execution, verification, mission-hierarchy, and persisted ideation tools. Engine agents and eligible dashboard chat sessions can use shared mission and ideation factories to create or attach a Mission handoff. Ideation show/diverge text returns canonical candidate IDs and provenance so agents can pass an ID directly to convergence. Research can be run by qualifying sessions, but its current handoff ends at a task document/task action rather than an attributable roadmap feature.
 
 The mission hierarchy is **Mission → Milestone → Slice → Feature → Task** ([Missions](./missions.md)); it is not the separate lightweight `Roadmap → RoadmapMilestone → RoadmapFeature` model. This document uses “roadmap” to mean the execution-oriented mission hierarchy unless it explicitly says otherwise.
 

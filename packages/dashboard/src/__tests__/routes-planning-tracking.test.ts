@@ -30,6 +30,19 @@ vi.mock("../planning.js", () => ({
   cleanupSession: vi.fn(),
   formatInterviewQA: vi.fn(() => ""),
   mergePlanningSubtaskDrafts: vi.fn((_sessionId: string, subtasks: unknown[]) => subtasks),
+  /*
+  FNXC:PlanningRouteTests 2026-07-23-08:20:
+  The direct registrar fixture must expose the durable create-claim lifecycle because
+  Planning create-task now resolves those exports before dispatching GitHub tracking.
+  */
+  updatePlanningCreateClaim: vi.fn(async () => undefined),
+  getDurablePlanningSession: vi.fn(async (id: string) => sessions.get(id)),
+  claimPlanningTaskCreation: vi.fn(async (id: string) => sessions.get(id)),
+  finalizePlanningTaskCreation: vi.fn(async () => undefined),
+  reconcilePlanningTaskCreation: vi.fn(async () => undefined),
+  releasePlanningTaskCreation: vi.fn(async () => undefined),
+  // FNXC:PlanningMode 2026-07-23-12:10: create-task terminalizes the session after creation.
+  validateSession: vi.fn(async () => undefined),
 }));
 
 function deferred<T>() {
@@ -127,8 +140,10 @@ describe("planning routes github tracking background dispatch", () => {
         createdTasks.set(id, next);
         return next;
       }),
+      upsertTaskDocument: vi.fn(async () => undefined),
       logEntry: vi.fn(async () => undefined),
       getTask: vi.fn(async (id: string) => createdTasks.get(id)),
+      listTasks: vi.fn(async () => [...createdTasks.values()]),
       getSettings: vi.fn(async () => ({
         githubTrackingEnabledByDefault: true,
         githubTrackingDefaultRepo: "o/r",

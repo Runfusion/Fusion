@@ -1461,6 +1461,27 @@ Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using th
   color: var(--text-dim);
 }
 
+.mission-event__diagnostics,
+.mission-event__diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  overflow-wrap: anywhere;
+}
+
+.mission-event__diagnostics {
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.mission-event__diagnostic + .mission-event__diagnostic {
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
 .mission-event__metadata {
   display: flex;
   flex-direction: column;

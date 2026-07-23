@@ -25,6 +25,7 @@ import {
   mkdirSync,
   symlinkSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -38,8 +39,11 @@ import {
   resolveEmbeddedMaxConnections,
   DEFAULT_EMBEDDED_MAX_CONNECTIONS,
   DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32,
+  isClusterNotYetAcceptingError,
+  isClusterStartingUpError,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
+  readPidFromPostmasterPid,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
   readPortFromPostmasterPid,
   __setEmbeddedPostgresCtorForTests,
@@ -831,9 +835,11 @@ describe("embedded-lifecycle: startup race (cross-process)", () => {
     class RacingEmbeddedPostgres {
       initialise = vi.fn(async () => {});
       async start() {
+        // process.pid: the winner's recorded pid must be a LIVE process now that
+        // the #2411 stale-pid gap fix probes liveness before joining.
         writeFileSync(
           join(dataDir, "postmaster.pid"),
-          ["12345", dataDir, String(Date.now()), "55440", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+          [String(process.pid), dataDir, String(Date.now()), "55440", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
         );
         throw new Error('lock file "postmaster.pid" already exists');
       }
@@ -866,10 +872,12 @@ Mocked ctor, no real Postgres — kept outside the real-process block so it runs
 gate/CI default (see the sibling startup-race block for why that placement matters).
 
 Pins the best-effort half of the join-path database verify: `isAlreadyRunning` joins
-optimistically without probing (a stale pid file from a crash still resolves to a port), so an
-unreachable joined instance must return the URL exactly as it did before the verify existed and
-let the connection layer report it. A hard throw here would turn every stale-pid start into a
-startup failure.
+optimistically when the recorded pid is alive (or unknowable) even if the PORT is unreachable,
+so an unreachable joined instance must return the URL exactly as it did before the verify
+existed and let the connection layer report it. A hard throw here would turn every such start
+into a startup failure. (A recorded pid that is provably DEAD no longer joins at all — see the
+issue #2411 stale-pid recovery block below — so this test records process.pid, a live process
+with nothing on the port.)
 */
 /*
 FNXC:PostgresStartupRace 2026-07-15-21:10:
@@ -916,7 +924,7 @@ describe("embedded-lifecycle: startup race only joins on a lock collision", () =
       async start() {
         writeFileSync(
           join(dataDir, "postmaster.pid"),
-          ["12345", dataDir, String(Date.now()), "55444", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+          [String(process.pid), dataDir, String(Date.now()), "55444", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
         );
         throw new Error('lock file "postmaster.pid" already exists');
       }
@@ -940,10 +948,11 @@ describe("embedded-lifecycle: join-path database verify is best-effort", () => {
   it("still resolves optimistically when the joined instance is unreachable", async () => {
     const dataDir = makeDataDir();
     writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
-    // A port nothing is listening on: the verify's probe cannot succeed.
+    // A live pid (this test process) with a port nothing is listening on: the
+    // verify's probe cannot succeed but the liveness gate still permits a join.
     writeFileSync(
       join(dataDir, "postmaster.pid"),
-      ["12345", dataDir, String(Date.now()), "55441", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+      [String(process.pid), dataDir, String(Date.now()), "55441", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
     );
     const logLines: string[] = [];
 
@@ -960,6 +969,138 @@ describe("embedded-lifecycle: join-path database verify is best-effort", () => {
       expect(lifecycle.isRunning()).toBe(false);
       expect(logLines.some((line) => /could not verify database/i.test(line))).toBe(true);
     } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): an interrupted cluster listens during crash
+recovery but rejects every connection with 57P03 until redo completes. The
+owned start must WAIT that out (never stop the recovering postmaster), and the
+join path must retry the 57P03 signal — while socket-level failures keep the
+instant optimistic-join contract (a stale pid file must not add a wait).
+Mocked/stubbed, no real Postgres; runs under the gate/CI default.
+*/
+describe("embedded-lifecycle: crash-recovery-aware connect classification (issue #2411)", () => {
+  it("classifies 57P03 / recovery messages as starting up", () => {
+    expect(isClusterStartingUpError({ code: "57P03" })).toBe(true);
+    expect(isClusterStartingUpError(new Error("FATAL: the database system is starting up"))).toBe(true);
+    expect(isClusterStartingUpError(new Error("the database system is in recovery mode"))).toBe(true);
+    expect(isClusterStartingUpError(new Error("connect ECONNREFUSED 127.0.0.1:5432"))).toBe(false);
+    expect(isClusterStartingUpError(new Error('password authentication failed for user "postgres"'))).toBe(false);
+  });
+
+  it("classifies socket-level failures as not-yet-accepting only for the owned wait superset", () => {
+    expect(isClusterNotYetAcceptingError({ code: "ECONNREFUSED" })).toBe(true);
+    expect(isClusterNotYetAcceptingError(new Error("connect ECONNREFUSED 127.0.0.1:52572"))).toBe(true);
+    expect(isClusterNotYetAcceptingError({ code: "CONNECT_TIMEOUT" })).toBe(true);
+    expect(isClusterNotYetAcceptingError({ code: "57P03" })).toBe(true);
+    expect(isClusterNotYetAcceptingError(new Error("syntax error at or near"))).toBe(false);
+  });
+});
+
+describe("embedded-lifecycle: owned start waits out crash recovery (issue #2411)", () => {
+  it("retries 57P03 rejections until the cluster accepts, without stopping it", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      dataDir: "/tmp/unused-recovery-wait",
+      database: "fusion",
+      startTimeoutMs: 30_000,
+      onLog: (message) => logs.push(message),
+    });
+    let attempts = 0;
+    const internal = lifecycle as unknown as {
+      openMaintenanceSqlOn: (port: number) => unknown;
+      waitForClusterAcceptingConnections: (port: number, signal?: AbortSignal) => Promise<void>;
+    };
+    internal.openMaintenanceSqlOn = () => {
+      const sql = (() => {
+        attempts += 1;
+        if (attempts < 3) {
+          return Promise.reject(
+            Object.assign(new Error("the database system is starting up"), { code: "57P03" }),
+          );
+        }
+        return Promise.resolve([{ one: 1 }]);
+      }) as unknown as { end: (opts?: unknown) => Promise<void> };
+      (sql as { end: (opts?: unknown) => Promise<void> }).end = async () => {};
+      return sql;
+    };
+
+    const wait = internal.waitForClusterAcceptingConnections(55490);
+    await vi.advanceTimersByTimeAsync(1_100);
+    await expect(wait).resolves.toBeUndefined();
+    expect(attempts).toBe(3);
+    expect(logs.some((line) => /crash recovery may be in progress/i.test(line))).toBe(true);
+  });
+
+  it("surfaces a non-recovery error immediately", async () => {
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      dataDir: "/tmp/unused-recovery-fatal",
+      database: "fusion",
+    });
+    const internal = lifecycle as unknown as {
+      openMaintenanceSqlOn: (port: number) => unknown;
+      waitForClusterAcceptingConnections: (port: number, signal?: AbortSignal) => Promise<void>;
+    };
+    internal.openMaintenanceSqlOn = () => {
+      const sql = (() =>
+        Promise.reject(new Error('password authentication failed for user "postgres"'))) as unknown as {
+        end: (opts?: unknown) => Promise<void>;
+      };
+      (sql as { end: (opts?: unknown) => Promise<void> }).end = async () => {};
+      return sql;
+    };
+
+    await expect(internal.waitForClusterAcceptingConnections(55490)).rejects.toThrow(
+      /password authentication failed/i,
+    );
+  });
+});
+
+describe("embedded-lifecycle: join path retries crash recovery (issue #2411)", () => {
+  it("retries a 57P03-rejecting joined instance instead of giving up on the first probe", async () => {
+    vi.useFakeTimers();
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    writeFileSync(
+      join(dataDir, "postmaster.pid"),
+      [String(process.pid), dataDir, String(1784424901), "55446", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+    );
+    const logLines: string[] = [];
+    let attempts = 0;
+    const createDatabaseIfMissing = vi
+      .spyOn(
+        EmbeddedPostgresLifecycle.prototype as unknown as {
+          createDatabaseIfMissing: (port: number) => Promise<void>;
+        },
+        "createDatabaseIfMissing",
+      )
+      .mockImplementation(async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw Object.assign(new Error("the database system is starting up"), { code: "57P03" });
+        }
+      });
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        onLog: (message) => logLines.push(message),
+      });
+
+      const start = lifecycle.start();
+      await vi.advanceTimersByTimeAsync(1_100);
+      await expect(start).resolves.toMatchObject({
+        runtimeUrl: expect.stringContaining(":55446/"),
+      });
+      expect(attempts).toBe(3);
+      expect(logLines.some((line) => /not accepting connections yet/i.test(line))).toBe(true);
+      expect(logLines.some((line) => /could not verify database/i.test(line))).toBe(false);
+    } finally {
+      createDatabaseIfMissing.mockRestore();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
@@ -1228,6 +1369,95 @@ describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", (
  * layout joins using index 3, while a persistent unreadable lock file must never
  * instantiate a colliding embedded-postgres start.
  */
+/**
+ * A pid guaranteed to belong to no live process: spawn a trivial child and use
+ * its pid after it has exited (spawnSync returns only after exit). Verified
+ * dead via signal-0; re-spawned in the vanishingly unlikely recycle case.
+ */
+function provablyDeadPid(): number {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const child = spawnSync(process.execPath, ["-e", ""], { stdio: "ignore" });
+    const pid = child.pid;
+    if (!pid) continue;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return pid;
+    }
+  }
+  throw new Error("could not obtain a provably dead pid");
+}
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-11:50:
+Issue #2411 (stale-pid gap): a hard host crash (SIGKILL, power loss) leaves
+postmaster.pid behind with no postmaster. Before this fix, every later boot
+optimistically joined the dead port and failed — a permanent dead shell until
+the operator deleted the pid file by hand. A recorded pid that is provably dead
+must instead allow an OWNED start; PostgreSQL re-validates and reclaims the
+stale lock file itself. Mocked ctor, no real Postgres; runs under the gate/CI
+default.
+*/
+describe("embedded-lifecycle: stale postmaster.pid recovery (issue #2411)", () => {
+  it("starts an owned postmaster when postmaster.pid records a dead pid", async () => {
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    const deadPid = provablyDeadPid();
+    writeFileSync(
+      join(dataDir, "postmaster.pid"),
+      [String(deadPid), dataDir, "1784424901", "55448", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+    );
+    const logLines: string[] = [];
+    const ctor = vi.fn();
+    const sentinel = new Error("owned start reached");
+    class OwnedStartEmbeddedPostgres {
+      constructor() {
+        ctor();
+      }
+      initialise = vi.fn(async () => {});
+      start = vi.fn(async () => {
+        throw sentinel;
+      });
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(OwnedStartEmbeddedPostgres as never);
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        startTimeoutMs: 0,
+        onLog: (message) => logLines.push(message),
+      });
+
+      // The owned start path is taken (ctor constructed, its start() reached)
+      // instead of joining the dead port 55448 or failing closed.
+      await expect(lifecycle.start()).rejects.toBe(sentinel);
+      expect(ctor).toHaveBeenCalledOnce();
+      expect(logLines.some((line) => /stale lock from a crash/i.test(line))).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("readPidFromPostmasterPid reads line 1 and rejects garbage", () => {
+    const dataDir = makeDataDir();
+    try {
+      writeFileSync(
+        join(dataDir, "postmaster.pid"),
+        ["4242", dataDir, "1784424901", "55449", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+      );
+      expect(readPidFromPostmasterPid(dataDir)).toBe(4242);
+
+      writeFileSync(join(dataDir, "postmaster.pid"), "not-a-pid\n");
+      expect(readPidFromPostmasterPid(dataDir)).toBe(null);
+
+      rmSync(join(dataDir, "postmaster.pid"));
+      expect(readPidFromPostmasterPid(dataDir)).toBe(null);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("embedded-lifecycle: postmaster.pid join safety", () => {
   it("joins an issue-shaped live pid without instantiating a second postmaster", async () => {
     const dataDir = makeDataDir();
@@ -1245,9 +1475,11 @@ describe("embedded-lifecycle: postmaster.pid join safety", () => {
       .spyOn(EmbeddedPostgresLifecycle.prototype, "ensureJoinedDatabase")
       .mockResolvedValue(undefined);
     try {
+      // process.pid: the join gate now requires the recorded pid to be alive
+      // (#2411 stale-pid recovery); this test's subject is the live-pid join.
       writeFileSync(
         join(dataDir, "postmaster.pid"),
-        ["1866", dataDir, "1784424901", "34643", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
+        [String(process.pid), dataDir, "1784424901", "34643", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
       );
       const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
 
@@ -1275,10 +1507,12 @@ describe("embedded-lifecycle: postmaster.pid join safety", () => {
     }
     __setEmbeddedPostgresCtorForTests(UnexpectedEmbeddedPostgres as never);
     try {
-      // `/tmp` at index 3 mirrors the prior off-by-one regression shape.
+      // `/tmp` at index 3 mirrors the prior off-by-one regression shape. The
+      // recorded pid is live (this process) so the #2411 stale-pid recovery
+      // does not divert the fail-closed unreadable-port path under test.
       writeFileSync(
         join(dataDir, "postmaster.pid"),
-        ["1866", dataDir, "1784424901", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
+        [String(process.pid), dataDir, "1784424901", "/tmp", "localhost", "79484 2", "ready"].join("\n") + "\n",
       );
       const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
 

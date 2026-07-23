@@ -160,6 +160,19 @@ FUSION_SKIP_ONBOARDING=1 fn dashboard
 On successful completion, Fusion records `cliOnboardingCompletedAt` in global
 settings.
 
+### Custom / Local OpenAI-compatible providers
+
+The **AI provider setup** picker includes **Custom / Local (OpenAI-compatible)**,
+for llama.cpp server, vLLM, LM Studio, and other OpenAI-compatible endpoints. The
+wizard collects a provider ID/name, an absolute `http:` or `https:` base URL, an
+optional API key, comma-separated model IDs, and optional reasoning/Qwen
+chat-template compatibility. Blank API keys remain absent for unauthenticated
+local servers. The entry is merged safely into the path selected by the existing
+registry compatibility resolver: `~/.fusion/agent/models.json`, or an existing
+legacy `~/.pi/agent/models.json` / `~/.pi/models.json`. Re-running onboarding
+preserves unrelated providers and unknown fields; malformed registry JSON stops
+without overwriting it.
+
 Auto-launch behavior: before interactive commands, Fusion auto-launches onboarding
 only when the central DB at `getDefaultCentralDbPath()` is missing and CLI
 onboarding has not already completed. Auto-launch is skipped for `serve`,

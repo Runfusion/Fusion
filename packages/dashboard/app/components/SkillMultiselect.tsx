@@ -81,6 +81,10 @@ export function SkillMultiselect({
   // Skills available to add (not yet selected)
   const availableSkills = skills.filter((s) => !value.includes(s.id));
 
+  /*
+  FNXC:AgentSettingsTheming 2026-07-23-13:01:
+  These state-specific classes are the stable theming surface for empty, loading, populated, all-selected, and disabled skill controls. Preserve them while maintaining the existing selection and duplicate-prevention behavior.
+  */
   return (
     <div className="skill-multiselect" data-testid="skill-multiselect">
       {label && (

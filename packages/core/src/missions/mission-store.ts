@@ -14,7 +14,7 @@
 import { EventEmitter } from "node:events";
 import type { Database } from "../db/db.js";
 import { fromJson, toJson, toJsonNullable } from "../db/db.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
 import type { Goal, GoalStatus } from "../goals/goal-types.js";
 import type {
   Mission,
@@ -51,6 +51,9 @@ import type {
   MilestoneValidationState,
   ValidatorRunStatus,
   FeatureLoopState,
+  ValidationDiagnostics,
+  MissionTransitionActor,
+  MissionUpdateOptions,
 } from "./mission-types.js";
 import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from "../duplicates/duplicate-guard.js";
 import { resolveEntryPointBranchAssignment } from "../branch/branch-assignment.js";
@@ -281,6 +284,8 @@ interface AssertionRow {
   type: string | null;
   orderIndex: number;
   sourceFeatureId: string | null;
+  scope: string | null;
+  origin: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -397,6 +402,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   ) {
     super();
     this.setMaxListeners(100);
+    this.ensureMissionContractAssertionColumns();
     // Initialize sequence counter from existing events to ensure uniqueness across restarts
     const lastEvent = this.db.prepare(`
       SELECT seq FROM mission_events ORDER BY seq DESC LIMIT 1
@@ -406,6 +412,42 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
   private _eventSeq = 0;
   private _milestonesMissingStructuredAssertions = new Set<string>();
+
+  /*
+  FNXC:MissionValidation 2026-07-23-20:30:
+  Sync-store compatibility must add assertion scope and provenance before any
+  assertion query or write. Pre-FN-8542 rows have no reliable scope signal, so
+  preserve them as independently authored feature assertions; milestone sync
+  may later add its separate provenance-identified derived assertion.
+  */
+  private ensureMissionContractAssertionColumns(): void {
+    const schemaStatement = this.db.prepare("PRAGMA table_info(mission_contract_assertions)") as unknown as {
+      all?: () => Array<{ name?: string }>;
+    };
+    // The production runtime uses AsyncMissionStore. Keep lightweight sync test
+    // doubles usable when they do not implement SQLite statement iteration.
+    const columns = schemaStatement.all?.();
+    if (!Array.isArray(columns) || columns.length === 0) return;
+
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("scope")) {
+      this.db.prepare("ALTER TABLE mission_contract_assertions ADD COLUMN scope TEXT NOT NULL DEFAULT 'feature'").run();
+    }
+    if (!names.has("origin")) {
+      this.db.prepare("ALTER TABLE mission_contract_assertions ADD COLUMN origin TEXT NOT NULL DEFAULT 'authored'").run();
+    }
+
+    this.db.prepare(`
+      UPDATE mission_contract_assertions
+      SET scope = 'feature'
+      WHERE scope IS NULL OR scope NOT IN ('feature', 'milestone')
+    `).run();
+    this.db.prepare(`
+      UPDATE mission_contract_assertions
+      SET origin = 'authored'
+      WHERE origin IS NULL OR origin NOT IN ('authored', 'imported', 'derived_milestone_acceptance')
+    `).run();
+  }
 
   // ── Row-to-Object Converters ───────────────────────────────────────
 
@@ -501,6 +543,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       id: row.id,
       milestoneId: row.milestoneId,
       sourceFeatureId: row.sourceFeatureId || undefined,
+      scope: normalizeMissionAssertionScope(row.scope),
+      origin: normalizeMissionAssertionOrigin(row.origin),
       title: row.title,
       assertion: row.assertion,
       status: row.status as import("./mission-types.js").MissionAssertionStatus,
@@ -1249,53 +1293,80 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The updated mission
    * @throws Error if mission not found
    */
-  updateMission(id: string, updates: Partial<Mission>): Mission {
-    const mission = this.getMission(id);
-    if (!mission) {
-      throw new Error(`Mission ${id} not found`);
-    }
-
-    const updated: Mission = {
-      ...mission,
-      ...updates,
-      id, // Prevent changing ID
-      createdAt: mission.createdAt, // Prevent changing creation time
-      updatedAt: new Date().toISOString(),
+  /**
+   * FNXC:MissionAutonomyAudit 2026-07-23-14:20:
+   * SQLite is a supported mission mutation surface. Keep status and autonomy
+   * changes, including their attributed before/after audit events, in one
+   * transaction so its contract matches the PostgreSQL store.
+   */
+  updateMission(id: string, updates: Partial<Mission>, options: MissionUpdateOptions = {}): Mission {
+    const actor: MissionTransitionActor = options.actor ?? {
+      type: "system",
+      id: "mission-store",
+      displayName: "Mission store",
+      source: "mission-store",
     };
+    const { updated, events } = this.db.transactionImmediate(() => {
+      const mission = this.getMission(id);
+      if (!mission) {
+        throw new Error(`Mission ${id} not found`);
+      }
 
-    this.db.prepare(`
-      UPDATE missions SET
-        title = ?,
-        description = ?,
-        status = ?,
-        interviewState = ?,
-        baseBranch = ?,
-        branchStrategy = ?,
-        autoMerge = ?,
-        autoAdvance = ?,
-        autopilotEnabled = ?,
-        autopilotState = ?,
-        lastAutopilotActivityAt = ?,
-        updatedAt = ?
-      WHERE id = ?
-    `).run(
-      updated.title,
-      updated.description ?? null,
-      updated.status,
-      updated.interviewState,
-      updated.baseBranch ?? null,
-      updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
-      updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0),
-      updated.autoAdvance ? 1 : 0,
-      updated.autopilotEnabled ? 1 : 0,
-      updated.autopilotState ?? "inactive",
-      updated.lastAutopilotActivityAt ?? null,
-      updated.updatedAt,
-      updated.id,
-    );
+      const updated: Mission = {
+        ...mission,
+        ...updates,
+        id, // Prevent changing ID
+        createdAt: mission.createdAt, // Prevent changing creation time
+        updatedAt: new Date().toISOString(),
+      };
+      const transitions: Array<{ eventType: MissionEventType; description: string; metadata: Record<string, unknown> }> = [];
+      if (mission.status !== updated.status) {
+        transitions.push({
+          eventType: "mission_status_changed",
+          description: `Mission status changed from ${mission.status} to ${updated.status}`,
+          metadata: { source: actor.source, actor, field: "status", from: mission.status, to: updated.status },
+        });
+      }
+      const wasAutopilotEnabled = mission.autopilotEnabled === true;
+      const isAutopilotEnabled = updated.autopilotEnabled === true;
+      if (wasAutopilotEnabled !== isAutopilotEnabled) {
+        transitions.push({
+          eventType: isAutopilotEnabled ? "autopilot_enabled" : "autopilot_disabled",
+          description: `Autopilot ${isAutopilotEnabled ? "enabled" : "disabled"}`,
+          metadata: { source: actor.source, actor, field: "autopilotEnabled", from: wasAutopilotEnabled, to: isAutopilotEnabled },
+        });
+      }
+
+      this.db.prepare(`
+        UPDATE missions SET
+          title = ?, description = ?, status = ?, interviewState = ?, baseBranch = ?, branchStrategy = ?,
+          autoMerge = ?, autoAdvance = ?, autopilotEnabled = ?, autopilotState = ?,
+          lastAutopilotActivityAt = ?, updatedAt = ? WHERE id = ?
+      `).run(
+        updated.title, updated.description ?? null, updated.status, updated.interviewState,
+        updated.baseBranch ?? null, updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
+        updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0), updated.autoAdvance ? 1 : 0,
+        updated.autopilotEnabled ? 1 : 0, updated.autopilotState ?? "inactive",
+        updated.lastAutopilotActivityAt ?? null, updated.updatedAt, updated.id,
+      );
+
+      const events = transitions.map((transition) => {
+        const event: MissionEvent = {
+          id: this.generateMissionEventId(), missionId: id, eventType: transition.eventType,
+          description: transition.description, metadata: transition.metadata,
+          timestamp: new Date().toISOString(), seq: ++this._eventSeq,
+        };
+        this.db.prepare(`INSERT INTO mission_events (id, missionId, eventType, description, metadata, timestamp, seq) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          event.id, event.missionId, event.eventType, event.description, toJsonNullable(event.metadata), event.timestamp, event.seq,
+        );
+        return event;
+      });
+      return { updated, events };
+    });
 
     this.db.bumpLastModified();
     this.emit("mission:updated", updated);
+    for (const event of events) this.emit("mission:event", event);
     return updated;
   }
 
@@ -1522,6 +1593,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("milestone:created", milestone);
+    this.synchronizeMilestoneAcceptanceAssertion(milestone);
     return milestone;
   }
 
@@ -1604,11 +1676,50 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     this.db.bumpLastModified();
     this.emit("milestone:updated", updated);
+    if (updates.acceptanceCriteria !== undefined) {
+      this.synchronizeMilestoneAcceptanceAssertion(updated);
+    }
 
     // Recompute mission status after milestone update
     this.recomputeMissionStatus(updated.missionId);
 
     return updated;
+  }
+
+  /*
+  FNXC:MissionValidation 2026-07-23-15:00:
+  Milestone prose is represented by exactly one durable derived assertion. Sync
+  storage selects it only by origin, preserving authored/imported rows even when
+  their text matches; blank prose retires only that derived contract.
+  */
+  private synchronizeMilestoneAcceptanceAssertion(milestone: Milestone): void {
+    const derived = this.listContractAssertions(milestone.id)
+      .filter((assertion) => assertion.origin === "derived_milestone_acceptance");
+    if (derived.length > 1) {
+      throw new Error(`Milestone ${milestone.id} has multiple derived acceptance assertions`);
+    }
+    const existing = derived[0];
+    const criteria = milestone.acceptanceCriteria?.trim();
+    if (!criteria) {
+      if (existing) this.deleteContractAssertion(existing.id);
+      return;
+    }
+    if (!existing) {
+      this.addContractAssertion(milestone.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        scope: "milestone",
+        origin: "derived_milestone_acceptance",
+      });
+      return;
+    }
+    if (existing.assertion !== criteria || existing.title !== "Milestone acceptance criteria") {
+      this.updateContractAssertion(existing.id, {
+        title: "Milestone acceptance criteria",
+        assertion: criteria,
+        status: "pending",
+      });
+    }
   }
 
   /**
@@ -2460,6 +2571,21 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       );
     }
 
+    if (feature.taskId && feature.taskId !== taskId) {
+      throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
+    }
+    const conflictingFeature = this.db
+      .prepare(`SELECT id FROM mission_features WHERE taskId = ? AND id != ? LIMIT 1`)
+      .get(taskId, featureId) as { id: string } | undefined;
+    if (conflictingFeature) {
+      throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+    }
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-12:00:
+    Keep sync test-contract parity with PostgreSQL: a defined feature's first
+    task claim is exclusive and must never overwrite another feature backlink.
+    */
     const linkage = this.resolveTaskLinkage(feature.sliceId);
 
     // When first linking (loopState is idle or falsy), transition to implementing
@@ -2978,6 +3104,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     failedAssertionIds: string[],
     failureReason?: string,
     title?: string,
+    diagnostics?: ValidationDiagnostics,
   ): MissionFeature {
     const sourceFeature = this.getFeature(sourceFeatureId);
     if (!sourceFeature) {
@@ -3039,9 +3166,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     // R6 — surface the observed-vs-expected reason to the remediation agent.
     const reasonText = failureReason?.trim();
-    const fixDescription = reasonText
-      ? `${sourceFeature.description ? `${sourceFeature.description}\n\n` : ""}## Verification failure detail\n${reasonText}`
-      : sourceFeature.description;
+    // FNXC:MissionValidationDiagnostics 2026-07-23-12:00: Generated remediation carries the same normalized cause as its event so operators and executors never need to reconstruct a validator failure.
+    const causeText = diagnostics ? renderValidationCause(diagnostics) : undefined;
+    const fixDescription = [sourceFeature.description, causeText ?? (reasonText ? `## Verification failure detail\n${reasonText}` : undefined)].filter(Boolean).join("\n\n") || undefined;
 
     const fixFeature: MissionFeature = {
       id: fixFeatureId,
@@ -3389,6 +3516,18 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(`Milestone ${milestoneId} not found`);
     }
 
+    const origin = input.origin ?? "authored";
+    if (origin === "derived_milestone_acceptance"
+      && this.listContractAssertions(milestoneId).some((assertion) => assertion.origin === "derived_milestone_acceptance")) {
+      /*
+      FNXC:MissionValidation 2026-07-23-17:20:
+      The sync store has no PostgreSQL partial index, so it must reject a second
+      canonical milestone-prose assertion before inserting it. Authored and
+      imported assertions remain intentionally non-unique.
+      */
+      throw new Error(`Milestone ${milestoneId} already has a derived milestone acceptance assertion`);
+    }
+
     const now = new Date().toISOString();
     const id = this.generateAssertionId();
 
@@ -3402,6 +3541,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       id,
       milestoneId,
       sourceFeatureId: input.sourceFeatureId,
+      scope: input.scope ?? "feature",
+      origin,
       title: input.title,
       assertion: input.assertion,
       status: input.status || "pending",
@@ -3412,8 +3553,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, type, orderIndex, sourceFeatureId, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, type, orderIndex, sourceFeatureId, scope, origin, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       assertion.id,
       assertion.milestoneId,
@@ -3423,6 +3564,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       assertion.type,
       assertion.orderIndex,
       assertion.sourceFeatureId ?? null,
+      assertion.scope ?? "feature",
+      assertion.origin ?? "authored",
       assertion.createdAt,
       assertion.updatedAt,
     );
@@ -3593,6 +3736,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     if (!assertion) {
       throw new Error(`Assertion ${assertionId} not found`);
     }
+    if (assertion.scope === "milestone") {
+      throw new Error(`Milestone-scoped assertion ${assertionId} cannot be linked to feature ${featureId}`);
+    }
 
     // Check if link already exists
     const existing = this.db.prepare(
@@ -3655,7 +3801,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const rows = this.db.prepare(`
       SELECT ca.* FROM mission_contract_assertions ca
       INNER JOIN mission_feature_assertions fa ON ca.id = fa.assertionId
-      WHERE fa.featureId = ?
+      WHERE fa.featureId = ? AND ca.scope != 'milestone'
       ORDER BY ca.orderIndex ASC, ca.createdAt ASC, ca.id ASC
     `).all(featureId);
     return (rows as unknown as AssertionRow[]).map((row) => this.rowToAssertion(row));
@@ -3745,10 +3891,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           break;
       }
 
-      // Check if assertion is linked to any feature
-      const linkedFeatures = this.listFeaturesForAssertion(assertion.id);
-      if (linkedFeatures.length === 0) {
-        unlinkedAssertions++;
+      // Milestone-scoped assertions are evaluated at rollup and deliberately
+      // require no feature coverage. Only feature assertions participate in
+      // the coverage invariant.
+      if (assertion.scope !== "milestone") {
+        const linkedFeatures = this.listFeaturesForAssertion(assertion.id);
+        if (linkedFeatures.length === 0) unlinkedAssertions++;
       }
     }
 

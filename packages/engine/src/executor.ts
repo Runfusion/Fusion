@@ -12413,7 +12413,10 @@ export class TaskExecutor {
             getSettings: async () => this.store.getSettings(),
           })
           : []),
-        ...createMissionTools(this.store),
+        ...createMissionTools(this.store, {
+          agentId: engineRunContext.agentId,
+          agentName: identityAgent?.name,
+        }),
         ...createIdeationTools(this.store),
         ...createGoalRetrievalTools(this.store, {
           runContext: {

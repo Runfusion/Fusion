@@ -378,8 +378,14 @@ Use GitHub import on mobile:
 
 1. Open the compact Header actions or bottom **More** sheet and select **Import from GitHub**.
    Expected outcome: the same import workflow opens in the mobile modal layout.
+<!--
+FNXC:GitHubImportDocs 2026-07-23-13:20:
+The mobile issue detail preserves the complete Close issue, Plan, Chat, and Import as task action set
+on one touch-safe row. Labels may wrap inside their own actions rather than being hidden or moved to
+an inaccessible second row.
+-->
 2. Choose the repository, issue/PR tab, candidate row, and detail action. For GitHub issues, choose **Import as task** for direct tracked creation or **Plan** to start Planning Mode with the issue context.
-   Expected outcome: direct import creates the board task with the same GitHub provenance/tracking metadata as the desktop/tablet **Import Tasks** view; Plan opens the Planning Mode interview without source-issue tracking.
+   Expected outcome: direct import creates the board task with the same GitHub provenance/tracking metadata as the desktop/tablet **Import Tasks** view; Plan opens the Planning Mode interview without source-issue tracking. When all GitHub issue actions are available, their full labels remain on one touch-safe action row.
 3. While a candidate detail sheet is open, use the platform Back gesture or control.
    Expected outcome: the first Back dismisses only the issue, pull request, or GitLab detail and returns to the import candidate list; a second Back dismisses the import form.
 
@@ -534,7 +540,8 @@ When an active Planning AI generation appears stuck, Planning Mode automatically
 <!-- FNXC:PlanningMode 2026-07-19-15:55: FN-8400 replaces the duplicate prompt-recovery controls with a focused three-pane interview; restarting remains a deliberate New session action. -->
 Use **New session** to restart planning with a different idea.
 
-Planning Mode uses the selected workflow's `planning` seam—the same triage template used for newly added tasks—as its quality bar, then layers the user-controlled interview adapter on top. An explicitly configured `planning-system` prompt override replaces that full system prompt.
+<!-- FNXC:PlanningMode 2026-07-23-11:50: Planning Mode must preserve a collaborative discovery identity instead of inheriting triage/workflow execution specifications. -->
+Planning Mode uses a dedicated collaborative system prompt. It investigates relevant repository and board context, explores assumptions and tradeoffs, considers decomposition choices without automatically creating child tasks, and sharpens concrete deliverables with observable acceptance criteria. This is separate from task triage and the executor-ready **PROMPT.md** generated after task creation. An explicitly configured nonblank `planning-system` prompt override replaces the complete dedicated system prompt; blank or absent values retain the default interview.
 
 <!-- FNXC:PlanningMode 2026-07-20-15:45: FN-8442 replaces the simultaneous three-pane interview with a sequential plan-review and question loop. -->
 Planning Mode is a single-surface sequence: enter an idea, wait while Fusion generates a concrete initial plan, then review that evolving work product before deciding whether clarification is needed. Plan review shows the title, description, explicit **What to change** and **Acceptance criteria** sections, and deliverables, plus model-suggested **Focus the next question** choices and **Write your own focus**. Choose **Refine** to ask one high-impact question or **Validate** to accept the current plan. Answering a question shows **Updating plan…** and returns to plan review rather than automatically starting another question. The active generation purpose and running plan are persisted, so refreshing or navigating away during generation restores the correct progress state and eventual review.
@@ -1133,6 +1140,8 @@ Features:
 - Agent list, live-agent, and detail task badges show the linked task ID with its current column when the task is non-terminal (for example `FN-6902 · Planning` or `FN-6902 · In Progress`). Terminal linked tasks are omitted, and unresolved column lookups render an explicit `Unresolved task` suffix so missing or deleted task links are not mistaken for healthy parked work.
 - First-run setup asks whether to create an optional project agent after project registration. The default template is **CEO**; users can choose another preset, use the AI interview when `experimentalFeatures.agentOnboarding` is enabled, or skip it. Fusion can still build tasks without an agent by starting temporary agents to plan, code, review, and merge task work.
 - Start, pause, stop, and trigger agent runs from the view and from detail panels
+- **Heartbeat controls** appear on every durable-agent List, Board, and Org chart card and in Agent detail settings. Heartbeats default to enabled unless `runtimeConfig.enabled` is explicitly `false`; changing this setting preserves the agent's other runtime configuration and does not pause, resume, or otherwise alter the agent lifecycle.
+- The Agents controls menu also provides **Enable all heartbeats** and **Disable all heartbeats** for every eligible durable agent in the current project, regardless of the active filter or layout. Each action confirms its target count, excludes ephemeral/task-worker agents, refreshes after completion, and reports skipped or failed updates rather than treating the batch as atomic.
 - In **Agent detail**, use the kebab **Bulk agent actions** button in the header utility cluster (next to **Refresh** and **Close**) to run project-wide lifecycle transitions for non-ephemeral agents in the current project — **Pause All Agents** targets agents in the `active` or `running` state, while **Resume All Agents** targets agents in the `paused` state only
 - In **Agent detail → Settings → Configuration**, the built-in-model picker includes a concrete **Thinking Level** selector; changing it autosaves to the agent's `runtimeConfig.thinkingLevel` alongside the provider/model choice.
 - Bulk menu items stay disabled when nothing is eligible and show an inline hint (`Loading eligible agents...`, `No active agents eligible`, `No paused agents eligible`, or the current eligible count such as `Pause 2 active/running agents`)
@@ -2172,8 +2181,10 @@ The merge-advance notice includes an explicit **Push to origin** action for the 
 - Standard push is `git push origin refs/heads/<branch>:refs/heads/<branch>` with no plain `--force` path.
 - Advanced mode enables opt-in `--force-with-lease=refs/heads/<branch>:<localSha>` only.
 - Non-fast-forward and lease-stale failures surface actionable messaging with Smart Pull.
-- Every attempt records `mutationType: "push:origin"` run-audit metadata: `integrationBranch`, `remote`, `localSha`, `remoteSha`, `aheadCount`, `behindCount`, `forceWithLease`, `outcome`, optional `stderrPreview`, and `durationMs`.
-- Push remains explicit user authorization only through dashboard HTTP routes (no scheduler/heartbeat auto-push).
+- Every dashboard Smart Push attempt records `mutationType: "push:origin"` run-audit metadata: `integrationBranch`, `remote`, `localSha`, `remoteSha`, `aheadCount`, `behindCount`, `forceWithLease`, `outcome`, optional `stderrPreview`, and `durationMs`.
+- Automatic post-merge pushes also emit `push:origin`; failed and shutdown-aborted attempts use `outcome: "failed"` and `outcome: "aborted"`, respectively, while leaving the already-finalized task done.
+- When post-merge push detects remote divergence, `push:recovery-branch` records the remote safety-ref lifecycle with IDs/outcomes-only metadata: `taskId`, `remote`, `recoveryBranch`, `sha`, and `outcome` (`success`, `failed`, `deleted`, or `delete-failed`). The `fusion/<task-id>-stranded` ref is deleted after a successful target push and retained after failure or abort.
+- Dashboard Push remains explicit user authorization only through dashboard HTTP routes; the separate `pushAfterMerge` project setting controls automatic post-merge pushes.
 
 ## Shared branch groups
 
@@ -2222,7 +2233,7 @@ If the endpoint is unavailable on the running dashboard build, the response will
 
 <!-- FNXC:PlanningMode 2026-07-20-01:00: Planning interviews are always infinite and user-validated. The former follow-up toggle cannot suppress questions or produce a final summary; the dashboard starts each interview in the full questioning mode. -->
 
-Planning Mode asks another focused question after every answer until you select **Validate plan**. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event and delivers a dashboard mailbox message that links the operator back to the Planning view. Mailbox delivery does not depend on ntfy configuration and is deduplicated by session/question across restarts.
+Planning Mode asks another focused question after every answer until you select **Validate plan**. For a vague, subjective, preference-style, or symptom-only opener, it first inspects the relevant repository surface and offers materially distinct, concrete directions plus **Other** instead of an abstract clarification question. Each selected direction, multi-selection, or verbatim Other response rebuilds the evolving plan around that accumulated decision; the next question then narrows the selected direction one consequential level further with concrete options. The provisional plan does not falsely commit to an unselected alternative, and only the operator can validate the finished plan. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event.
 
 ### Mobile footer quick actions
 
@@ -2254,3 +2265,7 @@ Productivity duration uses total agent-active time: planning (`cumulativePlannin
 ### Custom workflow column descriptions
 
 Custom workflow authors can add optional explanatory copy beneath each column name in the workflow editor. The description appears on selected, aggregate, and archived workflow board columns. Clearing it removes the custom metadata; columns then continue to use the standard lifecycle description when one exists.
+
+## Planning Mode contextual comments
+
+In plan review, select text inside the rendered plan and choose **Add comment to selection**. On mobile widths through 768px, the selection action appears in the bottom plan-action rail beside **Refine** and **Proceed with plan**; at 769px and wider it stays beside the selected plan content. Enter a suggestion to capture the selected quote and suggestion as a pending contextual comment. You can remove individual comments before choosing **Submit comments**; Fusion sends the ordered batch through the existing Planning Mode revision generation, so the agent revises the quoted areas while preserving unaffected plan content. A successful revised-plan update clears the batch; a failed submission retains it for retry.

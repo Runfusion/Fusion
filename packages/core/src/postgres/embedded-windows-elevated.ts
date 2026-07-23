@@ -22,7 +22,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** Handle returned by {@link startServerElevatedRestricted}; call stop() to kill it. */
 export interface ElevatedServerHandle {
@@ -234,6 +234,24 @@ function readTail(file: string, max: number): string {
   }
 }
 
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): the pgctl runner log used to live INSIDE the
+data directory (<dataDir>/.pgrunner). On an interrupted cluster, Windows crash
+recovery runs SyncDataDirectory(), which fsync-walks every file under the data
+dir — including Fusion's own live pgctl log, whose write handle the postmaster
+inherits from pg_ctl as its stderr. PostgreSQL's fsync open then fails with
+"could not open file ./.pgrunner/pgctl-<ts>.log: sharing violation … retrying
+for 30 seconds", adding a 30s stall to every crash recovery (reporter measured
+~1s recovery once the log was elsewhere). The runner dir is therefore a SIBLING
+of the data dir (.pgrunner-<dataDirName>), so recovery's data-dir walk can never
+touch it. The legacy in-dataDir .pgrunner directory is swept best-effort.
+*/
+export function resolvePgRunnerDir(dataDir: string): string {
+  const normalized = dataDir.replace(/[\\/]+$/, "");
+  return join(dirname(normalized), `.pgrunner-${basename(normalized)}`);
+}
+
 /**
  * FNXC:WindowsDesktopPackaging 2026-07-17-22:30:
  * Per-launch log file names + best-effort pruning replace the old truncate-on
@@ -243,8 +261,18 @@ function readTail(file: string, max: number): string {
  * Legacy wrapper artifacts (launch.bat/launch.ps1/wrapper.log/postgres.log)
  * are swept the same way.
  */
-function prepareRunDir(runDir: string): string {
+function prepareRunDir(runDir: string, legacyInDataDirRunDir?: string): string {
   mkdirSync(runDir, { recursive: true });
+  // FNXC:PostgresEmbedded 2026-07-23-10:40: sweep the pre-#2411-fix runner dir
+  // that lived inside the data dir; leaving it would keep the crash-recovery
+  // fsync sharing-violation stall alive for upgraded installs.
+  if (legacyInDataDirRunDir) {
+    try {
+      rmSync(legacyInDataDirRunDir, { recursive: true, force: true });
+    } catch {
+      // A file held open by a live process stays; it is swept on a later boot.
+    }
+  }
   const legacy = ["launch.bat", "launch.ps1", "wrapper.log", "postgres.log"];
   let entries: string[] = [];
   try {
@@ -264,6 +292,26 @@ function prepareRunDir(runDir: string): string {
   return join(runDir, `pgctl-${Date.now()}.log`);
 }
 
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): an interrupted cluster runs crash recovery
+before accepting queries, and any client that connects during that window is
+rejected with `FATAL: the database system is starting up` (SQLSTATE 57P03).
+Those lines are normal recovery progress, not a startup failure — treating them
+as fatal is what issued a fast-shutdown request ~0.2s into recovery and wedged
+the boot. Strip them (and their in-recovery sibling) before scanning the log
+tail for genuine startup errors.
+*/
+export function containsElevatedStartupFatal(tail: string): boolean {
+  const scan = tail
+    .split("\n")
+    .filter((line) => !/the database system is (starting up|in recovery)/i.test(line))
+    .join("\n");
+  return /\bFATAL\b|\bPANIC\b|could not (bind|start|create|access|connect|load)|not permitted|Permission denied|is not the owner/i.test(
+    scan,
+  );
+}
+
 /**
  * Start postgres.exe on an elevated Windows process via pg_ctl's restricted
  * token re-exec, and resolve once it is accepting connections. Rejects with a
@@ -280,8 +328,8 @@ export async function startServerElevatedRestricted(
   if (!existsSync(pgCtl)) {
     throw new Error(`embedded postgres: pg_ctl.exe not found at ${pgCtl}`);
   }
-  const runDir = join(opts.dataDir, ".pgrunner");
-  const logFile = prepareRunDir(runDir);
+  const runDir = resolvePgRunnerDir(opts.dataDir);
+  const logFile = prepareRunDir(runDir, join(opts.dataDir, ".pgrunner"));
   const safeFlags = sanitizePostgresFlags(opts.postgresFlags);
   const args = buildPgCtlStartArgs(
     opts.dataDir,
@@ -414,7 +462,7 @@ export async function startServerElevatedRestricted(
       lastSnapshot = tail;
       opts.onLog(`elevated diagnostic pg={${tail.slice(-400)}}`);
     }
-    if (/\bFATAL\b|\bPANIC\b|could not (bind|start|create|access|connect|load)|not permitted|Permission denied|is not the owner/i.test(tail)) {
+    if (containsElevatedStartupFatal(tail)) {
       killAll();
       throw new Error(
         `embedded postgres: elevated postgres reported a startup error before opening the port.\n${tail}`,

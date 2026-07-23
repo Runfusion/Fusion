@@ -73,6 +73,13 @@ describe("prompt-overrides", () => {
       expect(meta?.name).toBe("Executor Welcome");
     });
 
+    it("describes Planning Mode as a dedicated prompt with an explicit full replacement", () => {
+      const meta = getPromptKeyMetadata("planning-system");
+      expect(meta?.description).toMatch(/dedicated collaborative prompt/i);
+      expect(meta?.defaultContent).toMatch(/dedicated collaborative Planning Mode prompt/i);
+      expect(meta?.defaultContent).not.toMatch(/workflow planning seam|triage template/i);
+    });
+
     it("should return undefined for invalid keys", () => {
       expect(getPromptKeyMetadata("invalid-key" as PromptKey)).toBeUndefined();
       expect(getPromptKeyMetadata("" as PromptKey)).toBeUndefined();

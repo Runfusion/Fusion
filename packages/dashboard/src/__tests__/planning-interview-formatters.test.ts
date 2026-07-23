@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { PlanningQuestion } from "@fusion/core";
 import {
+  formatInitialPlanRequestForAgent,
+  formatInitialRunningPlanRequestForAgent,
   formatInterviewQA,
   formatResponseForAgent,
   normalizePlanningSummaryPayload,
@@ -56,6 +58,17 @@ describe("normalizePlanningSummaryPayload", () => {
 });
 
 describe("planning interview formatter Other answers", () => {
+  it("makes vague openers request inspected, unselected first-level directions", () => {
+    for (const prompt of [
+      formatInitialPlanRequestForAgent("I don't like the black background"),
+      formatInitialRunningPlanRequestForAgent("I don't like the black background"),
+    ]) {
+      expect(prompt).toMatch(/vague, subjective, preference-based, or symptom-only/i);
+      expect(prompt).toMatch(/inspect the relevant implementation surface|Inspect the relevant codebase/i);
+      expect(prompt).toMatch(/materially distinct first-level directions|materially distinct direction options/i);
+      expect(prompt).toMatch(/unselected direction/i);
+    }
+  });
   it("formats Other-only single-select answers for the planning agent and Q&A history", () => {
     const response = { scope: "other", _other: "Run discovery first" };
     const agent = formatResponseForAgent(singleSelectQuestion, response);
@@ -88,16 +101,24 @@ describe("planning interview formatter Other answers", () => {
     expect(qa).toContain("Need more context");
   });
 
-  it("reasserts the infinite, high-impact next-question contract with every answer", () => {
-    /*
-    FNXC:DashboardTests 2026-07-22-03:20:
-    Response key must match the question id (`scope`). Product copy asks for exactly one
-    next question and user-only proceed; keep the infinite-loop contract without pinning
-    retired "new/high-impact/does not repeat" phrasing.
-    */
+  it("makes a standard selected option the durable plan backbone before one deeper question", () => {
     const prompt = formatResponseForAgent(singleSelectQuestion, { scope: "mvp" });
 
-    expect(prompt).toMatch(/exactly one (?:new, high-impact |high-impact )?next question|exactly one next question/i);
+    expect(prompt).toContain("Selected: MVP");
+    expect(prompt).toMatch(/durable planning decision/i);
+    expect(prompt).toMatch(/selected direction is the central intended outcome/i);
+    expect(prompt).toMatch(/exactly one next question: a deeper concrete option-driven question/i);
     expect(prompt).toMatch(/only the user can (?:validate|proceed)/i);
+  });
+
+  it("carries every multi-select label and verbatim Other steering into the rebuilt plan contract", () => {
+    const prompt = formatResponseForAgent(multiSelectQuestion, {
+      priorities: ["speed", "quality"],
+      _other: "Keep the review checkpoint",
+    });
+
+    expect(prompt).toContain("Selected: Speed, Quality, Keep the review checkpoint (user's own answer)");
+    expect(prompt).toMatch(/Preserve free-text Other verbatim as steering/i);
+    expect(prompt).toMatch(/every accumulated decision/i);
   });
 });

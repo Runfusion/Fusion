@@ -11,6 +11,19 @@ describe("PlanningModeModal sequential layout", () => {
     expect(css).toContain("planning-summary-actions");
   });
 
+  it("captures selections only from the rendered plan and provides accessible comment controls", () => {
+    const component = readFileSync(resolve(process.cwd(), "app/components/PlanningModeModal.tsx"), "utf8");
+    expect(component).toContain("planDocumentRef.current");
+    expect(component).toContain("root.contains(selection.anchorNode)");
+    expect(component).toContain("root.contains(selection.focusNode)");
+    expect(component).toContain("Add comment to selection");
+    expect(component).toContain("planning-add-comment--document");
+    expect(component).toContain("planning-add-comment--mobile");
+    expect(component).toContain("mobileAddCommentTriggerRef");
+    expect(component).toContain("contextualComments");
+    expect(component).toContain("setContextualComments([])");
+  });
+
   it("keeps plan actions in a non-scrolling sibling footer with equal mobile columns", () => {
     const css = readFileSync(resolve(process.cwd(), "app/components/PlanningModeModal.css"), "utf8");
     expect(css).toMatch(/\.planning-actions\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
@@ -18,5 +31,7 @@ describe("PlanningModeModal sequential layout", () => {
     expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-plan-actions\s*\{[^}]*display\s*:\s*grid\s*;[^}]*grid-template-columns\s*:\s*repeat\(2, minmax\(0, 1fr\)\)\s*;[^}]*gap\s*:\s*var\(--space-md\)\s*;[^}]*calc\(var\(--space-sm\) \+ env\(safe-area-inset-bottom\)\)/);
     expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-plan-actions \.btn\s*\{[^}]*width\s*:\s*100%\s*;/);
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-plan-actions\s*\{[^}]*gap\s*:\s*var\(--space-md\)\s*;[^}]*calc\(var\(--space-sm\) \+ env\(safe-area-inset-bottom\)\)/);
+    expect(css).toMatch(/\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*none\s*;/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-add-comment--document\s*\{[^}]*display\s*:\s*none\s*;[\s\S]*?\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*inline-flex\s*;/);
   });
 });

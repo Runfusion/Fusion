@@ -38,7 +38,7 @@ import type {
 import {
   ResearchOrchestrator,
   type ResearchStepRunnerApi,
-} from "../../../../engine/src/research-orchestrator.js";
+} from "../../../../engine/src/research/research-orchestrator.js";
 
 const pgTest = pgDescribe;
 

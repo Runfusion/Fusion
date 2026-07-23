@@ -3,9 +3,9 @@
 Fusion ideation is a project-scoped, bounded operation rather than a free-form document.
 
 1. Start a session with `fn_ideation_start` or Command Center → **Ideation**.
-2. Record alternatives with `fn_ideation_diverge`; each candidate records an `agent`, `human`, or `research` origin and optional source reference.
-3. Inspect sessions with `fn_ideation_list` and `fn_ideation_show`.
-4. Converge an explicit candidate using `fn_ideation_converge` or the Command Center action.
+2. Record alternatives with `fn_ideation_diverge`; each candidate records an `agent`, `human`, or `research` origin and optional source reference. Its response lists every newly assigned candidate ID with that provenance and full content.
+3. Inspect sessions with `fn_ideation_list` and `fn_ideation_show`. Show lists every persisted candidate's ID, origin, source-reference state (`none` when omitted), and full content; it explicitly reports when a session has no candidates.
+4. Copy a candidate ID from diverge or show directly into `fn_ideation_converge` (or use the Command Center action) to converge that explicit candidate.
 
 Convergence creates a canonical Mission by default, or attaches to a supplied `targetMissionId`. The selected candidate and session persist the Mission (and optional Feature) linkage. It never writes an orphan ideation document as the handoff.
 

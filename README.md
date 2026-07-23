@@ -192,7 +192,7 @@ Here is the same fleet re-skinned into the **Ember** theme (dark graphite with a
 </tr>
 </table>
 
-Import a team and every agent shows up here — role, reports-to chain, heartbeat, and token share. The **Agents** roster in Ember:
+Import a team and every agent shows up here — role, reports-to chain, heartbeat, and token share. Each agent card's heartbeat dropdown shows **Disabled** when scheduling is persisted off; choose Disabled to pause heartbeats while retaining its cadence, or select an interval to re-enable them. The **Agents** roster in Ember:
 
 <div align="center">
   <img src="./demo/assets/agents-ember.png" alt="Fusion Agents view in the Ember theme" width="900" />
@@ -518,7 +518,7 @@ npx companies.sh add paperclipai/companies/gstack
 - **Git Worktree Isolation** — Each task runs in its own worktree (`fusion/{task-id}` branch)
 - **Selectable workflows** — Pick Coding, Quick fix, Review-heavy, Stepwise coding, plugin-gated Compound Engineering, custom workflows, or PR lifecycle fragments where appropriate ([overview](#workflow-overview); [Workflow Steps](./docs/workflow-steps.md#workflow-overview))
 - **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
-- **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational), plus workflow-declared optional steps such as opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
+- **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational), plus workflow-declared optional steps such as opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps-optional-group-nodes)
 - **Workflow-native policy** — Fast-mode planning (`leanPlanning` / `autoApproveSpec`), typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings, not hard-coded engine constants ([Settings Reference](./docs/settings-reference.md#workflow-native-triage-policy-settings); [workflow settings](./docs/settings-reference.md#workflow-settings))
 - **Planner oversight** — Workflow-native `plannerOversightLevel` (`off`/`observe`/`steer`/`autonomous`), with an optional per-task override and a separate notification-verbosity setting; merge/PR progression and destructive actions always require explicit human confirmation, even at `autonomous` ([overview](#planner-oversight); [Settings Reference](./docs/settings-reference.md#workflow-settings))
 - **GitHub + PR lifecycle** — Import issues with optional translation and screenshot attachments, skip previously imported issues even after edits or repository casing changes, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled

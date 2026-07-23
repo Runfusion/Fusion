@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { join, sep } from "node:path";
 import { DEFAULT_EMBEDDED_POSTGRES_FLAGS } from "../../postgres/embedded-lifecycle.js";
 import {
   buildPgCtlOptionsString,
   buildPgCtlStartArgs,
+  containsElevatedStartupFatal,
+  resolvePgRunnerDir,
   sanitizePostgresFlags,
   withWindowsNativeBinPath,
   WindowsPostgresFatalDetector,
@@ -80,6 +83,68 @@ describe("Windows child PATH hardening", () => {
   it("leaves non-Windows launch environments untouched", () => {
     const environment = { PATH: "/usr/bin", KEEP: "yes" };
     expect(withWindowsNativeBinPath(environment, "/runtime/native", "linux")).toBe(environment);
+  });
+});
+
+/*
+ * FNXC:PostgresEmbedded 2026-07-23-10:40:
+ * Issue #2411 (beta.4 follow-up): crash recovery on an interrupted cluster
+ * fsync-walks the ENTIRE data directory (SyncDataDirectory), so Fusion's pgctl
+ * runner log — whose write handle the postmaster inherits as its stderr — must
+ * live OUTSIDE the data dir. Keeping it inside produced the field-reported
+ * "could not open file ./.pgrunner/pgctl-<ts>.log: sharing violation …
+ * retrying for 30 seconds" stall on every crash recovery.
+ */
+describe("pg runner dir placement (issue #2411)", () => {
+  it("places the runner dir as a SIBLING of the data dir, never inside it", () => {
+    const dataDir = join("C:\\Users\\op", ".fusion", "embedded-postgres", "default");
+    const runDir = resolvePgRunnerDir(dataDir);
+
+    expect(runDir).toBe(join("C:\\Users\\op", ".fusion", "embedded-postgres", ".pgrunner-default"));
+    expect(runDir.startsWith(dataDir + sep)).toBe(false);
+  });
+
+  it("derives distinct sibling dirs for distinct data dirs (test clusters do not collide)", () => {
+    expect(resolvePgRunnerDir(join("/g", "embedded-postgres", "default"))).not.toBe(
+      resolvePgRunnerDir(join("/g", "embedded-postgres", "test")),
+    );
+  });
+
+  it("tolerates a trailing path separator on the data dir", () => {
+    expect(resolvePgRunnerDir(join("/g", "embedded-postgres", "default") + sep)).toBe(
+      join("/g", "embedded-postgres", ".pgrunner-default"),
+    );
+  });
+});
+
+/*
+ * FNXC:PostgresEmbedded 2026-07-23-10:40:
+ * Issue #2411 (beta.4 follow-up): during crash recovery PostgreSQL listens but
+ * rejects clients with `FATAL: the database system is starting up` (57P03).
+ * The readiness poll's log scan treated that normal recovery progress as a
+ * startup failure and issued a fast-shutdown request ~0.2s into recovery —
+ * the self-shutdown race the reporter captured. Recovery-rejection lines must
+ * be ignored while genuine FATAL startup errors still trip the scan.
+ */
+describe("elevated startup fatal scan (issue #2411)", () => {
+  it("ignores crash-recovery client rejections", () => {
+    expect(
+      containsElevatedStartupFatal(
+        "LOG:  database system was interrupted; last known up at 04:38:04\n" +
+          "FATAL:  the database system is starting up\n" +
+          "FATAL:  the database system is in recovery mode\n",
+      ),
+    ).toBe(false);
+  });
+
+  it("still trips on a genuine FATAL startup error", () => {
+    expect(
+      containsElevatedStartupFatal(
+        "FATAL:  the database system is starting up\n" +
+          'FATAL:  could not bind IPv4 address "127.0.0.1": Address already in use\n',
+      ),
+    ).toBe(true);
+    expect(containsElevatedStartupFatal("PANIC:  could not locate a valid checkpoint record\n")).toBe(true);
   });
 });
 

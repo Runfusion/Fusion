@@ -305,10 +305,33 @@ class JoinedInstanceUnreachableError extends Error {
   }
 }
 
-/** Matches a TCP-level connection-refused failure (ECONNREFUSED / "connect ECONNREFUSED"). */
+/**
+ * Matches a joined instance that is not (yet) queryable: TCP-level
+ * connection-refused, or PostgreSQL's 57P03 "cannot connect now" rejection.
+ *
+ * FNXC:PostgresEmbedded 2026-07-23-10:40:
+ * Issue #2411 (beta.4 follow-up): a joined instance running crash recovery on
+ * an interrupted cluster LISTENS but rejects every connection with FATAL "the
+ * database system is starting up" (57P03) until redo completes. That is the
+ * same "not yet accepting connections" startup race as the ECONNREFUSED bind
+ * window and must be retried, not surfaced as a hard schema-backend failure.
+ */
 function isConnectionRefusedError(chainText: string): boolean {
-  return /ECONNREFUSED/i.test(chainText);
+  return (
+    /ECONNREFUSED/i.test(chainText) ||
+    /the database system is (starting up|in recovery|shutting down)/i.test(chainText)
+  );
 }
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): one 500ms retry was not enough to outlast crash
+recovery on an interrupted cluster — the boot gave up while redo was still
+running and parked the dashboard in a manual-restart dead shell. Back off across
+a bounded window (~15s of delay) so a recovering joined instance is given time
+to finish; a genuinely dead target still fails, just slightly later.
+*/
+const JOINED_INSTANCE_RETRY_DELAYS_MS: readonly number[] = [500, 2_000, 4_000, 8_000];
 
 /** Matches PostgreSQL's encoding-conversion failure raised by a non-UTF-8 cluster. */
 export function isEncodingConversionError(chainText: string): boolean {
@@ -354,26 +377,35 @@ async function bootSchemaBackend(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
-  try {
-    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
-  } catch (error) {
-    if (error instanceof JoinedInstanceUnreachableError) {
+  let joinedRetryAttempt = 0;
+  for (;;) {
+    try {
+      return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+    } catch (error) {
+      if (
+        error instanceof JoinedInstanceUnreachableError &&
+        joinedRetryAttempt < JOINED_INSTANCE_RETRY_DELAYS_MS.length
+      ) {
+        const delayMs = JOINED_INSTANCE_RETRY_DELAYS_MS[joinedRetryAttempt];
+        joinedRetryAttempt += 1;
+        log.warn(
+          "startup-factory: joined embedded postgres instance was not yet accepting connections " +
+            "(startup race with the true owner's TCP bind, or crash recovery still running — " +
+            "see FNXC:PostgresStartupRace 2026-07-20-22:10 and FNXC:PostgresEmbedded 2026-07-23-10:40). " +
+            `Retrying in ${delayMs}ms (attempt ${joinedRetryAttempt}/${JOINED_INSTANCE_RETRY_DELAYS_MS.length}).`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
       log.warn(
-        "startup-factory: joined embedded postgres instance was not yet accepting connections " +
-          "(startup race with the true owner's TCP bind — see FNXC:PostgresStartupRace 2026-07-20-22:10). " +
-          "Retrying once after a short delay.",
+        `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
+          `encoding by an earlier version and never completed a boot (issue #2286). ` +
+          `Re-initializing it as UTF-8 and retrying once.`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      rmSync(error.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       return await bootSchemaBackendOnce(options, bypassProjectIsolation);
     }
-    if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
-    log.warn(
-      `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
-        `encoding by an earlier version and never completed a boot (issue #2286). ` +
-        `Re-initializing it as UTF-8 and retrying once.`,
-    );
-    rmSync(error.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
   }
 }
 

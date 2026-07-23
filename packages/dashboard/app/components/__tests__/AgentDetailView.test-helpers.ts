@@ -53,6 +53,8 @@ vi.mock("../../api", () => ({
   fetchAgent: (...args: Parameters<ApiModule["fetchAgent"]>) => mockFetchAgent(...args),
   fetchAgents: (...args: Parameters<ApiModule["fetchAgents"]>) => mockFetchAgents(...args),
   updateAgent: (...args: Parameters<ApiModule["updateAgent"]>) => mockUpdateAgent(...args),
+  isAgentHeartbeatEnabled: (agent: { runtimeConfig?: { enabled?: boolean } }) => agent.runtimeConfig?.enabled !== false,
+  withAgentHeartbeatEnabled: (agent: { runtimeConfig?: Record<string, unknown> }, enabled: boolean) => ({ ...(agent.runtimeConfig ?? {}), enabled }),
   updateAgentState: (...args: Parameters<ApiModule["updateAgentState"]>) => mockUpdateAgentState(...args),
   deleteAgent: (...args: Parameters<ApiModule["deleteAgent"]>) => mockDeleteAgent(...args),
   fetchAgentLogs: vi.fn(),

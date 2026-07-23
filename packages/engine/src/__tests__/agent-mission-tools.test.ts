@@ -37,6 +37,74 @@ describe("createMissionTools", () => {
     expect(result.details).toMatchObject({ feature: { id: "F-1" }, reused: false });
   });
 
+  it("renders populated hierarchy IDs, statuses, task links, and bounded gate text", async () => {
+    const longAcceptanceCriteria = "a".repeat(241);
+    const mission = {
+      id: "M-1", title: "Mission", status: "active", description: "Mission description", baseBranch: "main",
+      createdAt: "2026-07-23T00:00:00.000Z", updatedAt: "2026-07-23T01:00:00.000Z", eventCount: 4,
+      linkedGoals: [{ id: "G-1", title: "Goal", status: "active" }],
+      milestones: [
+        {
+          id: "MS-1", title: "Repeated", status: "active", acceptanceCriteria: longAcceptanceCriteria,
+          slices: [
+            {
+              id: "SL-1", title: "Repeated", status: "active", activatedAt: "2026-07-23T02:00:00.000Z", verification: "Run focused test",
+              features: [
+                { id: "F-1", title: "Repeated", status: "triaged", taskId: "FN-1", acceptanceCriteria: longAcceptanceCriteria },
+                { id: "F-2", title: "Repeated", status: "done" },
+              ],
+            },
+          ],
+        },
+        { id: "MS-2", title: "Second", status: "pending", slices: [] },
+      ],
+    };
+    const getMissionWithHierarchy = vi.fn().mockResolvedValue(mission);
+    const store = { getMissionStore: () => ({ getMissionWithHierarchy }) } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_show")!;
+    const result = await tool.execute("call", { id: mission.id });
+    const text = result.content[0].text;
+
+    expect(getMissionWithHierarchy).toHaveBeenCalledWith(mission.id);
+    expect(result.details).toEqual({ mission });
+    expect(text).toContain("Status: active");
+    expect(text).toContain("MS-1: Repeated (active)");
+    expect(text).toContain("SL-1: Repeated (active)");
+    expect(text).toContain("F-1: Repeated (triaged) → FN-1");
+    expect(text).toContain("F-2: Repeated (done)");
+    expect(text).toContain("MS-2: Second (pending)");
+    expect(text).toContain("No slices.");
+    expect(text).toContain("… (truncated, 241 chars)");
+    expect(text).toContain("F-1: Repeated (triaged) → FN-1");
+    expect(text.indexOf("MS-1:")).toBeLessThan(text.indexOf("SL-1:"));
+    expect(text.indexOf("SL-1:")).toBeLessThan(text.indexOf("F-1:"));
+    expect(text).not.toBe(`${mission.id}: ${mission.title}`);
+  });
+
+  it("renders explicit empty hierarchy states without optional metadata", async () => {
+    const missionWithoutMilestones = {
+      id: "M-empty", title: "Empty", status: "planning", createdAt: "2026-07-23T00:00:00.000Z", updatedAt: "2026-07-23T00:00:00.000Z", milestones: [],
+    };
+    const missionWithEmptyChildren = {
+      id: "M-children", title: "Children", status: "planning", createdAt: "2026-07-23T00:00:00.000Z", updatedAt: "2026-07-23T00:00:00.000Z",
+      milestones: [{ id: "MS-empty", title: "Empty", status: "pending", slices: [{ id: "SL-empty", title: "Empty", status: "pending", features: [] }] }],
+    };
+    const getMissionWithHierarchy = vi.fn()
+      .mockResolvedValueOnce(missionWithoutMilestones)
+      .mockResolvedValueOnce(missionWithEmptyChildren);
+    const store = { getMissionStore: () => ({ getMissionWithHierarchy }) } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_show")!;
+
+    const emptyResult = await tool.execute("call", { id: missionWithoutMilestones.id });
+    const childrenResult = await tool.execute("call", { id: missionWithEmptyChildren.id });
+
+    expect(emptyResult.content[0].text).toContain("No linked goals.");
+    expect(emptyResult.content[0].text).toContain("No milestones yet.");
+    expect(childrenResult.content[0].text).toContain("MS-empty: Empty (pending)");
+    expect(childrenResult.content[0].text).toContain("SL-empty: Empty (pending)");
+    expect(childrenResult.content[0].text).toContain("No features.");
+  });
+
   it("returns a structured error for missing hierarchy records", async () => {
     const store = { getMissionStore: () => ({ getMissionWithHierarchy: vi.fn().mockResolvedValue(undefined) }) } as never;
     const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_show")!;
@@ -50,6 +118,21 @@ describe("createMissionTools", () => {
     const store = { getMissionStore: () => ({ updateMission }) } as never;
     const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_update")!;
     await tool.execute("call", { id: "M-1", description: "   " });
-    expect(updateMission).toHaveBeenCalledWith("M-1", { description: "" });
+    expect(updateMission).toHaveBeenCalledWith("M-1", { description: "" }, {
+      actor: { type: "system", id: "engine-mission-tools", displayName: "Engine mission tools", source: "engine-agent-tool" },
+    });
+  });
+
+  it("forwards the runtime agent identity into mission mutations", async () => {
+    const updateMission = vi.fn().mockResolvedValue({ id: "M-1", title: "Mission" });
+    const store = { getMissionStore: () => ({ updateMission }) } as never;
+    const tool = createMissionTools(store, { agentId: "agent-7", agentName: "Planner" })
+      .find((candidate) => candidate.name === "fn_mission_update")!;
+
+    await tool.execute("call", { id: "M-1", title: "Updated mission" });
+
+    expect(updateMission).toHaveBeenCalledWith("M-1", { title: "Updated mission" }, {
+      actor: { type: "agent", id: "agent-7", displayName: "Planner", source: "engine-agent-tool" },
+    });
   });
 });

@@ -1,5 +1,52 @@
 # @runfusion/fusion
 
+## 0.73.0-beta.4
+
+### Minor Changes
+
+- 016221c: summary: Agent chat now investigates the live codebase with tools before answering architecture and code questions.
+  category: feature
+  dev: Adds CHAT_CODEBASE_ACCURACY_GUIDANCE and appends it in direct and room chat system-prompt assembly; response-length policy yields to path/symbol evidence on repo questions. Mailbox long-form path is conditional when fn_send_message is registered; find is bounded to the project checkout.
+- de5d446: summary: Add optional explanatory descriptions to custom workflow board columns.
+  category: feature
+  dev: Workflow IR column descriptions are projected to selected, aggregate, and archived boards.
+- 64661c3: summary: Add stable dashboard theme tokens and plugin overlay layering with --fusion-max-z.
+  category: feature
+  dev: `--fusion-max-z` is synced from `floatingWindowStack.ts` with an 11001 floor; `#plugin-overlay-root` is a click-through fixed mount point; the contract is documented and guarded by a docs-to-CSS sync test.
+
+### Patch Changes
+
+- a224c11: summary: Fix the Chat View "Latest" button shifting sideways out from under the cursor when clicked.
+  category: fix
+  dev: `.chat-jump-to-latest:active` now composes `translateX(-50%) scale(0.97)` so the global `.btn:active` transform no longer replaces the centering transform.
+- adf51e2: summary: Plugin API routes now work for plugins enabled after startup or enabled only in a non-launch project.
+  category: fix
+  dev: Plugin-defined HTTP routes are dispatched per request through the shared project-scoped PluginLoader resolution (routes/context.ts getProjectPluginLoader) instead of a boot-time snapshot of the launch project's loader. Fixes Compound Engineering "Failed to load sessions/artifacts: Not found" persisting on v0.73.0-beta.3.
+- 96a9da7: summary: Notify operators when a task is terminally blocked or exhausts automated recovery.
+  category: fix
+  dev: Adds deduped task-wedge provider and dashboard mailbox delivery.
+- 0e2aa49: summary: Hide uninstalled runtime pages from Settings integrations.
+  category: fix
+  dev: Settings refreshes installed runtime navigation from plugin lifecycle updates while keeping disabled installed runtimes visible.
+- 059b954: summary: Prevent plugin toggles from reinstalling uninstalled runtimes.
+  category: fix
+  dev: FN-8521 / Runfusion/Fusion#2409 separates install from project-scoped enablement.
+- e16204d: summary: Prevent Windows embedded PostgreSQL log contention and recover once from DLL initialization crashes.
+  category: fix
+  dev: Harden native PATH, runner-log observation, and bounded owned-cluster restart behavior.
+- 4ef94e6: summary: Stop completed PostgreSQL migrations from re-scanning retained SQLite backups at startup.
+  category: fix
+  dev: Core, central, and plugin sources now honor their independent completion markers before SQLite access.
+- 25cd42d: summary: Make imported task links in Stats follow the active dashboard theme.
+  category: fix
+  dev: The shared Stats provenance link now uses the --accent token.
+- e5d6be4: summary: Lower the embedded PostgreSQL default connection cap to 150 on Windows to prevent 0xC0000142 backend crashes.
+  category: fix
+  dev: Issue #2411 — embeddedPostgresMaxConnections is now schema-unset; resolveEmbeddedMaxConnections picks win32 150 / else 500, explicit settings still clamp to [32, 2000].
+- fc4f5aa: summary: Fix Planning Mode duplicating generations and "AI returned no valid JSON" errors after leaving and returning mid-run.
+  category: fix
+  dev: Planning turns are admitted through a synchronous per-session reservation across submitResponse/retrySession/startExistingSession and the initial turn, so a racing entry is rejected instead of displacing the in-flight generation and disposing its agent mid-prompt. Duplicate starts of a generating session are no-ops, the client auto-retry budget survives view remounts (module-scoped per-session map), and SSE reconnects rebuild thinking output from a full-turn replay buffer (2000 events) instead of appending onto existing output. Planning prompts also route through the engine's promptWithFallback so context-window overflows recover via compaction instead of erroring the session.
+
 ## 0.73.0-beta.3
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/cursor-runtime",
-  "version": "0.1.50-beta.3",
+  "version": "0.1.50-beta.4",
   "type": "module",
   "description": "Cursor CLI runtime plugin for Fusion",
   "keywords": [

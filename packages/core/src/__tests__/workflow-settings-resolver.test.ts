@@ -5,6 +5,7 @@ import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import {
   resolveEffectiveSettings,
   resolveEffectiveSettingsById,
+  resolveEffectiveSettingsDetailedById,
   resolveOptionalReviewRevisionBudget,
   resolveEffectivePlannerOversightLevel,
   type WorkflowSettingsResolverStore,
@@ -438,6 +439,78 @@ describe("resolveEffectiveSettings (per-task)", () => {
     const eff = await resolveEffectiveSettings(store, { id: "t1" });
     // The stored 5_000 is unreachable because the project key couldn't be resolved.
     expect(eff.workflowStepTimeoutMs).toBe(900_000);
+  });
+});
+
+describe("resolveEffectiveSettingsDetailedById", () => {
+  it("keeps the default workflow's stored planning lane as the project baseline", async () => {
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      values: {
+        "builtin:coding::proj-9": {
+          planningProvider: "project-provider",
+          planningModelId: "project-model",
+        },
+      },
+    });
+
+    const result = await resolveEffectiveSettingsDetailedById(store, "builtin:coding", "proj-9");
+    expect(result.effective).toMatchObject({
+      planningProvider: "project-provider",
+      planningModelId: "project-model",
+    });
+    expect(result.effective.selectedWorkflowModelLanes).toBeUndefined();
+  });
+
+  it("keeps a distinct workflow pair separate from the project baseline", async () => {
+    const customWithPlanningLane: WorkflowIr = {
+      ...CUSTOM_NO_SETTINGS,
+      settings: BUILTIN_WORKFLOW_SETTINGS.filter((setting) =>
+        ["planningProvider", "planningModelId"].includes(setting.id)),
+    };
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      defs: { "wf-custom": { ir: customWithPlanningLane } },
+      values: {
+        "builtin:coding::proj-9": {
+          planningProvider: "project-provider",
+          planningModelId: "project-model",
+        },
+        "wf-custom::proj-9": {
+          planningProvider: "workflow-provider",
+          planningModelId: "workflow-model",
+        },
+      },
+    });
+
+    const result = await resolveEffectiveSettingsDetailedById(store, "wf-custom", "proj-9");
+    expect(result.effective).toMatchObject({
+      planningProvider: "project-provider",
+      planningModelId: "project-model",
+      selectedWorkflowModelLanes: {
+        planningProvider: "workflow-provider",
+        planningModelId: "workflow-model",
+      },
+    });
+  });
+
+  it("keeps blank and incomplete selected workflow lanes inheritable", async () => {
+    const customWithPlanningLane: WorkflowIr = {
+      ...CUSTOM_NO_SETTINGS,
+      settings: BUILTIN_WORKFLOW_SETTINGS.filter((setting) =>
+        ["planningProvider", "planningModelId"].includes(setting.id)),
+    };
+    const store = makeStore({
+      defaultWorkflowId: "builtin:coding",
+      defs: { "wf-custom": { ir: customWithPlanningLane } },
+      values: {
+        "wf-custom::proj-9": { planningProvider: "workflow-provider" },
+      },
+    });
+
+    const result = await resolveEffectiveSettingsDetailedById(store, "wf-custom", "proj-9");
+    expect(result.effective.selectedWorkflowModelLanes).toEqual({ planningProvider: "workflow-provider" });
+    expect(result.effective.planningModelId).toBeUndefined();
   });
 });
 

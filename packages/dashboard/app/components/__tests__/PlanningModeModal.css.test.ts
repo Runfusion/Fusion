@@ -166,6 +166,33 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expectSomeRule(tabletCss, ".planning-plan-actions", /flex-wrap\s*:\s*nowrap\s*;/);
   });
 
+  it("shows exactly one contextual comment trigger in the mobile plan footer", () => {
+    const css = loadPlanningCss();
+    const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
+
+    expect(findRule(css, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*none\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*inline-flex\s*;/);
+    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/margin-top\s*:\s*0\s*;/);
+  });
+
+  it("pins only the plan-selection rail while its document scrolls in portrait and width-independent short landscape", () => {
+    const css = loadPlanningCss();
+    const responsiveCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");
+    const boundedPaneRule = findRule(responsiveCss, ".planning-plan-review,\n  .planning-plan-review > .planning-plan-pane");
+    const shrinkablePaneRules = findRules(responsiveCss, ".planning-plan-review > .planning-plan-pane");
+    const scrollOwnerRule = findRule(responsiveCss, ".planning-plan-pane > .planning-plan-scroll");
+    const pinnedActionsRule = findRule(responsiveCss, ".planning-plan-pane > .planning-plan-actions");
+
+    expect(boundedPaneRule).toMatch(/min-height\s*:\s*0\s*;/);
+    expect(shrinkablePaneRules.some((rule) => /flex\s*:\s*1 1 0\s*;/.test(rule))).toBe(true);
+    expect(scrollOwnerRule).toMatch(/flex\s*:\s*1 1 0\s*;/);
+    expect(scrollOwnerRule).toMatch(/min-height\s*:\s*0\s*;/);
+    expect(scrollOwnerRule).toMatch(/overflow-y\s*:\s*auto\s*;/);
+    expect(pinnedActionsRule).toMatch(/flex\s*:\s*0 0 auto\s*;/);
+    expect(responsiveCss).not.toMatch(/\.planning-actions\s*>\s*\.planning-plan-actions/);
+  });
+
   it("keeps the mobile sessions list scrolling above the bottom-pinned New session footer", () => {
     const css = loadPlanningCss();
     const mobileShellCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");

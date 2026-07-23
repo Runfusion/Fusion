@@ -608,10 +608,16 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
   box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--todo);
 }
 
+/*
+FNXC:AgentsView 2026-07-23-12:26:
+Agent-card identity and every visible status badge must remain in separate layout allocations at desktop, split-sidebar, and mobile widths. Let both regions shrink and wrap, while identity text breaks inside its own allocation, so long names or populated health/role/skill badges never paint over one another.
+*/
 .agent-card-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 
@@ -619,6 +625,8 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
   display: flex;
   align-items: center;
   gap: var(--space-md);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .agent-info--clickable {
@@ -680,6 +688,7 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
 .agent-meta {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .agent-name {
@@ -692,12 +701,27 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
   font-family: var(--font-mono);
 }
 
+.agent-name,
+.agent-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .agent-badges {
   display: flex;
+  flex: 0 1 auto;
   gap: var(--space-sm);
   flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
   justify-content: flex-end;
+}
+
+.agent-badges .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .agent-approval-badge {
@@ -712,6 +736,7 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
   max-width: min(100%, calc(var(--space-2xl) * 6));
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-card-chevron {
@@ -1210,6 +1235,17 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
   font-size: var(--space-md);
 }
 
+/* FNXC:AgentHeartbeatControls 2026-07-23-13:15: Keep the org action outside the card's button-like detail target so keyboard users never encounter nested interactive controls. */
+.org-chart-node__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-xs);
+}
+
+.agent-heartbeat-toggle {
+  min-height: var(--touch-target-min-size);
+}
+
 .org-chart-children {
   position: relative;
   display: flex;
@@ -1581,5 +1617,18 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     padding: var(--space-md) var(--space-md) calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+
+  .agents-view .agent-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agents-view .agent-info {
+    min-width: 0;
+  }
+
+  .agents-view .agent-badges {
+    justify-content: flex-start;
   }
 }

@@ -1761,6 +1761,82 @@ Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell
   min-width: 0;
 }
 
+/*
+FNXC:PlanningComments 2026-07-23-12:00:
+Contextual comments remain transient review controls: render the capture/editor only after a
+selection, and render the tray only after a valid comment exists so an empty plan review keeps
+its established Refine and Proceed action hierarchy.
+*/
+.planning-add-comment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}
+
+.planning-add-comment--mobile {
+  display: none;
+}
+
+.planning-comment-editor,
+.planning-comment-tray {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.planning-comment-editor {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  border: solid var(--btn-border-width) var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.planning-comment-quote,
+.planning-comment-tray blockquote,
+.planning-comment-tray p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.planning-comment-quote,
+.planning-comment-tray blockquote {
+  padding-inline-start: var(--space-md);
+  border-inline-start: solid var(--btn-border-width) var(--todo);
+  color: var(--text-muted);
+}
+
+.planning-comment-tray {
+  flex: 1;
+}
+
+.planning-comment-tray ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planning-comment-tray li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+.planning-comment-tray li > p {
+  grid-column: 1;
+}
+
+.planning-comment-tray .btn-icon {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
 .planning-summary-actions-right {
   display: flex;
   gap: var(--space-sm);
@@ -1787,6 +1863,10 @@ Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell
     min-height: calc(var(--space-2xl) + var(--space-md));
   }
 
+  .planning-comment-tray {
+    grid-column: 1 / -1;
+  }
+
   .planning-refine-menu {
     right: var(--space-lg);
     left: var(--space-lg);
@@ -1803,6 +1883,32 @@ Tablet embedded Planning keeps the desktop two-pane shell. The question Next act
 Refine/Proceed actions share one compact bottom baseline; equal footer/button heights, non-wrapping
 plan actions, and a token-sized bottom inset keep all three controls inline without extra space.
 */
+@media (max-width: 768px) {
+  /*
+  FNXC:PlanningComments 2026-07-31-00:00:
+  A selected quote needs a reachable mobile action beside Refine and Proceed, not a control lost
+  in the scrollable document. At 769px and above the selection-adjacent document trigger stays
+  canonical. These established 768px/1024px media boundaries are permitted; new dimensions use
+  only existing design tokens.
+  */
+  .planning-add-comment--document {
+    display: none;
+  }
+
+  .planning-add-comment--mobile {
+    display: inline-flex;
+    margin-top: 0;
+  }
+
+  .planning-comment-tray li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .planning-comment-editor {
+    padding: var(--space-md);
+  }
+}
+
 @media (min-width: 769px) and (max-width: 1024px) {
   /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
   .planning-modal-body--show-list {
@@ -2537,6 +2643,31 @@ mobile and desktop offer the same View task / Return to sessions choices.
   /* Model selection: prevent iOS zoom on select elements */
   .planning-modal-body select {
     font-size: 16px;
+  }
+}
+
+/*
+FNXC:PlanningModeMobile 2026-07-23-12:00:
+Plan selection actions must be visible before document scrolling in phone portrait and width-independent short landscape. Keep this scoped to the review pane: its Markdown scroll sibling may shrink, but the existing action rail remains a non-shrinking, safe-area-padded footer in both embedded and dialog hosts.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .planning-plan-review,
+  .planning-plan-review > .planning-plan-pane {
+    min-height: 0;
+  }
+
+  .planning-plan-review > .planning-plan-pane {
+    flex: 1 1 0;
+  }
+
+  .planning-plan-pane > .planning-plan-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .planning-plan-pane > .planning-plan-actions {
+    flex: 0 0 auto;
   }
 }
 
