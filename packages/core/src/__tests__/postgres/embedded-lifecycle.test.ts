@@ -38,6 +38,8 @@ import {
   resolveEmbeddedMaxConnections,
   DEFAULT_EMBEDDED_MAX_CONNECTIONS,
   DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32,
+  isClusterNotYetAcceptingError,
+  isClusterStartingUpError,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
@@ -960,6 +962,138 @@ describe("embedded-lifecycle: join-path database verify is best-effort", () => {
       expect(lifecycle.isRunning()).toBe(false);
       expect(logLines.some((line) => /could not verify database/i.test(line))).toBe(true);
     } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
+FNXC:PostgresEmbedded 2026-07-23-10:40:
+Issue #2411 (beta.4 follow-up): an interrupted cluster listens during crash
+recovery but rejects every connection with 57P03 until redo completes. The
+owned start must WAIT that out (never stop the recovering postmaster), and the
+join path must retry the 57P03 signal — while socket-level failures keep the
+instant optimistic-join contract (a stale pid file must not add a wait).
+Mocked/stubbed, no real Postgres; runs under the gate/CI default.
+*/
+describe("embedded-lifecycle: crash-recovery-aware connect classification (issue #2411)", () => {
+  it("classifies 57P03 / recovery messages as starting up", () => {
+    expect(isClusterStartingUpError({ code: "57P03" })).toBe(true);
+    expect(isClusterStartingUpError(new Error("FATAL: the database system is starting up"))).toBe(true);
+    expect(isClusterStartingUpError(new Error("the database system is in recovery mode"))).toBe(true);
+    expect(isClusterStartingUpError(new Error("connect ECONNREFUSED 127.0.0.1:5432"))).toBe(false);
+    expect(isClusterStartingUpError(new Error('password authentication failed for user "postgres"'))).toBe(false);
+  });
+
+  it("classifies socket-level failures as not-yet-accepting only for the owned wait superset", () => {
+    expect(isClusterNotYetAcceptingError({ code: "ECONNREFUSED" })).toBe(true);
+    expect(isClusterNotYetAcceptingError(new Error("connect ECONNREFUSED 127.0.0.1:52572"))).toBe(true);
+    expect(isClusterNotYetAcceptingError({ code: "CONNECT_TIMEOUT" })).toBe(true);
+    expect(isClusterNotYetAcceptingError({ code: "57P03" })).toBe(true);
+    expect(isClusterNotYetAcceptingError(new Error("syntax error at or near"))).toBe(false);
+  });
+});
+
+describe("embedded-lifecycle: owned start waits out crash recovery (issue #2411)", () => {
+  it("retries 57P03 rejections until the cluster accepts, without stopping it", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      dataDir: "/tmp/unused-recovery-wait",
+      database: "fusion",
+      startTimeoutMs: 30_000,
+      onLog: (message) => logs.push(message),
+    });
+    let attempts = 0;
+    const internal = lifecycle as unknown as {
+      openMaintenanceSqlOn: (port: number) => unknown;
+      waitForClusterAcceptingConnections: (port: number, signal?: AbortSignal) => Promise<void>;
+    };
+    internal.openMaintenanceSqlOn = () => {
+      const sql = (() => {
+        attempts += 1;
+        if (attempts < 3) {
+          return Promise.reject(
+            Object.assign(new Error("the database system is starting up"), { code: "57P03" }),
+          );
+        }
+        return Promise.resolve([{ one: 1 }]);
+      }) as unknown as { end: (opts?: unknown) => Promise<void> };
+      (sql as { end: (opts?: unknown) => Promise<void> }).end = async () => {};
+      return sql;
+    };
+
+    const wait = internal.waitForClusterAcceptingConnections(55490);
+    await vi.advanceTimersByTimeAsync(1_100);
+    await expect(wait).resolves.toBeUndefined();
+    expect(attempts).toBe(3);
+    expect(logs.some((line) => /crash recovery may be in progress/i.test(line))).toBe(true);
+  });
+
+  it("surfaces a non-recovery error immediately", async () => {
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      dataDir: "/tmp/unused-recovery-fatal",
+      database: "fusion",
+    });
+    const internal = lifecycle as unknown as {
+      openMaintenanceSqlOn: (port: number) => unknown;
+      waitForClusterAcceptingConnections: (port: number, signal?: AbortSignal) => Promise<void>;
+    };
+    internal.openMaintenanceSqlOn = () => {
+      const sql = (() =>
+        Promise.reject(new Error('password authentication failed for user "postgres"'))) as unknown as {
+        end: (opts?: unknown) => Promise<void>;
+      };
+      (sql as { end: (opts?: unknown) => Promise<void> }).end = async () => {};
+      return sql;
+    };
+
+    await expect(internal.waitForClusterAcceptingConnections(55490)).rejects.toThrow(
+      /password authentication failed/i,
+    );
+  });
+});
+
+describe("embedded-lifecycle: join path retries crash recovery (issue #2411)", () => {
+  it("retries a 57P03-rejecting joined instance instead of giving up on the first probe", async () => {
+    vi.useFakeTimers();
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    writeFileSync(
+      join(dataDir, "postmaster.pid"),
+      ["12345", dataDir, String(1784424901), "55446", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
+    );
+    const logLines: string[] = [];
+    let attempts = 0;
+    const createDatabaseIfMissing = vi
+      .spyOn(
+        EmbeddedPostgresLifecycle.prototype as unknown as {
+          createDatabaseIfMissing: (port: number) => Promise<void>;
+        },
+        "createDatabaseIfMissing",
+      )
+      .mockImplementation(async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw Object.assign(new Error("the database system is starting up"), { code: "57P03" });
+        }
+      });
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        onLog: (message) => logLines.push(message),
+      });
+
+      const start = lifecycle.start();
+      await vi.advanceTimersByTimeAsync(1_100);
+      await expect(start).resolves.toMatchObject({
+        runtimeUrl: expect.stringContaining(":55446/"),
+      });
+      expect(attempts).toBe(3);
+      expect(logLines.some((line) => /not accepting connections yet/i.test(line))).toBe(true);
+      expect(logLines.some((line) => /could not verify database/i.test(line))).toBe(false);
+    } finally {
+      createDatabaseIfMissing.mockRestore();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
