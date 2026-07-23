@@ -570,6 +570,7 @@ export {
 export {
   resolveEffectiveSettings,
   resolveEffectiveSettingsDetailed,
+  resolveEffectiveSettingsDetailedById,
   resolveProjectWorkflowModelLaneBaseline,
   resolveEffectiveSettingsById,
   resolveOptionalReviewRevisionBudget,

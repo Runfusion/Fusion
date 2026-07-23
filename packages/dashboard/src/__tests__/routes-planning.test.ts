@@ -1204,6 +1204,103 @@ describe("Planning Mode Routes", () => {
         });
       });
 
+      it("uses a selected workflow planning pair for new and existing draft starts", async () => {
+        const workflowId = "wf-planning-lane";
+        const workflowIr = {
+          version: "v2",
+          name: "Planning lane workflow",
+          columns: [{ id: "todo", name: "Todo", traits: [] }],
+          nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+          edges: [{ from: "start", to: "end" }],
+          settings: [
+            { id: "planningProvider", name: "Planning provider", type: "string" },
+            { id: "planningModelId", name: "Planning model", type: "string" },
+          ],
+        };
+        store = createMockStore({
+          getSettings: vi.fn().mockResolvedValue({}),
+          getDefaultWorkflowId: vi.fn().mockResolvedValue("builtin:coding"),
+          getWorkflowDefinition: vi.fn(async (id: string) => id === workflowId ? { ir: workflowIr } : undefined),
+          getWorkflowSettingValues: vi.fn((id: string) => id === workflowId
+            ? { planningProvider: "workflow-provider", planningModelId: "workflow-model" }
+            : {}),
+          getWorkflowSettingsProjectId: vi.fn(() => "default"),
+        });
+        const createFnAgentSpy = vi.fn(async () => ({
+          session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
+        }));
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        const newSession = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "New workflow planning session", workflowId }),
+          { "Content-Type": "application/json" },
+        );
+        expect(newSession.status).toBe(201);
+
+        const draft = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-draft",
+          JSON.stringify({ initialPlan: "Existing workflow planning session" }),
+          { "Content-Type": "application/json" },
+        );
+        const existingSession = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Existing workflow planning session",
+            existingSessionId: draft.body.sessionId,
+            workflowId,
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(existingSession.status).toBe(201);
+
+        await connectPlanningStreamUntilComplete(newSession.body.sessionId);
+        await connectPlanningStreamUntilComplete(existingSession.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledTimes(2);
+        });
+        for (const [options] of createFnAgentSpy.mock.calls) {
+          expect(options).toEqual(expect.objectContaining({
+            defaultProvider: "workflow-provider",
+            defaultModelId: "workflow-model",
+          }));
+        }
+      });
+
+      it("keeps test mode forced to mock despite a complete request override", async () => {
+        const createFnAgentSpy = vi.fn(async () => ({
+          session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
+        }));
+        __setCreateFnAgent(createFnAgentSpy as any);
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ testMode: true });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Test-mode workflow planning session",
+            planningModelProvider: "operator-provider",
+            planningModelId: "operator-model",
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(expect.objectContaining({
+            defaultProvider: "mock",
+            defaultModelId: "scripted",
+          }));
+        });
+      });
+
       it("rejects partial request override (provider only, no modelId)", async () => {
         const res = await REQUEST(
           buildApp(),

@@ -1072,6 +1072,8 @@ The three GPT-5.6 codenamed OpenAI Codex variants (`gpt-5.6-luna`, `gpt-5.6-sol`
 6. Global `defaultProvider` + `defaultModelId`
 7. Automatic provider/model resolution
 
+Planning Mode uses this same complete-pair order for both a newly started session and an existing draft. When a workflow is selected in Planning Mode, its effective planning lane is loaded as the selected-workflow value; a complete request-level pair remains first, and incomplete/blank pairs are skipped rather than mixed with another level. Test mode still forces `mock` / `scripted` after resolution.
+
 ### Executor model
 
 1. Per-task `modelProvider` + `modelId`

@@ -1,6 +1,7 @@
 import {
   DEFAULT_TASK_PRIORITY,
   formatPlanningPlanMd,
+  resolveEffectiveSettingsDetailedById,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -692,19 +693,40 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const runtime = planningRuntime(settings);
       runtime.clarificationEnabled = resolvedClarificationEnabled;
 
-      // Resolve planning model using canonical lane hierarchy:
-      // 1. Request body planning override
-      // 2. Project/global planning lane
-      // 3. Project default override
-      // 4. Global default
-      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
-      const resolvedPlanningProvider =
-        (planningModelProvider && planningModelId ? planningModelProvider : undefined) ||
-        resolvedPlanningSettings.provider;
-
-      const resolvedPlanningModelId =
-        (planningModelProvider && planningModelId ? planningModelId : undefined) ||
-        resolvedPlanningSettings.modelId;
+      /*
+       * FNXC:PlanningModelPrecedence 2026-07-22-14:15:
+       * A Planning Mode workflow exists before its task, so load its effective
+       * settings explicitly and retain selected lanes as a lower-precedence
+       * overlay. One canonical resolver receives the complete request pair,
+       * which keeps new and persisted-draft starts atomic and preserves test-mode
+       * forcing instead of allowing the request branch to bypass it.
+       */
+      const selectedWorkflowId = workflowId as string | undefined;
+      let workflowSettings: Record<string, unknown> = {};
+      if (selectedWorkflowId) {
+        try {
+          const workflowSettingsProjectId = projectId ?? scopedStore.getWorkflowSettingsProjectId();
+          workflowSettings = (await resolveEffectiveSettingsDetailedById(
+            scopedStore,
+            selectedWorkflowId,
+            workflowSettingsProjectId,
+          )).effective;
+        } catch {
+          // The route's established fail-soft settings behavior falls back to
+          // project/global values when workflow lookup cannot be completed.
+          workflowSettings = {};
+        }
+      }
+      const hasExplicitPlanningPair = Boolean(planningModelProvider && planningModelId);
+      const resolvedPlanningSettings = resolvePlanningSettingsModel({
+        ...settings,
+        ...workflowSettings,
+        ...(hasExplicitPlanningPair
+          ? { planningProvider: planningModelProvider, planningModelId }
+          : {}),
+      });
+      const resolvedPlanningProvider = resolvedPlanningSettings.provider;
+      const resolvedPlanningModelId = resolvedPlanningSettings.modelId;
 
       if (existingSessionId) {
         // Defeat the start-before-debounced-sync race: the textarea contents
