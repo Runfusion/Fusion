@@ -214,6 +214,42 @@ describe("Advanced Settings", () => {
     ).toBeInTheDocument();
   });
 
+  /*
+  FNXC:AgentSettingsTheming 2026-07-23-13:01:
+  Settings runtime tabs and avatar actions retain their semantic roles and pending-disabled behavior while scoped CSS themes their selected, hover, and focus states. Rendered coverage keeps those controls present across avatar and runtime selections.
+  */
+  it("renders avatar actions for absent and existing avatars", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await navigateToSettings(user);
+    expect(await screen.findByRole("button", { name: "Upload Avatar" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Remove Avatar" })).not.toBeInTheDocument();
+    unmount();
+
+    mockFetchAgent.mockResolvedValue(createMockAgent({ imageUrl: "https://example.test/avatar.png" }));
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await navigateToSettings(user);
+    expect(await screen.findByRole("button", { name: "Upload Avatar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove Avatar" })).toBeEnabled();
+  });
+
+  it("preserves selected and unselected runtime-tab semantics", async () => {
+    const user = userEvent.setup();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await navigateToSettings(user);
+
+    const builtIn = await screen.findByRole("tab", { name: "Built-in Model" });
+    const runtime = screen.getByRole("tab", { name: "Plugin Runtime" });
+    expect(builtIn).toHaveAttribute("aria-selected", "true");
+    expect(runtime).toHaveAttribute("aria-selected", "false");
+    expect(builtIn).toHaveClass("active");
+
+    await user.click(runtime);
+    expect(runtime).toHaveAttribute("aria-selected", "true");
+    expect(builtIn).toHaveAttribute("aria-selected", "false");
+    expect(runtime).toHaveClass("active");
+  });
+
   it("renders advanced settings form fields on Settings tab", async () => {
     const user = userEvent.setup();
     render(

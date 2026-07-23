@@ -4628,6 +4628,10 @@ function ConfigTab({
             <label>{t("agents.avatarLabel", "Avatar")}</label>
             <div className="agent-avatar-editor">
               <AgentAvatar agent={agent} size={64} className="agent-avatar-editor-preview" />
+              {/*
+              FNXC:AgentSettingsTheming 2026-07-23-13:01:
+              Avatar actions retain their existing upload/remove behavior while explicit action classes let the Settings theme contract cover pending, hover, and keyboard-focus states without styling the hidden file input as a visible control.
+              */}
               <div className="agent-avatar-editor-actions">
                 <input
                   ref={avatarInputRef}
@@ -4645,14 +4649,14 @@ function ConfigTab({
                 />
                 <button
                   type="button"
-                  className="btn btn-sm"
+                  className="btn btn-sm agent-avatar-editor-action"
                   disabled={isAvatarPending}
                   onClick={() => avatarInputRef.current?.click()}
                 >
                   {t("agents.uploadAvatar", "Upload Avatar")}
                 </button>
                 {agent.imageUrl ? (
-                  <button type="button" className="btn btn-sm" onClick={() => void handleAvatarDelete()} disabled={isAvatarPending}>
+                  <button type="button" className="btn btn-sm agent-avatar-editor-action" onClick={() => void handleAvatarDelete()} disabled={isAvatarPending}>
                     {t("agents.removeAvatar", "Remove Avatar")}
                   </button>
                 ) : null}
