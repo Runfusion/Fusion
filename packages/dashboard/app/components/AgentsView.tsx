@@ -60,6 +60,7 @@ function getAgentRoles(t: TFunction<"app">): { value: AgentCapability; label: st
 }
 
 const HEARTBEAT_MULTIPLIER_PRESETS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
+const HEARTBEAT_DISABLED_OPTION_VALUE = "__disabled__";
 
 const ORG_CHART_SCALE_MIN = 0.25;
 const ORG_CHART_SCALE_MAX = 3;
@@ -935,12 +936,35 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         {
           runtimeConfig: {
             ...(agent.runtimeConfig ?? {}),
+            enabled: true,
             heartbeatIntervalMs: newIntervalMs,
           },
         },
         projectId,
       );
       addToast(t("agents.heartbeatIntervalUpdated", "Heartbeat interval updated to {{interval}} for {{name}}", { interval: formatHeartbeatInterval(newIntervalMs), name: agent.name }), "success");
+      void loadAgents();
+    } catch (err) {
+      addToast(t("agents.heartbeatIntervalUpdateFailed", "Failed to update heartbeat interval: {{error}}", { error: getErrorMessage(err) }), "error");
+    } finally {
+      setUpdatingHeartbeatAgentId(null);
+    }
+  };
+
+  const handleHeartbeatDisabled = async (agent: Agent) => {
+    setUpdatingHeartbeatAgentId(agent.id);
+    try {
+      await updateAgent(
+        agent.id,
+        {
+          runtimeConfig: {
+            ...(agent.runtimeConfig ?? {}),
+            enabled: false,
+          },
+        },
+        projectId,
+      );
+      addToast(t("agents.heartbeatDisabled", "Heartbeat disabled for {{name}}", { name: agent.name }), "success");
       void loadAgents();
     } catch (err) {
       addToast(t("agents.heartbeatIntervalUpdateFailed", "Failed to update heartbeat interval: {{error}}", { error: getErrorMessage(err) }), "error");
@@ -989,6 +1013,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           {
             runtimeConfig: {
               ...(agent.runtimeConfig ?? {}),
+              enabled: true,
               heartbeatIntervalMs: MIN_HEARTBEAT_INTERVAL_MS,
             },
           },
@@ -1019,6 +1044,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         {
           runtimeConfig: {
             ...(agent.runtimeConfig ?? {}),
+            enabled: true,
             heartbeatIntervalMs: intervalMs,
           },
         },
@@ -1855,6 +1881,14 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const stateCardClass = getStateCardClass("agent-card", agent.state);
               const configuredIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
               const heartbeatOptions = getHeartbeatIntervalOptions(configuredIntervalMs);
+              /*
+               * FNXC:AgentHeartbeatControls 2026-07-23-12:43:
+               * The list-card select is the scheduling control: an explicit false wins over its saved cadence,
+               * while absent enabled remains backwards-compatible as enabled. Interval changes always persist
+               * enabled: true; disabling retains the complete runtime configuration and saved cadence.
+               */
+              const isHeartbeatDisabled = agent.runtimeConfig?.enabled === false;
+              const heartbeatSelectValue = isHeartbeatDisabled ? HEARTBEAT_DISABLED_OPTION_VALUE : String(configuredIntervalMs);
               const isUpdatingHeartbeat = updatingHeartbeatAgentId === agent.id;
               const modelLabel = getAgentModelLabel(agent);
               return (
@@ -2056,10 +2090,12 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         <>
                           <select
                             className="select agent-heartbeat-select"
-                            value={configuredIntervalMs}
+                            value={heartbeatSelectValue}
                             onChange={(e) => {
                               const value = e.target.value;
-                              if (value === "__custom__") {
+                              if (value === HEARTBEAT_DISABLED_OPTION_VALUE) {
+                                void handleHeartbeatDisabled(agent);
+                              } else if (value === "__custom__") {
                                 handleSelectCustomHeartbeat(agent);
                               } else {
                                 void handleHeartbeatIntervalChange(agent, Number(value));
@@ -2068,6 +2104,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                             disabled={isUpdatingHeartbeat}
                             aria-label={t("agents.setHeartbeatAria", "Set heartbeat interval for {{name}}", { name: agent.name })}
                           >
+                            <option value={HEARTBEAT_DISABLED_OPTION_VALUE}>{t("agents.heartbeatDisabledOption", "Disabled")}</option>
                             {heartbeatOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}

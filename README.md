@@ -192,7 +192,7 @@ Here is the same fleet re-skinned into the **Ember** theme (dark graphite with a
 </tr>
 </table>
 
-Import a team and every agent shows up here — role, reports-to chain, heartbeat, and token share. The **Agents** roster in Ember:
+Import a team and every agent shows up here — role, reports-to chain, heartbeat, and token share. Each agent card's heartbeat dropdown shows **Disabled** when scheduling is persisted off; choose Disabled to pause heartbeats while retaining its cadence, or select an interval to re-enable them. The **Agents** roster in Ember:
 
 <div align="center">
   <img src="./demo/assets/agents-ember.png" alt="Fusion Agents view in the Ember theme" width="900" />

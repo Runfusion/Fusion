@@ -1128,6 +1128,121 @@ describe("AgentsView", () => {
       expect(intervalSelect.options[intervalSelect.selectedIndex]?.text).toBe("1h");
     });
 
+    it("maps persisted heartbeat enablement to the dropdown across desktop and mobile", async () => {
+      const heartbeatAgents: Agent[] = [
+        { ...mockAgents[1], id: "agent-disabled", name: "Disabled Agent", runtimeConfig: { enabled: false, heartbeatIntervalMs: 900_000 } },
+        { ...mockAgents[1], id: "agent-enabled", name: "Enabled Agent", runtimeConfig: { enabled: true, heartbeatIntervalMs: 900_000 } },
+        { ...mockAgents[1], id: "agent-legacy", name: "Legacy Agent", runtimeConfig: { heartbeatIntervalMs: 900_000 } },
+        { ...mockAgents[1], id: "agent-default", name: "Default Agent", runtimeConfig: undefined },
+      ];
+      mockFetchAgents.mockResolvedValue(heartbeatAgents);
+      mockFetchAgentStats.mockResolvedValue({ total: heartbeatAgents.length, byState: {}, byRole: {} });
+      mockViewportMode.mockReturnValue("mobile");
+
+      renderView(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText("Set heartbeat interval for Disabled Agent") as HTMLSelectElement).value).toBe("__disabled__");
+      });
+      for (const name of ["Enabled Agent", "Legacy Agent"]) {
+        const select = screen.getByLabelText(`Set heartbeat interval for ${name}`) as HTMLSelectElement;
+        expect(select.value).toBe("900000");
+        expect(select.options[select.selectedIndex]?.text).toBe("15m");
+      }
+      expect((screen.getByLabelText("Set heartbeat interval for Default Agent") as HTMLSelectElement).value).toBe("3600000");
+    });
+
+    it("preserves runtime config while disabling and re-enabling heartbeat intervals", async () => {
+      const disabledAgent: Agent = {
+        ...mockAgents[1],
+        id: "agent-disabled",
+        name: "Disabled Agent",
+        runtimeConfig: {
+          enabled: false,
+          heartbeatIntervalMs: 900_000,
+          heartbeatTimeoutMs: 120_000,
+          maxConcurrentRuns: 3,
+          messageResponseMode: "on-heartbeat",
+        },
+      };
+      mockFetchAgents
+        .mockResolvedValueOnce([disabledAgent])
+        .mockResolvedValueOnce([disabledAgent])
+        .mockResolvedValueOnce([{ ...disabledAgent, runtimeConfig: { ...disabledAgent.runtimeConfig, enabled: true, heartbeatIntervalMs: 1_800_000 } }])
+        .mockResolvedValueOnce([{ ...disabledAgent, runtimeConfig: { ...disabledAgent.runtimeConfig, enabled: false, heartbeatIntervalMs: 1_800_000 } }]);
+      mockFetchAgentStats.mockResolvedValue({ total: 1, byState: {}, byRole: {} });
+
+      renderView(<AgentsView addToast={mockAddToast} />);
+
+      const select = await screen.findByLabelText("Set heartbeat interval for Disabled Agent") as HTMLSelectElement;
+      expect(select.value).toBe("__disabled__");
+      expect(Array.from(select.options).map((option) => option.text)).toContain("Disabled");
+
+      fireEvent.change(select, { target: { value: "__disabled__" } });
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenLastCalledWith(
+          "agent-disabled",
+          {
+            runtimeConfig: {
+              enabled: false,
+              heartbeatIntervalMs: 900_000,
+              heartbeatTimeoutMs: 120_000,
+              maxConcurrentRuns: 3,
+              messageResponseMode: "on-heartbeat",
+            },
+          },
+          undefined,
+        );
+      });
+
+      fireEvent.change(select, { target: { value: "1800000" } });
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenLastCalledWith(
+          "agent-disabled",
+          {
+            runtimeConfig: {
+              enabled: true,
+              heartbeatIntervalMs: 1_800_000,
+              heartbeatTimeoutMs: 120_000,
+              maxConcurrentRuns: 3,
+              messageResponseMode: "on-heartbeat",
+            },
+          },
+          undefined,
+        );
+      });
+
+      await waitFor(() => {
+        expect((screen.getByLabelText("Set heartbeat interval for Disabled Agent") as HTMLSelectElement).value).toBe("1800000");
+      });
+
+      const refreshedSelect = screen.getByLabelText("Set heartbeat interval for Disabled Agent");
+      fireEvent.change(refreshedSelect, { target: { value: "__disabled__" } });
+      await waitFor(() => {
+        expect((screen.getByLabelText("Set heartbeat interval for Disabled Agent") as HTMLSelectElement).value).toBe("__disabled__");
+      });
+
+      fireEvent.change(screen.getByLabelText("Set heartbeat interval for Disabled Agent"), { target: { value: "__custom__" } });
+      const customInput = await screen.findByLabelText("Custom heartbeat interval in minutes for Disabled Agent");
+      fireEvent.change(customInput, { target: { value: "7" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenLastCalledWith(
+          "agent-disabled",
+          {
+            runtimeConfig: {
+              enabled: true,
+              heartbeatIntervalMs: 420_000,
+              heartbeatTimeoutMs: 120_000,
+              maxConcurrentRuns: 3,
+              messageResponseMode: "on-heartbeat",
+            },
+          },
+          undefined,
+        );
+      });
+    });
+
     it("updates agent heartbeat interval from preset dropdown", async () => {
       renderView(<AgentsView addToast={mockAddToast} />);
 
