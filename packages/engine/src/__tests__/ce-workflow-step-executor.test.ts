@@ -131,7 +131,7 @@ async function expectCapturedSkillBody(
   distinctiveBody: string,
 ) {
   const { DefaultResourceLoader } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent");
-  const { createSkillsOverrideFromSelection, resolveSessionSkills } = await vi.importActual<typeof import("../cli-runtime/skill-resolver.js")>("../skill-resolver.js");
+  const { createSkillsOverrideFromSelection, resolveSessionSkills } = await vi.importActual<typeof import("../cli-runtime/skill-resolver.js")>("../cli-runtime/skill-resolver.js");
   const requestedSkillNames = cap.last?.skillSelection?.requestedSkillNames;
   const selection = resolveSessionSkills({ projectRootDir, requestedSkillNames, sessionPurpose: "executor" });
   const loader = new DefaultResourceLoader({

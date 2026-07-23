@@ -1035,7 +1035,7 @@ vi.mock("../errors/usage-limit-detector.js", () => ({
 
 // Mock worktree-names
 vi.mock("../worktree/worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree-names.js");
+  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree/worktree-names.js");
   return {
     ...actual,
     generateWorktreeName: vi.fn().mockReturnValue("test-worktree"),

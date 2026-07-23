@@ -14,7 +14,7 @@ class AuditStoreStub {
 const { resolveRuntimeMock } = vi.hoisted(() => ({ resolveRuntimeMock: vi.fn() }));
 
 vi.mock("../execution/runtime-resolution.js", async () => {
-  const actual = await vi.importActual<typeof import("../execution/runtime-resolution.js")>("../runtime-resolution.js");
+  const actual = await vi.importActual<typeof import("../execution/runtime-resolution.js")>("../execution/runtime-resolution.js");
   return { ...actual, resolveRuntime: resolveRuntimeMock };
 });
 

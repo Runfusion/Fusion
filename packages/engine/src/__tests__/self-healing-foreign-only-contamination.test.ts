@@ -7,7 +7,7 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("../execution/branch-conflicts.js", async () => {
-  const actual = await vi.importActual<typeof import("../execution/branch-conflicts.js")>("../branch-conflicts.js");
+  const actual = await vi.importActual<typeof import("../execution/branch-conflicts.js")>("../execution/branch-conflicts.js");
   return {
     ...actual,
     classifyForeignOnlyContamination: mocked.classifyForeignOnlyContamination,

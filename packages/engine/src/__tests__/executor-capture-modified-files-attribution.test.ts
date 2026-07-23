@@ -10,7 +10,7 @@ const { filterFilesToOwnTaskCommitsMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../execution/branch-attribution.js", async () => {
-  const actual = await vi.importActual<typeof import("../execution/branch-attribution.js")>("../branch-attribution.js");
+  const actual = await vi.importActual<typeof import("../execution/branch-attribution.js")>("../execution/branch-attribution.js");
   return {
     ...actual,
     filterFilesToOwnTaskCommits: filterFilesToOwnTaskCommitsMock,

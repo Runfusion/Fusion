@@ -346,7 +346,7 @@ describe("acquireTaskWorktree", () => {
 
   it("FN-6861 creates a fresh configured worktree when a resumed assignment points at the repo root", async () => {
     const rootDir = makeRepo();
-    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree-pool.js");
+    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
     const freshPath = join(rootDir, ".worktrees", "fn-6861-fresh");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
@@ -380,7 +380,7 @@ describe("acquireTaskWorktree", () => {
 
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
     const rootDir = makeRepo();
-    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree-pool.js");
+    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
     const freshPath = join(rootDir, ".worktrees", "fn-6922-trailing-slash");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });

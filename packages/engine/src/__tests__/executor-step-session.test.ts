@@ -1080,7 +1080,7 @@ describe("Real-time steering injection", () => {
       createdAt: new Date().toISOString(),
       author: "user" as const,
     };
-    const { StepSessionExecutor: ActualStepSessionExecutor } = await vi.importActual<typeof import("../execution/step-session-executor.js")>("../step-session-executor.js");
+    const { StepSessionExecutor: ActualStepSessionExecutor } = await vi.importActual<typeof import("../execution/step-session-executor.js")>("../execution/step-session-executor.js");
     const stepExecutor = new ActualStepSessionExecutor({
       taskDetail: makeSteeringTask() as any,
       worktreePath: "/tmp/test",
