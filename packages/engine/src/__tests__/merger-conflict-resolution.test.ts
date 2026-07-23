@@ -113,11 +113,11 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 
@@ -148,7 +148,7 @@ import {
   __testOnlyResolveComplexRebaseConflictsWithAi,
   type ConflictCategory,
 } from "../merger.js";
-import { AgentLogger } from "../agent-logger.js";
+import { AgentLogger } from "../agents/agent-logger.js";
 import { mergerLog } from "../logger.js";
 import { createFnAgent } from "../pi.js";
 import { execSync, exec } from "node:child_process";

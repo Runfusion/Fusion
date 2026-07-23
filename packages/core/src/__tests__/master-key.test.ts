@@ -14,7 +14,7 @@ import {
   MasterKeyManager,
   MasterKeyPermissionError,
   type KeytarLike,
-} from "../master-key.js";
+} from "../secrets/master-key.js";
 
 type MutableKeytar = KeytarLike & { writes: number; stored: string | null };
 

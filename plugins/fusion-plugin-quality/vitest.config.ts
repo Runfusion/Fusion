@@ -20,8 +20,8 @@ export default defineConfig({
         replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
       },
       {
-        find: "@fusion/dashboard/app/api/task-content",
-        replacement: fileURLToPath(new URL("../../packages/dashboard/app/api/task-content.ts", import.meta.url)),
+        find: "@fusion/dashboard/app/api/tasks/task-content",
+        replacement: fileURLToPath(new URL("../../packages/dashboard/app/api/tasks/task-content.ts", import.meta.url)),
       },
       {
         find: "@fusion/dashboard/app/components/ViewHeader",

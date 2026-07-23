@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractSandboxProvisioningRequest, resolveSandboxProvisioningPolicy } from "../sandbox-provisioning-policy.js";
+import { extractSandboxProvisioningRequest, resolveSandboxProvisioningPolicy } from "../sandbox/sandbox-provisioning-policy.js";
 
 describe("resolveSandboxProvisioningPolicy", () => {
   it("denies missing caller", () => {

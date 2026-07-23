@@ -20,17 +20,17 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReviewResult } from "../reviewer.js";
+import type { ReviewResult } from "../execution/reviewer.js";
 
 // Narrow AI seam: only reviewStep (the agent boundary) is mocked. Everything else is the real executor.
-vi.mock("../reviewer.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../reviewer.js")>();
+vi.mock("../execution/reviewer.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../execution/reviewer.js")>();
   return { ...actual, reviewStep: vi.fn() };
 });
 
-import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
+import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { TaskExecutor } from "../executor.js";
-import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflow-node-handlers.js";
+import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import type { Task, TaskStore, WorkspaceConfig } from "@fusion/core";
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);

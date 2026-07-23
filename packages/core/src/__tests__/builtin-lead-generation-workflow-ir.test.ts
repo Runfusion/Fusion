@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "../builtin-lead-generation-workflow-ir.js";
+import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "../workflows/builtin-lead-generation-workflow-ir.js";
 import {
   BUILTIN_WORKFLOWS,
   defaultEnabledBuiltinWorkflowIds,
   getBuiltinWorkflow,
-} from "../builtin-workflows.js";
-import { parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
+} from "../workflows/builtin-workflows.js";
+import { parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
 
 describe("built-in lead-generation workflow IR", () => {
   it("registers as an enabled v2 workflow with the authored custom columns", () => {

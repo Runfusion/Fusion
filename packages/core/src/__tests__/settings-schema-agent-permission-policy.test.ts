@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROJECT_SETTINGS, PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
+import { DEFAULT_PROJECT_SETTINGS, PROJECT_SETTINGS_KEYS } from "../config/settings-schema.js";
 
 describe("defaultAgentPermissionPolicy settings schema contract", () => {
   it("includes defaultAgentPermissionPolicy key", () => {

@@ -50,7 +50,7 @@ const {
   };
 });
 
-vi.mock("../docker-client.js", () => ({
+vi.mock("../docker/docker-client.js", () => ({
   DockerClientService: vi.fn().mockImplementation(function () {
     return {
       getDockerInstance: getDockerInstanceMock,
@@ -59,8 +59,8 @@ vi.mock("../docker-client.js", () => ({
   }),
 }));
 
-import { DockerProvisioningService } from "../docker-provisioning";
-import { DockerClientService } from "../docker-client";
+import { DockerProvisioningService } from "../docker/docker-provisioning.js";
+import { DockerClientService } from "../docker/docker-client.js";
 import type { DockerProvisionInput } from "../types";
 
 function createMockDocker() {

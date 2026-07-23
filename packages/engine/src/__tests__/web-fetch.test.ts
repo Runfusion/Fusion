@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dnsResolver, fetchWebContent, WebFetchError } from "../web-fetch.js";
+import { dnsResolver, fetchWebContent, WebFetchError } from "../util/web-fetch.js";
 
 describe("web-fetch", () => {
   const originalFetch = global.fetch;

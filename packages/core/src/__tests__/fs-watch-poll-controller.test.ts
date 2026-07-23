@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FsWatchPollController } from "../fs-watch-poll-controller.js";
+import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 
 /**
  * FN-7726: unit coverage for the shared mechanical fs.watch+poll lifecycle

@@ -6,12 +6,12 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskDetail, TaskStep, WorkflowIr } from "@fusion/core";
 import { getStepParserRegistry, __resetStepParserRegistryForTests } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
-import { createNoopLegacySeams, type ParseStepsHandlerDeps } from "../workflow-node-handlers.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { createNoopLegacySeams, type ParseStepsHandlerDeps } from "../workflows/workflow-node-handlers.js";
 import {
   registerPluginStepParsers,
   unregisterPluginStepParsers,
-} from "../plugin-parser-adapter.js";
+} from "../plugins/plugin-parser-adapter.js";
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 

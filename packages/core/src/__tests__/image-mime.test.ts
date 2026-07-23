@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectImageMimeFromBytes } from "../image-mime.js";
+import { detectImageMimeFromBytes } from "../i18n/image-mime.js";
 
 describe("detectImageMimeFromBytes", () => {
   it("detects PNG magic bytes", () => {

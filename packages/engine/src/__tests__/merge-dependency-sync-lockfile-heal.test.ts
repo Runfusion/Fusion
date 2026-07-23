@@ -9,7 +9,7 @@ import {
   installWorktreeDependencies,
   isOutdatedLockfileError,
   readInstallMarker,
-} from "../merge-dependency-sync.js";
+} from "../merge/merge-dependency-sync.js";
 
 /*
 FNXC:AIMerge 2026-07-02-14:05 (lockfile auto-heal):

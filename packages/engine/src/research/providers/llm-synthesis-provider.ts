@@ -1,5 +1,5 @@
 import type { ResearchProviderConfig, ResearchSource, ResearchSynthesisRequest, ResearchSynthesisResult, ResolvedModelSelection } from "@fusion/core";
-import type { ResearchProvider } from "../../research-step-runner.js";
+import type { ResearchProvider } from "../research-step-runner.js";
 import { createLogger } from "../../logger.js";
 import { createFnAgent, promptWithFallback } from "../../pi.js";
 import { ResearchProviderError } from "../types.js";

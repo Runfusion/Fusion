@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { WorkflowIrError, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
-import { resolveOptionalStepRevisionBudget } from "../workflow-ir-types.js";
-import type { WorkflowIrEdge, WorkflowIrNode, WorkflowIrV2 } from "../workflow-ir-types.js";
+import { WorkflowIrError, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
+import { resolveOptionalStepRevisionBudget } from "../workflows/workflow-ir-types.js";
+import type { WorkflowIrEdge, WorkflowIrNode, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-11:00:

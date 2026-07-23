@@ -24,7 +24,7 @@ import {
   readProjectIdentityAsync,
   writeProjectIdentityAsync,
   ProjectIdentityMismatchError,
-} from "../../project-identity.js";
+} from "../../central/project-identity.js";
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 

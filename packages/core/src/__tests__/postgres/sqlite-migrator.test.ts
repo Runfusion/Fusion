@@ -32,7 +32,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "../../sqlite-adapter.js";
+import { DatabaseSync } from "../../db/sqlite-adapter.js";
 import {
   formatMigrationProgress,
   migrateLegacyProjectPluginRows,

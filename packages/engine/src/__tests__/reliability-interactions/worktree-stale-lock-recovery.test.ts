@@ -2,8 +2,8 @@ import { mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { activeSessionRegistry } from "../../active-session-registry.js";
-import { classifyStaleLock, tryRemoveStaleLock } from "../../worktree-stale-lock.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
+import { classifyStaleLock, tryRemoveStaleLock } from "../../worktree/worktree-stale-lock.js";
 import { git, hasGit } from "./_helpers.js";
 
 describe.skipIf(!hasGit)("reliability interactions: worktree stale lock recovery", () => {

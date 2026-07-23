@@ -5,12 +5,12 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FirstRunDetector } from "../migration.js";
+import { FirstRunDetector } from "../central/migration.js";
 import {
   assertNotLinkedWorktreeOfExistingProject,
   LinkedWorktreeBootstrapRefusedError,
-} from "../project-root-guard.js";
-import { writeProjectIdentity } from "../project-identity.js";
+} from "../central/project-root-guard.js";
+import { writeProjectIdentity } from "../central/project-identity.js";
 
 const cleanupPaths: string[] = [];
 

@@ -55,7 +55,7 @@ import {
   inspectBranchConflict,
   listUniqueBranchCommits,
   reportBranchAttribution,
-} from "../branch-conflicts.js";
+} from "../execution/branch-conflicts.js";
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);

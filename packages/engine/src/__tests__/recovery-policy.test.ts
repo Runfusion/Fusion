@@ -6,7 +6,7 @@ import {
   BASE_DELAY_MS,
   MAX_DELAY_MS,
   BACKOFF_MULTIPLIER,
-} from "../recovery-policy.js";
+} from "../healing/recovery-policy.js";
 
 describe("computeRecoveryDecision", () => {
   afterEach(() => {

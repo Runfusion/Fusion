@@ -3,7 +3,7 @@ import {
   buildSnippet,
   extractGoalCitations,
   GOAL_CITATION_SNIPPET_MAX,
-} from "../goal-citation-extractor.js";
+} from "../goals/goal-citation-extractor.js";
 
 describe("goal-citation-extractor", () => {
   it("extracts simple fixture goal IDs", () => {

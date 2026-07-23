@@ -29,9 +29,9 @@ import type {
   TaskDocumentRow,
 } from "./row-types.js";
 import type { TaskRow } from "./persistence.js";
-import { fromJson } from "../db.js";
-import { generateTaskLineageId } from "../task-lineage.js";
-import { normalizeTaskPriority } from "../task-priority.js";
+import { fromJson } from "../db/db.js";
+import { generateTaskLineageId } from "../tasks/task-lineage.js";
+import { normalizeTaskPriority } from "../tasks/task-priority.js";
 import { normalizeTaskReviewState } from "./review-state.js";
 import {
   parseTaskBranchContextFromSourceMetadata,

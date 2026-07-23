@@ -6,7 +6,7 @@ import {
   getNativePrebuildName,
   findStagedNativeDir,
   ensureNodePtyNativePermissions,
-} from "../pty-native.js";
+} from "../cli-runtime/pty-native.js";
 
 const SAVED_ENV = {
   FUSION_RUNTIME_DIR: process.env.FUSION_RUNTIME_DIR,

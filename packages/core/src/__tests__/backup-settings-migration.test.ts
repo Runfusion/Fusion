@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planBackupSettingsMigration } from "../backup-settings-migration.js";
+import { planBackupSettingsMigration } from "../backup/backup-settings-migration.js";
 
 describe("backup settings project-to-global migration plan", () => {
   it("leaves unset values at global defaults", () => {

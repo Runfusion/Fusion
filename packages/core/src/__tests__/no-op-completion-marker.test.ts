@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseNoOpCompletionMarker } from "../no-op-completion-marker.js";
+import { parseNoOpCompletionMarker } from "../merge/no-op-completion-marker.js";
 
 describe("parseNoOpCompletionMarker", () => {
   it.each([

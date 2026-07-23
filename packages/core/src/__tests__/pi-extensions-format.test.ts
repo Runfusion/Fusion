@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPiExtensionSource } from "../pi-extensions.js";
+import { formatPiExtensionSource } from "../plugins/pi-extensions.js";
 
 describe("formatPiExtensionSource", () => {
   it("formats project-relative extension paths", () => {

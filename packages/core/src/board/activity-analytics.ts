@@ -1,0 +1,1249 @@
+import { sql } from "drizzle-orm";
+import type { Database } from "../db/db.js";
+import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import type { WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
+
+/**
+ * Activity analytics: distinct active nodes/agents per day, sessions, messages,
+ * and stickiness (DAU/MAU) over an arbitrary date range.
+ *
+ * Sessions come from `cli_sessions` (by `createdAt`); messages and node/agent
+ * activity come from `usage_events`. Inclusivity: `from`/`to` are inclusive,
+ * matching `usage-events.ts`.
+ *
+ * **MTTR (U13).** Mean-time-to-resolve is computed over the `incidents` table
+ * introduced by U13: MTTR = mean(resolvedAt − openedAt) across incidents whose
+ * `resolvedAt` falls within the range. Unresolved incidents contribute to
+ * "open incidents", not to MTTR. Deployment frequency comes from the
+ * `deployments` table. See {@link MttrSummary} and {@link MonitorMetrics}.
+ */
+
+export interface ActivityAnalyticsQuery {
+  /** ISO-8601 lower bound (inclusive). */
+  from?: string;
+  /** ISO-8601 upper bound (inclusive). */
+  to?: string;
+}
+
+/** Distinct active nodes/agents, messages, and agent-run count for a single UTC day. */
+export interface DailyActivity {
+  /** UTC date, `YYYY-MM-DD`. */
+  day: string;
+  activeNodes: number;
+  activeAgents: number;
+  messages: number;
+  /** Agent heartbeat runs started on this UTC day. */
+  agentRuns: number;
+}
+
+/** Agent heartbeat-run counts over an activity range, grouped by canonical status. */
+export interface AgentRunSummary {
+  total: number;
+  active: number;
+  completed: number;
+  failed: number;
+}
+
+/**
+ * MTTR summary. `value` is the mean minutes to resolve across incidents whose
+ * `resolvedAt` falls in the range. When no incident has been resolved in range
+ * MTTR cannot be computed: `value` is `null` and `unavailable` is `true`, never
+ * `0`. The `sampleCount` is the number of resolved incidents the mean is over.
+ */
+export interface MttrSummary {
+  /** Mean minutes to resolve; null when no resolved incident exists in range. */
+  value: number | null;
+  /** True when MTTR cannot be computed (no resolved incidents in range). */
+  unavailable: boolean;
+  /** Number of resolved incidents the mean is computed over. */
+  sampleCount: number;
+}
+
+/**
+ * Monitor-stage metrics (U13): MTTR plus deployment / incident counts that feed
+ * the Command Center's External Signals area and the Monitor surface. All counts
+ * are over the same date range as the parent activity query.
+ */
+export interface MonitorMetrics {
+  /** Mean-time-to-resolve over incidents resolved in range. */
+  mttr: MttrSummary;
+  /** Incidents opened (by `openedAt`) within the range. */
+  incidentsOpened: number;
+  /** Incidents resolved (by `resolvedAt`) within the range. */
+  incidentsResolved: number;
+  /** Incidents currently in the `open` state (point-in-time, not range-bound). */
+  openIncidents: number;
+  /** Deployments recorded (by `deployedAt`) within the range — deploy frequency. */
+  deployments: number;
+}
+
+
+/** Command Center Signals source breakdown from incidents opened in range. */
+export interface SignalSourceCount {
+  source: string;
+  count: number;
+}
+
+/** Command Center Signals severity breakdown from incidents opened in range. */
+export interface SignalSeverityCount {
+  severity: string;
+  count: number;
+}
+
+/** Command Center Signals status breakdown from incidents opened in range. */
+export interface SignalStatusCount {
+  status: string;
+  count: number;
+}
+
+/**
+ * External signal analytics for the Command Center Signals area. Counts are
+ * sourced from the `incidents` table so connector ingestion, monitor metrics,
+ * and UI pressure indicators share one durable signal record.
+ */
+export interface SignalsAnalytics {
+  from: string | null;
+  to: string | null;
+  /** Incidents opened (by `openedAt`) within the range. */
+  totalSignals: number;
+  /** Open incidents opened within the range. */
+  open: number;
+  /** Incidents resolved (by `resolvedAt`) within the range. */
+  resolved: number;
+  /** Mean-time-to-resolve over incidents resolved in range. */
+  mttr: MttrSummary;
+  /** Incidents opened in range grouped by source; null/blank values are `unknown`. */
+  bySource: SignalSourceCount[];
+  /** Incidents opened in range grouped by severity; null/blank values are `unknown`. */
+  bySeverity: SignalSeverityCount[];
+  /** Incidents opened in range grouped by status so connector recoveries are visible. */
+  byStatus: SignalStatusCount[];
+}
+
+export interface ActivityAnalytics {
+  from: string | null;
+  to: string | null;
+  /** Total `session_start` events from `cli_sessions` in range. */
+  sessions: number;
+  /** Total `user_message` events in range. */
+  messages: number;
+  /** Distinct nodes with any usage_event in range. */
+  activeNodes: number;
+  /** Distinct agents with any usage_event or agentRun in range. */
+  activeAgents: number;
+  /** Agent heartbeat runs started in range, grouped by status. */
+  agentRuns: AgentRunSummary;
+  /** Per-day breakdown, ascending by day. */
+  daily: DailyActivity[];
+  /**
+   * Stickiness = DAU/MAU. DAU = mean distinct-active-agents-per-day over the
+   * range; MAU = distinct active agents over the whole range. 0 when MAU is 0.
+   */
+  stickiness: number;
+  /** MTTR over incidents resolved in range (U13). */
+  mttr: MttrSummary;
+  /** Full monitor-stage metrics (MTTR + deploy/incident counts) (U13). */
+  monitor: MonitorMetrics;
+  /** SDLC funnel + throughput over the same range (U7). */
+  funnel: SdlcFunnel;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface DistinctRow {
+  count: number;
+}
+
+interface DayAggRow {
+  day: string;
+  activeNodes: number;
+  messages: number;
+}
+
+interface AgentActivityRow {
+  agentId: string;
+}
+
+interface AgentActivityDayRow {
+  day: string;
+  agentId: string;
+}
+
+interface AgentRunStatusRow {
+  status: string;
+  count: number;
+}
+
+interface AgentRunDayRow {
+  day: string;
+  count: number;
+}
+
+function rangeClauses(
+  column: string,
+  query: ActivityAnalyticsQuery,
+): { where: string; params: string[] } {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (query.from !== undefined) {
+    clauses.push(`${column} >= ?`);
+    params.push(query.from);
+  }
+  if (query.to !== undefined) {
+    clauses.push(`${column} <= ?`);
+    params.push(query.to);
+  }
+  return {
+    where: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
+}
+
+/**
+ * Aggregate activity (sessions, messages, active nodes/agents, daily breakdown,
+ * stickiness) over a date range. Empty range yields zeroed structures and an
+ * empty `daily` array — never nulls. `mttr` is the U13 unavailable seam.
+ */
+export async function aggregateActivityAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
+  query: ActivityAnalyticsQuery = {},
+): Promise<ActivityAnalytics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:45:
+  // The activity analytics queries (sessions, messages, nodes, agents, daily
+  // breakdown) are not yet ported to async. In backend mode, return a degraded
+  // result (empty daily, zero sessions/messages) with the monitor metrics from
+  // the async path. The SQLite path runs all queries synchronously.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    return aggregatePostgresActivityAnalytics(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
+  // Sessions from cli_sessions (by createdAt).
+  const sessionRange = rangeClauses("createdAt", query);
+  const sessions = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM cli_sessions ${sessionRange.where}`)
+      .get(...sessionRange.params) as CountRow
+  ).count;
+
+  // Messages from usage_events (kind = user_message).
+  const eventRange = rangeClauses("ts", query);
+  const eventWhereWith = (extra: string): string =>
+    eventRange.where
+      ? `${eventRange.where} AND ${extra}`
+      : `WHERE ${extra}`;
+
+  const messages = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM usage_events ${eventWhereWith("kind = 'user_message'")}`,
+      )
+      .get(...eventRange.params) as CountRow
+  ).count;
+
+  // Distinct active nodes/agents over the whole range.
+  const activeNodes = (
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT nodeId) AS count FROM usage_events ${eventWhereWith("nodeId IS NOT NULL")}`,
+      )
+      .get(...eventRange.params) as DistinctRow
+  ).count;
+  const agentActivity = collectActiveAgentActivity(db, query, eventRange);
+  const activeAgents = agentActivity.rangeAgentIds.size;
+
+  // Per-day distinct nodes + message count. substr(ts,1,10) is the UTC day key
+  // (ISO-8601 timestamps); distinct agents are merged from usage_events and
+  // agentRuns below so ephemeral task workers without usage rows participate.
+  const dailyRows = db
+    .prepare(
+      `SELECT
+         substr(ts, 1, 10) AS day,
+         COUNT(DISTINCT nodeId) AS activeNodes,
+         SUM(CASE WHEN kind = 'user_message' THEN 1 ELSE 0 END) AS messages
+       FROM usage_events ${eventRange.where}
+       GROUP BY day
+       ORDER BY day ASC`,
+    )
+    .all(...eventRange.params) as DayAggRow[];
+  /**
+   * FNXC:CommandCenter 2026-06-18-00:00:
+   * Command Center activity analytics must surface agent heartbeat-run volume as stat cards by status and as a per-day trend without requiring a schema migration or new endpoint. Count by agentRuns.startedAt in the selected range, and degrade to zeros when older databases do not have the table.
+   */
+  const agentRunMetrics = aggregateAgentRunMetrics(db, query);
+  const dailyByDay = new Map<string, DailyActivity>();
+  for (const r of dailyRows) {
+    dailyByDay.set(r.day, {
+      day: r.day,
+      activeNodes: r.activeNodes,
+      activeAgents: agentActivity.dailyAgentIds.get(r.day)?.size ?? 0,
+      messages: r.messages ?? 0,
+      agentRuns: 0,
+    });
+  }
+  for (const r of agentRunMetrics.daily) {
+    const existing = dailyByDay.get(r.day);
+    if (existing) {
+      existing.agentRuns = r.count;
+    } else {
+      dailyByDay.set(r.day, {
+        day: r.day,
+        activeNodes: 0,
+        activeAgents: agentActivity.dailyAgentIds.get(r.day)?.size ?? 0,
+        messages: 0,
+        agentRuns: r.count,
+      });
+    }
+  }
+  const daily: DailyActivity[] = [...dailyByDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+
+  // Stickiness = DAU/MAU. DAU = mean distinct-active-agents-per-day; MAU =
+  // distinct active agents over the range.
+  const dau =
+    daily.length > 0
+      ? daily.reduce((sum, d) => sum + d.activeAgents, 0) / daily.length
+      : 0;
+  const mau = activeAgents;
+  const stickiness = mau > 0 ? dau / mau : 0;
+
+  // U13: real monitor metrics over the incidents/deployments tables.
+  const monitor = await aggregateMonitorMetrics(db, query);
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    sessions,
+    messages,
+    activeNodes,
+    activeAgents,
+    agentRuns: agentRunMetrics.summary,
+    daily,
+    stickiness,
+    mttr: monitor.mttr,
+    monitor,
+    // U7 seam: SDLC funnel/throughput over the same range, mapped by workflow
+    // trait. Uses the built-in workflow's column→trait mapping by default;
+    // callers with a custom workflow IR should call aggregateSdlcFunnel directly
+    // with that workflow's columns so custom column ids map correctly.
+    funnel: aggregateSdlcFunnel(db, query),
+  };
+}
+
+/*
+FNXC:ActivityAnalyticsPostgres 2026-07-13-22:38:
+Command Center activity must never substitute plausible zeroes for unported PostgreSQL queries. Aggregate the same session, usage-event, agent-run, daily-stickiness, monitor, and funnel inputs as SQLite so operators can distinguish no activity from a storage regression.
+*/
+interface PostgresEventSummaryRow {
+  messages?: number;
+  active_nodes?: number;
+  agent_ids?: string[];
+}
+
+interface PostgresEventDailyRow extends PostgresEventSummaryRow {
+  day: string;
+}
+
+interface PostgresRunDailyRow {
+  day: string;
+  count: number;
+  agent_ids?: string[];
+}
+
+async function aggregatePostgresActivityAnalytics(
+  layer: AsyncDataLayer,
+  query: ActivityAnalyticsQuery,
+): Promise<ActivityAnalytics> {
+  const eventFrom = query.from ? sql`AND ts >= ${query.from}` : sql``;
+  const eventTo = query.to ? sql`AND ts <= ${query.to}` : sql``;
+  const runFrom = query.from ? sql`AND started_at >= ${query.from}` : sql``;
+  const runTo = query.to ? sql`AND started_at <= ${query.to}` : sql``;
+  const sessionFrom = query.from ? sql`AND created_at >= ${query.from}` : sql``;
+  const sessionTo = query.to ? sql`AND created_at <= ${query.to}` : sql``;
+  /*
+  FNXC:ActivityAnalyticsPostgres 2026-07-14-00:37:
+  An unbound analytics layer is deliberately project-agnostic and must aggregate every project partition consistently. A bound layer scopes sessions, usage, agent runs, and funnel activity to its project; never reinterpret an absent binding as the legacy empty-string partition.
+  */
+  const analyticsProject = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
+
+  const [sessionResult, eventSummaryResult, eventDailyResult, runStatusResult, runDailyResult, runAgentResult, monitor, funnel] = await Promise.all([
+    layer.db.execute(sql`SELECT count(*)::int AS count FROM project.cli_sessions WHERE 1=1 ${analyticsProject} ${sessionFrom} ${sessionTo}`),
+    layer.db.execute(sql`
+      SELECT
+        count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
+        count(DISTINCT node_id) FILTER (WHERE node_id IS NOT NULL)::int AS active_nodes,
+        array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids
+      FROM project.usage_events WHERE 1=1 ${analyticsProject} ${eventFrom} ${eventTo}
+    `),
+    layer.db.execute(sql`
+      SELECT left(ts, 10) AS day,
+        count(DISTINCT node_id) FILTER (WHERE node_id IS NOT NULL)::int AS active_nodes,
+        count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
+        array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids
+      FROM project.usage_events WHERE 1=1 ${analyticsProject} ${eventFrom} ${eventTo}
+      GROUP BY left(ts, 10) ORDER BY day
+    `),
+    layer.db.execute(sql`SELECT status, count(*)::int AS count FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY status`),
+    /*
+    FNXC:ActivityAnalyticsPostgres 2026-07-14-01:41:
+    Null agent IDs may survive in legacy or schema-drift run rows. Count those rows as runs, but remove NULL from the daily identity set so daily active agents and stickiness use the same non-null population as the range summary.
+    */
+    layer.db.execute(sql`SELECT left(started_at, 10) AS day, count(*)::int AS count, array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY left(started_at, 10) ORDER BY day`),
+    layer.db.execute(sql`SELECT DISTINCT agent_id FROM project.agent_runs WHERE agent_id IS NOT NULL ${analyticsProject} ${runFrom} ${runTo}`),
+    aggregateMonitorMetrics(layer, query),
+    aggregatePostgresSdlcFunnel(layer, query),
+  ]);
+  const sessionRows = sessionResult as unknown as Array<{ count?: number }>;
+  const eventSummaryRows = eventSummaryResult as unknown as PostgresEventSummaryRow[];
+  const eventDailyRows = eventDailyResult as unknown as PostgresEventDailyRow[];
+  const runStatusRows = runStatusResult as unknown as Array<{ status: string; count: number }>;
+  const runDailyRows = runDailyResult as unknown as PostgresRunDailyRow[];
+  const runAgentRows = runAgentResult as unknown as Array<{ agent_id: string }>;
+
+  const eventSummary = eventSummaryRows[0];
+  const rangeAgentIds = new Set<string>(eventSummary?.agent_ids ?? []);
+  for (const row of runAgentRows) rangeAgentIds.add(row.agent_id);
+
+  const agentRuns = zeroAgentRunSummary();
+  for (const row of runStatusRows) {
+    agentRuns.total += row.count;
+    if (row.status === "active") agentRuns.active = row.count;
+    if (row.status === "completed") agentRuns.completed = row.count;
+    if (row.status === "failed") agentRuns.failed = row.count;
+  }
+
+  const dailyByDay = new Map<string, DailyActivity>();
+  const eventAgentIdsByDay = new Map<string, readonly string[]>();
+  for (const row of eventDailyRows) {
+    eventAgentIdsByDay.set(row.day, row.agent_ids ?? []);
+    dailyByDay.set(row.day, {
+      day: row.day,
+      activeNodes: row.active_nodes ?? 0,
+      activeAgents: new Set(row.agent_ids ?? []).size,
+      messages: row.messages ?? 0,
+      agentRuns: 0,
+    });
+  }
+  for (const row of runDailyRows) {
+    const existing = dailyByDay.get(row.day) ?? { day: row.day, activeNodes: 0, activeAgents: 0, messages: 0, agentRuns: 0 };
+    const eventAgents = eventAgentIdsByDay.get(row.day) ?? [];
+    existing.activeAgents = new Set([...eventAgents, ...(row.agent_ids ?? [])]).size;
+    existing.agentRuns = row.count;
+    dailyByDay.set(row.day, existing);
+  }
+  const daily = [...dailyByDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  const activeAgents = rangeAgentIds.size;
+  const dau = daily.length > 0 ? daily.reduce((sum, day) => sum + day.activeAgents, 0) / daily.length : 0;
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    sessions: Number(sessionRows[0]?.count ?? 0),
+    messages: Number(eventSummary?.messages ?? 0),
+    activeNodes: Number(eventSummary?.active_nodes ?? 0),
+    activeAgents,
+    agentRuns,
+    daily,
+    stickiness: activeAgents > 0 ? dau / activeAgents : 0,
+    mttr: monitor.mttr,
+    monitor,
+    funnel,
+  };
+}
+
+function zeroAgentRunSummary(): AgentRunSummary {
+  return { total: 0, active: 0, completed: 0, failed: 0 };
+}
+
+function collectActiveAgentActivity(
+  db: Database,
+  query: ActivityAnalyticsQuery,
+  eventRange: { where: string; params: string[] },
+): { rangeAgentIds: Set<string>; dailyAgentIds: Map<string, Set<string>> } {
+  const rangeAgentIds = new Set<string>();
+  const dailyAgentIds = new Map<string, Set<string>>();
+  const addDailyAgent = (day: string, agentId: string): void => {
+    rangeAgentIds.add(agentId);
+    const set = dailyAgentIds.get(day) ?? new Set<string>();
+    set.add(agentId);
+    dailyAgentIds.set(day, set);
+  };
+  const eventWhereWith = (extra: string): string =>
+    eventRange.where
+      ? `${eventRange.where} AND ${extra}`
+      : `WHERE ${extra}`;
+
+  const usageAgents = db
+    .prepare(`SELECT DISTINCT agentId FROM usage_events ${eventWhereWith("agentId IS NOT NULL")}`)
+    .all(...eventRange.params) as AgentActivityRow[];
+  for (const row of usageAgents) {
+    rangeAgentIds.add(row.agentId);
+  }
+
+  const usageDailyAgents = db
+    .prepare(
+      `SELECT substr(ts, 1, 10) AS day, agentId
+       FROM usage_events ${eventWhereWith("agentId IS NOT NULL")}
+       GROUP BY day, agentId`,
+    )
+    .all(...eventRange.params) as AgentActivityDayRow[];
+  for (const row of usageDailyAgents) {
+    addDailyAgent(row.day, row.agentId);
+  }
+
+  if (!tableExists(db, "agentRuns")) {
+    return { rangeAgentIds, dailyAgentIds };
+  }
+
+  /*
+   * FNXC:CommandCenterActivity 2026-06-30-00:00:
+   * Dashboard active-agent metrics must include ephemeral task-worker heartbeat runs because task execution can be recorded in agentRuns without a durable-agent usage_events row. Merge by agentId so durable usage and run-only task workers count once per range/day.
+   */
+  const runRange = rangeClauses("startedAt", query);
+  const runWhereWith = (extra: string): string =>
+    runRange.where
+      ? `${runRange.where} AND ${extra}`
+      : `WHERE ${extra}`;
+  const runAgents = db
+    .prepare(`SELECT DISTINCT agentId FROM agentRuns ${runWhereWith("agentId IS NOT NULL")}`)
+    .all(...runRange.params) as AgentActivityRow[];
+  for (const row of runAgents) {
+    rangeAgentIds.add(row.agentId);
+  }
+
+  const runDailyAgents = db
+    .prepare(
+      `SELECT substr(startedAt, 1, 10) AS day, agentId
+       FROM agentRuns ${runWhereWith("agentId IS NOT NULL")}
+       GROUP BY day, agentId`,
+    )
+    .all(...runRange.params) as AgentActivityDayRow[];
+  for (const row of runDailyAgents) {
+    addDailyAgent(row.day, row.agentId);
+  }
+
+  return { rangeAgentIds, dailyAgentIds };
+}
+
+function aggregateAgentRunMetrics(
+  db: Database,
+  query: ActivityAnalyticsQuery,
+): { summary: AgentRunSummary; daily: AgentRunDayRow[] } {
+  if (!tableExists(db, "agentRuns")) {
+    return { summary: zeroAgentRunSummary(), daily: [] };
+  }
+
+  const range = rangeClauses("startedAt", query);
+  const statusRows = db
+    .prepare(
+      `SELECT status, COUNT(*) AS count
+       FROM agentRuns ${range.where}
+       GROUP BY status`,
+    )
+    .all(...range.params) as AgentRunStatusRow[];
+
+  const summary = zeroAgentRunSummary();
+  for (const row of statusRows) {
+    summary.total += row.count;
+    if (row.status === "active") summary.active = row.count;
+    if (row.status === "completed") summary.completed = row.count;
+    if (row.status === "failed") summary.failed = row.count;
+  }
+
+  const daily = db
+    .prepare(
+      `SELECT substr(startedAt, 1, 10) AS day, COUNT(*) AS count
+       FROM agentRuns ${range.where}
+       GROUP BY day
+       ORDER BY day ASC`,
+    )
+    .all(...range.params) as AgentRunDayRow[];
+
+  return { summary, daily };
+}
+
+/* ------------------------------------------------------------------------- */
+/* U7 — SDLC funnel + throughput                                             */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The canonical SDLC funnel stages, in flow order. Workflow columns map onto
+ * these by **trait**, never by column id/name, so custom workflows whose columns
+ * carry the standard traits are placed correctly; anything unrecognized folds
+ * into {@link OTHER_STAGE}.
+ */
+export const SDLC_STAGES = [
+  "triage",
+  "todo",
+  "in-progress",
+  "in-review",
+  "done",
+] as const;
+export type SdlcStage = (typeof SDLC_STAGES)[number];
+
+/** Bucket for columns whose traits don't map to a known SDLC stage. */
+export const OTHER_STAGE = "other" as const;
+export type SdlcStageKey = SdlcStage | typeof OTHER_STAGE;
+
+/**
+ * Trait → stage mapping. A column is placed at the first stage any of its traits
+ * matches, scanning in {@link SDLC_STAGES} order so e.g. an `in-review` column
+ * carrying both `human-review` and `merge` resolves deterministically. Keep this
+ * additive: new workflow traits that imply a stage are added here, not matched by
+ * column name.
+ */
+const TRAIT_TO_STAGE: Record<string, SdlcStage> = {
+  // triage
+  intake: "triage",
+  triage: "triage",
+  // todo
+  "reset-on-entry": "todo",
+  // in-progress
+  wip: "in-progress",
+  timing: "in-progress",
+  "abort-on-exit": "in-progress",
+  // in-review
+  "human-review": "in-review",
+  "merge-blocker": "in-review",
+  merge: "in-review",
+  "stall-detection": "in-review",
+  // done
+  complete: "done",
+};
+
+/** Resolve a column's traits to an SDLC stage, or OTHER if none map. */
+export function stageForTraits(traits: readonly string[]): SdlcStageKey {
+  // Prefer the earliest stage in flow order among matching traits so a column is
+  // anchored to its most representative stage deterministically.
+  let best: SdlcStage | undefined;
+  let bestIdx = Number.POSITIVE_INFINITY;
+  for (const t of traits) {
+    const stage = TRAIT_TO_STAGE[t];
+    if (stage === undefined) continue;
+    const idx = SDLC_STAGES.indexOf(stage);
+    if (idx < bestIdx) {
+      bestIdx = idx;
+      best = stage;
+    }
+  }
+  return best ?? OTHER_STAGE;
+}
+
+/** Minimal column shape needed to map columns to stages by trait. */
+export interface FunnelColumnTraitSource {
+  id: string;
+  traits: { trait: string }[];
+}
+
+/**
+ * Build a `columnId → stage` map from a workflow's columns, mapping each column
+ * by its traits (not its id/name). The `todo` builtin column carries `hold`
+ * (a generic gate trait shared by other columns) so we special-case the
+ * presence of `reset-on-entry` for todo above; columns with no recognized trait
+ * fold to OTHER.
+ */
+export function buildColumnStageMap(
+  columns: readonly FunnelColumnTraitSource[],
+): Map<string, SdlcStageKey> {
+  const map = new Map<string, SdlcStageKey>();
+  for (const col of columns) {
+    map.set(
+      col.id,
+      stageForTraits(col.traits.map((t) => t.trait)),
+    );
+  }
+  return map;
+}
+
+export interface SdlcFunnelQuery extends ActivityAnalyticsQuery {
+  /**
+   * Workflow columns to map by trait. Defaults to the built-in coding workflow's
+   * columns. Pass a custom workflow's columns so its column ids resolve; any
+   * column id seen in the activity log but absent here folds into OTHER.
+   */
+  columns?: readonly FunnelColumnTraitSource[];
+}
+
+/** Per-stage funnel datum. */
+export interface SdlcFunnelStage {
+  stage: SdlcStageKey;
+  /** Distinct tasks that entered this stage within the range. */
+  entered: number;
+  /**
+   * Conversion from the previous SDLC stage (entered / prevEntered) as a 0..1
+   * ratio. `null` for the first stage and when the previous stage had zero
+   * entrants (no divide-by-zero). `other` is excluded from conversion chaining.
+   */
+  conversionFromPrev: number | null;
+}
+
+export interface SdlcFunnel {
+  from: string | null;
+  to: string | null;
+  stages: SdlcFunnelStage[];
+  /** Distinct tasks that entered the first (triage) stage's pipeline in range. */
+  enteredInRange: number;
+  /** Distinct tasks that reached `done` in range. */
+  doneInRange: number;
+  /**
+   * Cohort completion rate for tasks that entered triage in range: count of
+   * those entrants that also reached `done`, divided by `enteredInRange`.
+   * Bounded to the 0..1 conversion ratio by set intersection; `null` when the
+   * denominator is zero (documented zero-denominator case), never NaN/∞.
+   */
+  completionRate: number | null;
+  /** Number of whole UTC days in the range (>= 1), used for throughput. */
+  rangeDays: number;
+  /** Tasks reaching `done` per day = doneInRange / rangeDays. */
+  throughputPerDay: number;
+}
+
+interface MoveRow {
+  taskId: string | null;
+  to: string | null;
+  ts: string;
+}
+
+function defaultColumns(): FunnelColumnTraitSource[] {
+  const ir = BUILTIN_CODING_WORKFLOW_IR;
+  if (ir.version === "v2") {
+    return (ir.columns as WorkflowIrColumn[]).map((c) => ({
+      id: c.id,
+      traits: c.traits.map((t) => ({ trait: t.trait })),
+    }));
+  }
+  return [];
+}
+
+function countWholeDays(from?: string, to?: string): number {
+  if (from === undefined || to === undefined) return 1;
+  const f = Date.parse(from);
+  const t = Date.parse(to);
+  if (!Number.isFinite(f) || !Number.isFinite(t) || t < f) return 1;
+  const ms = t - f;
+  const days = Math.ceil(ms / 86_400_000);
+  return Math.max(1, days);
+}
+
+/**
+ * Aggregate the SDLC funnel over a date range from `activityLog` transitions.
+ *
+ * **Entry into a stage** = a `task:moved` whose `metadata.to` column maps to that
+ * stage, OR a `task:created` whose initial column maps to it. Counts are distinct
+ * tasks per stage (a task that re-enters a stage is counted once). Columns map to
+ * stages **by trait** via {@link buildColumnStageMap}; unknown columns fold to
+ * OTHER. Completion rate divides done-in-range by entered-in-range with the
+ * zero-denominator case returning `null`.
+ */
+export function aggregateSdlcFunnel(
+  db: Database,
+  query: SdlcFunnelQuery = {},
+): SdlcFunnel {
+  const columns = query.columns ?? defaultColumns();
+  const range = rangeClauses("timestamp", query);
+  const where = range.where
+    ? `${range.where} AND type = 'task:moved'`
+    : `WHERE type = 'task:moved'`;
+
+  // task:moved carries metadata.to (the destination column id). The funnel is
+  // driven entirely by transitions — a task entering a stage is a move whose
+  // destination column maps to that stage. (task:created carries no column in
+  // metadata, so it is intentionally excluded; the first move records entry.)
+  const rows = db
+    .prepare(
+      `SELECT taskId,
+              json_extract(metadata, '$.to') AS "to",
+              timestamp AS ts
+       FROM activityLog ${where}`,
+    )
+    .all(...range.params) as MoveRow[];
+
+  return buildSdlcFunnelFromRows(rows, query, columns);
+}
+
+async function aggregatePostgresSdlcFunnel(
+  layer: AsyncDataLayer,
+  query: SdlcFunnelQuery,
+): Promise<SdlcFunnel> {
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
+  const from = query.from ? sql`AND timestamp >= ${query.from}` : sql``;
+  const to = query.to ? sql`AND timestamp <= ${query.to}` : sql``;
+  const rows = await layer.db.execute(sql`
+    SELECT task_id AS "taskId", metadata ->> 'to' AS "to", timestamp AS ts
+    FROM project.activity_log
+    WHERE type = 'task:moved' ${projectScope} ${from} ${to}
+  `) as unknown as MoveRow[];
+  return buildSdlcFunnelFromRows(rows, query, query.columns ?? defaultColumns());
+}
+
+function buildSdlcFunnelFromRows(
+  rows: readonly MoveRow[],
+  query: SdlcFunnelQuery,
+  columns: readonly FunnelColumnTraitSource[],
+): SdlcFunnel {
+  const stageMap = buildColumnStageMap(columns);
+  const stageOf = (columnId: string | null): SdlcStageKey => {
+    if (columnId === null) return OTHER_STAGE;
+    return stageMap.get(columnId) ?? OTHER_STAGE;
+  };
+  const perStage = new Map<SdlcStageKey, Set<string>>();
+  const ensure = (s: SdlcStageKey): Set<string> => {
+    let set = perStage.get(s);
+    if (!set) {
+      set = new Set();
+      perStage.set(s, set);
+    }
+    return set;
+  };
+
+  for (const row of rows) {
+    if (row.taskId === null) continue;
+    const stage = stageOf(row.to);
+    ensure(stage).add(row.taskId);
+  }
+
+  const stages: SdlcFunnelStage[] = [];
+  let prevEntered: number | null = null;
+  for (const stage of SDLC_STAGES) {
+    const entered = perStage.get(stage)?.size ?? 0;
+    const conversionFromPrev =
+      prevEntered === null || prevEntered === 0 ? null : entered / prevEntered;
+    stages.push({ stage, entered, conversionFromPrev });
+    prevEntered = entered;
+  }
+  // Append OTHER as a trailing, non-chained bucket if anything landed there.
+  const otherCount = perStage.get(OTHER_STAGE)?.size ?? 0;
+  if (otherCount > 0) {
+    stages.push({ stage: OTHER_STAGE, entered: otherCount, conversionFromPrev: null });
+  }
+
+  // Entered-in-range = distinct tasks that entered the FIRST funnel stage
+  // (triage) in range. doneInRange remains every task that reached done in range.
+  const triageEntrants = perStage.get("triage") ?? new Set<string>();
+  const doneEntrants = perStage.get("done") ?? new Set<string>();
+  const enteredInRange = triageEntrants.size;
+  const doneInRange = doneEntrants.size;
+  /*
+  FNXC:CommandCenter 2026-06-18-00:00:
+  Completion rate must be a cohort conversion, not done-in-range divided by triage-in-range. Tasks can finish inside a date range after entering triage before the range (or never entering triage), so intersecting the in-range triage cohort with done tasks keeps the dashboard and OTEL metric trustable at 0..1 or null.
+  */
+  const completedTriageEntrants = Array.from(triageEntrants).filter((taskId) =>
+    doneEntrants.has(taskId),
+  ).length;
+  const completionRate =
+    enteredInRange === 0 ? null : completedTriageEntrants / enteredInRange;
+
+  const rangeDays = countWholeDays(query.from, query.to);
+  const throughputPerDay = doneInRange / rangeDays;
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    stages,
+    enteredInRange,
+    doneInRange,
+    completionRate,
+    rangeDays,
+    throughputPerDay,
+  };
+}
+
+/* ------------------------------------------------------------------------- */
+/* U13 — Monitor stage: MTTR + deploy/incident metrics                       */
+/* ------------------------------------------------------------------------- */
+
+interface ResolvedIncidentRow {
+  openedAt: string;
+  resolvedAt: string;
+}
+
+/**
+ * Aggregate monitor-stage metrics over a date range from the `incidents` and
+ * `deployments` tables (U13).
+ *
+ * - **MTTR** = mean(resolvedAt − openedAt), in minutes, over incidents whose
+ *   `resolvedAt` is within `[from, to]`. An incident with no `resolvedAt`
+ *   (still open) is excluded — it contributes to {@link MonitorMetrics.openIncidents},
+ *   never to MTTR. When no incident is resolved in range, MTTR is the documented
+ *   unavailable sentinel (`value: null`, `unavailable: true`), never `0`.
+ * - **incidentsOpened** counts incidents by `openedAt` in range.
+ * - **incidentsResolved** counts incidents by `resolvedAt` in range.
+ * - **openIncidents** is the current count of `status = 'open'` incidents
+ *   (point-in-time, deliberately not range-bound — "how many are open now").
+ * - **deployments** counts deploys by `deployedAt` in range (deploy frequency).
+ *
+ * Tables are queried defensively: if `incidents`/`deployments` are absent (a DB
+ * predating migration 120), every metric degrades to its empty value rather than
+ * throwing, so the aggregator is safe to call on any schema.
+ */
+export async function aggregateMonitorMetrics(
+  dbOrLayer: Database | AsyncDataLayer,
+  query: ActivityAnalyticsQuery = {},
+): Promise<MonitorMetrics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:40:
+  // Backend mode: query incidents + deployments via the async layer.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    const layer = dbOrLayer as AsyncDataLayer;
+    const { sql } = await import("drizzle-orm");
+    // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+    // Raw async SQL must schema-qualify project tables (project.deployments,
+    // project.incidents) and use the real snake_case columns (deployed_at,
+    // opened_at, resolved_at). The async connection does not put `project` on
+    // the search_path (see data-layer.ts:353), so unqualified `FROM deployments`
+    // raised `relation "deployments" does not exist`; and quoted camelCase
+    // identifiers like `"openedAt"` do not match the snake_case columns. The
+    // deployments read previously sat OUTSIDE the try/catch, so this error 500'd
+    // the whole /command-center/activity route instead of degrading. Deployment
+    // frequency filters on deployed_at (deploy time), not the incident openedAt.
+    /*
+    FNXC:MonitorAnalyticsIsolation 2026-07-14-01:04:
+    A bound PostgreSQL layer must apply one shared tenant predicate to every deployment and incident metric, including the point-in-time open count and MTTR sample. An unbound layer deliberately omits it for global Command Center aggregation.
+    */
+    const projectScope = layer.projectId !== undefined
+      ? sql`AND project_id = ${layer.projectId}`
+      : sql``;
+    let deployments = 0;
+    try {
+      const depFrom = query.from ? sql`AND deployed_at >= ${query.from}` : sql``;
+      const depTo = query.to ? sql`AND deployed_at <= ${query.to}` : sql``;
+      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${projectScope} ${depFrom} ${depTo}`);
+      deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+    } catch (err) {
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // Degrade to 0 so the deployments read never 500s /command-center/activity
+      // (it previously sat outside any try/catch), but log: a real failure here
+      // (permissions, schema drift, bad bind) must not masquerade as "0 deploys".
+      deployments = 0;
+      console.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
+    }
+    try {
+      const openedFrom = query.from ? sql`AND opened_at >= ${query.from}` : sql``;
+      const openedTo = query.to ? sql`AND opened_at <= ${query.to}` : sql``;
+      const resolvedFrom = query.from ? sql`AND resolved_at >= ${query.from}` : sql``;
+      const resolvedTo = query.to ? sql`AND resolved_at <= ${query.to}` : sql``;
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`);
+      const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope}`);
+      const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // resolvedDetailRows already returns every resolved-in-range incident, so
+      // incidentsResolved is its row count — drop the separate COUNT query that
+      // had an identical WHERE clause (one fewer round-trip per activity load).
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      const incidentsResolved = resolvedDetailRows.length;
+      let totalMs = 0;
+      let sampleCount = 0;
+      for (const row of resolvedDetailRows) {
+        const duration = new Date(row.resolvedAt).getTime() - new Date(row.openedAt).getTime();
+        if (Number.isFinite(duration) && duration >= 0) {
+          totalMs += duration;
+          sampleCount++;
+        }
+      }
+      const mttrValue = sampleCount > 0 ? totalMs / sampleCount / 60000 : null;
+      return {
+        mttr: { value: mttrValue, unavailable: sampleCount === 0, sampleCount },
+        incidentsOpened,
+        incidentsResolved,
+        openIncidents,
+        deployments,
+      };
+    } catch {
+      return {
+        mttr: { value: null, unavailable: true, sampleCount: 0 },
+        incidentsOpened: 0,
+        incidentsResolved: 0,
+        openIncidents: 0,
+        deployments,
+      };
+    }
+  }
+  const db = dbOrLayer as Database;
+  if (!tableExists(db, "incidents")) {
+    return {
+      mttr: { value: null, unavailable: true, sampleCount: 0 },
+      incidentsOpened: 0,
+      incidentsResolved: 0,
+      openIncidents: 0,
+      deployments: tableExists(db, "deployments")
+        ? countDeployments(db, query)
+        : 0,
+    };
+  }
+
+  const openedRange = rangeClauses("openedAt", query);
+  const incidentsOpened = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents ${openedRange.where}`)
+      .get(...openedRange.params) as CountRow
+  ).count;
+
+  // Resolved-in-range: resolvedAt within [from,to]. Build clauses on resolvedAt
+  // plus a NOT NULL guard so unresolved incidents are excluded from MTTR.
+  const resolvedRange = rangeClauses("resolvedAt", query);
+  const resolvedWhere = resolvedRange.where
+    ? `${resolvedRange.where} AND resolvedAt IS NOT NULL`
+    : `WHERE resolvedAt IS NOT NULL`;
+
+  const incidentsResolved = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents ${resolvedWhere}`)
+      .get(...resolvedRange.params) as CountRow
+  ).count;
+
+  const openIncidents = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents WHERE status = 'open'`)
+      .get() as CountRow
+  ).count;
+
+  const resolvedRows = db
+    .prepare(
+      `SELECT openedAt, resolvedAt FROM incidents ${resolvedWhere}`,
+    )
+    .all(...resolvedRange.params) as ResolvedIncidentRow[];
+
+  return {
+    mttr: mttrFromResolvedRows(resolvedRows),
+    incidentsOpened,
+    incidentsResolved,
+    openIncidents,
+    deployments: tableExists(db, "deployments")
+      ? countDeployments(db, query)
+      : 0,
+  };
+}
+
+function countDeployments(db: Database, query: ActivityAnalyticsQuery): number {
+  const range = rangeClauses("deployedAt", query);
+  return (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM deployments ${range.where}`)
+      .get(...range.params) as CountRow
+  ).count;
+}
+
+function tableExists(db: Database, table: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    )
+    .get(table) as { name: string } | undefined;
+  return row !== undefined;
+}
+
+/* ------------------------------------------------------------------------- */
+/* FN-6706 — Command Center Signals analytics from incidents                  */
+/* ------------------------------------------------------------------------- */
+
+interface SignalsGroupRow {
+  key: string | null;
+  count: number;
+}
+
+function emptySignalsAnalytics(query: ActivityAnalyticsQuery): SignalsAnalytics {
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    totalSignals: 0,
+    open: 0,
+    resolved: 0,
+    mttr: { value: null, unavailable: true, sampleCount: 0 },
+    bySource: [],
+    bySeverity: [],
+    byStatus: [],
+  };
+}
+
+function mttrFromResolvedRows(rows: ResolvedIncidentRow[]): MttrSummary {
+  let totalMs = 0;
+  let sampleCount = 0;
+  for (const row of rows) {
+    const opened = Date.parse(row.openedAt);
+    const resolved = Date.parse(row.resolvedAt);
+    if (!Number.isFinite(opened) || !Number.isFinite(resolved)) continue;
+    const delta = resolved - opened;
+    if (delta < 0) continue;
+    totalMs += delta;
+    sampleCount += 1;
+  }
+  return sampleCount === 0
+    ? { value: null, unavailable: true, sampleCount: 0 }
+    : { value: totalMs / sampleCount / 60_000, unavailable: false, sampleCount };
+}
+
+function signalsBreakdown(
+  db: Database,
+  column: "source" | "severity" | "status",
+  openedWhere: string,
+  params: string[],
+): Array<{ key: string; count: number }> {
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(TRIM(${column}), ''), 'unknown') AS key, COUNT(*) AS count
+       FROM incidents ${openedWhere}
+       GROUP BY key
+       ORDER BY count DESC, key ASC`,
+    )
+    .all(...params) as SignalsGroupRow[];
+  return rows.map((row) => ({ key: row.key ?? "unknown", count: row.count }));
+}
+
+/**
+ * Aggregate Command Center Signals data from verified connector incidents.
+ *
+ * FNXC:CommandCenterSignals 2026-06-19-00:00:
+ * FN-6706 requires the Signals area to read real connector pressure from the project-scoped incidents table. Use openedAt for total/open/source/severity, resolvedAt for resolved/MTTR, bucket missing source/severity as `unknown`, and degrade to an empty unavailable-MTTR shape on older schemas without incidents.
+ *
+ * FNXC:CommandCenterSignals 2026-06-25-23:35:
+ * Connector resolution events must surface as a status breakdown, not only top-line open/resolved counts, so the UI and API can prove provider recovery signals changed incident state.
+ */
+export async function aggregateSignalsAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
+  query: ActivityAnalyticsQuery = {},
+): Promise<SignalsAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+  // Backend (PostgreSQL) path. The async connection has no `project` on the
+  // search_path, so project.incidents is schema-qualified and columns are
+  // snake_case (opened_at, resolved_at, status, source, severity). Semantics
+  // (openedAt for total/open/breakdowns, resolvedAt for resolved/MTTR, unknown
+  // bucketing, MTTR sentinel) mirror the sync branch exactly.
+  if ("ping" in dbOrLayer) {
+    return aggregateSignalsAnalyticsAsync(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
+  if (!tableExists(db, "incidents")) return emptySignalsAnalytics(query);
+
+  const openedRange = rangeClauses("openedAt", query);
+  const resolvedRange = rangeClauses("resolvedAt", query);
+  const openWhere = openedRange.where
+    ? `${openedRange.where} AND status = 'open'`
+    : "WHERE status = 'open'";
+  const resolvedWhere = resolvedRange.where
+    ? `${resolvedRange.where} AND resolvedAt IS NOT NULL`
+    : "WHERE resolvedAt IS NOT NULL";
+
+  const totalSignals = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents ${openedRange.where}`)
+      .get(...openedRange.params) as CountRow
+  ).count;
+  const open = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents ${openWhere}`)
+      .get(...openedRange.params) as CountRow
+  ).count;
+  const resolved = (
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM incidents ${resolvedWhere}`)
+      .get(...resolvedRange.params) as CountRow
+  ).count;
+
+  const resolvedRows = db
+    .prepare(`SELECT openedAt, resolvedAt FROM incidents ${resolvedWhere}`)
+    .all(...resolvedRange.params) as ResolvedIncidentRow[];
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    totalSignals,
+    open,
+    resolved,
+    mttr: mttrFromResolvedRows(resolvedRows),
+    bySource: signalsBreakdown(db, "source", openedRange.where, openedRange.params).map((row) => ({
+      source: row.key,
+      count: row.count,
+    })),
+    bySeverity: signalsBreakdown(db, "severity", openedRange.where, openedRange.params).map((row) => ({
+      severity: row.key,
+      count: row.count,
+    })),
+    byStatus: signalsBreakdown(db, "status", openedRange.where, openedRange.params).map((row) => ({
+      status: row.key,
+      count: row.count,
+    })),
+  };
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * PostgreSQL fetch path for {@link aggregateSignalsAnalytics}. project.incidents
+ * is schema-managed (always present), so no tableExists guard is needed — an
+ * empty project simply yields zero counts and the unavailable-MTTR sentinel.
+ * Breakdowns bucket NULL/blank source/severity/status as `unknown`, matching
+ * the sync `COALESCE(NULLIF(TRIM(col), ''), 'unknown')` shape.
+ */
+async function aggregateSignalsAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: ActivityAnalyticsQuery,
+): Promise<SignalsAnalytics> {
+  /*
+  FNXC:SignalsAnalyticsIsolation 2026-07-14-01:26:
+  A project-bound Signals read must apply the same tenant predicate to totals, open incidents, resolved/MTTR samples, and every breakdown. An unbound Command Center layer deliberately omits the predicate to preserve global aggregation.
+  */
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
+  const openedFrom = query.from !== undefined ? sql`AND opened_at >= ${query.from}` : sql``;
+  const openedTo = query.to !== undefined ? sql`AND opened_at <= ${query.to}` : sql``;
+  const resolvedFrom = query.from !== undefined ? sql`AND resolved_at >= ${query.from}` : sql``;
+  const resolvedTo = query.to !== undefined ? sql`AND resolved_at <= ${query.to}` : sql``;
+
+  const totalRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const totalSignals = Number(totalRows[0]?.count ?? 0);
+
+  const openRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope} ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const open = Number(openRows[0]?.count ?? 0);
+
+  const resolvedRows = (await layer.db.execute(
+    sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt"
+        FROM project.incidents
+        WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`,
+  )) as Array<{ openedAt: string; resolvedAt: string }>;
+  const resolved = resolvedRows.length;
+
+  const breakdown = async (column: "source" | "severity" | "status"): Promise<Array<{ key: string; count: number }>> => {
+    const col = sql.raw(column);
+    const rows = (await layer.db.execute(
+      sql`SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'unknown') AS key, count(*)::int AS count
+          FROM project.incidents
+          WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}
+          GROUP BY 1
+          ORDER BY count DESC, key ASC`,
+    )) as Array<{ key: string | null; count: number }>;
+    return rows.map((r) => ({ key: r.key ?? "unknown", count: Number(r.count) }));
+  };
+
+  const [bySource, bySeverity, byStatus] = await Promise.all([
+    breakdown("source"),
+    breakdown("severity"),
+    breakdown("status"),
+  ]);
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    totalSignals,
+    open,
+    resolved,
+    mttr: mttrFromResolvedRows(resolvedRows),
+    bySource: bySource.map((row) => ({ source: row.key, count: row.count })),
+    bySeverity: bySeverity.map((row) => ({ severity: row.key, count: row.count })),
+    byStatus: byStatus.map((row) => ({ status: row.key, count: row.count })),
+  };
+}

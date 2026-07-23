@@ -21,9 +21,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
-import * as branchConflictModule from "../../branch-conflicts.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
+import * as branchConflictModule from "../../execution/branch-conflicts.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 function makeStore(task: Task): TaskStore & EventEmitter {
   const emitter = new EventEmitter();

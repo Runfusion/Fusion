@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TokenCapDetector, type TokenCapCheckResult } from "../token-cap-detector.js";
+import { TokenCapDetector, type TokenCapCheckResult } from "../errors/token-cap-detector.js";
 
 /** Create a mock AgentSession with the given context usage. */
 function createMockSession(

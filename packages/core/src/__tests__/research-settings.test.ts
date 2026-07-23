@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isResearchExperimentalEnabled, resolveResearchSettings } from "../research-settings.js";
+import { isResearchExperimentalEnabled, resolveResearchSettings } from "../research/research-settings.js";
 import type { Settings } from "../types.js";
 
 describe("isResearchExperimentalEnabled", () => {

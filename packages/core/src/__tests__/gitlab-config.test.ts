@@ -4,7 +4,7 @@ import {
   DEFAULT_GITLAB_INSTANCE_URL,
   resolveGitlabConfig,
   resolveGitlabEnabled,
-} from "../gitlab-config.js";
+} from "../git/gitlab-config.js";
 
 /*
 FNXC:GitLabConfiguration 2026-07-02-00:00:

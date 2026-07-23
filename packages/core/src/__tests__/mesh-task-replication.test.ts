@@ -7,8 +7,8 @@ database) and those functions were removed from mesh-task-replication.ts.
 Only buildBootstrapPrompt survives (task/comment PROMPT.md stub builder).
 */
 import { describe, expect, it } from "vitest";
-import { buildBootstrapPrompt, isUnplannedSeedPrompt } from "../mesh-task-replication.js";
-import { applyOriginalDescription } from "../original-description-policy.js";
+import { buildBootstrapPrompt, isUnplannedSeedPrompt } from "../mesh/mesh-task-replication.js";
+import { applyOriginalDescription } from "../tasks/original-description-policy.js";
 
 describe("mesh-task-replication", () => {
   it("buildBootstrapPrompt matches task bootstrap format", () => {

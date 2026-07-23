@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discoverOverseerWatchdogFiles, formatOverseerWatchdogPromptBlocks } from "../overseer-watchdog.js";
+import { discoverOverseerWatchdogFiles, formatOverseerWatchdogPromptBlocks } from "../overseer/overseer-watchdog.js";
 
 describe("discoverOverseerWatchdogFiles", () => {
   it("returns empty when nothing is readable", () => {

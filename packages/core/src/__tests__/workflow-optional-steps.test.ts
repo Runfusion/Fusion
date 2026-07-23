@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
-import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
 import {
   resolveDefaultOnOptionalGroupIds,
   resolveWorkflowOptionalSteps,
-} from "../workflow-optional-steps.js";
+} from "../workflows/workflow-optional-steps.js";
 import type {
   WorkflowIr,
   WorkflowIrNode,
   WorkflowIrV2,
   WorkflowOptionalGroupConfig,
-} from "../workflow-ir-types.js";
+} from "../workflows/workflow-ir-types.js";
 
 const v1: WorkflowIr = {
   version: "v1",

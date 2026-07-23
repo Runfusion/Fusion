@@ -5,7 +5,7 @@ import { ViewHeader } from "@fusion/dashboard/app/components/ViewHeader";
 import {
   artifactMediaUrlWithToken,
   type ArtifactWithTask,
-} from "@fusion/dashboard/app/api/task-content";
+} from "@fusion/dashboard/app/api/tasks/task-content";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
 
 /*

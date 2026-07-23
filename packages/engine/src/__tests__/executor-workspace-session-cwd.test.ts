@@ -5,7 +5,7 @@ U1 session-cwd scenarios that require driving the real TaskExecutor.execute() to
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { acquireTaskWorktree } from "../worktree-acquisition.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 import type { WorkspaceConfig } from "@fusion/core";
 import {
   createMockStore,
@@ -14,8 +14,8 @@ import {
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
 
-vi.mock("../worktree-acquisition.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../worktree-acquisition.js")>();
+vi.mock("../worktree/worktree-acquisition.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../worktree/worktree-acquisition.js")>();
   return { ...actual, acquireTaskWorktree: vi.fn(actual.acquireTaskWorktree) };
 });
 

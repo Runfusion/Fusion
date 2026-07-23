@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
-import { askAcpOnce } from "../cli-agent-ask.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
+import { askAcpOnce } from "../cli-runtime/cli-agent-ask.js";
 
 interface FakeRuntimeOptions {
   createError?: Error;

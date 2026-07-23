@@ -18,7 +18,7 @@
  */
 
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode } from "@fusion/core";
-import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./auto-claim-snapshot.js";
+import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./scheduling/auto-claim-snapshot.js";
 import {
   ApprovalRequestStore,
   buildExecutionMemoryInstructions,
@@ -39,22 +39,22 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import { createTaskCreateTool, createTaskLogToolWithContext, createTaskLogsReadTool, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createTaskAssignTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createMissionTools, createIdeationTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
-import { AgentLogger } from "./agent-logger.js";
+import { AgentLogger } from "./agents/agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
   buildPluginPromptSection,
   resolveAgentHeartbeatProcedure,
-} from "./agent-instructions.js";
-import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./heartbeat-procedure-resolver.js";
-import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
-import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
+} from "./agents/agent-instructions.js";
+import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./agents/heartbeat-procedure-resolver.js";
+import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
+import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
-import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "./effective-settings.js";
+import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "./project/effective-settings.js";
 import {
   extractConcurrentSoftDeleteRaceDetails,
   isConcurrentSoftDeleteRaceError,
   isStaleWorktreeModuleResolutionError,
-} from "./transient-error-detector.js";
+} from "./errors/transient-error-detector.js";
 
 /**
  * FNXC:WorktreeAcquisition 2026-07-09-00:00:
@@ -83,21 +83,21 @@ FN-7672 requires durable agent error recovery to stay classification-gated: only
 FNXC:HeartbeatRecovery 2026-07-15-08:50:
 heartbeat-model-unavailable parks from assignment/on-demand runs were terminal until a human Retry, even when the next attempt succeeds with unchanged credentials (false "model unavailable" / registry / credential-probe blips). Admit those parks to the same bounded heartbeatErrorRecovery budget as error-state recovery so the engine auto-retries like operator Retry, while genuine missing credentials re-park after the budget exhausts.
 */
-import { acquireTaskWorktree } from "./worktree-acquisition.js";
-import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./run-audit.js";
+import { acquireTaskWorktree } from "./worktree/worktree-acquisition.js";
+import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
 import { promptWithFallback } from "./pi.js";
-import { withRateLimitRetry } from "./rate-limit-retry.js";
-import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agent-session-helpers.js";
-import { resolveMcpServersForStore } from "./mcp-resolution.js";
-import type { AgentActionGateContext } from "./agent-action-gate.js";
-import { buildSessionSkillContextSync } from "./session-skill-context.js";
-import type { AgentReflectionService } from "./agent-reflection.js";
-import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./heartbeat-prompt-trim.js";
-import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./room-ambiguity.js";
-import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./room-coordination.js";
-import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./task-agent-sync.js";
-import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./session-token-usage.js";
+import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
+import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
+import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
+import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
+import { buildSessionSkillContextSync } from "./cli-runtime/session-skill-context.js";
+import type { AgentReflectionService } from "./agents/agent-reflection.js";
+import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./agents/heartbeat-prompt-trim.js";
+import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./triage-domain/room-ambiguity.js";
+import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./triage-domain/room-coordination.js";
+import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./agents/task-agent-sync.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./execution/session-token-usage.js";
 
 const promptSizeLog = createLogger("prompt-size");
 
@@ -189,7 +189,7 @@ export interface HeartbeatMonitorOptions {
    *  When not provided, executeHeartbeat() will throw. */
   rootDir?: string;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
-  pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
   /** Optional ReflectionStore for evaluation-reading tools */
   reflectionStore?: ReflectionStore;
   /** Optional AgentReflectionService for fn_reflect_on_performance tool */
@@ -501,7 +501,7 @@ export {
   HEARTBEAT_NO_TASK_PROCEDURE_LITE,
   HEARTBEAT_NO_TASK_PROCEDURE_OFF,
   HEARTBEAT_NO_TASK_PROCEDURE,
-} from "./agent-heartbeat-prompts.js";
+} from "./agents/agent-heartbeat-prompts.js";
 import {
   HEARTBEAT_SYSTEM_PROMPT,
   HEARTBEAT_PROCEDURE_STRICT,
@@ -512,7 +512,7 @@ import {
   HEARTBEAT_NO_TASK_PROCEDURE_OFF,
   renderHeartbeatNoTaskProcedure,
   renderHeartbeatNoTaskSystemPrompt,
-} from "./agent-heartbeat-prompts.js";
+} from "./agents/agent-heartbeat-prompts.js";
 
 /* FNXC:AgentHeartbeat 2026-07-15-13:25: Keep recovery exports here so existing engine consumers retain the legacy public API after the extraction. */
 export {
@@ -530,7 +530,7 @@ export {
   isModelUnavailablePark,
   isModelUnavailableParkRecoveryEligible,
   isErrorRecoveryEligible,
-} from "./agent-heartbeat-error-recovery.js";
+} from "./agents/agent-heartbeat-error-recovery.js";
 import {
   MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS,
   HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
@@ -544,7 +544,7 @@ import {
   isModelUnavailablePark,
   isErrorRecoveryEligible,
   isHeartbeatManaged,
-} from "./agent-heartbeat-error-recovery.js";
+} from "./agents/agent-heartbeat-error-recovery.js";
 
 
 /** Parameter schema for the fn_heartbeat_done tool */
@@ -667,7 +667,7 @@ export class HeartbeatMonitor {
   private rootDir?: string;
   private messageStore?: MessageStore;
   private chatStore?: ChatStore;
-  private pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  private pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
   private reflectionStore?: ReflectionStore;
   private reflectionService?: AgentReflectionService;
   private selfImproveService?: SelfImproveServiceLike;

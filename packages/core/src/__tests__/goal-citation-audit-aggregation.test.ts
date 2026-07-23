@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunAuditEvent } from "../types.js";
-import { collectCitedGoalIdsFromAudit } from "../goal-citation-extractor.js";
+import { collectCitedGoalIdsFromAudit } from "../goals/goal-citation-extractor.js";
 
 function event(partial: Partial<RunAuditEvent>): RunAuditEvent {
   return {

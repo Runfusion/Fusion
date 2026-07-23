@@ -4,7 +4,7 @@ import {
   normalizeAgentPermissionPolicy,
   resolveEffectiveAgentPermissionPolicy,
   resolveAgentPermissionPolicyPreset,
-} from "../agent-permission-policy.js";
+} from "../agents/agent-permission-policy.js";
 
 describe("agent permission policy resolution", () => {
   it("returns built-in preset rules unchanged", () => {

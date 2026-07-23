@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "../overseer-session-delta.js";
+import { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "../overseer/overseer-session-delta.js";
 
 describe("isOverseerSelfAdvisoryText", () => {
   it("detects planner-oversight and advisory markers", () => {

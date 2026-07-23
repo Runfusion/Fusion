@@ -6,7 +6,7 @@ import {
   isRequiredArtifactReadFailedValue,
   requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
-} from "../required-workflow-artifacts.js";
+} from "../execution/required-workflow-artifacts.js";
 
 // FNXC:WorkflowArtifacts 2026-07-21-17:00: This suite locks the typed missing/read
 // distinction and the non-empty planning/step-source contract used by every gate.

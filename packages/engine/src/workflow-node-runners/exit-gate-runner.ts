@@ -1,7 +1,7 @@
 import type { WorkflowLoopExitCondition } from "@fusion/core";
 
-import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflow-graph-executor.js";
-import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflow-node-runner.js";
+import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflows/workflow-node-runner.js";
 
 /*
 FNXC:WorkflowExitGate 2026-07-05-00:00:

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { markSideEffectsStarted, primitiveNodeContext } from "../runtime-primitives.js";
-import { createWorkflowRuntimePrimitiveProvider } from "../workflow-runtime-primitive-provider.js";
+import { markSideEffectsStarted, primitiveNodeContext } from "../execution/runtime-primitives.js";
+import { createWorkflowRuntimePrimitiveProvider } from "../workflows/workflow-runtime-primitive-provider.js";
 
 describe("runtime primitives", () => {
   it("creates a workflow primitive context from a run and node", () => {

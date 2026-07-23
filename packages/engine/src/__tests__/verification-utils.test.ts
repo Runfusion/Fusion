@@ -10,7 +10,7 @@ import {
   execWithProcessGroup,
   VERIFICATION_TIMEOUT_PACKAGE_MS,
   VERIFICATION_TIMEOUT_WORKSPACE_MS,
-} from "../verification-utils.js";
+} from "../execution/verification-utils.js";
 
 const onPosix = process.platform !== "win32";
 const itPosix = onPosix ? it : it.skip;

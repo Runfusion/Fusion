@@ -18,7 +18,7 @@ import {
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
   resolveTaskMergeTarget,
-} from "../task-merge.js";
+} from "../merge/task-merge.js";
 
 const baseTask = {
   column: "in-review" as const,

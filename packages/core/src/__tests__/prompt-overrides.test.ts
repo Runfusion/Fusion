@@ -13,7 +13,7 @@ import {
   isValidPromptKey,
   isValidPromptOverrideMap,
   assertValidPromptOverrideMap,
-} from "../prompt-overrides.js";
+} from "../tasks/prompt-overrides.js";
 
 describe("prompt-overrides", () => {
   describe("PROMPT_KEY_CATALOG", () => {

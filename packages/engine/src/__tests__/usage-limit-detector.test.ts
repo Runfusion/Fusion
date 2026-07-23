@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isUsageLimitError, UsageLimitPauser, checkSessionError } from "../usage-limit-detector.js";
+import { isUsageLimitError, UsageLimitPauser, checkSessionError } from "../errors/usage-limit-detector.js";
 
 // ── isUsageLimitError classification tests ───────────────────────────
 

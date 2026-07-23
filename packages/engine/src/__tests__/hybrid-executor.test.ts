@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CentralCore, RegisteredProject } from "@fusion/core";
-import { HybridExecutor } from "../hybrid-executor.js";
+import { HybridExecutor } from "../concurrency/hybrid-executor.js";
 import * as engine from "../index.js";
-import type { ProjectRuntimeConfig } from "../project-runtime.js";
+import type { ProjectRuntimeConfig } from "../project/project-runtime.js";
 
 // Mock the ProjectManager
 const mockRuntimes = new Map();
@@ -21,7 +21,7 @@ const mockProjectManagerInstances: Array<{
   on: ReturnType<typeof vi.fn>;
 }> = [];
 
-vi.mock("../project-manager.js", () => ({
+vi.mock("../project/project-manager.js", () => ({
   ProjectManager: vi.fn().mockImplementation(function () {
     const instance = {
       addProject: vi.fn().mockImplementation((config: ProjectRuntimeConfig) => {
@@ -92,7 +92,7 @@ const mockNodeHealthMonitorInstances: Array<{
   checkAllNodes: ReturnType<typeof vi.fn>;
 }> = [];
 
-vi.mock("../node-health-monitor.js", () => ({
+vi.mock("../project/node-health-monitor.js", () => ({
   NodeHealthMonitor: vi.fn().mockImplementation(function () {
     const instance = {
       start: vi.fn().mockResolvedValue(undefined),

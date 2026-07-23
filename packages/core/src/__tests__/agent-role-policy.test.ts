@@ -13,7 +13,7 @@ import {
   isEngineerRoleAgent,
   isExecutorRoleAgent,
   isImplementationTask,
-} from "../agent-role-policy.js";
+} from "../agents/agent-role-policy.js";
 
 describe("agent-role-policy", () => {
   it("treats triage/todo/in-progress/in-review as implementation tasks", () => {

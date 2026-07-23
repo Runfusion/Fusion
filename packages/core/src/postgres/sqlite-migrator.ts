@@ -52,7 +52,7 @@
  * not collide with migrated rows.
  */
 
-import { DatabaseSync } from "../sqlite-adapter.js";
+import { DatabaseSync } from "../db/sqlite-adapter.js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -65,8 +65,8 @@ import {
   CENTRAL_SCHEMA,
   ARCHIVE_SCHEMA,
 } from "./schema/_shared.js";
-import { createLogger } from "../logger.js";
-import { getErrorMessage } from "../error-message.js";
+import { createLogger } from "../process/logger.js";
+import { getErrorMessage } from "../process/error-message.js";
 
 const log = createLogger("sqlite-migrator");
 

@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { unrefQmdChildProcess } from "../memory-backend.js";
+import { unrefQmdChildProcess } from "../memory/memory-backend.js";
 
 const tsxPackageJsonPath = createRequire(import.meta.url).resolve("tsx/package.json");
 const tsxCliPath = join(tsxPackageJsonPath, "..", "dist", "cli.mjs");

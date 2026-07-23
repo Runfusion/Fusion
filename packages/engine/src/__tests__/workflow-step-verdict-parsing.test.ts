@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inferWorkflowStepVerdictFromProse, parseWorkflowStepVerdict } from "../executor.js";
-import { proseSignalsClearApproval, extractJsonObjectCandidates, classifyReviewVerdictToken } from "../reviewer.js";
+import { proseSignalsClearApproval, extractJsonObjectCandidates, classifyReviewVerdictToken } from "../execution/reviewer.js";
 
 describe("parseWorkflowStepVerdict", () => {
   it("parses plain JSON", () => {

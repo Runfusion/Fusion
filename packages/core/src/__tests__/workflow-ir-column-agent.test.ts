@@ -18,15 +18,15 @@ import {
   serializeWorkflowIr,
   downgradeIrToV1IfPure,
   WorkflowIrError,
-} from "../workflow-ir.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+} from "../workflows/workflow-ir.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import type {
   WorkflowColumnAgent,
   WorkflowIrEdge,
   WorkflowIrNode,
   WorkflowIrV1,
   WorkflowIrV2,
-} from "../workflow-ir-types.js";
+} from "../workflows/workflow-ir-types.js";
 
 const baseColumns: WorkflowIrV2["columns"] = [
   { id: "todo", name: "todo", traits: [] },

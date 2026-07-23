@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { PluginLoader } from "../plugin-loader.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
 
 describe("PluginLoader.createRouteContext", () => {
   it("applies overrides including resolveProjectTaskStore", async () => {

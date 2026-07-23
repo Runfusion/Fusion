@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { extractSection } from "../step-session-executor.js";
+import { extractSection } from "../execution/step-session-executor.js";
 
 export interface DanglingTaskDocReference {
   path: string;

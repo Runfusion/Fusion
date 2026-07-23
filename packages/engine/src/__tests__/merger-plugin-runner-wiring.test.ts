@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@fusion/core";
 import * as fusionCore from "@fusion/core";
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
-import { makePrResponseAgentRunner } from "../pr-response-run-ops.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
+import { makePrResponseAgentRunner } from "../merge/pr-response-run-ops.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -165,7 +165,7 @@ describe("Session advisor + PR response PluginRunner wiring for Grok CLI", () =>
 
     // Keep the post-session prompt path inert so the test only asserts runtime routing.
     const pi = await import("../pi.js");
-    const usageLimit = await import("../usage-limit-detector.js");
+    const usageLimit = await import("../errors/usage-limit-detector.js");
     vi.spyOn(pi, "promptWithFallback").mockResolvedValue(undefined as never);
     vi.spyOn(usageLimit, "checkSessionError").mockReturnValue(undefined as never);
 

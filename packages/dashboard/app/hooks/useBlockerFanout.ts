@@ -3,7 +3,7 @@ import { type Task } from "@fusion/core";
 import {
   computeBlockerFanoutMap as computeBlockerFanoutMapCore,
   type BlockerFanoutEntry,
-} from "../../../core/src/blocker-fanout";
+} from "../../../core/src/tasks/blocker-fanout";
 
 export type { BlockerFanoutEntry };
 

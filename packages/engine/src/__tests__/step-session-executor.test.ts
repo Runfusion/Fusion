@@ -6,19 +6,19 @@ import {
   buildStepPrompt,
   buildReducedStepPrompt,
   StepSessionExecutor,
-} from "../step-session-executor.js";
-import { AgentLogger } from "../agent-logger.js";
+} from "../execution/step-session-executor.js";
+import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
-import * as worktreeBackendModule from "../worktree-backend.js";
+import * as worktreeBackendModule from "../worktree/worktree-backend.js";
 import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
-import { installTaskWorktreeIdentityGuard } from "../worktree-hooks.js";
+import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
 
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
@@ -934,7 +934,7 @@ vi.mock("../pi.js", () => ({
   compactSessionContext: vi.fn(),
 }));
 
-vi.mock("../agent-session-helpers.js", async () => {
+vi.mock("../agents/agent-session-helpers.js", async () => {
   const pi = await import("../pi.js");
   return {
     createResolvedAgentSession: vi.fn(async (options: any) => {
@@ -1022,20 +1022,20 @@ vi.mock("../logger.js", () => {
 });
 
 // Mock context-limit-detector
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn().mockImplementation((msg: string) =>
     /context\s+window\s+exceeds/i.test(msg),
   ),
 }));
 
 // Mock usage-limit-detector
-vi.mock("../usage-limit-detector.js", () => ({
+vi.mock("../errors/usage-limit-detector.js", () => ({
   checkSessionError: vi.fn(),
 }));
 
 // Mock worktree-names
-vi.mock("../worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree-names.js")>("../worktree-names.js");
+vi.mock("../worktree/worktree-names.js", async () => {
+  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree/worktree-names.js");
   return {
     ...actual,
     generateWorktreeName: vi.fn().mockReturnValue("test-worktree"),
@@ -1082,9 +1082,9 @@ vi.mock("node:fs", () => ({
 }));
 
 import { createFnAgent } from "../pi.js";
-import { generateWorktreeName } from "../worktree-names.js";
+import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { execSync } from "node:child_process";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { createLogger } from "../logger.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);

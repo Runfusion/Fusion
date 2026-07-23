@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Scheduler } from "../scheduler.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 import type { TaskStore, MissionStore, Slice, Mission, Milestone, MissionFeature } from "@fusion/core";
 
 // Mock store factory

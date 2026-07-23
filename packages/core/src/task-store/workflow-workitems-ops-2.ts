@@ -13,7 +13,7 @@ import {and, eq, inArray} from "drizzle-orm";
 import type {WorkflowWorkItem, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {replaceActiveTaskWorkflowContinuation as replaceActiveTaskWorkflowContinuationAsync, upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync} from "../task-store/async-workflow-workitems.js";
+import {replaceActiveTaskWorkflowContinuation as replaceActiveTaskWorkflowContinuationAsync, upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync} from "../task-store/async/async-workflow-workitems.js";
 import type {WorkflowWorkItemRow} from "../task-store/row-types.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 

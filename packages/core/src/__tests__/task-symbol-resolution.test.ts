@@ -9,7 +9,7 @@ import {
   resolveCreateDeclaredSymbols,
   resolveTaskSymbolsForTask,
   resolveTaskSymbolsFromSources,
-} from "../task-symbol-resolution.js";
+} from "../tasks/task-symbol-resolution.js";
 import {
   createTaskStoreForTest,
   pgDescribe,

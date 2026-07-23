@@ -15,7 +15,7 @@ vi.mock("node:fs/promises", async () => {
 import {
   DESKTOP_ARTIFACT_RELATIVE_PATHS,
   removeDesktopBuildArtifacts,
-} from "../worktree-desktop-artifacts.js";
+} from "../worktree/worktree-desktop-artifacts.js";
 
 describe("removeDesktopBuildArtifacts", () => {
   afterEach(() => {

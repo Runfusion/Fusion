@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 function task(id: string, overrides: Partial<Task> = {}): Task {
   return {

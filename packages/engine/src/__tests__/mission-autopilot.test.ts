@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { MissionAutopilot } from "../mission-autopilot.js";
+import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import type { Mission, Milestone, Slice, MissionFeature } from "@fusion/core";
 
 // ── Mock Factories ──────────────────────────────────────────────────

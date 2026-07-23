@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Goal } from "@fusion/core";
-import { buildGoalContextSection } from "../goal-context-injector.js";
+import { buildGoalContextSection } from "../goals/goal-context-injector.js";
 import { MockAgentRuntime, resetMockScripts, setMockScript } from "../providers/mock-provider.js";
 
 const GOAL_ID_PATTERN = /^- (G-[A-Za-z0-9-]+):/gm;

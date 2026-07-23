@@ -1,9 +1,9 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProjectSettings, TaskStore } from "@fusion/core";
-import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../auto-recovery.js";
+import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import type { Logger } from "../logger.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const execAsync = promisify(exec);
 

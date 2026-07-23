@@ -7,8 +7,8 @@ import { execSync } from "node:child_process";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { Scheduler } from "../../scheduler.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import * as branchConflictModule from "../../branch-conflicts.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import * as branchConflictModule from "../../execution/branch-conflicts.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 function git(cwd: string, command: string): string {
   return execSync(`git ${command}`, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();

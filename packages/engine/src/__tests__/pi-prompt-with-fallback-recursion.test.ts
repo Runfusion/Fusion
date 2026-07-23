@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DefaultPiRuntime } from "../runtime-resolution.js";
+import { DefaultPiRuntime } from "../execution/runtime-resolution.js";
 
 describe("pi promptWithFallback recursion guard (FN-4900)", () => {
   it("does not recurse when a bare session is wrapped by DefaultPiRuntime", async () => {

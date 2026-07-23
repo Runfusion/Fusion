@@ -3,8 +3,8 @@ import type { CentralCore, RegisteredProject, Task } from "@fusion/core";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 import { ChildProcessRuntime } from "../runtimes/child-process-runtime.js";
 import { RemoteNodeRuntime } from "../runtimes/remote-node-runtime.js";
-import { ProjectManager } from "../project-manager.js";
-import type { ProjectRuntimeConfig } from "../project-runtime.js";
+import { ProjectManager } from "../project/project-manager.js";
+import type { ProjectRuntimeConfig } from "../project/project-runtime.js";
 
 // Mock the runtimes
 vi.mock("../runtimes/in-process-runtime.js", () => ({

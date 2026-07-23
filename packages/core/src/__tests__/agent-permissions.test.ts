@@ -3,7 +3,7 @@ import {
   computeAccessState,
   isValidPermission,
   normalizePermissions,
-} from "../agent-permissions.js";
+} from "../agents/agent-permissions.js";
 import { AGENT_PERMISSIONS } from "../types.js";
 import type { Agent, AgentCapability, AgentPermission } from "../types.js";
 

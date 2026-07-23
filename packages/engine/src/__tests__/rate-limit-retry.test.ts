@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 
 describe("withRateLimitRetry", () => {
   beforeEach(() => {

@@ -44,9 +44,9 @@ vi.mock("node:child_process", async () => {
   };
 });
 
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { DONE_TASK_TEMP_WORKTREE_GRACE_MS, MIN_TEMP_WORKTREE_REAP_AGE_MS, SelfHealingManager, STALE_TEMP_MERGE_WORKTREE_MS } from "../self-healing.js";
-import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree-paths.js";
+import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 let sandboxRoot = "";

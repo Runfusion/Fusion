@@ -12,7 +12,7 @@ vi.mock("../logger.js", () => ({
   schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../worktree-pool.js", () => ({
+vi.mock("../worktree/worktree-pool.js", () => ({
   WorktreePool: vi.fn(),
   RemovalReason: {},
   scanIdleWorktrees: vi.fn().mockResolvedValue([]),

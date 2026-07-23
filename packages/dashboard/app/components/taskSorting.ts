@@ -1,5 +1,5 @@
 import type { Task, Column } from "@fusion/core";
-import { isActiveMergeStatus as isMergeActiveStatus } from "../../../core/src/active-merge-status";
+import { isActiveMergeStatus as isMergeActiveStatus } from "../../../core/src/merge/active-merge-status";
 
 export type DoneColumnSortMode = "completion-date-desc" | "task-id-desc";
 

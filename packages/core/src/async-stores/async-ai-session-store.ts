@@ -1,0 +1,569 @@
+/**
+ * Async Drizzle AiSessionStore helpers.
+ *
+ * FNXC:AiSessionStore 2026-06-24-23:00:
+ * Async equivalents of the sync SQLite AiSessionStore call sites in
+ * packages/dashboard/src/ai-session-store.ts. These helpers target the
+ * PostgreSQL `project.ai_sessions` table via Drizzle, using the schema
+ * defined in schema/project.ts.
+ *
+ * The AiSessionStore persists long-running AI session state (planning, subtask
+ * breakdown, mission interview) so users can dismiss modals and return later.
+ * In backend mode (PostgreSQL), the store delegates all CRUD to these helpers
+ * via the dual-path pattern. The sync SQLite path remains for the gate suite.
+ *
+ * SQLite -> PostgreSQL notes:
+ *   - `db.prepare(sql).get/run/all()` -> awaited Drizzle queries.
+ *   - JSON columns (inputPayload, conversationHistory, result) are jsonb in
+ *     PostgreSQL, so Drizzle returns them already-parsed.
+ *   - `INSERT ... ON CONFLICT(id) DO UPDATE` upsert maps to Drizzle
+ *     `insert().onConflictDoUpdate()`.
+ *   - SQLite `changes` for detecting row existence -> Drizzle
+ *     `.returning({...})` + `.length > 0`.
+ *
+ * Transition context: these helpers live in @fusion/core (where the schema is
+ * defined) and are exported so the dashboard's AiSessionStore can import them.
+ */
+import { and, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import * as schema from "../postgres/schema/index.js";
+import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+
+/** A query-capable handle: either the top-level db or a transaction handle. */
+type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
+
+// ── Local type aliases (mirror dashboard AiSessionRow/AiSessionStatus/AiSessionType) ──
+
+export type AiSessionStatus = "generating" | "awaiting_input" | "complete" | "error" | "draft";
+export type AiSessionType = "planning" | "subtask" | "mission_interview" | "milestone_interview" | "slice_interview";
+
+export interface AiSessionRow {
+  id: string;
+  type: AiSessionType;
+  status: AiSessionStatus;
+  title: string;
+  inputPayload: string;
+  conversationHistory: string;
+  currentQuestion: string | null;
+  result: string | null;
+  thinkingOutput: string;
+  error: string | null;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archived?: number;
+}
+
+export interface AiSessionSummary {
+  id: string;
+  type: AiSessionType;
+  status: AiSessionStatus;
+  title: string;
+  preview?: string;
+  projectId: string | null;
+  updatedAt: string;
+  archived?: boolean;
+}
+
+export interface AiSessionCleanupSummary {
+  terminalDeleted: number;
+  orphanedDeleted: number;
+  totalDeleted: number;
+}
+
+/** Max stored thinking output (50 KB). Older content trimmed from front. */
+const MAX_THINKING_BYTES = 50 * 1024;
+
+function trimThinking(output: string): string {
+  if (output.length <= MAX_THINKING_BYTES) return output;
+  return output.slice(output.length - MAX_THINKING_BYTES);
+}
+
+// ── Row conversion ──
+
+/**
+ * FNXC:AiSessionStore 2026-06-24-23:05:
+ * Convert a Drizzle row (camelCase columns) into the AiSessionRow shape.
+ * The jsonb columns are already parsed by Drizzle; callers expect string
+ * fields (sync interface compatibility), so we JSON.stringify them.
+ */
+function rowToSession(row: Record<string, unknown>): AiSessionRow {
+  const inputPayload = row.inputPayload;
+  const conversationHistory = row.conversationHistory;
+  const result = row.result;
+  return {
+    id: row.id as string,
+    type: row.type as AiSessionType,
+    status: row.status as AiSessionStatus,
+    title: row.title as string,
+    inputPayload: typeof inputPayload === "string" ? inputPayload : JSON.stringify(inputPayload ?? {}),
+    conversationHistory: typeof conversationHistory === "string"
+      ? conversationHistory
+      : JSON.stringify(conversationHistory ?? []),
+    currentQuestion: (row.currentQuestion as string | null) ?? null,
+    result: result == null ? null : typeof result === "string" ? result : JSON.stringify(result),
+    thinkingOutput: (row.thinkingOutput as string) ?? "",
+    error: (row.error as string | null) ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? null,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+    archived: typeof row.archived === "number" ? row.archived : Number(row.archived ?? 0),
+  };
+}
+
+function safeJsonParse<T>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// ── Upsert ──
+
+/**
+ * FNXC:AiSessionStore 2026-06-24-23:10:
+ * Insert or update an AI session row.
+ */
+export async function upsertAiSession(handle: QueryHandle, session: AiSessionRow): Promise<AiSessionRow> {
+  const now = new Date().toISOString();
+  const thinking = trimThinking(session.thinkingOutput);
+
+  const inputPayloadValue = typeof session.inputPayload === "string"
+    ? safeJsonParse(session.inputPayload, {})
+    : session.inputPayload;
+  const conversationHistoryValue = typeof session.conversationHistory === "string"
+    ? safeJsonParse(session.conversationHistory, [])
+    : session.conversationHistory;
+  const resultValue = session.result == null
+    ? null
+    : typeof session.result === "string"
+      ? safeJsonParse(session.result, null)
+      : session.result;
+
+  await handle
+    .insert(schema.project.aiSessions)
+    .values({
+      id: session.id,
+      type: session.type,
+      status: session.status,
+      title: session.title,
+      inputPayload: inputPayloadValue as Record<string, unknown>,
+      conversationHistory: conversationHistoryValue as unknown[],
+      currentQuestion: session.currentQuestion ?? null,
+      result: resultValue,
+      thinkingOutput: thinking,
+      error: session.error ?? null,
+      // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition (the composite (project_id, id) PK conflict target below is partition-scoped by design).
+      ...(session.projectId ? { ownerProjectId: session.projectId } : {}),
+      createdAt: session.createdAt || now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [schema.project.aiSessions.projectId, schema.project.aiSessions.id],
+      set: {
+        status: session.status,
+        title: session.title,
+        conversationHistory: conversationHistoryValue as unknown[],
+        currentQuestion: session.currentQuestion ?? null,
+        result: resultValue,
+        thinkingOutput: thinking,
+        error: session.error ?? null,
+        updatedAt: now,
+      },
+    });
+
+  const row = await getAiSession(handle, session.id);
+  if (!row) throw new Error(`AiSession upsert for ${session.id} succeeded but row could not be read back`);
+  return row;
+}
+
+// ── Read ──
+
+export async function getAiSession(handle: QueryHandle, id: string): Promise<AiSessionRow | null> {
+  const rows = await handle
+    .select()
+    .from(schema.project.aiSessions)
+    .where(eq(schema.project.aiSessions.id, id))
+    .limit(1);
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/**
+ * FNXC:AiSessionStore 2026-06-24-23:15:
+ * List active/retryable sessions (generating, awaiting_input, or error),
+ * excluding archived. Returns summary rows (no large fields).
+ */
+export async function listActiveAiSessions(
+  handle: QueryHandle,
+  projectId?: string,
+): Promise<unknown[]> {
+  const conditions = [
+    inArray(schema.project.aiSessions.status, ["generating", "awaiting_input", "error"]),
+    eq(schema.project.aiSessions.archived, 0),
+  ];
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
+  const rows = await handle
+    .select({
+      id: schema.project.aiSessions.id,
+      type: schema.project.aiSessions.type,
+      status: schema.project.aiSessions.status,
+      title: schema.project.aiSessions.title,
+      projectId: schema.project.aiSessions.ownerProjectId,
+      updatedAt: schema.project.aiSessions.updatedAt,
+      archived: schema.project.aiSessions.archived,
+    })
+    .from(schema.project.aiSessions)
+    .where(and(...conditions))
+    .orderBy(desc(schema.project.aiSessions.updatedAt));
+  return rows;
+}
+
+/**
+ * List all sessions (including complete), optionally filtered by projectId.
+ * By default excludes archived. Returns summary rows with inputPayload.
+ *
+ * FNXC:PlanningMode 2026-07-15-00:00:
+ * FN-7994 narrows the Planning sidebar's refresh to planning rows before
+ * inputPayload blobs cross the API boundary; calls without a type stay broad.
+ */
+export async function listAllAiSessions(
+  handle: QueryHandle,
+  projectId?: string,
+  options?: { includeArchived?: boolean; type?: AiSessionType },
+): Promise<unknown[]> {
+  const conditions: ReturnType<typeof eq>[] = [];
+  if (!options?.includeArchived) {
+    conditions.push(eq(schema.project.aiSessions.archived, 0));
+  }
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
+  if (options?.type) conditions.push(eq(schema.project.aiSessions.type, options.type));
+  const query = handle
+    .select({
+      id: schema.project.aiSessions.id,
+      type: schema.project.aiSessions.type,
+      status: schema.project.aiSessions.status,
+      title: schema.project.aiSessions.title,
+      inputPayload: schema.project.aiSessions.inputPayload,
+      projectId: schema.project.aiSessions.ownerProjectId,
+      updatedAt: schema.project.aiSessions.updatedAt,
+      archived: schema.project.aiSessions.archived,
+    })
+    .from(schema.project.aiSessions)
+    .orderBy(desc(schema.project.aiSessions.updatedAt));
+  const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+  return rows;
+}
+
+/**
+ * List recoverable sessions (generating or awaiting_input). Returns full rows.
+ */
+export async function listRecoverableAiSessions(
+  handle: QueryHandle,
+  projectId?: string,
+): Promise<AiSessionRow[]> {
+  const conditions = [
+    inArray(schema.project.aiSessions.status, ["generating", "awaiting_input"]),
+  ];
+  if (projectId) conditions.push(eq(schema.project.aiSessions.ownerProjectId, projectId));
+  const rows = await handle
+    .select()
+    .from(schema.project.aiSessions)
+    .where(and(...conditions))
+    .orderBy(desc(schema.project.aiSessions.updatedAt));
+  return rows.map(rowToSession);
+}
+
+// ── Updates ──
+
+export async function updateAiSessionStatus(
+  handle: QueryHandle,
+  id: string,
+  status: AiSessionStatus,
+  error?: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ status, error: error ?? null, updatedAt: now })
+    .where(eq(schema.project.aiSessions.id, id))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-20:15:
+FN-8442 requires a database compare-and-set before Planning Mode creates a task. The
+never-rotated proposalClaimId prevents duplicate task rows, while this conditional
+ai_sessions transition assigns exactly one live creator across dashboard processes.
+*/
+export async function claimPlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+  claimStartedAt: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: claimStartedAt })
+    .where(and(
+      eq(schema.project.aiSessions.id, sessionId),
+      eq(schema.project.aiSessions.type, "planning"),
+      sql`coalesce(${schema.project.aiSessions.inputPayload}->>'createClaimStatus', 'none') = 'none'`,
+    ))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Finalize only the owner that won claimPlanningSessionTaskCreation. */
+export async function finalizePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+  createdTaskId: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Reconcile a task created before a process could finalize its session linkage. */
+export async function reconcilePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  createdTaskId: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), eq(schema.project.aiSessions.type, "planning")))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+/** Release only an expired creator's transient ownership; the stable task key is unchanged. */
+export async function releasePlanningSessionTaskCreation(
+  handle: QueryHandle,
+  sessionId: string,
+  claimOwnerToken: string,
+): Promise<AiSessionRow | null> {
+  const existing = await getAiSession(handle, sessionId);
+  if (!existing || existing.type !== "planning") return null;
+  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
+  const inputPayload = { ...input, createClaimStatus: "none", claimOwnerToken: undefined, claimStartedAt: undefined };
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
+export async function updateAiSessionTitle(
+  handle: QueryHandle,
+  id: string,
+  title: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ title, updatedAt: now })
+    .where(eq(schema.project.aiSessions.id, id))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function markDraftSummarized(
+  handle: QueryHandle,
+  id: string,
+  title: string,
+  inputPayload: string,
+): Promise<boolean> {
+  const payloadValue = typeof inputPayload === "string" ? safeJsonParse(inputPayload, {}) : inputPayload;
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ title, inputPayload: payloadValue as Record<string, unknown>, updatedAt: now })
+    .where(and(eq(schema.project.aiSessions.id, id), eq(schema.project.aiSessions.type, "planning")))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function updateDraft(
+  handle: QueryHandle,
+  id: string,
+  inputPayload: string,
+): Promise<boolean> {
+  const payloadValue = typeof inputPayload === "string" ? safeJsonParse(inputPayload, {}) : inputPayload;
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ inputPayload: payloadValue as Record<string, unknown>, updatedAt: now })
+    /*
+    FNXC:PlanningMode 2026-07-21-00:42:
+    A debounced editor write can arrive after Start Planning changes the row to generating.
+    Restrict the mutation atomically so stale draft text cannot erase the generation timestamp.
+    */
+    .where(and(
+      eq(schema.project.aiSessions.id, id),
+      eq(schema.project.aiSessions.type, "planning"),
+      eq(schema.project.aiSessions.status, "draft"),
+    ))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function pingAiSession(handle: QueryHandle, id: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ updatedAt: now })
+    .where(eq(schema.project.aiSessions.id, id))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function updateThinking(
+  handle: QueryHandle,
+  id: string,
+  thinkingOutput: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ thinkingOutput: trimThinking(thinkingOutput), updatedAt: now })
+    .where(eq(schema.project.aiSessions.id, id))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function archiveAiSession(handle: QueryHandle, id: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ archived: 1, updatedAt: now })
+    .where(
+      and(
+        eq(schema.project.aiSessions.id, id),
+        inArray(schema.project.aiSessions.status, ["complete", "error"]),
+      ),
+    )
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+export async function unarchiveAiSession(handle: QueryHandle, id: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await handle
+    .update(schema.project.aiSessions)
+    .set({ archived: 0, updatedAt: now })
+    .where(eq(schema.project.aiSessions.id, id))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+/*
+FNXC:PlanningMultiTab 2026-07-14-00:00:
+The per-tab session lock (acquire/release/force-acquire/holder/stale-release) was removed here
+along with the `lockedByTab`/`lockedAt` columns. AI interview sessions (planning, subtask,
+mission, milestone, slice) are multi-tab: the persisted session row is the shared source of
+truth, any tab may read and interact, and concurrent writes are resolved by each producer's
+generation-in-progress guard rather than by a tab-ownership lock.
+*/
+
+// ── Delete ──
+
+export async function deleteAiSession(handle: QueryHandle, id: string): Promise<void> {
+  await handle.delete(schema.project.aiSessions).where(eq(schema.project.aiSessions.id, id));
+}
+
+export async function deleteAiSessionByIdAndType(
+  handle: QueryHandle,
+  id: string,
+  type: AiSessionType,
+): Promise<boolean> {
+  const result = await handle
+    .delete(schema.project.aiSessions)
+    .where(and(eq(schema.project.aiSessions.id, id), eq(schema.project.aiSessions.type, type)))
+    .returning({ id: schema.project.aiSessions.id });
+  return result.length > 0;
+}
+
+// ── Recovery / Cleanup ──
+
+export async function recoverStaleAiSessions(handle: QueryHandle): Promise<number> {
+  const now = new Date().toISOString();
+  let recovered = 0;
+
+  const withQuestion = await handle
+    .update(schema.project.aiSessions)
+    .set({ status: "awaiting_input", updatedAt: now })
+    .where(
+      and(
+        eq(schema.project.aiSessions.status, "generating"),
+        isNotNull(schema.project.aiSessions.currentQuestion),
+      ),
+    )
+    .returning({ id: schema.project.aiSessions.id });
+  recovered += withQuestion.length;
+
+  const withoutQuestion = await handle
+    .update(schema.project.aiSessions)
+    .set({ status: "error", error: "Session interrupted — please restart", updatedAt: now })
+    .where(
+      and(
+        eq(schema.project.aiSessions.status, "generating"),
+        isNull(schema.project.aiSessions.currentQuestion),
+      ),
+    )
+    .returning({ id: schema.project.aiSessions.id });
+  recovered += withoutQuestion.length;
+
+  return recovered;
+}
+
+export async function cleanupOldAiSessions(handle: QueryHandle, maxAgeMs: number): Promise<string[]> {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const result = await handle
+    .delete(schema.project.aiSessions)
+    .where(
+      and(
+        lte(schema.project.aiSessions.updatedAt, cutoff),
+        inArray(schema.project.aiSessions.status, ["complete", "error"]),
+      ),
+    )
+    .returning({ id: schema.project.aiSessions.id });
+  return result.map((r) => r.id);
+}
+
+export async function cleanupStaleAiSessions(
+  handle: QueryHandle,
+  maxAgeMs: number,
+): Promise<{ terminalDeletedIds: string[]; orphanedDeletedIds: string[] }> {
+  const terminalDeletedIds = await cleanupOldAiSessions(handle, maxAgeMs);
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+
+  const orphanedResult = await handle
+    .delete(schema.project.aiSessions)
+    .where(
+      and(
+        lte(schema.project.aiSessions.updatedAt, cutoff),
+        inArray(schema.project.aiSessions.status, ["generating", "awaiting_input"]),
+      ),
+    )
+    .returning({ id: schema.project.aiSessions.id });
+  const orphanedDeletedIds = orphanedResult.map((r) => r.id);
+
+  return { terminalDeletedIds, orphanedDeletedIds };
+}

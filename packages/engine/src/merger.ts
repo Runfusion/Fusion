@@ -2,9 +2,9 @@
 import { execSync, exec } from "node:child_process";
 import * as childProcess from "node:child_process";
 import { promisify } from "node:util";
-import { IDENTITY_GUARD_BYPASS_ENV } from "./worktree-hooks.js";
-import { mergeEffectiveSettings } from "./effective-settings.js";
-import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
+import { IDENTITY_GUARD_BYPASS_ENV } from "./worktree/worktree-hooks.js";
+import { mergeEffectiveSettings } from "./project/effective-settings.js";
+import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agents/agent-user-comments.js";
 
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execAsync = promisify(exec);
@@ -35,7 +35,7 @@ import {
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationCommandResult,
   type VerificationResult,
-} from "./verification-utils.js";
+} from "./execution/verification-utils.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 
@@ -49,7 +49,7 @@ export {
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationCommandResult,
   type VerificationResult,
-} from "./verification-utils.js";
+} from "./execution/verification-utils.js";
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -63,14 +63,14 @@ import {
   INSTALL_MARKER_RELPATH,
   readInstallMarker,
   writeInstallMarker,
-} from "./merge-dependency-sync.js";
-import { resolveTaskWorkingBranch } from "./worktree-names.js";
+} from "./merge/merge-dependency-sync.js";
+import { resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import {
   collectOwnTaskCommitsForRange,
   filterFilesToOwnTaskCommits,
   SilentNoOpAttributionMismatchError,
-} from "./branch-attribution.js";
-import { isBranchAuthoritativeForTask } from "./branch-conflicts.js";
+} from "./execution/branch-attribution.js";
+import { isBranchAuthoritativeForTask } from "./execution/branch-conflicts.js";
 import { hostname } from "node:os";
 import {
   assertNotWorkspaceTaskMerge,
@@ -110,17 +110,17 @@ import {
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
 } from "@fusion/core";
-import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
-import { resolveMergePolicy } from "./merge-trait.js";
+import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
+import { resolveMergePolicy } from "./merge/merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
-import { accumulateSessionTokenUsage } from "./session-token-usage.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
-import { createFallbackModelObserver } from "./fallback-model-observer.js";
-import { buildSessionSkillContext } from "./session-skill-context.js";
-import { resolveMcpServersForStore } from "./mcp-resolution.js";
-import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, RemovalReason, removeWorktree, type WorktreePool } from "./worktree-pool.js";
-import { activeSessionRegistry } from "./active-session-registry.js";
-import { AgentLogger } from "./agent-logger.js";
+import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
+import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
+import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
+import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
+import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, RemovalReason, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
+import { activeSessionRegistry } from "./agents/active-session-registry.js";
+import { AgentLogger } from "./agents/agent-logger.js";
 import { mergerLog } from "./logger.js";
 
 // FNXC:CodeOrganization 2026-07-15-12:00:
@@ -129,10 +129,10 @@ export {
   LOCKFILE_PATTERNS,
   GENERATED_PATTERNS,
   matchGlob,
-} from "./merger-glob.js";
-export type { ConflictType } from "./merger-glob.js";
-import { matchGlob, LOCKFILE_PATTERNS, GENERATED_PATTERNS } from "./merger-glob.js";
-import type { ConflictType } from "./merger-glob.js";
+} from "./merge/merger-glob.js";
+export type { ConflictType } from "./merge/merger-glob.js";
+import { matchGlob, LOCKFILE_PATTERNS, GENERATED_PATTERNS } from "./merge/merger-glob.js";
+import type { ConflictType } from "./merge/merger-glob.js";
 
 export {
   parsePnpmWorkspaceGlobs,
@@ -142,12 +142,12 @@ export {
   deriveScopedPnpmTestCommand,
   deriveFileScopedPnpmTestCommand,
   inferDefaultTestCommand,
-} from "./merger-workspace-test-commands.js";
-export type { InferredTestCommand } from "./merger-workspace-test-commands.js";
+} from "./merge/merger-workspace-test-commands.js";
+export type { InferredTestCommand } from "./merge/merger-workspace-test-commands.js";
 import {
   packageNamesForFiles,
   inferDefaultTestCommand,
-} from "./merger-workspace-test-commands.js";
+} from "./merge/merger-workspace-test-commands.js";
 
 export {
   parseDiffStat,
@@ -158,8 +158,8 @@ export {
   assertSquashOverlapsFileScope,
   formatFileScopeViolationAgentLog,
   enforceSquashFileScopeInvariant,
-} from "./merger-file-scope.js";
-export type { DiffFileEntry, DiffScopeResult, StagedFilesReader } from "./merger-file-scope.js";
+} from "./merge/merger-file-scope.js";
+export type { DiffFileEntry, DiffScopeResult, StagedFilesReader } from "./merge/merger-file-scope.js";
 import {
   parseDiffStat,
   extractFileScope,
@@ -167,31 +167,31 @@ import {
   partitionConflictsByFileScope,
   FileScopeViolationError,
   enforceSquashFileScopeInvariant,
-} from "./merger-file-scope.js";
-import type { DiffScopeResult } from "./merger-file-scope.js";
+} from "./merge/merger-file-scope.js";
+import type { DiffScopeResult } from "./merge/merger-file-scope.js";
 
 export {
   VerificationError,
   MergeAbortedError,
   OutOfScopeVerificationError,
   throwIfAborted,
-} from "./merger-errors.js";
+} from "./merge/merger-errors.js";
 import {
   VerificationError,
   OutOfScopeVerificationError,
   throwIfAborted,
-} from "./merger-errors.js";
+} from "./merge/merger-errors.js";
 
 export {
   FUSION_TASK_ID_TRAILER_KEY,
   toTaskToken,
   classifyOwnedLandedEvidence,
-} from "./merger-owned-landed.js";
-export type { OwnedLandedClassification } from "./merger-owned-landed.js";
+} from "./merge/merger-owned-landed.js";
+export type { OwnedLandedClassification } from "./merge/merger-owned-landed.js";
 import {
   FUSION_TASK_ID_TRAILER_KEY,
   classifyOwnedLandedEvidence,
-} from "./merger-owned-landed.js";
+} from "./merge/merger-owned-landed.js";
 
 export {
   getConflictedFiles,
@@ -203,15 +203,15 @@ export {
   detectResolvableConflicts,
   autoResolveFile,
   resolveConflicts,
-} from "./merger-conflict-resolution.js";
-export type { ConflictResolution, ConflictCategory } from "./merger-conflict-resolution.js";
+} from "./merge/merger-conflict-resolution.js";
+export type { ConflictResolution, ConflictCategory } from "./merge/merger-conflict-resolution.js";
 import {
   getConflictedFiles,
   classifyConflict,
   resolveWithOurs,
   resolveWithTheirs,
   resolveTrivialWhitespace,
-} from "./merger-conflict-resolution.js";
+} from "./merge/merger-conflict-resolution.js";
 
 export {
   parseFailingFilesFromOutput,
@@ -219,14 +219,14 @@ export {
   parseShortstatSummary,
   getBranchChangedFiles,
   quoteArg,
-} from "./merger-git-parse.js";
+} from "./merge/merger-git-parse.js";
 import {
   parseFailingFilesFromOutput,
   parsePorcelainZ,
   parseShortstatSummary,
   getBranchChangedFiles,
   quoteArg,
-} from "./merger-git-parse.js";
+} from "./merge/merger-git-parse.js";
 
 export {
   AUTOSTASH_LABEL_PREFIX,
@@ -236,7 +236,7 @@ export {
   parseAutostashTaskId,
   parseAutostashCreatedAt,
   parseAutostashSourcePhase,
-} from "./merger-autostash-labels.js";
+} from "./merge/merger-autostash-labels.js";
 import {
   AUTOSTASH_LABEL_PREFIX,
   LEGACY_AI_SYNC_LABEL_PREFIX,
@@ -244,18 +244,18 @@ import {
   parseAutostashTaskId,
   parseAutostashCreatedAt,
   parseAutostashSourcePhase,
-} from "./merger-autostash-labels.js";
+} from "./merge/merger-autostash-labels.js";
 
 
-import { regenerateBareMergeSubject } from "./merger-bare-subject.js";
-export { regenerateBareMergeSubject, BARE_MERGE_SUBJECT_RE } from "./merger-bare-subject.js";
-import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
-import { isContextLimitError } from "./context-limit-detector.js";
-import { withRateLimitRetry } from "./rate-limit-retry.js";
-import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agent-instructions.js";
+import { regenerateBareMergeSubject } from "./merge/merger-bare-subject.js";
+export { regenerateBareMergeSubject, BARE_MERGE_SUBJECT_RE } from "./merge/merger-bare-subject.js";
+import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
+import { isContextLimitError } from "./errors/context-limit-detector.js";
+import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
 import { createWebFetchTool } from "./agent-tools.js";
 import {
   auditSquashMerge,
@@ -263,20 +263,20 @@ import {
   type PostMergeAuditInput,
   type PostMergeAuditStrategy,
   type SquashAuditFindings,
-} from "./merger-squash-audit.js";
-import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
+} from "./merge/merger-squash-audit.js";
+import { detectMergeOverlap, restoreBranchWinsFiles } from "./merge/merger-overlap-guard.js";
 import {
   checkDiffVolume,
   DiffVolumeRegressionError,
   resolveDiffVolumeGateSettings,
   formatDiffVolumeFindings,
-} from "./merger-diff-volume-gate.js";
+} from "./merge/merger-diff-volume-gate.js";
 export {
   resolveDiffVolumeGateSettings,
   formatDiffVolumeFindings,
-} from "./merger-diff-volume-gate.js";
-import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./already-merged-detector.js";
-import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merger-auto-prerebase.js";
+} from "./merge/merger-diff-volume-gate.js";
+import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./merge/already-merged-detector.js";
+import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merge/merger-auto-prerebase.js";
 import {
   acquireReuseHandoff,
   ensureUsableMergeIntegrationRoot,
@@ -286,16 +286,16 @@ import {
   resolveIntegrationRemote,
   resolveMergeIntegrationRoot,
   type HandoffResult,
-} from "./merger-integration-worktree.js";
-import { acquireTaskWorktree } from "./worktree-acquisition.js";
-import { resolveIntegrationBranch } from "./integration-branch.js";
-import { evaluateBranchGroupPromotion, resolveBranchGroupMergeRouting } from "./group-merge-coordinator.js";
-import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
-import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree-ref-sync.js";
-import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merger-scope-auto-widen.js";
+} from "./merge/merger-integration-worktree.js";
+import { acquireTaskWorktree } from "./worktree/worktree-acquisition.js";
+import { resolveIntegrationBranch } from "./merge/integration-branch.js";
+import { evaluateBranchGroupPromotion, resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
+import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
+import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
+import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merge/merger-scope-auto-widen.js";
 
-export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
-export { IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
+export { DiffVolumeRegressionError } from "./merge/merger-diff-volume-gate.js";
+export { IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 
 /*
 FNXC:WorkflowMergeLifecycle 2026-07-19-07:40 (U7 / R2/R7/KTD-10):
@@ -4941,7 +4941,7 @@ export interface MergerOptions {
   /** Allow synchronization when local checkout is dirty during merge reconciliation. */
   allowDirtyLocalCheckoutSync?: boolean;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
-  pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
   /**
    * Injected group-PR sync callback (KTD7, U6). When a shared branch-group
    * member lands and its group has a persisted open PR, the merger uses this to
@@ -4949,7 +4949,7 @@ export interface MergerOptions {
    * non-fatal and retryable on the next landing. Injected from the CLI layer so
    * the engine never imports the dashboard GitHub client.
    */
-  syncGroupPr?: import("./group-merge-coordinator.js").SyncGroupPrFn;
+  syncGroupPr?: import("./merge/group-merge-coordinator.js").SyncGroupPrFn;
   /**
    * Test seam (T14): the group-PR sync is fired-and-forgotten so a hung GitHub
    * call can never stall merge completion. When provided, the merger hands the
@@ -5821,7 +5821,7 @@ async function resolveComplexRebaseConflictsWithAi(
   conflictedFiles: string[],
   options?: {
     onAgentText?: (delta: string) => void;
-    pluginRunner?: import("./plugin-runner.js").PluginRunner;
+    pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
     signal?: AbortSignal;
     runtimeHint?: string;
     assignedAgentRuntimeConfig?: Record<string, unknown>;
@@ -6515,7 +6515,7 @@ export async function syncGroupPrOnLanding(input: {
   store: Pick<TaskStore, "getBranchGroup" | "listTasksByBranchGroup" | "updateBranchGroup">;
   groupId: string;
   cwd: string;
-  syncGroupPr: import("./group-merge-coordinator.js").SyncGroupPrFn;
+  syncGroupPr: import("./merge/group-merge-coordinator.js").SyncGroupPrFn;
 }): Promise<void> {
   const { store, groupId, cwd, syncGroupPr } = input;
   const latestGroup = await store.getBranchGroup(groupId);

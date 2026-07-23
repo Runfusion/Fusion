@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideAutoPrerebase } from "../../merger-auto-prerebase.js";
+import { decideAutoPrerebase } from "../../merge/merger-auto-prerebase.js";
 
 describe("auto-prerebase reliability interactions", () => {
   it("defers when worktrunk is enabled", () => {

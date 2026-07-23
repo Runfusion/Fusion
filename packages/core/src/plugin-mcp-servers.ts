@@ -1,6 +1,6 @@
 import { resolve as resolvePath } from "node:path";
-import { PluginLoader } from "./plugin-loader.js";
-import type { PluginMcpServerContribution } from "./plugin-types.js";
+import { PluginLoader } from "./plugins/plugin-loader.js";
+import type { PluginMcpServerContribution } from "./plugins/plugin-types.js";
 
 export type PluginMcpServerEntry = { pluginId: string; server: PluginMcpServerContribution };
 

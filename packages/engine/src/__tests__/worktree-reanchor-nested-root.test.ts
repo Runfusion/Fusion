@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import "./executor-test-helpers.js";
-import { detectNestedWorktreeRoot } from "../worktree-pool.js";
+import { detectNestedWorktreeRoot } from "../worktree/worktree-pool.js";
 import { mockedExecSync, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
 describe("detectNestedWorktreeRoot", () => {
   beforeEach(() => {

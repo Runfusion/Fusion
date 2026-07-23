@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { claudeAcpExperimentalEnabled, applyClaudeAcpEnable } from "../claude-acp-enable.js";
+import { claudeAcpExperimentalEnabled, applyClaudeAcpEnable } from "../cli-runtime/claude-acp-enable.js";
 
 describe("claudeAcpExperimentalEnabled — default ON", () => {
   it("is ON when no settings / no experimentalFeatures", () => {

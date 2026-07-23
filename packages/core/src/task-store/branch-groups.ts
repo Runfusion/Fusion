@@ -28,7 +28,7 @@ export type {
 export {
   validateBranchGroupBranchName,
   filterTasksByBranchGroup,
-} from "../branch-assignment.js";
+} from "../branch/branch-assignment.js";
 
 export {
   parseTaskBranchContextFromSourceMetadata,

@@ -25,7 +25,7 @@ import {
 import {
   ingestIncidentSignalAsync,
   getOpenIncidentByGroupingKeyAsync,
-} from "../../task-store/async-monitor.js";
+} from "../../task-store/async/async-monitor.js";
 import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;

@@ -8,7 +8,7 @@ vi.mock("node:fs", () => ({
   realpathSync: vi.fn((path: string) => path),
 }));
 
-import { PoolDoubleLeaseError, WorktreePool } from "../worktree-pool.js";
+import { PoolDoubleLeaseError, WorktreePool } from "../worktree/worktree-pool.js";
 
 // FN-5000:
 // - A prior "delay prepareForTask" sketch was invalid because acquire() is synchronous,

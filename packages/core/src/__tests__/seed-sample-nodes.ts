@@ -10,7 +10,7 @@
  *   await seedSampleNodes(central); // central backed by temp directory
  */
 
-import { CentralCore } from "../central-core.js";
+import { CentralCore } from "../central/central-core.js";
 import type { NodeConfig, NodeStatus } from "../types.js";
 
 /** Sample remote nodes to create for visual testing */

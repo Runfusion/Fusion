@@ -24,8 +24,8 @@ import {
   type PgTestHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
-import { insertTaskRow } from "../../task-store/async-persistence.js";
-import { writeProjectConfig } from "../../task-store/async-settings.js";
+import { insertTaskRow } from "../../task-store/async/async-persistence.js";
+import { writeProjectConfig } from "../../task-store/async/async-settings.js";
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 

@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { AutoRecoverySettings } from "@fusion/core";
 import { createLogger, type Logger } from "../logger.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const baseLog = createLogger("auto-recovery:message-delivery");
 

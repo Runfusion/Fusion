@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import type { RunAuditEventInput, TaskStore } from "@fusion/core";
-import { createRunAuditor } from "../run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import { __test__ } from "../merger.js";
 
 const { runMergeAdvanceAutoSync } = __test__;

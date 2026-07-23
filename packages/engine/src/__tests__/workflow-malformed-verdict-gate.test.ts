@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIrNode } from "@fusion/core";
 
 import { parseWorkflowStepOutput } from "../executor.js";
-import { createDefaultNodeHandlers } from "../workflow-node-handlers.js";
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { createDefaultNodeHandlers } from "../workflows/workflow-node-handlers.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowGates 2026-06-17-18:27:

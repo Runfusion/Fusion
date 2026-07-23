@@ -4,7 +4,7 @@ import {
   SilentNoOpAttributionMismatchError,
   collectOwnTaskCommitsForRange,
   filterFilesToOwnTaskCommits,
-} from "../branch-attribution.js";
+} from "../execution/branch-attribution.js";
 
 describe("FN-5039 branch-attribution", () => {
   it("returns empty attribution for empty range", async () => {

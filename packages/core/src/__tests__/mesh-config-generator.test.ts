@@ -15,11 +15,11 @@ const mockDockerClient = {
   recreateContainer: vi.fn(),
 };
 
-vi.mock("../central-core.js", () => ({
+vi.mock("../central/central-core.js", () => ({
   CentralCore: vi.fn(),
 }));
 
-vi.mock("../docker-client.js", () => ({
+vi.mock("../docker/docker-client.js", () => ({
   DockerClientService: vi.fn(),
 }));
 
@@ -50,7 +50,7 @@ function createManagedNode(overrides: Partial<ManagedDockerNode> = {}): ManagedD
 }
 
 // Import after mocks are set up
-const { MeshConfigGenerator } = await import("../mesh-config-generator.js");
+const { MeshConfigGenerator } = await import("../mesh/mesh-config-generator.js");
 
 function createGenerator() {
   return new MeshConfigGenerator({

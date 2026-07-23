@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   resolveWorkspaceTaskRevertCommits,
   revertWorkspaceTask,
-} from "../task-revert.js";
+} from "../execution/task-revert.js";
 import type { Task } from "@fusion/core";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;

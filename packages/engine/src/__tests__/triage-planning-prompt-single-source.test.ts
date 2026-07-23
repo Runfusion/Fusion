@@ -14,7 +14,7 @@ const { mockReviewStep, mockCreateFnAgent } = vi.hoisted(() => ({
   mockCreateFnAgent: vi.fn(),
 }));
 
-vi.mock("../reviewer.js", () => ({
+vi.mock("../execution/reviewer.js", () => ({
   reviewStep: mockReviewStep,
 }));
 

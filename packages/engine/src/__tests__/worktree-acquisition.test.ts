@@ -4,12 +4,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { acquireTaskWorktree, RepoRootWorktreeError } from "../worktree-acquisition.js";
-import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree-pool.js";
-import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
-import * as branchConflicts from "../branch-conflicts.js";
+import { acquireTaskWorktree, RepoRootWorktreeError } from "../worktree/worktree-acquisition.js";
+import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree/worktree-pool.js";
+import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
+import * as branchConflicts from "../execution/branch-conflicts.js";
 
-vi.mock("../worktree-pool.js", async () => {
+vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return {
     ...actual,
@@ -18,7 +18,7 @@ vi.mock("../worktree-pool.js", async () => {
   };
 });
 
-vi.mock("../branch-conflicts.js", async () => {
+vi.mock("../execution/branch-conflicts.js", async () => {
   const actual = await vi.importActual<any>("../branch-conflicts.js");
   return {
     ...actual,
@@ -32,11 +32,11 @@ vi.mock("../branch-conflicts.js", async () => {
   };
 });
 
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 1, documentsCopied: 1, artifactsCopied: 0 }),
 }));
 
-vi.mock("../worktree-desktop-artifacts.js", () => ({
+vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
@@ -46,7 +46,7 @@ Pool unit tests use temp dirs that are not real git worktrees. installTaskWorktr
 resolves git paths and throws there, which the pool catch treats as prepare failure and falls
 through to fresh. No-op the guard so classification + pool wiring stay under test.
 */
-vi.mock("../worktree-hooks.js", async () => {
+vi.mock("../worktree/worktree-hooks.js", async () => {
   const actual = await vi.importActual<any>("../worktree-hooks.js");
   return {
     ...actual,
@@ -346,7 +346,7 @@ describe("acquireTaskWorktree", () => {
 
   it("FN-6861 creates a fresh configured worktree when a resumed assignment points at the repo root", async () => {
     const rootDir = makeRepo();
-    const actualPool = await vi.importActual<typeof import("../worktree-pool.js")>("../worktree-pool.js");
+    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
     const freshPath = join(rootDir, ".worktrees", "fn-6861-fresh");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
@@ -380,7 +380,7 @@ describe("acquireTaskWorktree", () => {
 
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
     const rootDir = makeRepo();
-    const actualPool = await vi.importActual<typeof import("../worktree-pool.js")>("../worktree-pool.js");
+    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
     const freshPath = join(rootDir, ".worktrees", "fn-6922-trailing-slash");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
@@ -651,7 +651,7 @@ describe("acquireTaskWorktree foreign start-point warning", () => {
     };
 
     vi.doMock("node:child_process", () => ({ exec: execMock, execFile: execMock }));
-    const mod = await import("../worktree-acquisition.js");
+    const mod = await import("../worktree/worktree-acquisition.js");
 
     await mod.acquireTaskWorktree({
       task: { id: "FN-4488", title: "Task", description: "Desc", branch: null, worktree: null, executionStartBranch: "fusion/fn-4367" } as any,

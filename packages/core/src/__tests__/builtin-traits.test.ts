@@ -3,11 +3,11 @@ import {
   BUILTIN_TRAIT_DEFINITIONS,
   BUILTIN_TRAIT_IDS,
   registerBuiltinTraits,
-} from "../builtin-traits.js";
-import { TraitRegistry } from "../trait-registry.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
-import type { WorkflowIrV2 } from "../workflow-ir-types.js";
+} from "../workflows/builtin-traits.js";
+import { TraitRegistry } from "../workflows/trait-registry.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-coding-workflow-ir.js";
+import type { WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 function freshRegistry(): TraitRegistry {
   const r = new TraitRegistry();

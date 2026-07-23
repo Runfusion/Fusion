@@ -18,12 +18,12 @@ import { createConnectionSetFromUrl, type PostgresConnections } from "../../post
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
-import { insertTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   createAsyncDistributedTaskIdAllocator,
   reconcileTaskIdStateAsync,
-} from "../../task-store/async-allocator.js";
-import type { DistributedTaskIdAllocator } from "../../distributed-task-id.js";
+} from "../../task-store/async/async-allocator.js";
+import type { DistributedTaskIdAllocator } from "../../tasks/distributed-task-id.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";

@@ -4,8 +4,8 @@ import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { runAiMerge } from "../merger-ai.js";
-import { computeLockfileHash, INSTALL_MARKER_RELPATH } from "../merge-dependency-sync.js";
+import { runAiMerge } from "../merge/merger-ai.js";
+import { computeLockfileHash, INSTALL_MARKER_RELPATH } from "../merge/merge-dependency-sync.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();

@@ -4,7 +4,7 @@ import {
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
   validateWorktrunkSettings,
-} from "../worktrunk-settings.js";
+} from "../config/worktrunk-settings.js";
 
 describe("worktrunk-settings", () => {
   it("returns defaults when settings are empty", () => {

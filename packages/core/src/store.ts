@@ -43,53 +43,53 @@ export function isWorkflowColumnsCompatibilityFlagEnabled(settings: Pick<Setting
   */
   return settings?.experimentalFeatures?.workflowColumns === true;
 }
-import { type PluginGateVerdict } from "./plugin-gate-verdict.js";
-import type { PluginOnSchemaInit, PluginPostgresSchemaDefinition } from "./plugin-types.js";
+import { type PluginGateVerdict } from "./plugins/plugin-gate-verdict.js";
+import type { PluginOnSchemaInit, PluginPostgresSchemaDefinition } from "./plugins/plugin-types.js";
 import { assertLoadedPluginSchemaInitHooksSupported, type LoadedPluginSchemaContract } from "./postgres/plugin-schema-hook.js";
-import { DEFAULT_WORKFLOW_POOL_ID } from "./workflow-capacity.js";
-import type { WorkflowIr, WorkflowFieldDefinition, WorkflowSettingDefinition } from "./workflow-ir-types.js";
-import type { WorkflowMovePolicyInput } from "./workflow-extension-types.js";
-import { type CustomFieldRejection } from "./task-fields.js";
+import { DEFAULT_WORKFLOW_POOL_ID } from "./workflows/workflow-capacity.js";
+import type { WorkflowIr, WorkflowFieldDefinition, WorkflowSettingDefinition } from "./workflows/workflow-ir-types.js";
+import type { WorkflowMovePolicyInput } from "./workflows/workflow-extension-types.js";
+import { type CustomFieldRejection } from "./tasks/task-fields.js";
 // Side-effect import: registers the 14 built-in trait DEFINITIONS into the
 // shared trait registry on load (the flag-ON path resolves traits by id).
 import "./builtin-traits.js";
 // Step-inversion U12 (KTD-12): the legacy `parseStepsFromPrompt` path resolves
 // the `step-headings` parser through the registry (proving the registry path),
 // staying byte-identical with the direct extracted function.
-import type { StoredWorkflowRow, WorkflowDefinition, WorkflowDefinitionInput, WorkflowDefinitionUpdate, WorkflowNodeLayout } from "./workflow-definition-types.js";
-import { type WorkflowParitySummary, type WorkflowColumnsGraduationReport } from "./workflow-parity.js";
+import type { StoredWorkflowRow, WorkflowDefinition, WorkflowDefinitionInput, WorkflowDefinitionUpdate, WorkflowNodeLayout } from "./workflows/workflow-definition-types.js";
+import { type WorkflowParitySummary, type WorkflowColumnsGraduationReport } from "./workflows/workflow-parity.js";
 
 /** Tags WorkflowStep rows materialized by compiling a workflow so they can be
  *  filtered out of the user-facing step manager and cleaned up on re-selection. */
 export const WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX = "workflow:";
-import { GlobalSettingsStore } from "./global-settings.js";
-import { Database } from "./db.js";
-import { ArchiveDatabase } from "./archive-db.js";
+import { GlobalSettingsStore } from "./config/global-settings.js";
+import { Database } from "./db/db.js";
+import { ArchiveDatabase } from "./db/archive-db.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
-import { MissionStore } from "./mission-store.js";
-import { AsyncMissionStore } from "./async-mission-store.js";
-import { AsyncIdeationStore } from "./async-ideation-store.js";
-import { reconcileSoftDeletedColumnDriftAsync } from "./task-store/async-self-healing.js";
-import { PluginStore } from "./plugin-store.js";
-import { InsightStore } from "./insight-store.js";
-import { ResearchStore } from "./research-store.js";
-import { ExperimentSessionStore } from "./experiment-session-store.js";
-import { TodoStore } from "./todo-store.js";
-import { AsyncTodoStore } from "./async-todo-store.js";
-import { AsyncInsightStore } from "./async-insight-store.js";
-import { AsyncResearchStore } from "./async-research-store.js";
-import { GoalStore } from "./goal-store.js";
-import { AsyncGoalStore } from "./async-goal-store.js";
-import { EvalStore } from "./eval-store.js";
-import { AsyncEvalStore } from "./async-eval-store.js";
-import { CentralCore } from "./central-core.js";
-import { SecretsStore } from "./secrets-store.js";
-import { getLatestFailedPreMergeReviewStep } from "./task-merge.js";
-import { createLogger } from "./logger.js";
-import { type UsageEventInput } from "./usage-events.js";
-import { assertNotLinkedWorktreeOfExistingProject, assertProjectRootDir } from "./project-root-guard.js";
-import { type DistributedTaskIdAllocator } from "./distributed-task-id.js";
-import { type TaskIdIntegrityReport } from "./task-id-integrity.js";
+import { MissionStore } from "./missions/mission-store.js";
+import { AsyncMissionStore } from "./async-stores/async-mission-store.js";
+import { AsyncIdeationStore } from "./async-stores/async-ideation-store.js";
+import { reconcileSoftDeletedColumnDriftAsync } from "./task-store/async/async-self-healing.js";
+import { PluginStore } from "./stores/plugin-store.js";
+import { InsightStore } from "./insights/insight-store.js";
+import { ResearchStore } from "./research/research-store.js";
+import { ExperimentSessionStore } from "./eval/experiment-session-store.js";
+import { TodoStore } from "./stores/todo-store.js";
+import { AsyncTodoStore } from "./async-stores/async-todo-store.js";
+import { AsyncInsightStore } from "./async-stores/async-insight-store.js";
+import { AsyncResearchStore } from "./async-stores/async-research-store.js";
+import { GoalStore } from "./goals/goal-store.js";
+import { AsyncGoalStore } from "./async-stores/async-goal-store.js";
+import { EvalStore } from "./eval/eval-store.js";
+import { AsyncEvalStore } from "./async-stores/async-eval-store.js";
+import { CentralCore } from "./central/central-core.js";
+import { SecretsStore } from "./secrets/secrets-store.js";
+import { getLatestFailedPreMergeReviewStep } from "./merge/task-merge.js";
+import { createLogger } from "./process/logger.js";
+import { type UsageEventInput } from "./tasks/usage-events.js";
+import { assertNotLinkedWorktreeOfExistingProject, assertProjectRootDir } from "./central/project-root-guard.js";
+import { type DistributedTaskIdAllocator } from "./tasks/distributed-task-id.js";
+import { type TaskIdIntegrityReport } from "./tasks/task-id-integrity.js";
 
 // file. These are pure behavior-invariant moves — the extracted symbols are
 // byte-identical to their pre-extraction form. store.ts remains the facade and
@@ -111,12 +111,12 @@ import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWi
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, deleteTaskIfBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
-import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
-import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async-phantom-reservations.js";
-import { resolveTaskSymbolsForTask, type TaskSymbolResolution } from "./task-symbol-resolution.js";
+import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async/async-maintenance.js";
+import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async/async-phantom-reservations.js";
+import { resolveTaskSymbolsForTask, type TaskSymbolResolution } from "./tasks/task-symbol-resolution.js";
 import { acquireSymbolLocksAsync, inspectSymbolLockConflictsAsync, reconcileStaleSymbolLocksAsync, releaseSymbolLocksAsync, renewSymbolLocksAsync } from "./task-store/symbol-locks.js";
-import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./symbol-lock-types.js";
-import { queryRunAuditEvents } from "./task-store/async-audit.js";
+import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./tasks/symbol-lock-types.js";
+import { queryRunAuditEvents } from "./task-store/async/async-audit.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
@@ -187,7 +187,7 @@ export type TaskDependencyMutation =
 // re-imported at the top of this file and re-exported below for back-compat.
 
 // `parseStepHeadings` re-exported here for back-compat; extracted to step-parsers.ts (KTD-12).
-export { parseStepHeadings } from "./step-parsers.js";
+export { parseStepHeadings } from "./tasks/step-parsers.js";
 
 // Re-export extracted symbols (VAL-DECOMPOSE-002: facade preserves every public method signature).
 export {
@@ -740,7 +740,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
   /** Work items own no symbol column; their taskId is the sole declaration source. */
-  async resolveTaskSymbolsForWorkItem(workItem: Pick<import("./types/merge-queue.js").WorkflowWorkItem, "taskId">): Promise<TaskSymbolResolution> {
+  async resolveTaskSymbolsForWorkItem(workItem: Pick<import("./types/merge/merge-queue.js").WorkflowWorkItem, "taskId">): Promise<TaskSymbolResolution> {
     return this.resolveTaskSymbols(workItem.taskId);
   }
   async setTaskDeclaredSymbols(taskId: string, symbols: readonly string[]): Promise<Task> {

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { createFallbackModelObserver } from "../fallback-model-observer.js";
-import { notifyFallbackUsed } from "../notifier.js";
+import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
+import { notifyFallbackUsed } from "../util/notifier.js";
 
-vi.mock("../notifier.js", () => ({
+vi.mock("../util/notifier.js", () => ({
   notifyFallbackUsed: vi.fn().mockResolvedValue(undefined),
 }));
 

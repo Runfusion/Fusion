@@ -97,7 +97,7 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("../custom-providers.js", () => ({
+vi.mock("../auth/custom-providers.js", () => ({
   readCustomProviders: readCustomProvidersMock,
 }));
 
@@ -3257,7 +3257,7 @@ describe("createFnAgent", () => {
       const piLogSpy = vi.spyOn(piLog, "log").mockImplementation(() => {});
 
       // Test diagnostics logging by directly calling createSkillsOverrideFromSelection
-      const { createSkillsOverrideFromSelection } = await import("../skill-resolver.js");
+      const { createSkillsOverrideFromSelection } = await import("../cli-runtime/skill-resolver.js");
 
       const selection = {
         allowedSkillPaths: new Set<string>(),

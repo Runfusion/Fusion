@@ -8,7 +8,7 @@
  * here; store.ts re-imports the helpers and the test-only override seam.
  */
 import type { TaskLogEntry } from "../types.js";
-import { buildBootstrapPrompt } from "../mesh-task-replication.js";
+import { buildBootstrapPrompt } from "../mesh/mesh-task-replication.js";
 
 const DEFAULT_TASK_ACTIVITY_LOG_ENTRY_LIMIT = 1_000;
 const DEFAULT_TASK_ACTIVITY_LOG_OUTCOME_LIMIT = 4_000;

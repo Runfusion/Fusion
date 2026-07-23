@@ -17,14 +17,14 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 
-vi.mock("../merge-dependency-sync.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../merge-dependency-sync.js")>();
+vi.mock("../merge/merge-dependency-sync.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../merge/merge-dependency-sync.js")>();
   return { ...actual, installWorktreeDependencies: vi.fn() };
 });
 
-import { installWorktreeDependencies } from "../merge-dependency-sync.js";
-import { landWorkspaceTask, landOneRepo } from "../merger-ai.js";
-import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
+import { installWorktreeDependencies } from "../merge/merge-dependency-sync.js";
+import { landWorkspaceTask, landOneRepo } from "../merge/merger-ai.js";
+import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

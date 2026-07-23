@@ -7,7 +7,7 @@ import {
   autoRecoverCrossContamination,
   classifyForeignCommits,
   classifyMisroutedForeignCommit,
-} from "../../branch-conflicts.js";
+} from "../../execution/branch-conflicts.js";
 
 function git(dir: string, cmd: string): string {
   return execSync(cmd, { cwd: dir, stdio: "pipe" }).toString().trim();

@@ -7,7 +7,7 @@ vi.mock("node:child_process", async () => {
   return { ...actual, execFile };
 });
 
-import { MAX_GH_STDIN_INPUT_BYTES, runGhAsync } from "../gh-cli.js";
+import { MAX_GH_STDIN_INPUT_BYTES, runGhAsync } from "../cli/gh-cli.js";
 
 describe("runGhAsync stdin input", () => {
   beforeEach(() => vi.clearAllMocks());

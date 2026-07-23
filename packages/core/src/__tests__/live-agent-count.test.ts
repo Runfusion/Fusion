@@ -5,8 +5,8 @@ import {
   enrichRunningAgentTaskShapeFromFlags,
   isRunningAgentTask,
   isWaitingAgentTask,
-} from "../live-agent-count.js";
-import type { RunningAgentTaskShape } from "../live-agent-count.js";
+} from "../agents/live-agent-count.js";
+import type { RunningAgentTaskShape } from "../agents/live-agent-count.js";
 
 function task(overrides: Partial<RunningAgentTaskShape> & Pick<RunningAgentTaskShape, "column">): RunningAgentTaskShape {
   return { columnTerminalKind: "none", ...overrides };

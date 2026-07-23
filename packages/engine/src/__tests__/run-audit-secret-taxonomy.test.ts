@@ -4,7 +4,7 @@ import {
   SECRET_MUTATION_TYPES,
   assertNoSecretPlaintext,
   type FilesystemMutationType,
-} from "../run-audit.js";
+} from "../util/run-audit.js";
 
 describe("run-audit secret taxonomy", () => {
   it("keeps secret mutation types assignable to FilesystemMutationType", () => {

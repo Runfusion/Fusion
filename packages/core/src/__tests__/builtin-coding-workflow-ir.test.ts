@@ -7,9 +7,9 @@ import {
   parseWorkflowIr,
   serializeWorkflowIr,
 } from "../index.js";
-import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../builtin-browser-verification-group.js";
-import { CODE_REVIEW_GROUP_ID, CODE_REVIEW_STEP_NODE_ID } from "../builtin-code-review-group.js";
-import type { WorkflowIrV2 } from "../workflow-ir-types.js";
+import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../workflows/builtin-browser-verification-group.js";
+import { CODE_REVIEW_GROUP_ID, CODE_REVIEW_STEP_NODE_ID } from "../workflows/builtin-code-review-group.js";
+import type { WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 const EXECUTE_NODE_MAX_RETRIES = 2;
 

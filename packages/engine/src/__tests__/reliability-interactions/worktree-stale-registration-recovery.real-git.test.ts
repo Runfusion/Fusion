@@ -2,8 +2,8 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeWorktreeBackend } from "../../worktree-backend.js";
-import { WorktreePool } from "../../worktree-pool.js";
+import { NativeWorktreeBackend } from "../../worktree/worktree-backend.js";
+import { WorktreePool } from "../../worktree/worktree-pool.js";
 import { git, hasGit } from "./_helpers.js";
 
 describe.skipIf(!hasGit)("reliability interactions: worktree stale registration recovery", () => {

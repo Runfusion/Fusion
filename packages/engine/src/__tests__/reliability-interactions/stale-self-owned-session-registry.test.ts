@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 const ROOT = "/tmp/test";
 const PATH = "/tmp/test/.worktrees/fn-4976";

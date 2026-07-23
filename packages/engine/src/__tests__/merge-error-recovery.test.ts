@@ -33,8 +33,8 @@ vi.mock("../merger.js", () => ({
 // (these classes are imported from ./merger-ai.js). A bare replacement mock left them undefined,
 // so `instanceof undefined` threw on every recovery path (24 pre-existing red tests). Re-export the
 // REAL error classes via importOriginal so the instanceof guards evaluate; only runAiMerge is faked.
-vi.mock("../merger-ai.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../merger-ai.js")>();
+vi.mock("../merge/merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../merge/merger-ai.js")>();
   return {
     ...actual,
     runAiMerge: testState.runAiMerge,
@@ -70,7 +70,7 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
 import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { VerificationError } from "../merger.js";
-import { runAiMerge } from "../merger-ai.js";
+import { runAiMerge } from "../merge/merger-ai.js";
 
 type MockTask = {
   id: string;

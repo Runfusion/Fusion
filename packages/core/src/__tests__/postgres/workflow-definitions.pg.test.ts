@@ -44,7 +44,7 @@ pgTest("workflow definitions (PostgreSQL backend mode)", () => {
     const store = h.store();
     const layer = store.getAsyncLayer();
     if (!layer) throw new Error("expected async layer in backend mode");
-    const { listWorkflowRows, getWorkflowRow } = await import("../../async-workflow-store.js");
+    const { listWorkflowRows, getWorkflowRow } = await import("../../async-stores/async-workflow-store.js");
     const { project } = await import("../../postgres/schema/index.js");
     const now = "2026-01-01T00:00:00.000Z";
     await layer.db.insert(project.workflows).values({

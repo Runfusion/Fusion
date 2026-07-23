@@ -16,13 +16,13 @@ import {mkdir, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import type {Task, RunAuditEvent, MergeQueueEntry, MergeRequestRecord, CompletionHandoffMarker, WorkflowWorkItem, PrEntity, PrConflictState, PrChecksRollup, PrReviewDecision} from "../types.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../task-priority.js";
-import {fromJson} from "../db.js";
-import {generateTaskLineageId} from "../task-lineage.js";
+import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import {fromJson} from "../db/db.js";
+import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {type TaskRow, type TaskPersistSerializationContext, type TaskColumnDescriptor, TASK_COLUMN_DESCRIPTORS, TASK_COLUMN_DESCRIPTOR_BY_COLUMN} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow as readTaskRowAsync} from "../task-store/async-persistence.js";
-import {findArchivedTaskEntry} from "../task-store/async-archive-lineage.js";
+import {readTaskRow as readTaskRowAsync} from "../task-store/async/async-persistence.js";
+import {findArchivedTaskEntry} from "../task-store/async/async-archive-lineage.js";
 import type {PrEntityRow, RunAuditEventRow, MergeQueueRow, MergeRequestRow, CompletionHandoffMarkerRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
 
 export function getTaskSelectClauseImpl2(store: TaskStore, slim: boolean, tableAlias?: string): string {

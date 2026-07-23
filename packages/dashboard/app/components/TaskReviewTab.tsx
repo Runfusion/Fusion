@@ -1,6 +1,6 @@
 import "./TaskReviewTab.css";
 import { getErrorMessage, isReviewArtifact, type PrCheckStatus, type Task, type TaskDetail, type TaskReviewSummary } from "@fusion/core";
-import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
+import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { Bot, ExternalLink, GitPullRequest, User } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";

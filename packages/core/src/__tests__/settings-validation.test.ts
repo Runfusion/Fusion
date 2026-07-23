@@ -6,7 +6,7 @@ import {
   validateHeartbeatPromptTemplate,
   validateHeartbeatScopeDisciplineMode,
   validateUnavailableNodePolicy,
-} from "../settings-validation.js";
+} from "../config/settings-validation.js";
 
 describe("settings-validation", () => {
   describe("validateUnavailableNodePolicy", () => {

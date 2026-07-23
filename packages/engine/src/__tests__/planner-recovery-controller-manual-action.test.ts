@@ -7,8 +7,8 @@ without consuming the autonomous attempt budget, and `clear` releases both.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "../planner-recovery-controller.js";
-import type { OverseerStageObservation, OverseerWatchedStage } from "../planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "../overseer/planner-recovery-controller.js";
+import type { OverseerStageObservation, OverseerWatchedStage } from "../overseer/planner-overseer.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {

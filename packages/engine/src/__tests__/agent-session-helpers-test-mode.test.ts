@@ -5,7 +5,7 @@ import {
   resolveMergerSessionModel,
   resolvePlanningSessionModel,
   resolveValidatorSessionModel,
-} from "../agent-session-helpers.js";
+} from "../agents/agent-session-helpers.js";
 
 const assignedAgentRuntimeConfig = {
   modelProvider: "anthropic",

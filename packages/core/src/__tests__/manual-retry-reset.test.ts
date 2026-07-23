@@ -5,7 +5,7 @@ import {
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
-} from "../manual-retry-reset.js";
+} from "../tasks/manual-retry-reset.js";
 
 const RETRY_SUMMARY_COUNTER_REGEX = /toCount\(task\.(\w+)\)/g;
 

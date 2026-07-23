@@ -20,14 +20,14 @@
       "import": "./dist/index.js"
     },
     "./gh-cli": {
-      "types": "./src/gh-cli.ts",
-      "source": "./src/gh-cli.ts",
-      "import": "./dist/gh-cli.js"
+      "types": "./src/cli/gh-cli.ts",
+      "source": "./src/cli/gh-cli.ts",
+      "import": "./dist/cli/gh-cli.js"
     },
     "./detect-content-language": {
-      "types": "./src/detect-content-language.ts",
-      "source": "./src/detect-content-language.ts",
-      "import": "./dist/detect-content-language.js"
+      "types": "./src/i18n/detect-content-language.ts",
+      "source": "./src/i18n/detect-content-language.ts",
+      "import": "./dist/i18n/detect-content-language.js"
     },
     "./package.json": "./package.json"
   },

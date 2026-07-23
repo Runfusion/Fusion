@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import * as worktreePool from "../worktree-pool.js";
-import * as branchAutocorrect from "../branch-autocorrect.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
+import * as branchAutocorrect from "../execution/branch-autocorrect.js";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function baseTask() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SecretsSyncError, unwrapSecretsBundle, wrapSecretsBundle } from "../secrets-sync.js";
+import { SecretsSyncError, unwrapSecretsBundle, wrapSecretsBundle } from "../secrets/secrets-sync.js";
 
 describe("secrets-sync", () => {
   const records = [{ key: "A", value: "v", scope: "project" as const, accessPolicy: "auto" as const, envExportable: true, envExportKey: null }];

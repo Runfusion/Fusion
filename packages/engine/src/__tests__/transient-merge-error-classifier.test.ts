@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
+import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
 
 describe("classifyTransientMergeError", () => {
   it("returns null for empty or missing errors", () => {

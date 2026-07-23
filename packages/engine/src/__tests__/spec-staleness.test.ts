@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { evaluateSpecStaleness, getPromptPath } from "../spec-staleness.js";
+import { evaluateSpecStaleness, getPromptPath } from "../execution/spec-staleness.js";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Settings, Task } from "@fusion/core";

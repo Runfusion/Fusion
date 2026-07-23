@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeRetrySummary } from "../retry-summary.js";
+import { computeRetrySummary } from "../tasks/retry-summary.js";
 import type { TaskDetail } from "../types.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {

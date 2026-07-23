@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   WorkflowExtensionRegistry,
   WorkflowExtensionRegistrationError,
-} from "../workflow-extension-registry.js";
-import type { WorkflowExtensionContribution } from "../workflow-extension-types.js";
+} from "../workflows/workflow-extension-registry.js";
+import type { WorkflowExtensionContribution } from "../workflows/workflow-extension-types.js";
 
 function extension(
   extensionId = "move-policy",

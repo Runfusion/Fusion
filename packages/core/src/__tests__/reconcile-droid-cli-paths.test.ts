@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconcileDroidCliPaths } from "../pi-extensions.js";
+import { reconcileDroidCliPaths } from "../plugins/pi-extensions.js";
 
 const VENDORED = "/repo/packages/droid-cli/index.ts";
 const GLOBAL_NPM = "/opt/homebrew/lib/node_modules/droid-cli/index.ts";

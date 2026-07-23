@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
-import * as branchConflictModule from "../../branch-conflicts.js";
-import * as worktreePoolModule from "../../worktree-pool.js";
+import * as branchConflictModule from "../../execution/branch-conflicts.js";
+import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 
 type MutableSettings = Settings & {
   autoMerge?: boolean;

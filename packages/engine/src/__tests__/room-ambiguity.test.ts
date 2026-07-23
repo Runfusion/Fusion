@@ -6,7 +6,7 @@ import {
   renderAmbiguityPromptBlock,
   scoreReferentConfidence,
   type AntecedentCandidate,
-} from "../room-ambiguity.js";
+} from "../triage-domain/room-ambiguity.js";
 
 function roomMessage(id: string, content: string, senderAgentId: string | null = "agent-1"): ChatRoomMessage {
   return {

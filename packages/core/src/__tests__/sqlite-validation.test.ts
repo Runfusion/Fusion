@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
+import { isValidSqliteDatabaseFile } from "../db/sqlite-validation.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-sqlite-validation-"));

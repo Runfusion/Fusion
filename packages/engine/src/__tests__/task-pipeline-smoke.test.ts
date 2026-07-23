@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Settings, TaskDetail, TaskStep } from "@fusion/core";
 
-import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
-import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+import { WorkflowTaskRuntime } from "../workflows/workflow-task-runtime.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import {
   WORKFLOW_ID_CONTEXT_KEY,
   WORKFLOW_RUN_ID_CONTEXT_KEY,
-} from "../workflow-node-handlers.js";
+} from "../workflows/workflow-node-handlers.js";
 
 const promptWithOneStep = `# Task: FN-7228 Pipeline smoke
 

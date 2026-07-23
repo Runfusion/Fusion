@@ -4,7 +4,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES, SelfHealingManager } from "../../self-healing.js";
-import { MAX_RECOVERY_RETRIES } from "../../recovery-policy.js";
+import { MAX_RECOVERY_RETRIES } from "../../healing/recovery-policy.js";
 import { mockExecuteAll, mockedCreateFnAgent, resetExecutorMocks } from "../executor-test-helpers.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {

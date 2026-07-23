@@ -11,7 +11,7 @@ import {
   buildPluginPromptSection,
   ensureDefaultHeartbeatProcedureFile,
   resolveAgentHeartbeatProcedure,
-} from "../agent-instructions.js";
+} from "../agents/agent-instructions.js";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {

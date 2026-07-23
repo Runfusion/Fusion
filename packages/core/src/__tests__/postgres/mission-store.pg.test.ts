@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } 
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
-import type { TaskCreateInput } from "../../types/task-core.js";
+import type { TaskCreateInput } from "../../types/task/task-core.js";
 
 import {
   pgDescribe,
@@ -35,7 +35,7 @@ import {
   listMilestones as listMilestoneRows,
   listMissionEvents,
   listMissions as listMissionRows,
-} from "../../async-mission-store.js";
+} from "../../async-stores/async-mission-store.js";
 
 const pgTest = pgDescribe;
 

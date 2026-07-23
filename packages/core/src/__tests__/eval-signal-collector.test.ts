@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectDeterministicSignals } from "../eval-signal-collector.js";
+import { collectDeterministicSignals } from "../eval/eval-signal-collector.js";
 import type { TaskDetail } from "../types.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {

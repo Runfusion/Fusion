@@ -12,7 +12,7 @@ const {
   mockDescribeModel: vi.fn().mockReturnValue("mock-model"),
 }));
 
-vi.mock("../agent-session-helpers.js", () => ({
+vi.mock("../agents/agent-session-helpers.js", () => ({
   createResolvedAgentSession: mockCreateResolvedAgentSession,
   extractRuntimeHint: vi.fn(),
   resolvePlanningSessionModel: vi.fn().mockReturnValue({ provider: "mock", modelId: "mock-model" }),
@@ -46,7 +46,7 @@ vi.mock("../pi.js", () => {
   };
 });
 
-vi.mock("../reviewer.js", () => ({
+vi.mock("../execution/reviewer.js", () => ({
   reviewStep: vi.fn(),
 }));
 

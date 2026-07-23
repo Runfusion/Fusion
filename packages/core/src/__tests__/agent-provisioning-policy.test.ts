@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractAgentProvisioningRequest, resolveAgentProvisioningPolicy } from "../agent-provisioning-policy.js";
+import { extractAgentProvisioningRequest, resolveAgentProvisioningPolicy } from "../agents/agent-provisioning-policy.js";
 
 describe("resolveAgentProvisioningPolicy", () => {
   it("denies missing caller", () => {

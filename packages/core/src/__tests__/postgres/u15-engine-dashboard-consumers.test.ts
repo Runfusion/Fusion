@@ -45,11 +45,11 @@ import {
   decideStormGuard,
   DEFAULT_STORM_GUARD,
   FIX_TASK_CLAIM_SENTINEL_PREFIX,
-} from "../../task-store/async-monitor.js";
+} from "../../task-store/async/async-monitor.js";
 import {
   listSoftDeletedColumnDriftCandidates,
   reconcileSoftDeletedColumnDriftAsync,
-} from "../../task-store/async-self-healing.js";
+} from "../../task-store/async/async-self-healing.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";

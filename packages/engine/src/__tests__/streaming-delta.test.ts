@@ -3,7 +3,7 @@ import {
   createStreamingDeltaNormalizer,
   normalizeStreamingDelta,
   normalizeStreamingDeltaFromEvent,
-} from "../streaming-delta.js";
+} from "../execution/streaming-delta.js";
 
 describe("normalizeStreamingDelta", () => {
   it("repairs period + uppercase sentence boundaries across deltas", () => {

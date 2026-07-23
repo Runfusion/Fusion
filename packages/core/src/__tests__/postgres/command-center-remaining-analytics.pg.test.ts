@@ -26,10 +26,10 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateWorkflowAnalytics } from "../../workflow-analytics.js";
-import { aggregateGithubIssueAnalytics } from "../../github-issue-analytics.js";
-import { aggregateSignalsAnalytics } from "../../activity-analytics.js";
-import { composeLiveSnapshot } from "../../command-center-live.js";
+import { aggregateWorkflowAnalytics } from "../../board/workflow-analytics.js";
+import { aggregateGithubIssueAnalytics } from "../../board/github-issue-analytics.js";
+import { aggregateSignalsAnalytics } from "../../board/activity-analytics.js";
+import { composeLiveSnapshot } from "../../board/command-center-live.js";
 
 const pgTest = pgDescribe;
 

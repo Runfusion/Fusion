@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEvalsExperimentalEnabled, resolveEvalSettings } from "../eval-settings.js";
+import { isEvalsExperimentalEnabled, resolveEvalSettings } from "../eval/eval-settings.js";
 
 describe("isEvalsExperimentalEnabled", () => {
   it("returns false when settings are undefined", () => {

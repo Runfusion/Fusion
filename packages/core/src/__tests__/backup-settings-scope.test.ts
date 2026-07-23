@@ -4,7 +4,7 @@ import {
   PROJECT_SETTINGS_KEYS,
   isGlobalSettingsKey,
   isProjectSettingsKey,
-} from "../settings-schema.js";
+} from "../config/settings-schema.js";
 
 describe("database backup settings scope", () => {
   const databaseKeys = ["autoBackupEnabled", "autoBackupSchedule", "autoBackupRetention", "autoBackupDir"] as const;

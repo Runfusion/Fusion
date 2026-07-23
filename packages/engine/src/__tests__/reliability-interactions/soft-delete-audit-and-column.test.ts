@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AutoClaimSnapshotManager } from "../../auto-claim-snapshot.js";
+import { AutoClaimSnapshotManager } from "../../scheduling/auto-claim-snapshot.js";
 import { Scheduler } from "../../scheduler.js";
 
 type TestTask = {

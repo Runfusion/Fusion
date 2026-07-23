@@ -9,35 +9,35 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
-import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import {resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
+import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import * as schema from "../postgres/schema/index.js";
 import type {MoveTaskOptions, MoveTaskInternalOptions} from "../store.js";
 import {TASK_BRANCH_CONTEXT_METADATA_KEY} from "../store.js";
 import {randomUUID} from "node:crypto";
 import {and, eq, inArray, isNull} from "drizzle-orm";
-import {filterArchived as filterArchivedAsync} from "../async-archive-db.js";
+import {filterArchived as filterArchivedAsync} from "../async-stores/async-archive-db.js";
 import type {Task, TaskCreateInput, Column, ColumnId, TaskDocumentWithTask, RunMutationContext, TaskCommitAssociation, GoalCitation, GoalCitationInput, TaskBranchAssignmentMode, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind} from "../types.js";
 import {COLUMNS} from "../types.js";
-import {parseWorkflowIr, serializeWorkflowIr} from "../workflow-ir.js";
-import {resolveAllowedColumns, workflowHasColumn} from "../workflow-transitions.js";
-import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
-import {validateCustomFieldPatch, applyFieldDefaults, reconcileFieldsOnWorkflowChange, type CustomFieldRejection} from "../task-fields.js";
+import {parseWorkflowIr, serializeWorkflowIr} from "../workflows/workflow-ir.js";
+import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
+import type {WorkflowFieldDefinition} from "../workflows/workflow-ir-types.js";
+import {validateCustomFieldPatch, applyFieldDefaults, reconcileFieldsOnWorkflowChange, type CustomFieldRejection} from "../tasks/task-fields.js";
 import "../builtin-traits.js";
-import type {StoredWorkflowRow, WorkflowDefinition} from "../workflow-definition-types.js";
-import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
-import {toJson} from "../db.js";
-import {GoalStore} from "../goal-store.js";
-import {AsyncGoalStore} from "../async-goal-store.js";
-import {normalizeTaskCommitAssociation} from "../task-lineage.js";
+import type {StoredWorkflowRow, WorkflowDefinition} from "../workflows/workflow-definition-types.js";
+import {resolveDefaultOnOptionalGroupIds} from "../workflows/workflow-optional-steps.js";
+import {toJson} from "../db/db.js";
+import {GoalStore} from "../goals/goal-store.js";
+import {AsyncGoalStore} from "../async-stores/async-goal-store.js";
+import {normalizeTaskCommitAssociation} from "../tasks/task-lineage.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
-import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
-import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync} from "../task-store/async-workflow-workitems.js";
-import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async-audit.js";
-import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async-comments-attachments.js";
-import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async-events.js";
+import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
+import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync} from "../task-store/async/async-workflow-workitems.js";
+import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async/async-audit.js";
+import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async-comments-attachments.js";
+import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async/async-events.js";
 import type {TaskDocumentRow, GoalCitationRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {

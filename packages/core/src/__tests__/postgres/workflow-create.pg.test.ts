@@ -15,7 +15,9 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import type { TaskStore } from "../../store.js";
 import * as schema from "../../postgres/schema/index.js";
-import { writeProjectConfig } from "../../task-store/async-settings.js";
+
+import { writeProjectConfig } from "../../task-store/async/async-settings.js";
+
 import { __setWorkflowDefinitionBeforeInsertForTesting } from "../../task-store/project-store-ops.js";
 
 import {
@@ -23,7 +25,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../../builtin-coding-workflow-ir.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workflow-ir.js";
 
 const pgTest = pgDescribe;
 

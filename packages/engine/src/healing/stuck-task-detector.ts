@@ -1,0 +1,870 @@
+/**
+ * Stuck Task Detector — monitors in-progress tasks for agent session stagnation.
+ *
+ * The detector supports two detection modes:
+ * - **Inactivity** — no activity at all for the timeout period (session appears dead)
+ * - **Loop** — agent is active, has not advanced a step past the timeout, AND shows
+ *   repetitive tool fingerprints or ignored step-update rebuffs (context-growth thrash).
+ *   High activity volume alone is NOT a loop — long single-step work (E2E debug, refactors)
+ *   produces many heartbeats without step transitions and must not false-positive.
+ *
+ * Activity tracking uses two signals:
+ * - `recordActivity(taskId, signal?)` — text/tool heartbeats; increments `activitySinceProgress`.
+ *   Tool calls should pass `{ toolName, toolDetail? }` so loop classification can fingerprint novelty.
+ * - `recordProgress(taskId)` — step transitions (in-progress, done, skipped); resets counters
+ *
+ * The detector polls at a configurable interval and compares timestamps against
+ * `taskStuckTimeoutMs` from settings. Project defaults keep this active by
+ * default while keeping workflow-step execution timeouts independent.
+ */
+
+import { createHash } from "node:crypto";
+import type { TaskStore, Settings } from "@fusion/core";
+import { createLogger } from "../logger.js";
+
+const stuckLog = createLogger("stuck-detector");
+
+/** Minimal session interface — matches what TaskExecutor stores. */
+export interface DisposableSession {
+  dispose: () => void;
+}
+
+/**
+ * Optional activity signal for loop-novelty accounting.
+ * Text/heartbeat-only calls omit this; tool starts should include toolName + primary-arg detail.
+ */
+export interface ActivitySignal {
+  /** Tool name when this heartbeat is a tool invocation. */
+  toolName?: string;
+  /** Primary arg summary (command, path, etc.) when available. */
+  toolDetail?: string;
+}
+
+/** Tracked entry for a single in-progress task. */
+interface TrackedTask {
+  session: DisposableSession;
+  /** Timestamp of the last heartbeat (text delta, tool call, etc.). */
+  lastActivity: number;
+  /** Timestamp of the last step progress event. */
+  lastProgressAt: number;
+  /** Number of activity heartbeats since the last progress event. */
+  activitySinceProgress: number;
+  /** Number of ignored fn_task_update rebuffs since the last progress event. */
+  ignoredStepUpdateCount: number;
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * Ring buffer of recent tool fingerprints (toolName + normalized detail). Loop classification requires
+   * low novelty here so linear iterative work (distinct edits/tests/fixes on one step) is not killed as a loop.
+   */
+  toolFingerprints: string[];
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * FN-6598 requires long fn_run_verification subprocesses to count as healthy in-flight work instead of loop churn. Track active runs with a count so nested or overlapping verification calls do not clear suppression until every run ends.
+   */
+  verificationActiveCount: number;
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * Verification suppression must be bounded by the command's own hard timeout plus a small cleanup grace, so a missing end signal cannot blind stuck detection forever.
+   */
+  verificationDeadlineAt: number | null;
+  /**
+   * Set once the executor has already observed a loop in the current execute()
+   * lifecycle. FN-5168 only escalates to no-progress churn after the existing
+   * loop recovery path already had one chance to compact-and-resume.
+   */
+  loopObservedInLifecycle: boolean;
+  /**
+   * True while compact-and-resume recovery has been accepted but the executor
+   * has not yet resumed normal prompting. Keep tracking alive so FN-5168 can
+   * still accumulate ignored-step rebuffs after recovery resumes.
+   */
+  recoveryInProgress: boolean;
+  /**
+   * The canonical task ID used for all external callbacks (beforeRequeue,
+   * onStuck, onLoopDetected).  In step-session mode the map key is a compound
+   * string like "FN-1452-step-1"; this field always holds the bare task ID
+   * ("FN-1452") so callbacks can look up the right task record.
+   */
+  canonicalTaskId: string;
+}
+
+/** Payload emitted when a stuck task is detected. */
+export interface StuckTaskEvent {
+  /** The task that was detected as stuck. */
+  taskId: string;
+  /** Why the task is considered stuck. */
+  reason: "inactivity" | "loop" | "no-progress-churn";
+  /** Milliseconds since the last step progress event. */
+  noProgressMs: number;
+  /** Milliseconds since the last activity heartbeat. */
+  inactivityMs: number;
+  /** Number of activity heartbeats since the last progress event. */
+  activitySinceProgress: number;
+  /** Number of ignored fn_task_update rebuffs since the last progress event. */
+  ignoredStepUpdateCount: number;
+  /** Whether the task should be re-queued (budget not exhausted). */
+  shouldRequeue: boolean;
+}
+
+/** Minimum activity-since-progress count to classify as a loop.
+ *  Prevents false positives when a task is genuinely inactive. */
+const LOOP_ACTIVITY_THRESHOLD = 60;
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Loop requires evidence of thrash beyond "busy without a step transition".
+ * Elevated ignored step-update rebuffs (before the post-recovery FN-5168 terminal) are one such signal.
+ */
+const LOOP_IGNORED_STEP_MIN = 10;
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Tool-fingerprint window and novelty gates for loop detection. Distinct iterative tool work
+ * (E2E debug cycles with different commands/files) stays above these novelty floors and is not a loop.
+ *
+ * FNXC:StuckDetector 2026-07-22-19:15:
+ * Do NOT use a 50% single-fingerprint dominance rule. Alternating one stable test command with
+ * unique file edits is healthy fix/test work: the test fingerprint can occupy half the window while
+ * the other half is novel, and that must not kill the session (Greptile P1 on PR #2404).
+ * Unique-ratio alone still catches pure thrash (one or few fingerprints filling the window).
+ */
+const TOOL_FINGERPRINT_WINDOW = 40;
+const LOOP_MIN_TOOL_SAMPLES = 20;
+/** Unique fingerprints / samples at or below this ratio counts as repetitive. */
+const LOOP_MAX_UNIQUE_RATIO = 0.25;
+/** Hex chars kept from the detail content hash (sha256 prefix). */
+const TOOL_DETAIL_HASH_HEX_LEN = 16;
+
+/**
+ * FN-5168 root cause: once compact-and-resume has already fired, repeated
+ * ignored step-update rebuffs are a strong deterministic signal that the agent
+ * is still churning on completed work instead of advancing.
+ */
+const NO_PROGRESS_CHURN_THRESHOLD = 25;
+const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
+
+/**
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Stable short hash of the full (whitespace-collapsed) tool detail so long arguments that
+ * differ only after a shared prefix remain distinct. Prefix truncation alone was a false-loop path
+ * (Greptile P1 on PR #2404).
+ */
+export function hashToolDetail(detail: string): string {
+  return createHash("sha256").update(detail).digest("hex").slice(0, TOOL_DETAIL_HASH_HEX_LEN);
+}
+
+/**
+ * FNXC:StuckDetector 2026-07-22-18:05:
+ * Build a stable fingerprint from tool name + primary arg so repeated identical actions
+ * collapse while distinct edit/test/debug actions stay unique.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:20:
+ * Return null when detail is missing. Bare tool-name fingerprints collapse every call to the
+ * same custom tool into one value and false-positive productive structured-arg work as a loop
+ * (Greptile P1 on PR #2404). Name-only activity still refreshes liveness; it is not thrash evidence.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * Hash the full detail body instead of a fixed character prefix so long structured/string args
+ * that diverge late still fingerprint as novel.
+ */
+export function buildToolFingerprint(toolName: string, toolDetail?: string): string | null {
+  const name = toolName.trim().toLowerCase() || "tool";
+  const detail = toolDetail?.trim().replace(/\s+/g, " ");
+  if (!detail) return null;
+  return `${name}:${hashToolDetail(detail)}`;
+}
+
+function emptyTrackedTask(
+  session: DisposableSession,
+  now: number,
+  canonicalTaskId: string,
+): TrackedTask {
+  return {
+    session,
+    lastActivity: now,
+    lastProgressAt: now,
+    activitySinceProgress: 0,
+    ignoredStepUpdateCount: 0,
+    toolFingerprints: [],
+    verificationActiveCount: 0,
+    verificationDeadlineAt: null,
+    loopObservedInLifecycle: false,
+    recoveryInProgress: false,
+    canonicalTaskId,
+  };
+}
+
+export interface StuckTaskDetectorOptions {
+  /** Polling interval in milliseconds. Default: 30000 (30 seconds). */
+  pollIntervalMs?: number;
+  /** Callback invoked when a stuck task is detected.
+   *  The task will be moved to "todo" for retry by the detector.
+   *  Receives a structured payload with detection reason and metrics. */
+  onStuck?: (event: StuckTaskEvent) => void;
+  /** Called before re-queuing a killed task. Return false to prevent re-queue
+   *  (caller is responsible for marking the task as terminally failed).
+   *  Used by SelfHealingManager to enforce stuck kill budgets. */
+  beforeRequeue?: (taskId: string, reason: "inactivity" | "loop" | "no-progress-churn", event: StuckTaskEvent) => Promise<boolean>;
+  /** Pre-kill callback invoked ONLY when reason is "loop".
+   *  Called BEFORE session.dispose() / moveTask("todo") so the caller can
+   *  attempt in-process recovery (e.g. compact-and-resume) without killing
+   *  the agent session.
+   *
+   *  Return `true` to signal "executor accepted ownership of recovery for this
+   *  run" — the detector will skip dispose/requeue and keep the task tracked
+   *  for FN-5168 churn accounting while the caller owns recovery.
+   *  Return `false` to let the detector proceed with the normal kill/requeue path.
+   *
+   *  Errors in this callback fall through to the normal kill path (treated as `false`). */
+  onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
+  /**
+   * U8 (CLI Agent Executor): returns true when a task's live CLI agent session
+   * is `waitingOnInput` — expected idleness (a permission/question prompt). When
+   * true, stuck/inactivity flagging is SUPPRESSED for that task this cycle: the
+   * agent is intentionally quiet waiting for a human, not stalled. The U3 stall
+   * backstop (the CLI session state machine's own watchdog) remains the only
+   * escalation path while waiting. Narrow seam: a single lookup; absence
+   * (undefined) preserves the prior behavior. Errors are treated as "not
+   * waiting" (fail toward the normal stuck path, never silently suppress). */
+  isCliSessionWaitingOnInput?: (taskId: string) => boolean;
+}
+
+export class StuckTaskDetector {
+  private tracked = new Map<string, TrackedTask>();
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private pollIntervalMs: number;
+  private onStuck?: (event: StuckTaskEvent) => void;
+  private beforeRequeue?: (taskId: string, reason: "inactivity" | "loop" | "no-progress-churn", event: StuckTaskEvent) => Promise<boolean>;
+  private onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
+  private isCliSessionWaitingOnInput?: (taskId: string) => boolean;
+  private paused = false;
+  private exhaustedTasks = new Set<string>();
+
+  constructor(
+    private store: TaskStore,
+    options: StuckTaskDetectorOptions = {},
+  ) {
+    this.pollIntervalMs = options.pollIntervalMs ?? 30_000;
+    this.onStuck = options.onStuck;
+    this.beforeRequeue = options.beforeRequeue;
+    this.onLoopDetected = options.onLoopDetected;
+    this.isCliSessionWaitingOnInput = options.isCliSessionWaitingOnInput;
+  }
+
+  /**
+   * U8: whether stuck flagging should be suppressed for a task because its live
+   * CLI agent session is `waitingOnInput` (expected idleness). Defensive: a
+   * throw in the injected lookup is treated as "not waiting" so a broken seam
+   * never silently disables stuck detection.
+   */
+  private isWaitingOnInput(canonicalTaskId: string): boolean {
+    if (!this.isCliSessionWaitingOnInput) return false;
+    try {
+      return this.isCliSessionWaitingOnInput(canonicalTaskId);
+    } catch (err) {
+      stuckLog.error(`waitingOnInput lookup threw for ${canonicalTaskId}; treating as not waiting:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Start the polling loop that checks for stuck tasks.
+   * Safe to call multiple times (no-ops if already running).
+   */
+  start(): void {
+    if (this.interval) return;
+    this.interval = setInterval(() => {
+      stuckLog.log("Running periodic stuck task check (polling)");
+      this.checkStuckTasks().catch((err) => {
+        stuckLog.error("Error checking stuck tasks:", err);
+      });
+    }, this.pollIntervalMs);
+    stuckLog.log(`Started (poll interval: ${this.pollIntervalMs}ms)`);
+  }
+
+  /**
+   * Stop the polling loop.
+   * Does not untrack any tasks — just stops checking.
+   */
+  stop(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+      stuckLog.log("Stopped");
+    }
+  }
+
+  /**
+   * Register an active agent session for monitoring.
+   * Sets initial timestamps and counters to now.
+   *
+   * @param trackingKey  The key used internally to identify this session.
+   *   In step-session mode this is a compound string like "FN-1452-step-1".
+   * @param session      The disposable agent session.
+   * @param canonicalTaskId  The bare task ID ("FN-1452") used for all external
+   *   callbacks (beforeRequeue, onStuck, onLoopDetected).  When omitted the
+   *   trackingKey is used as-is (single-session mode where they are identical).
+   */
+  trackTask(trackingKey: string, session: DisposableSession, canonicalTaskId?: string): void {
+    const canonicalId = canonicalTaskId ?? trackingKey;
+    if (this.exhaustedTasks.has(canonicalId)) {
+      void this.store.getTask(canonicalId)
+        .then((task) => {
+          const isExhausted = task.status === "failed"
+            && (
+              task.error?.startsWith("STUCK_LOOP_EXHAUSTED:")
+              || task.error?.startsWith("STUCK_NO_PROGRESS_CHURN:")
+            );
+          if (isExhausted) {
+            stuckLog.log(`Skipping tracking for ${trackingKey} (canonical=${canonicalId}) — task is in terminal stuck state`);
+            return;
+          }
+          this.exhaustedTasks.delete(canonicalId);
+          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
+          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+        })
+        .catch((err) => {
+          stuckLog.error(`Failed to validate exhausted status for ${canonicalId}; proceeding to track:`, err);
+          this.exhaustedTasks.delete(canonicalId);
+          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
+          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+        });
+      return;
+    }
+
+    this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
+    stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+  }
+
+  /**
+   * Remove a task from monitoring.
+   * Called when a task finishes (success, failure, or pause).
+   *
+   * Handles both direct keys and step-scoped keys:
+   * - Direct key (single-session mode): removes the entry with the given ID
+   * - Step-scoped keys (step-session mode): removes ALL entries for the canonical task ID
+   *
+   * In step-session mode, tasks are tracked with compound keys like "FN-200-step-0".
+   * When the executor calls untrackTask with the bare task ID "FN-200", this method
+   * cleans up all step-scoped entries for that task.
+   */
+  untrackTask(taskId: string): void {
+    // First, try to delete the direct key (single-session mode)
+    this.tracked.delete(taskId);
+
+    // Also clean up any step-scoped entries for this task.
+    // In step-session mode, entries are keyed by "taskId-step-N" but we need to
+    // clean them up when given the bare task ID.
+    // Pattern: "{taskId}-step-{N}" where N is a number
+    const stepPrefix = `${taskId}-step-`;
+    for (const key of this.tracked.keys()) {
+      if (key.startsWith(stepPrefix)) {
+        this.tracked.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Record a heartbeat for a task's agent session.
+   * Called on text deltas and tool calls only (NOT step transitions).
+   * Increments `activitySinceProgress` counter.
+   *
+   * When `signal` includes a tool name **and** a non-empty toolDetail, appends a fingerprint
+   * to the novelty ring buffer used by loop classification. Text/heartbeat-only calls and
+   * name-only tool calls refresh liveness without contributing loop-thrash evidence.
+   *
+   * In step-session mode, called with step-scoped keys (e.g., "FN-200-step-0").
+   */
+  recordActivity(taskId: string, signal?: ActivitySignal): void {
+    const entry = this.tracked.get(taskId);
+    if (entry) {
+      entry.lastActivity = Date.now();
+      entry.activitySinceProgress++;
+      const toolName = signal?.toolName?.trim();
+      if (toolName) {
+        const fingerprint = buildToolFingerprint(toolName, signal?.toolDetail);
+        if (fingerprint) {
+          this.pushToolFingerprint(entry, fingerprint);
+        }
+      }
+      if (entry.activitySinceProgress <= 3 || entry.activitySinceProgress % 50 === 0) {
+        stuckLog.log(
+          `Activity recorded for ${taskId} (sinceProgress=${entry.activitySinceProgress}` +
+          `${toolName ? `, tools=${entry.toolFingerprints.length}` : ""})`,
+        );
+      }
+    }
+  }
+
+  private pushToolFingerprint(entry: TrackedTask, fingerprint: string): void {
+    entry.toolFingerprints.push(fingerprint);
+    if (entry.toolFingerprints.length > TOOL_FINGERPRINT_WINDOW) {
+      entry.toolFingerprints.splice(0, entry.toolFingerprints.length - TOOL_FINGERPRINT_WINDOW);
+    }
+  }
+
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * True when recent tool fingerprints show low novelty (few unique commands/paths in the window).
+   * Diverse iterative work (different files/commands per cycle) returns false.
+   *
+   * FNXC:StuckDetector 2026-07-22-19:15:
+   * Unique-ratio only — no single-fingerprint dominance share. A stable re-run test interleaved with
+   * novel edits is productive mixed work and must stay below the thrash bar.
+   */
+  private isRepetitiveToolActivity(entry: TrackedTask): boolean {
+    const fps = entry.toolFingerprints;
+    if (fps.length < LOOP_MIN_TOOL_SAMPLES) return false;
+    const unique = new Set(fps).size;
+    return unique / fps.length <= LOOP_MAX_UNIQUE_RATIO;
+  }
+
+  /**
+   * FNXC:StuckDetector 2026-07-22-18:05:
+   * Loop thrash evidence is either repetitive tool fingerprints or elevated ignored step-update rebuffs.
+   * Bare high activity without either signal is healthy long single-step work.
+   */
+  private hasLoopThrashEvidence(entry: TrackedTask): boolean {
+    return entry.ignoredStepUpdateCount >= LOOP_IGNORED_STEP_MIN
+      || this.isRepetitiveToolActivity(entry);
+  }
+
+  private findTrackedEntry(taskId: string): TrackedTask | undefined {
+    const direct = this.tracked.get(taskId);
+    if (direct) return direct;
+    for (const entry of this.tracked.values()) {
+      if (entry.canonicalTaskId === taskId) {
+        return entry;
+      }
+    }
+    return undefined;
+  }
+
+  private isVerificationActive(entry: TrackedTask, now: number): boolean {
+    return entry.verificationActiveCount > 0
+      && entry.verificationDeadlineAt !== null
+      && now < entry.verificationDeadlineAt;
+  }
+
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * fn_run_verification owns its subprocess timeout and emits line/synthetic heartbeats while alive. During that bounded active window, no-progress loop/churn classification is suspended because subprocess output is forward progress, not agent churn.
+   */
+  beginVerification(taskId: string, timeoutMs: number): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (!entry) return;
+    const now = Date.now();
+    entry.lastActivity = now;
+    entry.verificationActiveCount++;
+    const deadline = now + Math.max(0, timeoutMs) + VERIFICATION_DEADLINE_GRACE_MS;
+    entry.verificationDeadlineAt = Math.max(entry.verificationDeadlineAt ?? 0, deadline);
+    stuckLog.log(`Verification started for ${taskId} (active=${entry.verificationActiveCount})`);
+  }
+
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * Ending verification refreshes activity and clears accumulated subprocess heartbeat churn so a healthy long command does not get killed immediately after returning.
+   */
+  endVerification(taskId: string): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (!entry) return;
+    if (entry.verificationActiveCount > 0) {
+      entry.verificationActiveCount--;
+    }
+    entry.lastActivity = Date.now();
+    entry.activitySinceProgress = 0;
+    // Verification output is forward progress; clear tool-fingerprint thrash so a
+    // healthy marathon command does not leave a residual repetitive window.
+    entry.toolFingerprints = [];
+    if (entry.verificationActiveCount === 0) {
+      entry.verificationDeadlineAt = null;
+    }
+    stuckLog.log(`Verification ended for ${taskId} (active=${entry.verificationActiveCount})`);
+  }
+
+  /**
+   * Record a step progress event for a task's agent session.
+   * Called on step transitions (in-progress, done, skipped).
+   * Resets `activitySinceProgress` to 0 and updates `lastProgressAt`.
+   *
+   * In step-session mode, called with the bare task ID (e.g., "FN-200").
+   * This method finds entries by canonical task ID when the direct key lookup fails.
+   */
+  recordProgress(taskId: string): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (entry) {
+      entry.lastProgressAt = Date.now();
+      entry.activitySinceProgress = 0;
+      entry.ignoredStepUpdateCount = 0;
+      entry.toolFingerprints = [];
+      entry.verificationActiveCount = 0;
+      entry.verificationDeadlineAt = null;
+      entry.recoveryInProgress = false;
+    }
+  }
+
+  /**
+   * Get the last activity timestamp for a tracked task.
+   * Returns undefined if the task is not tracked.
+   */
+  getLastActivity(taskId: string): number | undefined {
+    return this.tracked.get(taskId)?.lastActivity;
+  }
+
+  /**
+   * Get the activity-since-progress count for a tracked task.
+   * Returns undefined if the task is not tracked.
+   */
+  getActivitySinceProgress(taskId: string): number | undefined {
+    return this.tracked.get(taskId)?.activitySinceProgress;
+  }
+
+  /**
+   * Get the last progress timestamp for a tracked task.
+   * Returns undefined if the task is not tracked.
+   */
+  getLastProgressAt(taskId: string): number | undefined {
+    return this.tracked.get(taskId)?.lastProgressAt;
+  }
+
+  getIgnoredStepUpdateCount(taskId: string): number | undefined {
+    return this.findTrackedEntry(taskId)?.ignoredStepUpdateCount;
+  }
+
+  recordIgnoredStepUpdate(taskId: string): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (entry) {
+      entry.lastActivity = Date.now();
+      entry.activitySinceProgress++;
+      entry.ignoredStepUpdateCount++;
+      if (entry.ignoredStepUpdateCount <= 3 || entry.ignoredStepUpdateCount % 10 === 0) {
+        stuckLog.log(
+          `Ignored step update recorded for ${taskId} ` +
+          `(ignored=${entry.ignoredStepUpdateCount}, sinceProgress=${entry.activitySinceProgress})`,
+        );
+      }
+    }
+  }
+
+  markLoopObserved(taskId: string): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (entry) {
+      entry.loopObservedInLifecycle = true;
+    }
+  }
+
+  /**
+   * Check whether a task is stuck (no activity for longer than timeout).
+   */
+  isStuck(taskId: string, timeoutMs: number): boolean {
+    const entry = this.tracked.get(taskId);
+    if (!entry) return false;
+    return (Date.now() - entry.lastActivity) > timeoutMs;
+  }
+
+  /**
+   * Classify why a task is stuck.
+   * Returns null if the task is not stuck.
+   */
+  classifyStuckReason(taskId: string, timeoutMs: number): "inactivity" | "loop" | "no-progress-churn" | null {
+    const entry = this.tracked.get(taskId);
+    if (!entry) return null;
+
+    const now = Date.now();
+    const inactivityMs = now - entry.lastActivity;
+    const noProgressMs = now - entry.lastProgressAt;
+    const verificationActive = this.isVerificationActive(entry, now);
+
+    // Check inactivity first — if there's been zero activity, it's just inactive
+    if (inactivityMs >= timeoutMs) {
+      return "inactivity";
+    }
+
+    // FN-6598: active verification output is healthy progress for loop/churn
+    // accounting, but inactivity remains unsuppressed above and the verification
+    // deadline restores normal detection if the subprocess never ends.
+    if (verificationActive) {
+      return null;
+    }
+
+    // FN-5168: only escalate to churn after loop recovery already had one chance
+    // in this execute() lifecycle and the agent kept hammering ignored step updates.
+    if (
+      noProgressMs >= timeoutMs
+      && entry.loopObservedInLifecycle
+      && entry.ignoredStepUpdateCount >= NO_PROGRESS_CHURN_THRESHOLD
+    ) {
+      return "no-progress-churn";
+    }
+
+    // After onLoopDetected accepts compact-and-resume, the executor owns the
+    // recovery prompt. Do not immediately classify the same stale timestamps as
+    // another loop before the executor has a chance to emit fresh progress. The
+    // deterministic no-progress-churn terminal path above still has to fire if
+    // the recovered session keeps hammering rejected step updates.
+    if (entry.recoveryInProgress) {
+      return null;
+    }
+
+    // Check loop — active, no step progress past timeout, enough activity volume,
+    // AND thrash evidence (repetitive tools or ignored step-update rebuffs).
+    // Volume without thrash is legitimate long single-step work, not a loop.
+    if (
+      noProgressMs >= timeoutMs
+      && entry.activitySinceProgress >= LOOP_ACTIVITY_THRESHOLD
+      && this.hasLoopThrashEvidence(entry)
+    ) {
+      return "loop";
+    }
+
+    return null;
+  }
+
+  /**
+   * Terminate a stuck task's agent session and trigger recovery.
+   * - Disposes the agent session
+   * - Logs the stuck event to the task log
+   * - Moves the task back to "todo" (preserving step progress)
+   * - Invokes the onStuck callback
+   */
+  async killAndRetry(taskId: string, timeoutMs: number): Promise<void> {
+    const entry = this.tracked.get(taskId);
+    if (!entry) return;
+
+    // In step-session mode the map key is a compound string like "FN-1452-step-1".
+    // All external callbacks (beforeRequeue, onStuck, onLoopDetected) must use
+    // the canonical task ID so they can look up the right task record and signal
+    // the right executor entry.
+    const canonicalId = entry.canonicalTaskId;
+
+    const now = Date.now();
+    const inactivityMs = now - entry.lastActivity;
+    const noProgressMs = now - entry.lastProgressAt;
+    const activitySinceProgress = entry.activitySinceProgress;
+    const ignoredStepUpdateCount = entry.ignoredStepUpdateCount;
+
+    // Classify the reason. If recovery is already pending or fresh progress
+    // made the task no longer stuck, do not kill it.
+    const reason = this.classifyStuckReason(taskId, timeoutMs);
+    if (reason === null) return;
+
+    const elapsedMin = Math.round(inactivityMs / 60_000);
+    const noProgressMin = Math.round(noProgressMs / 60_000);
+
+    stuckLog.log(
+      `Killing stuck task ${taskId} (canonical=${canonicalId}, reason=${reason}, ` +
+      `no progress for ~${noProgressMin}min, ` +
+      `no activity for ~${elapsedMin}min, ` +
+      `${activitySinceProgress} events since last progress, ` +
+      `${ignoredStepUpdateCount} ignored step-update rebuffs)`,
+    );
+
+    // Log the event to the task log using the canonical task ID so it
+    // appears in the correct task's log (not a phantom step-key task).
+    try {
+      await this.store.logEntry(
+        canonicalId,
+        `Task terminated due to stuck agent session (reason=${reason}, ` +
+        `no progress for ~${noProgressMin}min, ` +
+        `no activity for ~${elapsedMin}min, ` +
+        `${activitySinceProgress} events since last progress, ` +
+        `${ignoredStepUpdateCount} ignored step-update rebuffs)`,
+      );
+    } catch (err) {
+      stuckLog.error(`Failed to log stuck event for ${canonicalId}:`, err);
+    }
+
+    // Build the event payload using the canonical task ID so executor callbacks
+    // can look up the right entry in stuckAborted / activeStepExecutors.
+    const event: StuckTaskEvent = {
+      taskId: canonicalId,
+      reason,
+      noProgressMs,
+      inactivityMs,
+      activitySinceProgress,
+      ignoredStepUpdateCount,
+      shouldRequeue: true,
+    };
+
+    // Check stuck kill budget BEFORE disposing the session so the result
+    // is available to the executor's cleanup path via the event payload.
+    let shouldRequeue = true;
+    if (this.beforeRequeue) {
+      try {
+        shouldRequeue = await this.beforeRequeue(canonicalId, reason, event);
+        if (!shouldRequeue) {
+          stuckLog.log(
+            reason === "no-progress-churn"
+              ? `${canonicalId} hit no-progress churn terminalization — not re-queuing`
+              : `${canonicalId} exceeded stuck kill budget — not re-queuing`,
+          );
+        }
+      } catch (err) {
+        stuckLog.error(`beforeRequeue check failed for ${canonicalId}:`, err);
+        // Fall through with shouldRequeue=true — safer than dropping the task
+      }
+    }
+    event.shouldRequeue = shouldRequeue;
+
+    // ── Pre-kill loop interception ──────────────────────────────────
+    // When reason is "loop" and an onLoopDetected callback is registered,
+    // give the caller a chance to handle recovery in-process (e.g.
+    // compact-and-resume) before falling through to the kill/requeue path.
+    //
+    // If the callback returns true, the caller owns the task — we skip
+    // dispose/requeue but keep tracking alive for FN-5168 churn accounting.
+    // Errors fall through to normal kill.
+    if (reason === "loop" && this.onLoopDetected) {
+      // Mark recovery as pending before awaiting the callback. Compaction or
+      // steering can be slow; without this, the next poll can re-enter the same
+      // loop recovery path and spam compact-and-resume attempts for one session.
+      entry.recoveryInProgress = true;
+      try {
+        const handled = await this.onLoopDetected(event);
+        if (handled) {
+          stuckLog.log(
+            `${canonicalId} loop recovery accepted by onLoopDetected callback — ` +
+            `skipping kill/requeue (caller owns recovery)`,
+          );
+          // Keep the task tracked so FN-5168 can keep counting ignored
+          // step-update churn after recovery resumes, but suppress detector
+          // polling until the executor emits fresh progress on resume.
+          return;
+        }
+        entry.recoveryInProgress = false;
+      } catch (err) {
+        entry.recoveryInProgress = false;
+        stuckLog.error(`onLoopDetected callback failed for ${canonicalId}:`, err);
+        // Fall through to normal kill path
+      }
+    }
+
+    // Notify listeners before disposing the session so executor cleanup can
+    // mark the abort as intentional before the disposed session unwinds.
+    this.onStuck?.(event);
+
+    if (!shouldRequeue) {
+      this.exhaustedTasks.add(canonicalId);
+      stuckLog.log(
+        reason === "no-progress-churn"
+          ? `${canonicalId} untracked due to STUCK_NO_PROGRESS_CHURN terminal state (no automatic retries)`
+          : `${canonicalId} untracked due to STUCK_LOOP_EXHAUSTED terminal state (no automatic retries)`,
+      );
+    }
+
+    // Dispose the agent session after listeners have marked the abort.
+    try {
+      entry.session.dispose();
+    } catch (err) {
+      stuckLog.error(`Failed to dispose session for ${taskId}:`, err);
+    }
+
+    // Remove from tracking.
+    // The actual moveTask("todo") is handled by the executor's catch/finally
+    // block after it cleans up this.executing. This prevents a race where the
+    // scheduler re-dispatches the task while the old execution is still active.
+    this.tracked.delete(taskId);
+  }
+
+  /**
+   * Pause stuck detection checks while the engine is in a paused lifecycle.
+   * Active tracked sessions are preserved and refreshed on resume.
+   */
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+  }
+
+  /**
+   * Resume stuck detection checks and refresh tracked timestamps so the paused
+   * interval does not count as inactivity/no-progress time.
+   */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    if (this.tracked.size === 0) return;
+    const now = Date.now();
+    for (const entry of this.tracked.values()) {
+      entry.lastActivity = now;
+      entry.lastProgressAt = now;
+      entry.activitySinceProgress = 0;
+      entry.ignoredStepUpdateCount = 0;
+      entry.toolFingerprints = [];
+      entry.verificationActiveCount = 0;
+      entry.verificationDeadlineAt = null;
+      entry.loopObservedInLifecycle = false;
+      entry.recoveryInProgress = false;
+    }
+  }
+
+  /**
+   * Check for stuck tasks immediately, outside the normal polling cycle.
+   * Safe to call at any time — will no-op if no tasks are tracked or timeout is disabled.
+   * Logs at debug level to distinguish manual checks from polling.
+   */
+  async checkNow(): Promise<void> {
+    stuckLog.log("Running immediate stuck task check (triggered manually)");
+    await this.checkStuckTasks();
+  }
+
+  /**
+   * Poll all tracked tasks and kill any that have exceeded the timeout.
+   * Reads `taskStuckTimeoutMs` from settings on each check so changes
+   * take effect on the next poll cycle.
+   *
+   * Detection rules:
+   * - **inactivity**: `lastActivity` older than `taskStuckTimeoutMs` (no heartbeats at all)
+   * - **no-progress-churn**: after an earlier loop recovery in the same execute() lifecycle,
+   *   `lastProgressAt` still exceeds `taskStuckTimeoutMs` and ignored step-update rebuffs reach 25+
+   * - **loop**: `lastProgressAt` older than `taskStuckTimeoutMs` AND `activitySinceProgress >= 60`
+   *   AND thrash evidence (repetitive tool fingerprints in the recent window, or
+   *   ignored step-update rebuffs ≥ 10). High activity without thrash is not a loop.
+   * - Active `fn_run_verification`: suppresses loop/no-progress-churn until the command ends or its own deadline elapses; inactivity remains governed by `lastActivity`.
+   */
+  private async checkStuckTasks(): Promise<void> {
+    if (this.tracked.size === 0) return;
+
+    // Fast pause gate: if lifecycle hooks paused the detector, skip the cycle
+    // without reading settings (avoids noisy settings-read errors while paused).
+    if (this.paused) return;
+
+    let settings: Settings;
+    try {
+      settings = await this.store.getSettings();
+    } catch (err) {
+      stuckLog.error("Failed to read settings — skipping stuck task detection cycle:", err);
+      return; // Can't read settings — skip this cycle
+    }
+
+    // Defensive fallback for pause windows where lifecycle hooks haven't run yet.
+    if (settings.globalPause || settings.enginePaused) return;
+
+    const timeoutMs = settings.taskStuckTimeoutMs;
+    if (!timeoutMs || timeoutMs <= 0) return; // Disabled when task stuck timeout is explicitly unset/disabled
+
+    const stuckTasks: string[] = [];
+
+    for (const [taskId, entry] of this.tracked) {
+      const reason = this.classifyStuckReason(taskId, timeoutMs);
+      if (reason !== null) {
+        // U8: suppress flagging while the CLI session is waitingOnInput
+        // (expected idleness). The U3 stall backstop remains the only escalation
+        // path while genuinely waiting.
+        if (this.isWaitingOnInput(entry.canonicalTaskId)) {
+          stuckLog.log(`Suppressing stuck flag for ${taskId} (canonical=${entry.canonicalTaskId}) — CLI session waitingOnInput`);
+          continue;
+        }
+        stuckTasks.push(taskId);
+      }
+    }
+
+    for (const taskId of stuckTasks) {
+      await this.killAndRetry(taskId, timeoutMs);
+    }
+  }
+
+  /** Number of currently tracked tasks (for testing). */
+  get trackedCount(): number {
+    return this.tracked.size;
+  }
+}

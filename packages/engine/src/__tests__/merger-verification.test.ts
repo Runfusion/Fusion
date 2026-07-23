@@ -127,11 +127,11 @@ vi.mock("node:fs", () => ({
   readdirSync: vi.fn().mockReturnValue([]),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 

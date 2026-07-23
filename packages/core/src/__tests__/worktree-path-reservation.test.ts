@@ -2,7 +2,7 @@ import {mkdtemp, rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {afterEach, describe, expect, it, vi} from "vitest";
-import {acquireWorktreePathReservation, readWorktreePathReservation} from "../worktree-path-reservation.js";
+import {acquireWorktreePathReservation, readWorktreePathReservation} from "../tasks/worktree-path-reservation.js";
 
 const dirs: string[] = [];
 async function fixture() {

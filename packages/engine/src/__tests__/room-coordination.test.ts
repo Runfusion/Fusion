@@ -5,7 +5,7 @@ import {
   decideRoomCoordination,
   detectTaskFilingIntent,
   renderRoomCoordinationPromptBlock,
-} from "../room-coordination.js";
+} from "../triage-domain/room-coordination.js";
 
 function roomMember(agentId: string | null): ChatRoomMember {
   return {

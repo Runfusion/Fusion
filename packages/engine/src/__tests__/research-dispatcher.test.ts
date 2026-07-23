@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ResearchRun, ResearchStore } from "@fusion/core";
-import type { ResearchOrchestrator } from "../research-orchestrator.js";
-import { ResearchRunDispatcher } from "../research-dispatcher.js";
+import type { ResearchOrchestrator } from "../research/research-orchestrator.js";
+import { ResearchRunDispatcher } from "../research/research-dispatcher.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

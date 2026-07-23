@@ -16,7 +16,7 @@ import {
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
   takePreHeldExecutorSlot,
-} from "../concurrency.js";
+} from "../concurrency/concurrency.js";
 
 describe("ScopedAgentSemaphore", () => {
   it("returns only this scope's residual slots without clobbering other scopes", async () => {

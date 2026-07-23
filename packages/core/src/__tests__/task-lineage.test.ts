@@ -5,7 +5,7 @@ import {
   classifyTaskCommitAssociationConfidence,
   generateTaskLineageId,
   parseTaskLineageTrailer,
-} from "../task-lineage.js";
+} from "../tasks/task-lineage.js";
 
 describe("task-lineage", () => {
   it("generates UUID lineage ids", () => {

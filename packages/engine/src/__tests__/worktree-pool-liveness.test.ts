@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { classifyTaskWorktree, hasRequiredWorktreeFiles, isUsableTaskWorktree } from "../worktree-pool.js";
+import { classifyTaskWorktree, hasRequiredWorktreeFiles, isUsableTaskWorktree } from "../worktree/worktree-pool.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;

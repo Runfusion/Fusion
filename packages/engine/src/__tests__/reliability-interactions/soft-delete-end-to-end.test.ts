@@ -1,6 +1,6 @@
 import "../executor-test-helpers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AutoClaimSnapshotManager } from "../../auto-claim-snapshot.js";
+import { AutoClaimSnapshotManager } from "../../scheduling/auto-claim-snapshot.js";
 import { Scheduler } from "../../scheduler.js";
 import { TaskExecutor } from "../../executor.js";
 import { executorLog } from "../../logger.js";

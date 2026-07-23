@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeCacheHitRatio } from "../session-token-usage.js";
+import { computeCacheHitRatio } from "../execution/session-token-usage.js";
 
 describe("computeCacheHitRatio", () => {
   it("returns 0 when no tokens used", () => {

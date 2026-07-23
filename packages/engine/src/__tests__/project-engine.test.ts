@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 // Resolves to the vi.mock factory above (the mocked merger-ai exports the real-shaped
 // workspace land error classes so the dispatch's `instanceof` matching is exercised).
-import { WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "../merger-ai.js";
+import { WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
-import { NtfyNotifier } from "../notifier.js";
+import { NtfyNotifier } from "../util/notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthValidityLogger } from "../notification/index.js";
 
 const mocks = vi.hoisted(() => ({
@@ -44,8 +44,8 @@ const mocks = vi.hoisted(() => ({
   prHandlerCreateFollowUpTask: vi.fn(async () => undefined),
 }));
 
-vi.mock("../postgres-migration-notice.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../postgres-migration-notice.js")>();
+vi.mock("../project/postgres-migration-notice.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../project/postgres-migration-notice.js")>();
   return {
     ...actual,
     deliverPostgresMigrationCompleteNoticeIfNeeded: mocks.deliverPostgresMigrationCompleteNotice,
@@ -67,7 +67,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   });
 });
 
-vi.mock("../cron-runner.js", () => {
+vi.mock("../scheduling/cron-runner.js", () => {
   return {
     CronRunner: vi.fn().mockImplementation(function () {
       return {
@@ -93,7 +93,7 @@ vi.mock("../merger.js", () => ({
 // and a mockable `landWorkspaceTask`; otherwise `err instanceof WorkspacePartialLandError`
 // throws "not callable" and the workspace dispatch can't be exercised. The classes are
 // declared INSIDE the (hoisted) factory so they exist when the mock is evaluated.
-vi.mock("../merger-ai.js", () => {
+vi.mock("../merge/merger-ai.js", () => {
   class WorkspaceRepoLandBusyError extends Error {
     public readonly retryable = true;
     constructor(
@@ -132,7 +132,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
-vi.mock("../pr-monitor.js", () => ({
+vi.mock("../merge/pr-monitor.js", () => ({
   PrMonitor: vi.fn().mockImplementation(function () {
     return {
       onNewComments: vi.fn(),
@@ -140,7 +140,7 @@ vi.mock("../pr-monitor.js", () => ({
   }),
 }));
 
-vi.mock("../pr-comment-handler.js", () => ({
+vi.mock("../merge/pr-comment-handler.js", () => ({
   PrCommentHandler: vi.fn().mockImplementation(function () {
     return {
       handleNewComments: vi.fn(),
@@ -149,7 +149,7 @@ vi.mock("../pr-comment-handler.js", () => ({
   }),
 }));
 
-vi.mock("../notifier.js", () => ({
+vi.mock("../util/notifier.js", () => ({
   NtfyNotifier: vi.fn().mockImplementation(function () {
     return {
       start: mocks.notifierStart,
@@ -190,7 +190,7 @@ vi.mock("../notification/index.js", () => ({
   }),
 }));
 
-vi.mock("../auth-storage.js", () => ({
+vi.mock("../auth/auth-storage.js", () => ({
   createFusionAuthStorage: vi.fn(() => ({
     reload: vi.fn(),
     getOAuthProviders: vi.fn(() => []),

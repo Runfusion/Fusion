@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { Scheduler } from "../scheduler.js";
-import { MissionAutopilot } from "../mission-autopilot.js";
-import { MissionExecutionLoop } from "../mission-execution-loop.js";
+import { MissionAutopilot } from "../missions/mission-autopilot.js";
+import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
 import type { TaskStore } from "@fusion/core";
 
 function makeHarness({

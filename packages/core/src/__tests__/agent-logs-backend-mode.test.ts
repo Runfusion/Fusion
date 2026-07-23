@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendAgentLogBatchImpl, flushAgentLogBufferImpl } from "../task-store/agent-logs.js";
 import { appendAgentLogImpl } from "../task-store/workflow-integrity.js";
 import { getAgentLogCountImpl, getAgentLogsImpl } from "../task-store/task-artifacts-ops.js";
-import { dbImpl } from "../task-store/task-id-integrity.js";
-import { readAgentLogEntries } from "../agent-log-file-store.js";
+import { dbImpl } from "../tasks/task-id-integrity.js";
+import { readAgentLogEntries } from "../agents/agent-log-file-store.js";
 
 /**
  * FNXC:PostgresBackend 2026-06-27-00:40:

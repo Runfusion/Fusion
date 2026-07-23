@@ -113,11 +113,11 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 
@@ -148,7 +148,7 @@ import {
   type ConflictCategory,
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
-import { __resetIntegrationBranchCacheForTests } from "../integration-branch.js";
+import { __resetIntegrationBranchCacheForTests } from "../merge/integration-branch.js";
 import { createFnAgent } from "../pi.js";
 import { execSync, exec } from "node:child_process";
 import * as core from "@fusion/core";
@@ -561,7 +561,7 @@ describe("aiMergeTask — agent log persistence", () => {
 
 // ── Usage limit detection in merger ──────────────────────────────────
 
-import { UsageLimitPauser } from "../usage-limit-detector.js";
+import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 
 
 describe("aiMergeTask — usage limit detection", () => {

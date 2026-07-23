@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import type { ResearchProviderConfig, ResearchSource } from "@fusion/core";
-import type { ResearchProvider } from "../../research-step-runner.js";
+import type { ResearchProvider } from "../research-step-runner.js";
 import { createLogger } from "../../logger.js";
 import { ResearchProviderError, type ResearchFetchResult } from "../types.js";
 

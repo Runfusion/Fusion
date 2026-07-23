@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { PrMonitor, type PrComment } from "../pr-monitor.js";
-import type { PrMonitorGhClient } from "../pr-monitor-gh.js";
+import { PrMonitor, type PrComment } from "../merge/pr-monitor.js";
+import type { PrMonitorGhClient } from "../merge/pr-monitor-gh.js";
 
 describe("PrMonitor", () => {
   let monitor: PrMonitor;

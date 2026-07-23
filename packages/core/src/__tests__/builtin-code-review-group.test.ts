@@ -3,14 +3,14 @@ import {
   CODE_REVIEW_GROUP_ID,
   CODE_REVIEW_STEP_NODE_ID,
   codeReviewOptionalGroupNode,
-} from "../builtin-code-review-group.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
-import { parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
+} from "../workflows/builtin-code-review-group.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-coding-workflow-ir.js";
+import { parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
 import {
   resolveDefaultOnOptionalGroupIds,
   resolveWorkflowOptionalSteps,
-} from "../workflow-optional-steps.js";
+} from "../workflows/workflow-optional-steps.js";
 
 /*
 FNXC:CodeReviewStep 2026-06-25-15:00:

@@ -4,7 +4,7 @@ import {
   computeOverallScore,
   normalizeCategoryScore,
   resolveScoreBand,
-} from "../eval-scoring.js";
+} from "../eval/eval-scoring.js";
 
 describe("eval-scoring", () => {
   it("resolves score bands at boundaries", () => {

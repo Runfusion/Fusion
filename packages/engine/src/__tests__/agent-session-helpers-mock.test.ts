@@ -3,15 +3,15 @@ import {
   createResolvedAgentSession,
   resolveExecutorSessionModel,
   resolvePlanningSessionModel,
-} from "../agent-session-helpers.js";
+} from "../agents/agent-session-helpers.js";
 import { MOCK_PROVIDER_ID } from "../providers/mock-provider.js";
 
 const { resolveRuntimeMock } = vi.hoisted(() => ({
   resolveRuntimeMock: vi.fn(),
 }));
 
-vi.mock("../runtime-resolution.js", async () => {
-  const actual = await vi.importActual<typeof import("../runtime-resolution.js")>("../runtime-resolution.js");
+vi.mock("../execution/runtime-resolution.js", async () => {
+  const actual = await vi.importActual<typeof import("../execution/runtime-resolution.js")>("../execution/runtime-resolution.js");
   return {
     ...actual,
     resolveRuntime: resolveRuntimeMock,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import { insertWorkflowDefinitionSyncImpl, nextWorkflowDefinitionIdImpl } from "../task-store/workflow-definitions.js";
 import type { TaskStore } from "../store.js";
 

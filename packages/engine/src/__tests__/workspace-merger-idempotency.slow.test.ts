@@ -31,7 +31,7 @@ import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { landWorkspaceTask, WorkspacePartialLandError } from "../merger-ai.js";
+import { landWorkspaceTask, WorkspacePartialLandError } from "../merge/merger-ai.js";
 import { shouldRetryAutoMergeConflict } from "../project-engine.js";
 
 /*

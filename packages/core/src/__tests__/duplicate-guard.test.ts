@@ -6,7 +6,7 @@ import {
   __getDeterministicGuardMutexSize,
   reconcileDeterministicDuplicate,
   runDeterministicDuplicateGuard,
-} from "../duplicate-guard.js";
+} from "../duplicates/duplicate-guard.js";
 
 function mkTask(overrides: Partial<Task> & { id: string; description: string; column: Column }): Task {
   const now = new Date().toISOString();

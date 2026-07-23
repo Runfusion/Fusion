@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CentralCore, NodeConfig } from "@fusion/core";
-import { NodeHealthMonitor } from "../node-health-monitor.js";
+import { NodeHealthMonitor } from "../project/node-health-monitor.js";
 
 const NOW = "2026-04-08T00:00:00.000Z";
 

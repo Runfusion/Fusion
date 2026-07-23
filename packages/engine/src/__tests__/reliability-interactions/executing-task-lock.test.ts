@@ -22,7 +22,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
-import { executingTaskLock } from "../../active-session-registry.js";
+import { executingTaskLock } from "../../agents/active-session-registry.js";
 import { mockedCreateFnAgent, createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {

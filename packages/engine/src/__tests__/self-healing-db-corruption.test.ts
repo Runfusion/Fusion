@@ -15,7 +15,7 @@ vi.mock("node:os", async () => {
 
 import { SelfHealingManager } from "../self-healing.js";
 import type { NotificationService } from "../notification/notification-service.js";
-import * as notifierModule from "../notifier.js";
+import * as notifierModule from "../util/notifier.js";
 
 function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & EventEmitter {
   const emitter = new EventEmitter();

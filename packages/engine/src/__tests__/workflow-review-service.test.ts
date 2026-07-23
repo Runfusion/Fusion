@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WorkflowReviewService } from "../workflow-review-service.js";
+import { WorkflowReviewService } from "../workflows/workflow-review-service.js";
 
 describe("WorkflowReviewService", () => {
   it("forwards single-cwd step review input through the injected invoker", async () => {

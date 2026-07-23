@@ -25,7 +25,7 @@ import {
   claimIncidentForFixTaskAsync,
   attachFixTaskAsync,
   releaseIncidentFixTaskClaimAsync,
-} from "../../task-store/async-monitor.js";
+} from "../../task-store/async/async-monitor.js";
 
 const pgTest = pgDescribe;
 

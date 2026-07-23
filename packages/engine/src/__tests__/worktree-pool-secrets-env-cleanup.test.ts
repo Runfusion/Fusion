@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const cleanupSecretsEnvFile = vi.fn();
 
-vi.mock("../secrets-env-writer.js", () => ({
+vi.mock("../worktree/secrets-env-writer.js", () => ({
   cleanupSecretsEnvFile,
 }));
 
@@ -31,7 +31,7 @@ describe("worktree-pool secrets cleanup hooks", () => {
     mkdirSync(orphan, { recursive: true });
     writeFileSync(join(orphan, ".env"), "A=1\n");
 
-    const mod = await import("../worktree-pool.js");
+    const mod = await import("../worktree/worktree-pool.js");
     const removed = await mod.reapOrphanWorktrees(root);
 
     expect(removed).toBe(1);
@@ -48,7 +48,7 @@ describe("worktree-pool secrets cleanup hooks", () => {
     const orphan = join(root, ".worktrees", "orphan-2");
     mkdirSync(orphan, { recursive: true });
 
-    const mod = await import("../worktree-pool.js");
+    const mod = await import("../worktree/worktree-pool.js");
     const removed = await mod.reapOrphanWorktrees(root);
 
     expect(removed).toBe(1);

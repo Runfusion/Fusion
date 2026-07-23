@@ -4,12 +4,12 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { cleanupAiMergeWorktree, pruneExistingAiMergeWorktrees, resolveAiMergeRoot, runAiMerge } from "../merger-ai.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { cleanupAiMergeWorktree, pruneExistingAiMergeWorktrees, resolveAiMergeRoot, runAiMerge } from "../merge/merger-ai.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "../self-healing.js";
-import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
-import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "../worktree-paths.js";
-import type { RunAuditor } from "../run-audit.js";
+import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
+import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "../worktree/worktree-paths.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const fsState = vi.hoisted(() => ({ failReaddirPath: "" }));
 

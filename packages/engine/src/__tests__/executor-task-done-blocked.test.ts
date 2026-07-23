@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import * as worktreePool from "../worktree-pool.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { evaluateNoCommitsNoOpFinalize } from "@fusion/core";
 import {

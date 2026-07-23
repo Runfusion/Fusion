@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { getBuiltinWorkflow } from "../builtin-workflows.js";
-import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import { getBuiltinWorkflow } from "../workflows/builtin-workflows.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import {
   resolveWorkflowIrForTask,
   resolveWorkflowIrById,
-} from "../workflow-ir-resolver.js";
+} from "../workflows/workflow-ir-resolver.js";
 
 /** A minimal custom IR distinguishable from the built-in default. */
 const CUSTOM_IR: WorkflowIr = {

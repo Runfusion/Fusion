@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { installTaskWorktreeIdentityGuard } from "../../worktree-hooks.js";
+import { installTaskWorktreeIdentityGuard } from "../../worktree/worktree-hooks.js";
 
 function git(dir: string, cmd: string): { stdout: string; stderr: string; status: number | null } {
   try {

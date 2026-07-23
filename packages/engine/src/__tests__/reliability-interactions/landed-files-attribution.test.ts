@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync, spawnSync } from "node:child_process";
 import { captureRebaseLandedFilesForTask, sumShortstatsForCommits } from "../../merger.js";
-import { filterFilesToOwnTaskCommits, SilentNoOpAttributionMismatchError } from "../../branch-attribution.js";
+import { filterFilesToOwnTaskCommits, SilentNoOpAttributionMismatchError } from "../../execution/branch-attribution.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;

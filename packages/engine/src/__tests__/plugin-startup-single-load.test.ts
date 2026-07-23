@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PluginLoader } from "@fusion/core";
-import { PluginRunner } from "../plugin-runner.js";
+import { PluginRunner } from "../plugins/plugin-runner.js";
 
 function createStore(root: string, entry: string) {
   const installation = {

@@ -12,7 +12,7 @@ import {
   formatTaskIdentifier,
   resolveNtfyEvents,
   sendNtfyNotificationWithResult,
-} from "../notifier.js";
+} from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
 
 export interface NtfyProviderConfig {

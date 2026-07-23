@@ -28,28 +28,28 @@ import {
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
   type AgentSemaphore,
-} from "./concurrency.js";
-import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree-names.js";
+} from "./concurrency/concurrency.js";
+import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { schedulerLog } from "./logger.js";
-import { type PrMonitor, type PrComment } from "./pr-monitor.js";
-import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
-import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
-import { resolveEffectiveNode, type EffectiveNode } from "./effective-node.js";
-import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./node-routing-policy.js";
-import type { NodeDispatchValidationResult } from "./node-dispatch-validation.js";
-import type { MeshLeaseManager } from "./mesh-lease-manager.js";
-import { selectPermanentAgentForTask } from "./agent-assignment.js";
-import type { AutoClaimSnapshotManager } from "./auto-claim-snapshot.js";
-import { StaleTaskReporter } from "./stale-task-reporter.js";
-import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
-import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
-import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import { type PrMonitor, type PrComment } from "./merge/pr-monitor.js";
+import { reconcileMissionFeatureState } from "./missions/mission-feature-sync.js";
+import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
+import { resolveEffectiveNode, type EffectiveNode } from "./project/effective-node.js";
+import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./project/node-routing-policy.js";
+import type { NodeDispatchValidationResult } from "./project/node-dispatch-validation.js";
+import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
+import { selectPermanentAgentForTask } from "./agents/agent-assignment.js";
+import type { AutoClaimSnapshotManager } from "./scheduling/auto-claim-snapshot.js";
+import { StaleTaskReporter } from "./healing/stale-task-reporter.js";
+import { BacklogPressureReporter } from "./scheduling/backlog-pressure-reporter.js";
+import { UnlinkedMissionsAdvisoryReporter } from "./missions/unlinked-missions-advisory-reporter.js";
+import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
-import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
-import { moveTaskToReplanColumn } from "./replan-target.js";
-import { evaluateParkedAgentTaskLink } from "./task-agent-sync.js";
-import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./mission-symbol-admission.js";
+import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./execution/hold-release.js";
+import { moveTaskToReplanColumn } from "./execution/replan-target.js";
+import { evaluateParkedAgentTaskLink } from "./agents/task-agent-sync.js";
+import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./missions/mission-symbol-admission.js";
 
 const SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
 
@@ -546,7 +546,7 @@ export interface SchedulerOptions {
   /** Optional lease manager used to recover stale checkout leases before scheduling. */
   leaseManager?: MeshLeaseManager;
   /** Optional MissionAutopilot for autonomous mission progression */
-  missionAutopilot?: import("./mission-autopilot.js").MissionAutopilot;
+  missionAutopilot?: import("./missions/mission-autopilot.js").MissionAutopilot;
   /**
    * Called when a task with a closed/merged PR moves out of in-review
    * and the PrMonitor has buffered actionable comments.
@@ -559,11 +559,11 @@ export interface SchedulerOptions {
     comments: PrComment[]
   ) => void | Promise<void>;
   /** Optional MissionExecutionLoop for validation cycle handling */
-  missionExecutionLoop?: import("./mission-execution-loop.js").MissionExecutionLoop;
+  missionExecutionLoop?: import("./missions/mission-execution-loop.js").MissionExecutionLoop;
   /** Optional NodeHealthMonitor for node health checks during dispatch.
    *  Reserved for FN-2722-C (unavailable node policy enforcement).
    *  Accepted here so the option can be wired at construction time. */
-  nodeHealthMonitor?: import("./node-health-monitor.js").NodeHealthMonitor;
+  nodeHealthMonitor?: import("./project/node-health-monitor.js").NodeHealthMonitor;
   /** Optional dispatch validator used to block dispatch on configuration issues before health policy checks. */
   validateNodeDispatch?: (nodeId: string) => Promise<NodeDispatchValidationResult>;
   /** Local node identifier used to distinguish self-owned leases from foreign-owned leases. Default: "local". */
@@ -1265,7 +1265,7 @@ export class Scheduler {
     schedulerLog.log(`Poll interval updated to ${newIntervalMs}ms`);
   }
 
-  getMissionAutopilot(): import("./mission-autopilot.js").MissionAutopilot | undefined {
+  getMissionAutopilot(): import("./missions/mission-autopilot.js").MissionAutopilot | undefined {
     return this.options.missionAutopilot;
   }
 

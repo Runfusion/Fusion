@@ -134,13 +134,13 @@ export default defineConfig({
       The dashboard core-import scanner enforces this alias boundary for both relative core/src and package-subpath value imports.
       Add a new browser leaf only after its full dependency graph is reviewed and it has a dated entry in scripts/lib/dashboard-browser-safe-core-modules.json.
       */
-      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
+      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/i18n/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
       // FNXC:PluginBuild 2026-06-22-03:50: Bundled plugin source can import the dashboard's shared ViewHeader through the package export; Vite needs the same source alias during dashboard builds so plugin UI normalization does not fail only in CI merge builds.
       "@fusion/dashboard/app/components/ViewHeader": resolve(__dirname, "app/components/ViewHeader.tsx"),
       // FNXC:Quality 2026-07-19-12:00: The bundled Quality plugin needs the host's token-appended artifact URL helper because native video loads cannot attach authorization headers.
-      "@fusion/dashboard/app/api/task-content": resolve(__dirname, "app/api/task-content.ts"),
+      "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
       "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),

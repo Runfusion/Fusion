@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { collectSystemMetrics } from "../system-metrics.js";
+import { collectSystemMetrics } from "../mesh/system-metrics.js";
 
 type ProcessWithAvailableMemory = NodeJS.Process & { availableMemory?: () => number };
 const originalAvailableMemory = (process as ProcessWithAvailableMemory).availableMemory;

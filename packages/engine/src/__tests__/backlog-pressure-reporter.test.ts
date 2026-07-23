@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
-import { BacklogPressureReporter } from "../backlog-pressure-reporter.js";
+import { BacklogPressureReporter } from "../scheduling/backlog-pressure-reporter.js";
 
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:15:

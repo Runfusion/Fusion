@@ -30,7 +30,7 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
   afterAll(h.afterAll);
 
   it("agent-to-agent send persists and survives a throwing wake-hook", async () => {
-    const { MessageStore } = await import("../../message-store.js");
+    const { MessageStore } = await import("../../stores/message-store.js");
     const store = new MessageStore(null, { asyncLayer: h.layer() });
 
     // Mirror the engine wiring: the agent-delivery hook reads the sync AgentStore
@@ -61,7 +61,7 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
   });
 
   it("a non-agent send (no wake-hook) persists normally", async () => {
-    const { MessageStore } = await import("../../message-store.js");
+    const { MessageStore } = await import("../../stores/message-store.js");
     const store = new MessageStore(null, { asyncLayer: h.layer() });
     const msg = await store.sendMessage({
       fromId: "agent-a",
@@ -75,7 +75,7 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
   });
 
   it("round-trips native structure embeds through mailbox metadata", async () => {
-    const { MessageStore } = await import("../../message-store.js");
+    const { MessageStore } = await import("../../stores/message-store.js");
     const store = new MessageStore(null, { asyncLayer: h.layer() });
     const nativeStructures = [
       { kind: "mission" as const, id: "M-1", label: "Launch roadmap" },
@@ -100,7 +100,7 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
   Once-only inbox delivery must use PostgreSQL's primary-key conflict handling as the concurrency authority; parallel callers may share the resulting message, but only one may report inserting it.
   */
   it("atomically inserts an idempotent message once under concurrent sends", async () => {
-    const { MessageStore } = await import("../../message-store.js");
+    const { MessageStore } = await import("../../stores/message-store.js");
     const store = new MessageStore(null, { asyncLayer: h.layer() });
     const input = {
       fromType: "system" as const,
@@ -133,7 +133,7 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
   insert — verify a NUL-laden send round-trips instead of throwing.
   */
   it("sendMessage strips a raw U+0000 byte instead of throwing", async () => {
-    const { MessageStore } = await import("../../message-store.js");
+    const { MessageStore } = await import("../../stores/message-store.js");
     const store = new MessageStore(null, { asyncLayer: h.layer() });
 
     const diagnosticDump =

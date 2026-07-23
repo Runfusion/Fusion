@@ -27,8 +27,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { TaskStore, getPlannerInterventionTimeline, type Task } from "@fusion/core";
 import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { ProjectEngine } from "../project-engine.js";
-import { PlannerOverseerMonitor, type OverseerStageObservation } from "../planner-overseer.js";
-import { PlannerRecoveryController, type PlannerRecoveryHandlers, type PlannerRecoverySnapshotProvider } from "../planner-recovery-controller.js";
+import { PlannerOverseerMonitor, type OverseerStageObservation } from "../overseer/planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers, type PlannerRecoverySnapshotProvider } from "../overseer/planner-recovery-controller.js";
 
 interface EngineOverseerInternals {
   plannerObservationEmitDedup: Map<string, string>;

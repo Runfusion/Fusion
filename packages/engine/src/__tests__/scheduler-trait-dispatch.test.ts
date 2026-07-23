@@ -9,7 +9,7 @@ budget-set resolution.
 import { describe, expect, it, vi } from "vitest";
 import { resolveWipBudgetColumns, evaluateCapacityRejection, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
 
-import { runHoldReleaseSweep } from "../hold-release.js";
+import { runHoldReleaseSweep } from "../execution/hold-release.js";
 
 const WF = "custom:wf";
 

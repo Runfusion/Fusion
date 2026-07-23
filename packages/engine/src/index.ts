@@ -1,14 +1,14 @@
-export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agent-logger.js";
-export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent-action-gate.js";
-export type { AgentActionGateContext } from "./agent-action-gate.js";
-export { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
+export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agents/agent-logger.js";
+export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agents/agent-action-gate.js";
+export type { AgentActionGateContext } from "./agents/agent-action-gate.js";
+export { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
 export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   refreshFusionModelRegistry,
   type ModelRegistryRefreshOutcome,
   type RefreshableModelRegistry,
   type RefreshFusionModelRegistryOptions,
-} from "./model-registry-refresh.js";
+} from "./auth/model-registry-refresh.js";
 export {
   wrapAuthStorageWithApiKeyProviders,
   mergeAuthStorageReads,
@@ -16,18 +16,18 @@ export {
   createReadOnlyAuthFileStorage,
   type LoginCallbacks,
   type DashboardAuthStorage,
-} from "./provider-auth.js";
+} from "./auth/provider-auth.js";
 export {
   resolveApiType,
   registerCustomProviders,
   reregisterCustomProviders,
-} from "./custom-provider-registry.js";
+} from "./auth/custom-provider-registry.js";
 export {
   seedDashboardProviders,
   type SeedDashboardProvidersStore,
   type SeedDashboardProvidersOptions,
   type SeedDashboardProvidersResult,
-} from "./provider-registration.js";
+} from "./auth/provider-registration.js";
 export {
   createTaskCreateTool,
   createTaskListTool,
@@ -147,22 +147,22 @@ export {
   type PostgresMigrationCompleteNoticeResult,
   type PostgresMigrationNoticeLog,
   type PostgresMigrationNoticeResult,
-} from "./postgres-migration-notice.js";
-export { AgentSemaphore, PRIORITY_MERGE, PRIORITY_EXECUTE, PRIORITY_SPECIFY } from "./concurrency.js";
+} from "./project/postgres-migration-notice.js";
+export { AgentSemaphore, PRIORITY_MERGE, PRIORITY_EXECUTE, PRIORITY_SPECIFY } from "./concurrency/concurrency.js";
 export { TriageProcessor, type TriageProcessorOptions } from "./triage.js";
 export { TaskExecutor, type TaskExecutorOptions } from "./executor.js";
 export {
   WorkflowGraphExecutor,
   type WorkflowGraphExecutorDeps,
   type WorkflowGraphExecutorResult,
-} from "./workflow-graph-executor.js";
+} from "./workflows/workflow-graph-executor.js";
 export {
   runSplitJoin,
   type WorkflowBranchPersistence,
   type WorkflowBranchProgress,
   type WorkflowBranchRunState,
   type WorkflowBranchSemaphore,
-} from "./workflow-graph-branches.js";
+} from "./workflows/workflow-graph-branches.js";
 export {
   createDefaultNodeHandlers,
   createPrimitivePromptLikeHandler,
@@ -179,20 +179,20 @@ export {
   type ParseStepsHandlerDeps,
   type CodeNodeRunner,
   type DefaultNodeHandlerDeps,
-} from "./workflow-node-handlers.js";
+} from "./workflows/workflow-node-handlers.js";
 export {
   WorkflowNodeRunnerRegistry,
   handlerBackedRunner,
   type WorkflowNodeRunner,
   type WorkflowNodeRunnerContext,
   type WorkflowNodeRunnerKind,
-} from "./workflow-node-runner.js";
+} from "./workflows/workflow-node-runner.js";
 export {
   createWorkflowRuntimePrimitiveProvider,
   CallbackWorkflowRuntimePrimitiveProvider,
   type WorkflowRuntimePrimitiveProvider,
   type WorkflowRuntimePrimitiveFactory,
-} from "./workflow-runtime-primitive-provider.js";
+} from "./workflows/workflow-runtime-primitive-provider.js";
 export {
   MERGE_ACTIVE_MISSING_WORKTREE_STATUSES,
   MISSING_WORKTREE_SESSION_PREFIXES,
@@ -205,17 +205,17 @@ export {
   isRecoverableMissingWorktreeReviewFailure,
   isRecoverableMissingWorktreeReviewFailureNoProgress,
   isRecoverableMissingWorktreeReviewFailureWithProgress,
-} from "./restart-recovery-coordinator.js";
+} from "./healing/restart-recovery-coordinator.js";
 export {
   WorkflowCustomNodeExecutionService,
   type WorkflowCustomNodeExecutionServiceDeps,
-} from "./workflow-custom-node-execution.js";
+} from "./workflows/workflow-custom-node-execution.js";
 export {
   WorkflowReviewService,
   type WorkflowReviewStepInput,
   type WorkflowReviewStepInvoker,
-} from "./workflow-review-service.js";
-export { WorkflowPlanningService } from "./workflow-planning-service.js";
+} from "./workflows/workflow-review-service.js";
+export { WorkflowPlanningService } from "./workflows/workflow-planning-service.js";
 export {
   markSideEffectsStarted,
   primitiveNodeContext,
@@ -235,7 +235,7 @@ export {
   type AbortPrimitiveInput,
   type AuditPrimitiveInput,
   type WorkflowRuntimePrimitives,
-} from "./runtime-primitives.js";
+} from "./execution/runtime-primitives.js";
 export {
   createPrNodeHandlers,
   createAutoMergeGateHandler,
@@ -252,7 +252,7 @@ export {
   type PrRespondCallResult,
   type PrRespondGithubOps,
   buildRespondCallback,
-} from "./pr-nodes.js";
+} from "./merge/pr-nodes.js";
 export {
   runPrResponseRun,
   scanForSecrets,
@@ -272,7 +272,7 @@ export {
   type PrAgentRunResult,
   type PrPushResult,
   type SecretFinding,
-} from "./pr-response-run.js";
+} from "./merge/pr-response-run.js";
 export {
   PrReconciler,
   deriveTransitions,
@@ -284,42 +284,42 @@ export {
   type PrReconcileTransition,
   type PrReleaseByEventFn,
   type ResolveGroupReleaseTaskFn,
-} from "./pr-reconcile.js";
+} from "./merge/pr-reconcile.js";
 export {
   WorkflowGraphTaskRunner,
   type WorkflowGraphRunDisposition,
   type WorkflowGraphRunnerStore,
   type WorkflowGraphTaskRunResult,
   type WorkflowGraphTaskRunnerDeps,
-} from "./workflow-graph-task-runner.js";
+} from "./workflows/workflow-graph-task-runner.js";
 export {
   WorkflowTaskRuntime,
   type WorkflowTaskRuntimeDeps,
   type WorkflowTaskRuntimeDisposition,
   type WorkflowTaskRuntimeResult,
-} from "./workflow-task-runtime.js";
-export { collectTaskEvaluationEvidence } from "./evaluator-evidence.js";
+} from "./workflows/workflow-task-runtime.js";
+export { collectTaskEvaluationEvidence } from "./eval/evaluator-evidence.js";
 export { Scheduler, type SchedulerOptions } from "./scheduler.js";
 export {
   claimDueWorkflowWorkItem,
   type ClaimWorkflowWorkOptions,
   type WorkflowWorkDispatch,
   type WorkflowWorkSchedulerStore,
-} from "./workflow-work-scheduler.js";
+} from "./workflows/workflow-work-scheduler.js";
 export {
   classifyMergePrimitiveResult,
   runWorkflowMergeAttemptNode,
   type WorkflowMergeNodeDeps,
-} from "./workflow-merge-nodes.js";
+} from "./workflows/workflow-merge-nodes.js";
 export {
   processDueWorkflowWorkItem,
   workflowMergeWorkKinds,
   type WorkflowWorkProcessorOptions,
   type WorkflowWorkProcessorResult,
-} from "./workflow-work-processor.js";
-export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
-export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
-export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
+} from "./workflows/workflow-work-processor.js";
+export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./project/mesh-lease-manager.js";
+export { MissionAutopilot, type MissionAutopilotOptions } from "./missions/mission-autopilot.js";
+export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./missions/mission-execution-loop.js";
 // FNXC:MergerUnification 2026-06-22-00:00: @deprecated must sit on aiMergeTask's own
 // export so IDE/type-aware tooling flags only aiMergeTask, not the helpers it shares with
 // runAiMerge (those are NOT deprecated). A single @deprecated on the multi-member block
@@ -346,10 +346,10 @@ export {
 } from "./merger.js";
 // FNXC:MergerUnification 2026-06-21-19:05: runAiMerge is the sole merge path
 // (master-plan U0); exported for the CLI callers (fn task merge + UI-only merge).
-export { runAiMerge } from "./merger-ai.js";
+export { runAiMerge } from "./merge/merger-ai.js";
 // FNXC:Workspace 2026-06-22-14:10 (Phase D review G): canonical landed predicate now lives in its
 // own dependency-free module (self-healing ↔ merger-ai cycle dissolved). Public export preserved.
-export { isRepoLanded } from "./workspace-land-predicate.js";
+export { isRepoLanded } from "./merge/workspace-land-predicate.js";
 // FNXC:Workspace 2026-06-21-23:40 (Phase C U1): per-repo workspace merge loop +
 // the extracted per-repo land primitive, exported for the CLI/dashboard merge doors.
 export {
@@ -363,18 +363,18 @@ export {
   type WorkspaceRepoLandResult,
   type LandOneRepoResult,
   type LandRepoContext,
-} from "./merger-ai.js";
+} from "./merge/merger-ai.js";
 export {
   resolveMergePolicy,
   type ResolvedMergePolicy,
   type MergeFileScopeMode,
   type MergeTraitStrategy,
-} from "./merge-trait.js";
+} from "./merge/merge-trait.js";
 export {
   resolveIntegrationBranch,
   resolveIntegrationBranchSync,
   __resetIntegrationBranchCacheForTests,
-} from "./integration-branch.js";
+} from "./merge/integration-branch.js";
 export {
   resolveTaskRevertCommits,
   classifyTaskRevert,
@@ -408,7 +408,7 @@ export {
   type PrepareWorkspaceRevertPrBranchesResult,
   type PrepareWorkspaceRevertPrBranchesOptions,
   type WorkspaceRepoRevertPrBranch,
-} from "./task-revert.js";
+} from "./execution/task-revert.js";
 export {
   resolveBranchGroupMergeRouting,
   evaluateBranchGroupPromotion,
@@ -425,7 +425,7 @@ export {
   type SyncGroupPrFn,
   type CloseGroupPrFn,
   type GroupPrReconcileResult,
-} from "./group-merge-coordinator.js";
+} from "./merge/group-merge-coordinator.js";
 export {
   resolveMergeIntegrationRoot,
   resolveIntegrationRemote,
@@ -434,7 +434,7 @@ export {
   MergeHandoffRefusedError,
   type HandoffResult,
   type MergeIntegrationRootResolution,
-} from "./merger-integration-worktree.js";
+} from "./merge/merger-integration-worktree.js";
 export {
   smartPull,
   type SmartPullInput,
@@ -442,7 +442,7 @@ export {
   type SmartPullMode,
   type SmartPullAuditEvent,
   type SmartPullAuditEmitter,
-} from "./smart-pull.js";
+} from "./merge/smart-pull.js";
 export {
   syncWorktreeToHead,
   type SyncWorktreeInput,
@@ -450,10 +450,10 @@ export {
   type SyncMode,
   type WorktreeSyncAuditEvent,
   type WorktreeSyncAuditEmitter,
-} from "./worktree-ref-sync.js";
+} from "./worktree/worktree-ref-sync.js";
 export {
   generateSyntheticRunId,
-} from "./run-audit.js";
+} from "./util/run-audit.js";
 export {
   auditSquashMerge,
   formatSquashAuditReport,
@@ -462,13 +462,13 @@ export {
   type SquashAuditDuplicateSubjectFinding,
   type SquashAuditTouchedFileOverlapFinding,
   type SquashAuditRecentMainCommit,
-} from "./merger-squash-audit.js";
-export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./reviewer.js";
+} from "./merge/merger-squash-audit.js";
+export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./execution/reviewer.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, wrapToolsWithActionGate, type AgentOptions, type AgentResult } from "./pi.js";
-export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp-resolution.js";
-export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp-discovery-service.js";
-export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp-runtime-support.js";
-export { validateMcpServer, type McpValidationResult, type ValidateMcpServerOptions } from "./mcp-validation-service.js";
+export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp/mcp-resolution.js";
+export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp/mcp-discovery-service.js";
+export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp/mcp-runtime-support.js";
+export { validateMcpServer, type McpValidationResult, type ValidateMcpServerOptions } from "./mcp/mcp-validation-service.js";
 export {
   createInteractiveAiSessionWith,
   createCliAgentPlanningSessionWith,
@@ -478,8 +478,8 @@ export {
   type InteractiveAgentResult,
   type InteractiveAgentFactory,
   type PlanningExecutorSelection,
-} from "./interactive-ai-session.js";
-export { selectPermanentAgentForTask, listEligibleExecutorAgents } from "./agent-assignment.js";
+} from "./execution/interactive-ai-session.js";
+export { selectPermanentAgentForTask, listEligibleExecutorAgents } from "./agents/agent-assignment.js";
 
 // Register createFnAgent into core's loader so consumers in @fusion/core
 // (e.g. ai-summarize, memory-compaction) can resolve it without a circular
@@ -492,7 +492,7 @@ import type {
   CreateInteractiveAiSessionOptions,
 } from "@fusion/core";
 import { createFnAgent as _createFnAgentForCore } from "./pi.js";
-import { resolvePlanningExecutorSession } from "./interactive-ai-session.js";
+import { resolvePlanningExecutorSession } from "./execution/interactive-ai-session.js";
 
 const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAiSessionOptions): Promise<AiSessionResult> => {
   return _createFnAgentForCore({
@@ -577,15 +577,15 @@ export {
   type SkillSelectionContext,
   type SkillSelectionResult,
   type SkillDiagnostic,
-} from "./skill-resolver.js";
+} from "./cli-runtime/skill-resolver.js";
 /*
 FNXC:ChatSkills 2026-06-16-19:08:
 Dashboard chat consumes the synchronous session skill helper so chat sessions request the same agent and enabled plugin skills as executor sessions.
 Do not re-export the local SessionPurpose from session-skill-context here because runtime-resolution already owns the public SessionPurpose export.
 */
-export { buildSessionSkillContextSync, type SessionSkillContextResult } from "./session-skill-context.js";
-export { AgentReflectionService, type AgentReflectionServiceOptions } from "./agent-reflection.js";
-export { AgentSelfImproveService, type AgentSelfImproveServiceOptions } from "./agent-self-improve.js";
+export { buildSessionSkillContextSync, type SessionSkillContextResult } from "./cli-runtime/session-skill-context.js";
+export { AgentReflectionService, type AgentReflectionServiceOptions } from "./agents/agent-reflection.js";
+export { AgentSelfImproveService, type AgentSelfImproveServiceOptions } from "./agents/agent-self-improve.js";
 export {
   buildAgentChatPrompt,
   resolveAgentInstructionsWithRatings,
@@ -593,7 +593,7 @@ export {
   buildSystemPromptWithInstructions,
   resolveAgentHeartbeatProcedure,
   ensureDefaultHeartbeatProcedureFile,
-} from "./agent-instructions.js";
+} from "./agents/agent-instructions.js";
 export { HEARTBEAT_PROCEDURE, HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_PROMPT } from "./agent-heartbeat.js";
 export {
   MOCK_PROVIDER_ID,
@@ -608,13 +608,13 @@ export {
   type MockScript,
   type MockScriptContext,
 } from "./providers/index.js";
-export { activeSessionRegistry } from "./active-session-registry.js";
-export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree-pool.js";
+export { activeSessionRegistry } from "./agents/active-session-registry.js";
+export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree/worktree-pool.js";
 export {
   pruneWorktreeAdminEntries,
   pruneWorktreeAdminEntriesSync,
   type PruneWorktreeAdminEntriesOptions,
-} from "./worktree-prune.js";
+} from "./worktree/worktree-prune.js";
 export {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -626,8 +626,8 @@ export {
   type BranchConflictDetails,
   type BranchConflictInspectionResult,
   type InspectBranchConflictInput,
-} from "./branch-conflicts.js";
-export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree-names.js";
+} from "./execution/branch-conflicts.js";
+export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree/worktree-names.js";
 export { createLogger, type Logger } from "./logger.js";
 export {
   validateExternalIntegrationManifest,
@@ -637,8 +637,8 @@ export {
   type ExternalIntegrationManifestValidationError,
   type ExternalIntegrationManifestValidationResult,
 } from "./external-integrations/index.js";
-export { fetchWebContent, assertSafeUrl, WebFetchError, type WebFetchOptions, type WebFetchResult, type WebFetchErrorCode } from "./web-fetch.js";
-export { classifyTaskError, type ErrorClass, type TaskErrorClassification } from "./error-classifier.js";
+export { fetchWebContent, assertSafeUrl, WebFetchError, type WebFetchOptions, type WebFetchResult, type WebFetchErrorCode } from "./util/web-fetch.js";
+export { classifyTaskError, type ErrorClass, type TaskErrorClassification } from "./errors/error-classifier.js";
 export {
   buildGoalContextSection,
   DEFAULT_GOAL_INJECTION_CHAR_BUDGET,
@@ -646,7 +646,7 @@ export {
   type GoalInjectionInput,
   type GoalInjectionResult,
   type GoalInjectionTruncationEvent,
-} from "./goal-context-injector.js";
+} from "./goals/goal-context-injector.js";
 export {
   classifyGoalInjectionFailure,
   classifyGoalInjectionResult,
@@ -658,7 +658,7 @@ export {
   type GoalInjectionDisabledReason,
   type GoalInjectionOutcome,
   type ResolveAndEmitGoalContextInput,
-} from "./goal-injection-diagnostics.js";
+} from "./goals/goal-injection-diagnostics.js";
 export {
   emitGoalAnchoringAudit,
   emitGoalRetrievalAudit,
@@ -668,7 +668,7 @@ export {
   type GoalAnchoringLane,
   type GoalInjectionAuditInput,
   type GoalRetrievalAuditInput,
-} from "./goal-anchoring-audit.js";
+} from "./goals/goal-anchoring-audit.js";
 export {
   resolveWorktrunkBinary,
   installWorktrunk,
@@ -692,7 +692,7 @@ export {
   type WorktrunkReleaseManifest,
   type WorktrunkManifestValidationError,
   type WorktrunkManifestValidationResult,
-} from "./worktrunk-installer.js";
+} from "./worktree/worktrunk-installer.js";
 export {
   handleWorktrunkOperationFailure,
   truncateWorktrunkStderr,
@@ -701,10 +701,10 @@ export {
   type WorktrunkFailureNotification,
   type WorktrunkOpName,
   type WorktrunkOperationFailure,
-} from "./worktrunk-failure-handler.js";
-export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
-export { withRateLimitRetry } from "./rate-limit-retry.js";
-export { ResearchOrchestrator, type ResearchOrchestratorOptions, type ResearchOrchestratorStatus, type ResearchOrchestratorStartOptions } from "./research-orchestrator.js";
+} from "./worktree/worktrunk-failure-handler.js";
+export { isUsageLimitError, UsageLimitPauser } from "./errors/usage-limit-detector.js";
+export { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+export { ResearchOrchestrator, type ResearchOrchestratorOptions, type ResearchOrchestratorStatus, type ResearchOrchestratorStartOptions } from "./research/research-orchestrator.js";
 export {
   ExperimentExecutor,
   ExperimentMaxIterationsError,
@@ -717,7 +717,7 @@ export {
   type RunExperimentInput,
   type RunExperimentResult,
   type LogExperimentInput,
-} from "./experiment-executor.js";
+} from "./eval/experiment-executor.js";
 export {
   ExperimentFinalizeService,
   __activeFinalizeLocksForTesting,
@@ -744,7 +744,7 @@ export {
   type ResearchStepRunnerApi,
   type ResearchStepRunnerOptions,
   type ResearchStepResult,
-} from "./research-step-runner.js";
+} from "./research/research-step-runner.js";
 export { ResearchProviderRegistry } from "./research/provider-registry.js";
 export {
   ResearchProviderError,
@@ -764,7 +764,7 @@ export {
   LLMSynthesisProvider,
   type LLMSynthesisProviderOptions,
 } from "./research/providers/index.js";
-export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
+export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./merge/pr-monitor.js";
 export {
   PlannerOverseerMonitor,
   OVERSEER_WATCHED_STAGES,
@@ -776,7 +776,7 @@ export {
   type OverseerTaskRef,
   type OverseerLogStore,
   type PlannerOverseerMonitorOptions,
-} from "./planner-overseer.js";
+} from "./overseer/planner-overseer.js";
 // FN-7531: re-export the core planner-overseer state types for engine consumers
 // (e.g. `ProjectEngine.getPlannerOverseerRuntimeSnapshot`).
 export {
@@ -792,39 +792,39 @@ export {
   type PlannerRecoverySnapshotProvider,
   type PlannerRecoveryObservationSource,
   type PlannerRecoveryControllerOptions,
-} from "./planner-recovery-controller.js";
+} from "./overseer/planner-recovery-controller.js";
 export {
   evaluateOverseerHumanControl,
   type OverseerHumanControlDecision,
   type OverseerHumanControlWithholdReason,
   type OverseerHumanControlTask,
   type OverseerHumanControlSettings,
-} from "./overseer-human-control-policy.js";
+} from "./overseer/overseer-human-control-policy.js";
 // FNXC:PlannerOversight 2026-07-13-23:05: session-advisor (OMP advisor parity) public surface.
 export {
   OverseerAdvisorRuntime,
   type OverseerAdvisorAgent,
   type OverseerAdvisorRuntimeHost,
   type OverseerAdvisorRuntimeOptions,
-} from "./overseer-advisor-runtime.js";
+} from "./overseer/overseer-advisor-runtime.js";
 export {
   OverseerAdvisorService,
   createParsingOverseerAgent,
   type OverseerAdvisorServiceOptions,
   type OverseerAdvisorModelConfig,
-} from "./overseer-advisor-service.js";
+} from "./overseer/overseer-advisor-service.js";
 export {
   OverseerAdviseRecorder,
   parseAdvisorReplyForAdvice,
   extractAdvisorAssistantText,
   OVERSEER_ADVISOR_SYSTEM_PROMPT,
   OVERSEER_ADVISOR_REPLY_CONTRACT,
-} from "./overseer-advise-tool.js";
+} from "./overseer/overseer-advise-tool.js";
 export {
   discoverOverseerWatchdogFiles,
   formatOverseerWatchdogPromptBlocks,
-} from "./overseer-watchdog.js";
-export { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "./overseer-session-delta.js";
+} from "./overseer/overseer-watchdog.js";
+export { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "./overseer/overseer-session-delta.js";
 export {
   decidePlannerRecovery,
   PLANNER_RECOVERY_MAX_ATTEMPTS,
@@ -847,9 +847,9 @@ export {
   SECRET_AUDIT_PLAINTEXT_FORBIDDEN_KEYS,
   assertNoSecretPlaintext,
   type FilesystemMutationType,
-} from "./run-audit.js";
-export { PrCommentHandler } from "./pr-comment-handler.js";
-export { writeSecretsEnvFile, cleanupSecretsEnvFile, type WriteSecretsEnvFileOptions, type WriteSecretsEnvFileResult, type CleanupSecretsEnvFileOptions, type CleanupSecretsEnvFileResult } from "./secrets-env-writer.js";
+} from "./util/run-audit.js";
+export { PrCommentHandler } from "./merge/pr-comment-handler.js";
+export { writeSecretsEnvFile, cleanupSecretsEnvFile, type WriteSecretsEnvFileOptions, type WriteSecretsEnvFileResult, type CleanupSecretsEnvFileOptions, type CleanupSecretsEnvFileResult } from "./worktree/secrets-env-writer.js";
 export {
   NtfyNotifier,
   DEFAULT_NTFY_EVENTS,
@@ -863,16 +863,16 @@ export {
   type NtfyNotificationPriority,
   type NtfyNotificationConfigInput,
   type SendNtfyNotificationInput,
-} from "./notifier.js";
+} from "./util/notifier.js";
 // ── Notification Service ──────────────────────────────────────
 export { NtfyNotificationProvider, NotificationService, WebhookNotificationProvider } from "./notification/index.js";
 export type { NtfyProviderConfig, NotificationServiceOptions, WebhookProviderConfig } from "./notification/index.js";
-export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, formatInProcessBackupError } from "./cron-runner.js";
-export { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
-export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-scheduler.js";
-export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";
+export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, formatInProcessBackupError } from "./scheduling/cron-runner.js";
+export { RoutineRunner, type RoutineRunnerOptions } from "./scheduling/routine-runner.js";
+export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/routine-scheduler.js";
+export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
-export { TokenCapDetector, type TokenCapCheckResult } from "./token-cap-detector.js";
+export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
 export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
 /*
 FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
@@ -885,8 +885,8 @@ export {
   DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
   isMergeActiveStatus,
   isStaleMergeActiveStatus,
-} from "./merge-active-status.js";
-export { PluginRunner, type PluginRunnerOptions } from "./plugin-runner.js";
+} from "./merge/merge-active-status.js";
+export { PluginRunner, type PluginRunnerOptions } from "./plugins/plugin-runner.js";
 export {
   registerPluginTraits,
   degradePluginTraits,
@@ -897,7 +897,7 @@ export {
   evaluatePluginGate,
   PluginTraitHasDependentsError,
   type PluginTraitDependent,
-} from "./plugin-trait-adapter.js";
+} from "./plugins/plugin-trait-adapter.js";
 // Step-inversion U12 (KTD-12): plugin step-parser adapter.
 export {
   registerPluginStepParsers,
@@ -907,7 +907,7 @@ export {
   PluginParserError,
   PLUGIN_PARSER_TIMEOUT_MS,
   type PluginStepParserContribution,
-} from "./plugin-parser-adapter.js";
+} from "./plugins/plugin-parser-adapter.js";
 // Step-inversion U14 (KTD-15): code-node runner + save-time validation helper.
 export {
   runCodeNode,
@@ -927,15 +927,15 @@ export {
   type CodeNodeTaskSubset,
   type CodeNodeFailureReason,
   type RunCodeNodeOptions,
-} from "./code-node-runner.js";
+} from "./execution/code-node-runner.js";
 // Agent runtime abstraction
 export {
   type AgentPromptResult,
   type AgentRuntime,
   type AgentRuntimeOptions,
   type AgentSessionResult,
-} from "./agent-runtime.js";
-export { askAcpOnce, type AskAcpOnceOptions, type AskAcpOnceResult } from "./cli-agent-ask.js";
+} from "./agents/agent-runtime.js";
+export { askAcpOnce, type AskAcpOnceOptions, type AskAcpOnceResult } from "./cli-runtime/cli-agent-ask.js";
 export {
   resolveRuntime,
   getDefaultPiRuntime,
@@ -943,7 +943,7 @@ export {
   type RuntimeResolutionContext,
   type ResolvedRuntime,
   type SessionPurpose,
-} from "./runtime-resolution.js";
+} from "./execution/runtime-resolution.js";
 // Agent session helpers
 export {
   createResolvedAgentSession,
@@ -960,8 +960,8 @@ export {
   extractRuntimeModel,
   type ResolvedSessionOptions,
   type ResolvedSessionResult,
-} from "./agent-session-helpers.js";
-export { ProjectManager } from "./project-manager.js";
+} from "./agents/agent-session-helpers.js";
+export { ProjectManager } from "./project/project-manager.js";
 export { ProjectEngine, type ProjectEngineOptions } from "./project-engine.js";
 export { ProjectEngineManager, type EngineManagerOptions } from "./project-engine-manager.js";
 export {
@@ -970,16 +970,16 @@ export {
   computeEngineSocketPath,
   EngineAlreadyRunningError,
   type EngineSingletonLock,
-} from "./engine-singleton-lock.js";
-export { NodeHealthMonitor } from "./node-health-monitor.js";
+} from "./project/engine-singleton-lock.js";
+export { NodeHealthMonitor } from "./project/node-health-monitor.js";
 export {
   HybridExecutor,
   type HybridExecutorOptions,
   type HybridExecutorEvents,
-} from "./hybrid-executor.js";
-export { shouldUseHybridExecutor, type HybridExecutorGateDecision } from "./hybrid-executor-gate.js";
-export { applyUnavailableNodePolicy, type PolicyDecision } from "./node-routing-policy.js";
-export { PeerExchangeService, type PeerExchangeServiceOptions, type SyncResult } from "./peer-exchange-service.js";
+} from "./concurrency/hybrid-executor.js";
+export { shouldUseHybridExecutor, type HybridExecutorGateDecision } from "./concurrency/hybrid-executor-gate.js";
+export { applyUnavailableNodePolicy, type PolicyDecision } from "./project/node-routing-policy.js";
+export { PeerExchangeService, type PeerExchangeServiceOptions, type SyncResult } from "./project/peer-exchange-service.js";
 export {
   TunnelProcessManager,
   getTunnelProviderAdapter,
@@ -1018,14 +1018,14 @@ export {
   type HoldReleaseDeps,
   type HoldReleaseResult,
   type SlotReservation,
-} from "./hold-release.js";
-export { StepSessionExecutor } from "./step-session-executor.js";
-export type { StepResult, ParallelWave, StepSessionExecutorOptions } from "./step-session-executor.js";
+} from "./execution/hold-release.js";
+export { StepSessionExecutor } from "./execution/step-session-executor.js";
+export type { StepResult, ParallelWave, StepSessionExecutorOptions } from "./execution/step-session-executor.js";
 export {
   runTaskStep,
   resetStepToBaseline,
   makeAncestryBlastRadiusGuard,
-} from "./step-runner.js";
+} from "./execution/step-runner.js";
 export type {
   RunTaskStepDeps,
   RunTaskStepOptions,
@@ -1035,7 +1035,7 @@ export type {
   RunSingleStep,
   SessionRef,
   StepRunnerTask,
-} from "./step-runner.js";
+} from "./execution/step-runner.js";
 // Multi-project runtime types
 export {
   type ProjectRuntime,
@@ -1043,7 +1043,7 @@ export {
   type ProjectRuntimeEvents,
   type RuntimeStatus,
   type RuntimeMetrics,
-} from "./project-runtime.js";
+} from "./project/project-runtime.js";
 // Shared node-pty native-asset loader
 export {
   loadPtyModule,
@@ -1052,7 +1052,7 @@ export {
   findInstalledNodePtyNativeDir,
   getNativePrebuildName,
   resetPtyModuleCacheForTests,
-} from "./pty-native.js";
+} from "./cli-runtime/pty-native.js";
 // CLI agent executor — session manager (U2), telemetry hub (U3), state machine (U3),
 // hook scripts (U17); consumed by the dashboard hook route (U17) and transport (U10).
 export {
@@ -1152,7 +1152,7 @@ export {
   genericCliAdapter,
   type CliAdapterDescriptor,
 } from "./cli-agent/adapters/index.js";
-export { installBaselineArchiveWorktreeDisposer } from "./archive-worktree-disposer-install.js";
+export { installBaselineArchiveWorktreeDisposer } from "./healing/archive-worktree-disposer-install.js";
 
 // CLI Agent Executor — task ↔ session orchestration (U7).
 export {

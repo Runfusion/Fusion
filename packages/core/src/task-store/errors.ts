@@ -8,7 +8,7 @@
  * callers that import from "../store.js" or "@fusion/core" are unaffected.
  */
 import type { Column, ColumnId } from "../types.js";
-import type { TransitionRejection } from "../transition-types.js";
+import type { TransitionRejection } from "../tasks/transition-types.js";
 
 export class TaskHasDependentsError extends Error {
   readonly taskId: string;

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { NotificationPayload, TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
-import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflow-node-handlers.js";
-import type { WorkflowNodeExecutionContext } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflows/workflow-node-handlers.js";
+import type { WorkflowNodeExecutionContext } from "../workflows/workflow-graph-executor.js";
 
 const notifyNode: WorkflowIrNode = {
   id: "notify",

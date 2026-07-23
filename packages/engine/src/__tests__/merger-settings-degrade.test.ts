@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { BUILTIN_WORKFLOW_SETTINGS, type Settings } from "@fusion/core";
-import { mergeEffectiveSettings } from "../effective-settings.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
 
 const PROJECT = "proj-1";
 

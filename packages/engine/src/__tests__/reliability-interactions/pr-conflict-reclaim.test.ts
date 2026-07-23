@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
-import * as branchConflicts from "../../branch-conflicts.js";
-import * as worktreePool from "../../worktree-pool.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import * as branchConflicts from "../../execution/branch-conflicts.js";
+import * as worktreePool from "../../worktree/worktree-pool.js";
+import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {

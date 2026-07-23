@@ -13,12 +13,12 @@ import {
   TASK_PRIORITIES,
   getErrorMessage,
 } from "@fusion/core";
-import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
+import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 // FNXC:PlannerOversight 2026-07-04-00:00: the dashboard's vite alias for "@fusion/core"
 // resolves only to ../core/src/types.ts (see packages/dashboard/vite.config.ts), so this
 // resolver — like resolveEffectiveAutoMerge above — must be imported from its source module
 // directly rather than the package barrel.
-import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflow-settings-resolver";
+import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflows/workflow-settings-resolver";
 import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, fetchWorkflowSettingValues, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";

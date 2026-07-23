@@ -7,7 +7,7 @@ import {
   type ResearchProviderConfig,
   type ResearchSource,
 } from "@fusion/core";
-import type { ResearchProvider } from "../../research-step-runner.js";
+import type { ResearchProvider } from "../research-step-runner.js";
 import { createLogger } from "../../logger.js";
 import { ResearchProviderError, type ResearchFetchResult } from "../types.js";
 

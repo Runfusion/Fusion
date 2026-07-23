@@ -22,7 +22,7 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 
-import { reviewStep } from "../reviewer.js";
+import { reviewStep } from "../execution/reviewer.js";
 import { createFnAgent } from "../pi.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);

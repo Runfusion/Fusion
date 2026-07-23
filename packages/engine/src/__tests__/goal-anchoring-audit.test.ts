@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { collectCitedGoalIdsFromAudit, type RunAuditEventInput, type TaskStore } from "@fusion/core";
-import { createRunAuditor } from "../run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import {
   emitGoalAnchoringAudit,
   emitGoalRetrievalAudit,
   GOAL_INJECTION_APPLIED,
   GOAL_INJECTION_SKIPPED,
   GOAL_RETRIEVAL_INVOKED,
-} from "../goal-anchoring-audit.js";
+} from "../goals/goal-anchoring-audit.js";
 
 describe("goal anchoring audit helpers", () => {
   it("emits applied injection audit", async () => {

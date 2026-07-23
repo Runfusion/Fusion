@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import * as worktreePool from "../worktree-pool.js";
+import * as worktreePool from "../worktree/worktree-pool.js";
 import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function createTask(overrides: Record<string, unknown> = {}) {

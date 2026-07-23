@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr, WorkflowIrNodeKind } from "@fusion/core";
 import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 
 const task = { id: "FN-6294" } as TaskDetail;
 const settings = { experimentalFeatures: { workflowGraphExecutor: true } };

@@ -4,8 +4,8 @@ import type { Settings, TaskDetail, WorkflowDefinition, WorkflowIr } from "@fusi
 import { createTaskStoreForTest, PG_AVAILABLE } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 import { NotificationService } from "../notification/notification-service.js";
-import { WorkflowGraphTaskRunner, type WorkflowGraphRunnerStore } from "../workflow-graph-task-runner.js";
-import type { WorkflowNodeResult } from "../workflow-graph-executor.js";
+import { WorkflowGraphTaskRunner, type WorkflowGraphRunnerStore } from "../workflows/workflow-graph-task-runner.js";
+import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 
 const task = { id: "FN-9001" } as TaskDetail;
 const flagOn = { experimentalFeatures: { workflowGraphExecutor: true } } as unknown as Pick<

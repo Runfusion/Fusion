@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMcpDiscoverySources, parseDiscoveredMcpServersFromFile } from "../mcp-discovery.js";
+import { getMcpDiscoverySources, parseDiscoveredMcpServersFromFile } from "../config/mcp-discovery.js";
 
 function pathsFor(platform: NodeJS.Platform, projectRootDir?: string) {
   return getMcpDiscoverySources({ homeDir: platform === "win32" ? "C:\\Users\\Ada" : "/Users/ada", platform, projectRootDir });

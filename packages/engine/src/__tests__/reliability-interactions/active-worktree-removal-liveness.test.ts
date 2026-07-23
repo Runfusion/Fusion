@@ -15,8 +15,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
-import { BranchConflictError } from "../../branch-conflicts.js";
-import * as branchConflictModule from "../../branch-conflicts.js";
+import { BranchConflictError } from "../../execution/branch-conflicts.js";
+import * as branchConflictModule from "../../execution/branch-conflicts.js";
 import { createMockStore, mockedExec, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
 const ACTIVE_PATH = "/tmp/test/.worktrees/lemon-reef";

@@ -17,13 +17,13 @@ import {
   parseInstanceNodeId,
   resolveColumnAgentBinding,
   resolveEffectiveAgent,
-} from "../column-agent-resolver.js";
+} from "../agents/column-agent-resolver.js";
 import type {
   WorkflowColumnAgent,
   WorkflowIrEdge,
   WorkflowIrNode,
   WorkflowIrV2,
-} from "../workflow-ir-types.js";
+} from "../workflows/workflow-ir-types.js";
 
 function v2(
   columns: WorkflowIrV2["columns"],

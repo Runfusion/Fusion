@@ -11,11 +11,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../worktree-hooks.js", () => ({
+vi.mock("../worktree/worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 
 const WAIT_FOR_ASYNC_OPTIONS = { timeout: 2000, interval: 5 };
 
@@ -50,10 +50,10 @@ vi.mock("../pi.js", () => ({
   // so a plain Error subclass is a faithful stub (instanceof simply returns false).
   ModelFallbackExhaustedError: class ModelFallbackExhaustedError extends Error {},
 }));
-vi.mock("../reviewer.js", () => ({
+vi.mock("../execution/reviewer.js", () => ({
   reviewStep: vi.fn(),
 }));
-vi.mock("../agent-session-helpers.js", async () => {
+vi.mock("../agents/agent-session-helpers.js", async () => {
   const { createFnAgent } = await import("../pi.js");
   return {
     createResolvedAgentSession: async (options: any) => {
@@ -284,7 +284,7 @@ import { TaskExecutor } from "../executor.js";
 import { TriageProcessor } from "../triage.js";
 import { Scheduler } from "../scheduler.js";
 import { aiMergeTask } from "../merger.js";
-import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "../worktree-pool.js";
+import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "../worktree/worktree-pool.js";
 import { createFnAgent } from "../pi.js";
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";

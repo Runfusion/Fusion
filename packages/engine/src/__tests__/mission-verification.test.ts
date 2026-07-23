@@ -21,7 +21,7 @@ import {
   type CheckoutMaterializer,
   type IsolatingBackendProbe,
   type VerificationRequest,
-} from "../mission-verification.js";
+} from "../missions/mission-verification.js";
 import {
   __resetSandboxBackendForTests,
   type SandboxBackend,

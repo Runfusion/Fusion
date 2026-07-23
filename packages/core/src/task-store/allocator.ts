@@ -18,9 +18,9 @@ export {
   reconcileTaskIdState,
   resolveLocalNodeId,
   type DistributedTaskIdAllocator,
-} from "../distributed-task-id.js";
+} from "../tasks/distributed-task-id.js";
 
 export {
   detectTaskIdIntegrityAnomalies,
   type TaskIdIntegrityReport,
-} from "../task-id-integrity.js";
+} from "../tasks/task-id-integrity.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STALE_PAUSED_TODO_THRESHOLD_MS, getStalePausedTodoSignal } from "../stale-paused-todo.js";
+import { DEFAULT_STALE_PAUSED_TODO_THRESHOLD_MS, getStalePausedTodoSignal } from "../tasks/stale-paused-todo.js";
 
 const NOW = Date.parse("2026-05-14T12:00:00.000Z");
 

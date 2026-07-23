@@ -8,7 +8,7 @@ import {
   probeAgentBrowserAvailability,
   TaskExecutor,
 } from "../executor.js";
-import { summarizeToolArgs } from "../agent-logger.js";
+import { summarizeToolArgs } from "../agents/agent-logger.js";
 import {
   createMockStore,
   mockedCreateFnAgent,

@@ -61,28 +61,28 @@ import {
   resolveSessionSkills,
   createSkillsOverrideFromSelection,
   type SkillSelectionContext,
-} from "./skill-resolver.js";
-import { isContextLimitError } from "./context-limit-detector.js";
-import { applyClaudeAcpEnable } from "./claude-acp-enable.js";
-import { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
-import { refreshFusionModelRegistry } from "./model-registry-refresh.js";
+} from "./cli-runtime/skill-resolver.js";
+import { isContextLimitError } from "./errors/context-limit-detector.js";
+import { applyClaudeAcpEnable } from "./cli-runtime/claude-acp-enable.js";
+import { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
+import { refreshFusionModelRegistry } from "./auth/model-registry-refresh.js";
 import { piLog, extensionsLog } from "./logger.js";
-import { readCustomProviders } from "./custom-providers.js";
-import { buildCustomProviderModels } from "./custom-provider-registry.js";
+import { readCustomProviders } from "./auth/custom-providers.js";
+import { buildCustomProviderModels } from "./auth/custom-provider-registry.js";
 import {
   buildGateRejection,
   evaluateAgentActionGate,
   resolveGateOutcome,
   type AgentActionGateContext,
-} from "./agent-action-gate.js";
-import { resolvePermanentAgentToolDecision } from "./permanent-agent-gating.js";
-import type { SystemPromptLayers } from "./prompt-layers.js";
-import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflow-step-tool-policy.js";
-import { createStreamingDeltaNormalizer } from "./streaming-delta.js";
-import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./transient-error-detector.js";
-import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp-runtime-support.js";
-import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp-session-tools.js";
-export { isModelAuthTierIncompatibilityError } from "./transient-error-detector.js";
+} from "./agents/agent-action-gate.js";
+import { resolvePermanentAgentToolDecision } from "./agents/permanent-agent-gating.js";
+import type { SystemPromptLayers } from "./execution/prompt-layers.js";
+import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflows/workflow-step-tool-policy.js";
+import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
+import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./errors/transient-error-detector.js";
+import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-support.js";
+import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
+export { isModelAuthTierIncompatibilityError } from "./errors/transient-error-detector.js";
 
 const RTK_ACCEPTED_REWRITE_EXIT_CODES = new Set([0, 3]);
 const RTK_EXPECTED_PASSTHROUGH_EXIT_CODES = new Set([1, 2]);

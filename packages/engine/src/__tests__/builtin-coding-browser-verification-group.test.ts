@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-15:10:

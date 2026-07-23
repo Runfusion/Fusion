@@ -87,7 +87,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("TodoStore: create list → add items → toggle → reorder round-trip", async () => {
     ctx = await setupCtx();
-    const { createTodoList, getTodoList, listTodoLists, createTodoItem, listTodoItems, updateTodoItem, deleteTodoItem, reorderTodoItems, getTodoListsWithItems } = await import("../../async-todo-store.js");
+    const { createTodoList, getTodoList, listTodoLists, createTodoItem, listTodoItems, updateTodoItem, deleteTodoItem, reorderTodoItems, getTodoListsWithItems } = await import("../../async-stores/async-todo-store.js");
     const now = new Date().toISOString();
     const list = await createTodoList(ctx.layer.db, { id: "TDL-1", projectId: "P1", title: "My List", createdAt: now, updatedAt: now });
     expect(list.id).toBe("TDL-1");
@@ -119,8 +119,8 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("GoalStore: create → list → archive → unarchive with active-limit enforcement", async () => {
     ctx = await setupCtx();
-    const { createGoal, getGoal, listGoals, archiveGoal, unarchiveGoal } = await import("../../async-goal-store.js");
-    const { ACTIVE_GOAL_LIMIT } = await import("../../goal-types.js");
+    const { createGoal, getGoal, listGoals, archiveGoal, unarchiveGoal } = await import("../../async-stores/async-goal-store.js");
+    const { ACTIVE_GOAL_LIMIT } = await import("../../goals/goal-types.js");
 
     const goal = await createGoal(ctx.layer, { id: "G-1", title: "Ship", description: "Ship the product" });
     expect(goal.status).toBe("active");
@@ -148,7 +148,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("MessageStore: send → inbox → mark read → conversation → mailbox round-trip", async () => {
     ctx = await setupCtx();
-    const { sendMessage, getMessage, queryMessagesByParticipant, markMessageAsRead, markAllMessagesAsRead, getConversation, getMailbox } = await import("../../async-message-store.js");
+    const { sendMessage, getMessage, queryMessagesByParticipant, markMessageAsRead, markAllMessagesAsRead, getConversation, getMailbox } = await import("../../async-stores/async-message-store.js");
     const now = new Date().toISOString();
     const msg = await sendMessage(ctx.layer.db, { id: "msg-1", fromId: "agent-a", fromType: "agent", toId: "agent-b", toType: "agent", content: "Hello", type: "agent-to-agent", read: false, metadata: { key: "val" }, createdAt: now, updatedAt: now });
     expect(msg.read).toBe(false);
@@ -189,7 +189,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("ApprovalRequestStore: create → decide → complete with audit history", async () => {
     ctx = await setupCtx();
-    const { createApprovalRequest, getApprovalRequest, decideApprovalRequest, markApprovalRequestCompleted, getApprovalAuditHistory } = await import("../../async-approval-request-store.js");
+    const { createApprovalRequest, getApprovalRequest, decideApprovalRequest, markApprovalRequestCompleted, getApprovalAuditHistory } = await import("../../async-stores/async-approval-request-store.js");
     const req = await createApprovalRequest(ctx.layer, {
       id: "apr-1",
       requester: { actorId: "agent-1", actorType: "agent", actorName: "Bot" },
@@ -214,7 +214,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("EvalStore: create run → upsert result → list → append event", async () => {
     ctx = await setupCtx();
-    const { createEvalRun, getEvalRun, listEvalRuns, upsertEvalTaskResult, getEvalTaskResultByRunTask, listEvalTaskResults, appendEvalRunEvent, listEvalRunEvents } = await import("../../async-eval-store.js");
+    const { createEvalRun, getEvalRun, listEvalRuns, upsertEvalTaskResult, getEvalTaskResultByRunTask, listEvalTaskResults, appendEvalRunEvent, listEvalRunEvents } = await import("../../async-stores/async-eval-store.js");
     const now = new Date().toISOString();
     const run = await createEvalRun(ctx.layer.db, { id: "ER-1", projectId: "P1", trigger: "manual", scope: "all", window: { days: 7 }, requestedTaskIds: ["T1"], counts: { totalTasks: 1, scoredTasks: 0, skippedTasks: 0, erroredTasks: 0 }, createdAt: now, updatedAt: now });
     expect(run.status).toBe("pending");
@@ -246,7 +246,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("ExperimentSessionStore: create session → append record → list round-trip", async () => {
     ctx = await setupCtx();
-    const { createExperimentSession, getExperimentSession, appendExperimentRecord, listExperimentRecords } = await import("../../async-experiment-session-store.js");
+    const { createExperimentSession, getExperimentSession, appendExperimentRecord, listExperimentRecords } = await import("../../async-stores/async-experiment-session-store.js");
     const now = new Date().toISOString();
     const session = await createExperimentSession(ctx.layer.db, {
       id: "EXP-1", name: "Test", projectId: "P1", status: "active",
@@ -269,7 +269,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("InsightStore: create → upsert by fingerprint → list → run round-trip", async () => {
     ctx = await setupCtx();
-    const { createInsight, getInsight, upsertInsight, listInsights, createInsightRun, findActiveInsightRun } = await import("../../async-insight-store.js");
+    const { createInsight, getInsight, upsertInsight, listInsights, createInsightRun, findActiveInsightRun } = await import("../../async-stores/async-insight-store.js");
     const now = new Date().toISOString();
     await createInsight(ctx.layer.db, {
       id: "INS-1", projectId: "P1", title: "Slow builds", content: "Builds are slow",
@@ -294,7 +294,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("ResearchStore: create run → persist → append event → export round-trip", async () => {
     ctx = await setupCtx();
-    const { createResearchRun, getResearchRun, persistResearchRun, appendResearchRunEvent, listResearchRunEvents, createResearchExport, getResearchExports, getResearchStats } = await import("../../async-research-store.js");
+    const { createResearchRun, getResearchRun, persistResearchRun, appendResearchRunEvent, listResearchRunEvents, createResearchExport, getResearchExports, getResearchStats } = await import("../../async-stores/async-research-store.js");
     const now = new Date().toISOString();
     const run = await createResearchRun(ctx.layer.db, {
       id: "RR-1", query: "best practices", topic: "testing", status: "queued", projectId: "P1",
@@ -324,7 +324,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("ChatStore: session + messages + room + members + room messages round-trip", async () => {
     ctx = await setupCtx();
-    const { createChatSession, getChatSession, addChatMessage, getChatMessages, getLastMessageForSessions, createChatRoom, getChatRoom, addChatRoomMember, listChatRoomMembers, addChatRoomMessage, getChatRoomMessages, clearChatRoomMessages } = await import("../../async-chat-store.js");
+    const { createChatSession, getChatSession, addChatMessage, getChatMessages, getLastMessageForSessions, createChatRoom, getChatRoom, addChatRoomMember, listChatRoomMembers, addChatRoomMessage, getChatRoomMessages, clearChatRoomMessages } = await import("../../async-stores/async-chat-store.js");
     const now = new Date().toISOString();
 
     // Session + messages
@@ -360,7 +360,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     later pin request. The store's row lock makes these invariants hold when
     archive and pin requests overlap as well as in this serial regression case.
     */
-    const chatStore = new (await import("../../chat-store.js")).ChatStore(ctx.layer);
+    const chatStore = new (await import("../../chat/chat-store.js")).ChatStore(ctx.layer);
     const pinned = await chatStore.setSessionPinned("chat-1", true);
     expect(pinned?.pinnedAt).not.toBeNull();
     const archived = await chatStore.archiveSession("chat-1");
@@ -375,7 +375,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
 
   it("JSON columns round-trip identical shape across all stores (VAL-SCHEMA-004)", async () => {
     ctx = await setupCtx();
-    const { createChatSession, getChatSession } = await import("../../async-chat-store.js");
+    const { createChatSession, getChatSession } = await import("../../async-stores/async-chat-store.js");
     const now = new Date().toISOString();
     const complexMetadata = { nested: { deep: [1, 2, { x: true }], null: null, str: "text" } };
     await createChatSession(ctx.layer.db, {
@@ -384,7 +384,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
       cliSessionFile: null, inFlightGeneration: { provider: "openai", step: 3 }, cliExecutorAdapterId: null,
     });
     // Use addChatMessage to test metadata jsonb
-    const { addChatMessage, getChatMessage } = await import("../../async-chat-store.js");
+    const { addChatMessage, getChatMessage } = await import("../../async-stores/async-chat-store.js");
     await addChatMessage(ctx.layer.db, { id: "msg-json", sessionId: "chat-json", role: "user", content: "x", thinkingOutput: null, metadata: complexMetadata, attachments: [{ type: "file", name: "test.txt" }], createdAt: now });
     const msg = await getChatMessage(ctx.layer.db, "msg-json");
     expect(msg?.metadata).toEqual(complexMetadata);

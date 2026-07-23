@@ -25,43 +25,43 @@ import {
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
-import type { PrMonitor, PrComment } from "../pr-monitor.js";
+import type { PrMonitor, PrComment } from "../merge/pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
-import { buildPrNodeDeps } from "../pr-nodes.js";
+import { buildPrNodeDeps } from "../merge/pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
-import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree-pool.js";
-import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency.js";
+import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree/worktree-pool.js";
+import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency/concurrency.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
-import { AutoClaimSnapshotManager } from "../auto-claim-snapshot.js";
-import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
-import { RoutineScheduler } from "../routine-scheduler.js";
-import { createAiPromptExecutor } from "../cron-runner.js";
+import { AutoClaimSnapshotManager } from "../scheduling/auto-claim-snapshot.js";
+import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
+import { RoutineScheduler } from "../scheduling/routine-scheduler.js";
+import { createAiPromptExecutor } from "../scheduling/cron-runner.js";
 import type {
   ProjectRuntime,
   ProjectRuntimeConfig,
   RuntimeStatus,
   RuntimeMetrics,
   ProjectRuntimeEvents,
-} from "../project-runtime.js";
+} from "../project/project-runtime.js";
 import { runtimeLog } from "../logger.js";
-import { getActiveNotificationService } from "../notifier.js";
-import { StuckTaskDetector } from "../stuck-task-detector.js";
-import { UsageLimitPauser } from "../usage-limit-detector.js";
+import { getActiveNotificationService } from "../util/notifier.js";
+import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
+import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
-import { RestartRecoveryCoordinator } from "../restart-recovery-coordinator.js";
-import { MeshLeaseManager } from "../mesh-lease-manager.js";
-import { PluginRunner } from "../plugin-runner.js";
-import { MissionAutopilot } from "../mission-autopilot.js";
-import { MissionExecutionLoop } from "../mission-execution-loop.js";
+import { RestartRecoveryCoordinator } from "../healing/restart-recovery-coordinator.js";
+import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
+import { PluginRunner } from "../plugins/plugin-runner.js";
+import { MissionAutopilot } from "../missions/mission-autopilot.js";
+import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
 import { TriageProcessor } from "../triage.js";
-import { EphemeralWorkerManager } from "../ephemeral-worker-manager.js";
-import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
-import { attachAgentLinkSync } from "../task-agent-sync.js";
-import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
+import { EphemeralWorkerManager } from "../agents/ephemeral-worker-manager.js";
+import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
+import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
+import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
-import { resolvePreReleasePlanReviewNode } from "../hold-release.js";
+import { resolvePreReleasePlanReviewNode } from "../execution/hold-release.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
@@ -512,7 +512,7 @@ export class InProcessRuntime
       // killed between `mkdir` and `git worktree add`).  Removing them here
       // ensures scanIdleWorktrees / rehydrate never sees broken entries, and
       // prevents assertValidWorktreeSession from permanently blocking retries.
-      const { reapOrphanWorktrees, scanIdleWorktrees } = await import("../worktree-pool.js");
+      const { reapOrphanWorktrees, scanIdleWorktrees } = await import("../worktree/worktree-pool.js");
       const settings = await this.taskStore.getSettings();
       try {
         const reaped = await reapOrphanWorktrees(this.config.workingDirectory, settings);
@@ -801,10 +801,10 @@ export class InProcessRuntime
       }
 
       // 5c. Initialize AgentReflectionService (requires agentStore and reflectionStore)
-      let reflectionService: import("../agent-reflection.js").AgentReflectionService | undefined;
+      let reflectionService: import("../agents/agent-reflection.js").AgentReflectionService | undefined;
       if (agentStoreForReflection && reflectionStoreForService) {
         try {
-          const { AgentReflectionService: AgentReflectionServiceClass } = await import("../agent-reflection.js");
+          const { AgentReflectionService: AgentReflectionServiceClass } = await import("../agents/agent-reflection.js");
           reflectionService = new AgentReflectionServiceClass({
             agentStore: agentStoreForReflection,
             taskStore: this.taskStore,
@@ -817,10 +817,10 @@ export class InProcessRuntime
         }
       }
 
-      let selfImproveService: import("../agent-self-improve.js").AgentSelfImproveService | undefined;
+      let selfImproveService: import("../agents/agent-self-improve.js").AgentSelfImproveService | undefined;
       if (agentStoreForReflection && reflectionStoreForService) {
         try {
-          const { AgentSelfImproveService: AgentSelfImproveServiceClass } = await import("../agent-self-improve.js");
+          const { AgentSelfImproveService: AgentSelfImproveServiceClass } = await import("../agents/agent-self-improve.js");
           selfImproveService = new AgentSelfImproveServiceClass({
             agentStore: agentStoreForReflection,
             reflectionStore: reflectionStoreForService,

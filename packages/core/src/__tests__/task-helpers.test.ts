@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getPrimaryPrInfo, taskHasManualOpenPullRequest } from "../task-helpers.js";
+import { getPrimaryPrInfo, taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { PrInfo } from "../types.js";
 
 function prInfo(overrides: Partial<PrInfo> = {}): PrInfo {

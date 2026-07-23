@@ -20,7 +20,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../../task-merge.js";
+import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../../merge/task-merge.js";
 
 const pgTest = pgDescribe;
 

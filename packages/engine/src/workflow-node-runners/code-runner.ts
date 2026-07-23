@@ -1,7 +1,7 @@
 import type { TaskDetail, WorkflowIrNode } from "@fusion/core";
 
-import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflow-graph-executor.js";
-import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflow-node-runner.js";
+import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflows/workflow-node-runner.js";
 
 export type CodeNodeRunnerDelegate = (
   node: WorkflowIrNode,

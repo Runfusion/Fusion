@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { loadWorkspaceConfig, type Task, type TaskStore, type WorkspaceConfig } from "@fusion/core";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;

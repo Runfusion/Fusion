@@ -33,7 +33,7 @@ import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
-import { insertTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   searchTasksTsvector,
   countSearchTasksTsvector,
@@ -41,8 +41,8 @@ import {
   readTaskSearchVector,
   reindexTasksSearchVector,
   sanitizeSearchTokens,
-} from "../../task-store/async-search.js";
-import { upsertArchivedTaskEntry } from "../../task-store/async-archive-lineage.js";
+} from "../../task-store/async/async-search.js";
+import { upsertArchivedTaskEntry } from "../../task-store/async/async-archive-lineage.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 
 const PG_TEST_URL_BASE =

@@ -22,7 +22,7 @@ vi.mock("bonjour-service", () => ({
   default: BonjourMock,
 }));
 
-import { NodeDiscovery } from "../node-discovery.js";
+import { NodeDiscovery } from "../mesh/node-discovery.js";
 
 function createMockBrowser(): MockBrowser {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();

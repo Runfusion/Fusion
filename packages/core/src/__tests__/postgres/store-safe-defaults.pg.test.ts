@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
-import { ChatStore } from "../../chat-store.js";
+import { ChatStore } from "../../chat/chat-store.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

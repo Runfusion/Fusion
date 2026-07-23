@@ -9,7 +9,7 @@ import {
   getClaudeCodeCredentialPaths,
   readStoredCredentialsFromAuthFile,
   shouldHydrateStoredCredential,
-} from "../oauth-credential-interop.js";
+} from "../secrets/oauth-credential-interop.js";
 
 function encodeBase64Url(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url");

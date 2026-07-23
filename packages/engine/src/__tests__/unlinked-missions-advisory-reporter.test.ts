@@ -4,7 +4,7 @@ import {
   UNLINKED_MISSIONS_ADVISORY_KEY,
   UNLINKED_MISSIONS_ADVISORY_TITLE,
   UnlinkedMissionsAdvisoryReporter,
-} from "../unlinked-missions-advisory-reporter.js";
+} from "../missions/unlinked-missions-advisory-reporter.js";
 
 function createMission(overrides: Partial<Mission> = {}): Mission {
   return {

@@ -11,7 +11,7 @@ import {
   buildUnblockWeightMap,
   compareTaskIdNumeric,
   sortTasksForDisplayColumn,
-} from "../task-priority.js";
+} from "../tasks/task-priority.js";
 import {
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,

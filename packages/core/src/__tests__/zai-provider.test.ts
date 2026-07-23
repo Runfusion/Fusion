@@ -4,7 +4,7 @@ import {
   registerBuiltInZaiProvider,
   ZAI_PROVIDER_ID,
   ZAI_PROVIDER_REGISTRATION,
-} from "../zai-provider.js";
+} from "../ai/zai-provider.js";
 
 const EXISTING_ZAI_MODELS = [
   "glm-4.5-air",

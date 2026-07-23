@@ -115,7 +115,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./execution/replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -123,10 +123,10 @@ import {
   resolvePlanningFallbackThinkingLevel,
   resolvePlanningSessionModel,
   resolvePlanningThinkingLevel,
-} from "./agent-session-helpers.js";
-import { mergeEffectiveSettings } from "./effective-settings.js";
+} from "./agents/agent-session-helpers.js";
+import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
-import { buildSessionSkillContext } from "./session-skill-context.js";
+import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import {
   PRIORITY_SPECIFY,
   computeTopLevelConcurrencyClaimedFromStore,
@@ -136,26 +136,26 @@ import {
   takePreHeldExecutorSlot,
   recoverIdleSemaphoreLeakCandidate,
   type AgentSemaphore,
-} from "./concurrency.js";
-import { AgentLogger } from "./agent-logger.js";
+} from "./concurrency/concurrency.js";
+import { AgentLogger } from "./agents/agent-logger.js";
 import {
   resolveAgentInstructions,
   resolveAgentInstructionsWithRatings,
   buildPluginPromptSection,
-} from "./agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
-import { createFallbackModelObserver } from "./fallback-model-observer.js";
+} from "./agents/agent-instructions.js";
+import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
+import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
 import { planLog, formatError } from "./logger.js";
-import { resolveMcpServersForStore } from "./mcp-resolution.js";
+import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
 import {
   isUsageLimitError,
   checkSessionError,
   type UsageLimitPauser,
-} from "./usage-limit-detector.js";
-import { isOperatorActionableAgentError, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
-import { withRateLimitRetry } from "./rate-limit-retry.js";
-import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
-import type { StuckTaskDetector } from "./stuck-task-detector.js";
+} from "./errors/usage-limit-detector.js";
+import { isOperatorActionableAgentError, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
+import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
+import type { StuckTaskDetector } from "./healing/stuck-task-detector.js";
 import { exec } from "node:child_process";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -180,15 +180,15 @@ import {
 import {
   getResearchGuidanceForSurface,
   isResearchToolSurfaceEnabled,
-} from "./tool-availability.js";
-import { runGhostBugPreflight } from "./triage-preflight.js";
+} from "./execution/tool-availability.js";
+import { runGhostBugPreflight } from "./triage-domain/triage-preflight.js";
 import { archiveAsGhostBug } from "./self-healing.js";
-import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
-import { accumulateSessionTokenUsage } from "./session-token-usage.js";
+import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
+import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
+import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
-import type { AgentActionGateContext } from "./agent-action-gate.js";
-import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
+import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
+import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 
 
 export interface TriageProcessorOptions {
@@ -208,7 +208,7 @@ export interface TriageProcessorOptions {
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
-  pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
 }
 
 /**

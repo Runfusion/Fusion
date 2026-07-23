@@ -92,7 +92,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Mission: create → get → list → update → delete round-trip with branchStrategy JSON", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     const mission = await mod.createMission(ctx.layer.db, {
@@ -141,7 +141,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Milestone: create → get → list → update → delete with jsonb dependencies + text acceptanceCriteria", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -182,7 +182,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Slice: create → get → list → update → delete with planState", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -221,7 +221,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Feature: create → get → list → update with loop state + attempt counters", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -273,7 +273,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Mission events: insert with jsonb metadata, count, list by seq", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -311,7 +311,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Mission-goal links: idempotent link, list, count, delete", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     // Create a goal first (needed for FK)
@@ -342,7 +342,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Contract assertions: create → list → reorder → update → delete", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -385,7 +385,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Feature-assertion links: idempotent link, exists check, unlink", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -424,7 +424,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Validator runs + failures + fix-feature lineage round-trip", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {
@@ -492,7 +492,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Snapshot upsert: ON CONFLICT DO UPDATE for mission/milestone/slice/feature", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     // Initial create
@@ -532,7 +532,7 @@ pgDescribe("PostgreSQL satellite MissionStore (VAL-SCHEMA-001, VAL-DATA-009)", (
 
   it("Cascade: deleting a mission removes its milestones/slices/features", async () => {
     ctx = await setupCtx();
-    const mod = await import("../../async-mission-store.js");
+    const mod = await import("../../async-stores/async-mission-store.js");
     const now = new Date().toISOString();
 
     await mod.createMission(ctx.layer.db, {

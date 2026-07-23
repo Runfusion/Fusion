@@ -12,17 +12,17 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, TaskLogEntry, RunMutationContext} from "../types.js";
-import {validateCustomFieldPatch, CustomFieldRejectionError} from "../task-fields.js";
+import {validateCustomFieldPatch, CustomFieldRejectionError} from "../tasks/task-fields.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../task-priority.js";
-import {validateNodeOverrideChange} from "../node-override-guard.js";
-import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
-import {buildBootstrapPrompt} from "../mesh-task-replication.js";
+import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import {validateNodeOverrideChange} from "../mesh/node-override-guard.js";
+import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
+import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
-import {applyOriginalDescription} from "../original-description-policy.js";
+import {applyOriginalDescription} from "../tasks/original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
-import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
+import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
     {

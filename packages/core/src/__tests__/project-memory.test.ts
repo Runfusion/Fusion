@@ -15,7 +15,7 @@ import {
   searchProjectMemory,
   getProjectMemory,
   resolveMemoryInstructionContext,
-} from "../project-memory.js";
+} from "../memory/project-memory.js";
 
 describe("project-memory", () => {
   let testDir: string;

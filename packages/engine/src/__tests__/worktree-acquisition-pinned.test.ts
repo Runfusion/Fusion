@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { join } from "node:path";
-import { acquireTaskWorktree } from "../worktree-acquisition.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 
 /*
 FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
@@ -8,7 +8,7 @@ The pinned-mode branch is validated in isolation with mocked git/liveness seams 
 deterministic (no real-git worktree creation). classifyTaskWorktree / branch lookup / fs existence are the
 observable inputs to derive→validate→reuse-or-recreate; we drive each of them.
 */
-vi.mock("../worktree-pool.js", async () => {
+vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return {
     ...actual,
@@ -20,7 +20,7 @@ vi.mock("../worktree-pool.js", async () => {
   };
 });
 
-vi.mock("../branch-conflicts.js", async () => {
+vi.mock("../execution/branch-conflicts.js", async () => {
   const actual = await vi.importActual<any>("../branch-conflicts.js");
   return {
     ...actual,
@@ -33,11 +33,11 @@ vi.mock("../branch-conflicts.js", async () => {
   };
 });
 
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 0, documentsCopied: 0, artifactsCopied: 0 }),
 }));
 
-vi.mock("../worktree-desktop-artifacts.js", () => ({
+vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
@@ -47,7 +47,7 @@ vi.mock("node:fs", async () => {
 });
 
 import { existsSync } from "node:fs";
-import { classifyTaskWorktree, getRegisteredWorktreeBranches, removeWorktree } from "../worktree-pool.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranches, removeWorktree } from "../worktree/worktree-pool.js";
 
 const ROOT = "/repo";
 const PINNED = join(ROOT, ".worktrees", "fn-7996");

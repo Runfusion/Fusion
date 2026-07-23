@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { GridlockDetector } from "../gridlock-detector.js";
-import type { GridlockEvent } from "../gridlock-detector.js";
+import { GridlockDetector } from "../healing/gridlock-detector.js";
+import type { GridlockEvent } from "../healing/gridlock-detector.js";
 
 function createTask(id: string, overrides: Partial<Task> = {}): Task {
   return {

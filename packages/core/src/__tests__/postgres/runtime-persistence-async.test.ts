@@ -26,11 +26,11 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import {
   insertTaskRow,
-} from "../../task-store/async-persistence.js";
+} from "../../task-store/async/async-persistence.js";
 import {
   writeProjectConfig,
   readProjectConfig,
-} from "../../task-store/async-settings.js";
+} from "../../task-store/async/async-settings.js";
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 

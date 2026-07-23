@@ -18,7 +18,7 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { acquireSchemaMutationLocks } from "./advisory-locks.js";
-import type { PluginPostgresSchemaDefinition } from "../plugin-types.js";
+import type { PluginPostgresSchemaDefinition } from "../plugins/plugin-types.js";
 
 export interface LoadedPluginSchemaContract {
   pluginId: string;

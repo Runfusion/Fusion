@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createBoardActionServices } from "../board-action-services.js";
+import { createBoardActionServices } from "../board/board-action-services.js";
 
 describe("board action services", () => {
   it("delegates moves through the canonical TaskStore moveTask path", async () => {

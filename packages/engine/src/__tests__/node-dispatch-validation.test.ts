@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
+import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 
 describe("validateProjectNodeMapping", () => {
   it("allows dispatch when mapping path is present", () => {

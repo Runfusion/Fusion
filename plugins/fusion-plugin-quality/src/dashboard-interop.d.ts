@@ -13,7 +13,7 @@ declare module "@fusion/dashboard/app/plugins/types" {
   }
 }
 
-declare module "@fusion/dashboard/app/api/task-content" {
+declare module "@fusion/dashboard/app/api/tasks/task-content" {
   export type ArtifactType = "document" | "image" | "video" | "audio" | "other";
 
   export interface ArtifactWithTask {

@@ -22,7 +22,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateGitlabIssueAnalytics } from "../../gitlab-issue-analytics.js";
+import { aggregateGitlabIssueAnalytics } from "../../board/gitlab-issue-analytics.js";
 
 const pgTest = pgDescribe;
 

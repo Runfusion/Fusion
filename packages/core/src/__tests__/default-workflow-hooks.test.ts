@@ -11,14 +11,14 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   __resetTraitRegistryForTests,
   getTraitRegistry,
-} from "../trait-registry.js";
-import { registerBuiltinTraits } from "../builtin-traits.js";
+} from "../workflows/trait-registry.js";
+import { registerBuiltinTraits } from "../workflows/builtin-traits.js";
 import {
   __resetDefaultWorkflowHooksForTests,
   applyDefaultWorkflowMoveEffects,
   registerDefaultWorkflowHooks,
   type DefaultWorkflowMoveContext,
-} from "../default-workflow-hooks.js";
+} from "../workflows/default-workflow-hooks.js";
 import type { Task } from "../types.js";
 
 function makeCtx(overrides: Partial<DefaultWorkflowMoveContext> = {}): DefaultWorkflowMoveContext {

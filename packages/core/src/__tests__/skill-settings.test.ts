@@ -4,7 +4,7 @@ import {
   getSkillSettingState,
   parseSkillId,
   resolvePluginSkillEnabled,
-} from "../skill-settings.js";
+} from "../config/skill-settings.js";
 
 describe("skill-settings", () => {
   it("computes and parses stable skill IDs", () => {

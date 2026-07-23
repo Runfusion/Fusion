@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { type TaskStore } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
-import type { SyncGroupPrFn } from "../../group-merge-coordinator.js";
+import type { SyncGroupPrFn } from "../../merge/group-merge-coordinator.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 

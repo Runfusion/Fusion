@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   TraitRegistry,
   TraitRegistrationError,
-} from "../trait-registry.js";
-import type { TraitDefinition } from "../trait-types.js";
-import type { WorkflowIrColumn } from "../workflow-ir-types.js";
+} from "../workflows/trait-registry.js";
+import type { TraitDefinition } from "../workflows/trait-types.js";
+import type { WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
 
 function col(id: string, traits: string[]): WorkflowIrColumn {
   return { id, name: id, traits: traits.map((t) => ({ trait: t })) };

@@ -4,12 +4,12 @@ import {
   handleWorktrunkOperationFailure,
   type WorktrunkOperationFailure,
   type WorktreeOperationResult,
-} from "../worktrunk-failure-handler.js";
+} from "../worktree/worktrunk-failure-handler.js";
 import {
   WorktrunkBinaryUnavailableError,
   WorktrunkInstallDeniedError,
   WorktrunkInstallFailedError,
-} from "../worktrunk-installer.js";
+} from "../worktree/worktrunk-installer.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Task } from "@fusion/core";
 
 import { TaskExecutor } from "../executor.js";
-import { MAX_RECOVERY_RETRIES } from "../recovery-policy.js";
+import { MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function task(overrides: Partial<Task> = {}): Task {

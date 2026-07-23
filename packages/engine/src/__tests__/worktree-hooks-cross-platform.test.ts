@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 const { execMock } = vi.hoisted(() => ({ execMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
 
-import { writeFileAtomic } from "../worktree-hooks.js";
+import { writeFileAtomic } from "../worktree/worktree-hooks.js";
 
 describe("worktree-hooks cross-platform", () => {
   it("creates missing parent directories without shell mkdir", async () => {

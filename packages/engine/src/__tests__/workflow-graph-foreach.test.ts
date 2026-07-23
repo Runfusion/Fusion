@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, TaskStep, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type WorkflowLegacySeams,
-} from "../workflow-node-handlers.js";
-import type { WorkflowStepInstanceState } from "../workflow-graph-foreach.js";
+} from "../workflows/workflow-node-handlers.js";
+import type { WorkflowStepInstanceState } from "../workflows/workflow-graph-foreach.js";
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 

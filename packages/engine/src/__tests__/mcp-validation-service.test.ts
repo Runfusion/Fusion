@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ResolvedMcpServerDefinition } from "@fusion/core";
-import { validateMcpServer } from "../mcp-validation-service.js";
+import { validateMcpServer } from "../mcp/mcp-validation-service.js";
 
 describe("mcp-validation-service", () => {
   it("uses an injected stdio probe for stdio servers", async () => {

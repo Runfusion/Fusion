@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Goal } from "@fusion/core";
-import { buildGoalContextSection } from "../goal-context-injector.js";
-import { buildPromptLayers, collapsePromptLayers } from "../prompt-layers.js";
+import { buildGoalContextSection } from "../goals/goal-context-injector.js";
+import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
 
 function goal(id: string, title: string, createdAt: string): Goal {
   return {

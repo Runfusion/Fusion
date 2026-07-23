@@ -5,7 +5,7 @@ import {
   buildMergeSystemPrompt,
   buildReviewSystemPrompt,
   parseReviewVerdict,
-} from "../merger-ai.js";
+} from "../merge/merger-ai.js";
 
 describe("merger-ai prompt/verdict re-exports", () => {
   it("fails safe to a blocking reject for empty reviewer output", () => {

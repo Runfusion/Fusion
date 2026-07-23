@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach } from "vitest";
-import { assertOutsideRealFusionPath } from "../test-safety.js";
+import { assertOutsideRealFusionPath } from "../process/test-safety.js";
 
 /**
  * FNXC:CoreTests 2026-06-18-01:30:

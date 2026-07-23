@@ -8,8 +8,8 @@
  * stays in lockstep with the named-column INSERT/UPSERT clauses generated below.
  */
 import type { Task } from "../types.js";
-import { normalizeTaskPriority } from "../task-priority.js";
-import { toJson, toJsonNullable } from "../db.js";
+import { normalizeTaskPriority } from "../tasks/task-priority.js";
+import { toJson, toJsonNullable } from "../db/db.js";
 
 /** Database row shape for the tasks table (all columns). */
 export interface TaskRow {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AutoRecoverySettings, Task } from "@fusion/core";
-import { AutoRecoveryDispatcher, type AutoRecoveryFailure } from "../auto-recovery.js";
+import { AutoRecoveryDispatcher, type AutoRecoveryFailure } from "../healing/auto-recovery.js";
 
 const task = { id: "FN-1", recoveryRetryCount: 0 } as Task;
 

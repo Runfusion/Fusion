@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { StepStatus, WorkflowStepResult } from "../types.js";
-import { getLatestFailedPreMergeReviewStep, getTaskMergeBlocker } from "../task-merge.js";
+import { getLatestFailedPreMergeReviewStep, getTaskMergeBlocker } from "../merge/task-merge.js";
 
 /*
  * FNXC:ReviewLaneBypass 2026-07-09-00:00:

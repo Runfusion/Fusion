@@ -22,7 +22,7 @@ import type {
   MissionFeature,
   MissionValidatorRun,
 } from "@fusion/core";
-import type { VerificationCapability, VerificationOutcome } from "../../mission-verification.js";
+import type { VerificationCapability, VerificationOutcome } from "../../missions/mission-verification.js";
 
 // ── Mock AI dependencies (mirror mission-execution-loop.test.ts) ───────────────
 const mockSessionHolder: {
@@ -38,8 +38,8 @@ vi.mock("../../logger.js", () => ({
   createLogger: vi.fn(() => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() })),
 }));
 
-vi.mock("../../agent-session-helpers.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../agent-session-helpers.js")>();
+vi.mock("../../agents/agent-session-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/agent-session-helpers.js")>();
   return {
     ...actual,
     createResolvedAgentSession: vi.fn(async () => ({
@@ -51,8 +51,8 @@ vi.mock("../../agent-session-helpers.js", async (importOriginal) => {
   };
 });
 
-import { createResolvedAgentSession } from "../../agent-session-helpers.js";
-import { MissionExecutionLoop } from "../../mission-execution-loop.js";
+import { createResolvedAgentSession } from "../../agents/agent-session-helpers.js";
+import { MissionExecutionLoop } from "../../missions/mission-execution-loop.js";
 
 type AssertionRow = {
   id: string;

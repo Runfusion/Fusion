@@ -4,11 +4,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { writeSecretsEnvFile } = vi.hoisted(() => ({ writeSecretsEnvFile: vi.fn() }));
 
-vi.mock("../secrets-env-writer.js", () => ({
+vi.mock("../worktree/secrets-env-writer.js", () => ({
   writeSecretsEnvFile,
 }));
 
-vi.mock("../worktree-pool.js", async () => {
+vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return {
     ...actual,
@@ -17,7 +17,7 @@ vi.mock("../worktree-pool.js", async () => {
   };
 });
 
-vi.mock("../worktree-db-hydrate.js", () => ({
+vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 0, documentsCopied: 0, artifactsCopied: 0 }),
 }));
 
@@ -25,7 +25,7 @@ vi.mock("../worktree-db-hydrate.js", () => ({
 FNXC:EngineTests 2026-07-21-00:10:
 Pool unit tests use non-git temp paths; identity guard would throw and fall through to fresh.
 */
-vi.mock("../worktree-hooks.js", async () => {
+vi.mock("../worktree/worktree-hooks.js", async () => {
   const actual = await vi.importActual<any>("../worktree-hooks.js");
   return {
     ...actual,
@@ -33,8 +33,8 @@ vi.mock("../worktree-hooks.js", async () => {
   };
 });
 
-import { acquireTaskWorktree } from "../worktree-acquisition.js";
-import { classifyTaskWorktree } from "../worktree-pool.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
+import { classifyTaskWorktree } from "../worktree/worktree-pool.js";
 
 describe("worktree-acquisition secrets env hook", () => {
   const task = { id: "FN-1", title: "t", description: "d", branch: null, worktree: null } as any;

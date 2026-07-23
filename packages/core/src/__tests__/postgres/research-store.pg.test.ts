@@ -18,8 +18,8 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { ResearchLifecycleError } from "../../research-store.js";
-import type { AsyncResearchStore } from "../../async-research-store.js";
+import { ResearchLifecycleError } from "../../research/research-store.js";
+import type { AsyncResearchStore } from "../../async-stores/async-research-store.js";
 
 const pgTest = pgDescribe;
 

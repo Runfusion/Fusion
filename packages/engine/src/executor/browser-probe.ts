@@ -5,7 +5,7 @@
  */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { SkillSelectionContext } from "../skill-resolver.js";
+import type { SkillSelectionContext } from "../cli-runtime/skill-resolver.js";
 
 const execAsync = promisify(exec);
 

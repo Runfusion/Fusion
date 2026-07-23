@@ -49,8 +49,8 @@ vi.mock("../logger.js", () => ({
   })),
 }));
 
-vi.mock("../agent-session-helpers.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../agent-session-helpers.js")>();
+vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agents/agent-session-helpers.js")>();
   return {
     ...actual,
     createResolvedAgentSession: vi.fn(async () => ({
@@ -69,8 +69,8 @@ function resetMockSession() {
 }
 
 // Import AFTER vi.mock so the mock is applied
-import { createResolvedAgentSession } from "../agent-session-helpers.js";
-import { MissionExecutionLoop, loopLog } from "../mission-execution-loop.js";
+import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
+import { MissionExecutionLoop, loopLog } from "../missions/mission-execution-loop.js";
 
 // ── Mock Factories ──────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ import {
   createAuthMaterialSnapshot,
   createProjectSettingsSnapshot,
   validateSnapshotEnvelope,
-} from "../shared-mesh-state.js";
+} from "../mesh/shared-mesh-state.js";
 
 /*
 FNXC:PostgresCutover 2026-07-12:

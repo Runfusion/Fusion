@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { smartPull, type SmartPullAuditEvent } from "../smart-pull.js";
+import { smartPull, type SmartPullAuditEvent } from "../merge/smart-pull.js";
 
 function git(cwd: string, cmd: string): string {
   return execSync(cmd, { cwd, stdio: "pipe" }).toString("utf-8").trim();

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import {
   resolveEffectiveSettings,
   resolveEffectiveSettingsById,
@@ -9,7 +9,7 @@ import {
   resolveOptionalReviewRevisionBudget,
   resolveEffectivePlannerOversightLevel,
   type WorkflowSettingsResolverStore,
-} from "../workflow-settings-resolver.js";
+} from "../workflows/workflow-settings-resolver.js";
 
 const PROJECT = "proj-1";
 

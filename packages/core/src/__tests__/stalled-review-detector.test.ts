@@ -7,7 +7,7 @@ import {
   STALLED_REVIEW_REENQUEUE_THRESHOLD,
   STALLED_REVIEW_WINDOW_MS,
   detectStalledReview,
-} from "../stalled-review-detector.js";
+} from "../tasks/stalled-review-detector.js";
 import type { TaskLogEntry } from "../types.js";
 
 function entry(timestamp: string, action: string, outcome?: string): TaskLogEntry {

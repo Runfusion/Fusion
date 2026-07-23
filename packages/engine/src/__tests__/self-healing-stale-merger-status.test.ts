@@ -15,8 +15,8 @@ vi.mock("../logger.js", () => ({ createLogger: vi.fn(() => logger) }));
 const { recordRunAuditEventMock } = vi.hoisted(() => ({
   recordRunAuditEventMock: vi.fn(async () => undefined),
 }));
-vi.mock("../run-audit.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../run-audit.js")>();
+vi.mock("../util/run-audit.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../util/run-audit.js")>();
   return {
     ...actual,
     createRunAuditor: vi.fn(() => ({

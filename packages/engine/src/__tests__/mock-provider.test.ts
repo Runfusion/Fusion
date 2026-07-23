@@ -19,7 +19,7 @@ vi.mock("node:https", () => ({
 import * as http from "node:http";
 import * as https from "node:https";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { accumulateSessionTokenUsage } from "../session-token-usage.js";
+import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
 import {
   MOCK_PROVIDER_ID,
   MOCK_SYNTHETIC_TOKEN_USAGE,

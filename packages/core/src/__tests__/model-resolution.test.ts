@@ -17,7 +17,7 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
   TEST_MODE_RESOLVED,
-} from "../model-resolution.js";
+} from "../ai/model-resolution.js";
 
 describe("model-resolution", () => {
   it("detects complete fallback pairs at the lane, global, and selected-workflow tiers", () => {

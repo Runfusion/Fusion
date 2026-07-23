@@ -9,7 +9,7 @@ import {
   hydrateGrokApiKeyFromUserSettings,
   isGrokApiKeyFusionVisible,
   registerBuiltInGrokProvider,
-} from "../grok-provider.js";
+} from "../ai/grok-provider.js";
 
 const ORIGINAL_ENV = { ...process.env };
 

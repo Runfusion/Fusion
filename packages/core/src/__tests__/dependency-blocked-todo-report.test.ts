@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeDependencyBlockedTodoReport,
   DEFAULT_DEPENDENCY_BLOCKED_TODO_FRESH_MS,
-} from "../dependency-blocked-todo-report.js";
+} from "../tasks/dependency-blocked-todo-report.js";
 import type { Task } from "../types.js";
 
 const MAX_AUTO_MERGE_RETRIES = 3;

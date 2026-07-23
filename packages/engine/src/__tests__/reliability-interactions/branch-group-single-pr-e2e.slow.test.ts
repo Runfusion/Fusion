@@ -10,7 +10,7 @@ import {
   type CreateGroupPrFn,
   type CloseGroupPrFn,
   type SyncGroupPrFn,
-} from "../../group-merge-coordinator.js";
+} from "../../merge/group-merge-coordinator.js";
 import { aiMergeTask } from "../../merger.js";
 import { SelfHealingManager } from "../../self-healing.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).

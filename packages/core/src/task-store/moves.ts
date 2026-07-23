@@ -12,30 +12,30 @@ import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionErr
 import {eq, sql} from "drizzle-orm";
 import type {Task, Column, ColumnId, HandoffToReviewOptions} from "../types.js";
 import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
-import {serializeWorkflowIr} from "../workflow-ir.js";
-import {resolveAllowedColumns, workflowHasColumn} from "../workflow-transitions.js";
-import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../builtin-workflows.js";
-import {parseWorkflowIr} from "../workflow-ir.js";
-import {findWorkflowColumn, resolveColumnPluginGates} from "../plugin-gate-verdict.js";
-import {getTraitRegistry, resolveColumnFlags} from "../trait-registry.js";
-import {resolveColumnCapacity, resolveWipBudgetColumns} from "../workflow-capacity.js";
+import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
+import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
+import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
+import {parseWorkflowIr} from "../workflows/workflow-ir.js";
+import {findWorkflowColumn, resolveColumnPluginGates} from "../plugins/plugin-gate-verdict.js";
+import {getTraitRegistry, resolveColumnFlags} from "../workflows/trait-registry.js";
+import {resolveColumnCapacity, resolveWipBudgetColumns} from "../workflows/workflow-capacity.js";
 import {
   type TransitionColumnFacts,
   evaluateCapacityRejection,
   evaluateTransitionInvariants,
-} from "../workflow-transition-policy.js";
-import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../default-workflow-hooks.js";
-import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
-import {writeTransitionPending, clearTransitionPending} from "../transition-pending.js";
-import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
-import type {WorkflowIr} from "../workflow-ir-types.js";
+} from "../workflows/workflow-transition-policy.js";
+import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../workflows/default-workflow-hooks.js";
+import {makeTransitionRejection, makeTransitionPending} from "../tasks/transition-types.js";
+import {writeTransitionPending, clearTransitionPending} from "../tasks/transition-pending.js";
+import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async/async-transition-pending.js";
+import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
-import {getTaskMergeBlocker} from "../task-merge.js";
+import {getTaskMergeBlocker} from "../merge/task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
-import {disposeTaskBeforeMove} from "../task-move-disposer.js";
-import {resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
+import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async/async-persistence.js";
+import {disposeTaskBeforeMove} from "../tasks/task-move-disposer.js";
+import {resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 
 /*
 FNXC:PostgresCutover 2026-07-05-19:50:
@@ -66,7 +66,7 @@ async function resolveTaskWorkflowIrForMove(store: TaskStore, id: string): Promi
     return resolveDefaultWorkflowIr();
   }
 }
-import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async-merge-coordination.js";
+import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async/async-merge-coordination.js";
 
 /*
 FNXC:WorkflowTransitionPolicy 2026-07-18-19:52:

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-import { stepsToWorkflowIr, stepToFragmentIr, layoutForIr } from "../workflow-steps-to-ir.js";
-import { parseWorkflowIr } from "../workflow-ir.js";
+import { stepsToWorkflowIr, stepToFragmentIr, layoutForIr } from "../workflows/workflow-steps-to-ir.js";
+import { parseWorkflowIr } from "../workflows/workflow-ir.js";
 import type { WorkflowStep } from "../types.js";
 
 /*

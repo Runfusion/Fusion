@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalFusionBranchName } from "../worktree-names.js";
+import { canonicalFusionBranchName } from "../worktree/worktree-names.js";
 
 describe("executor branch canonicalization", () => {
   it("canonicalizes mixed-case task IDs to lowercase fusion branches", () => {

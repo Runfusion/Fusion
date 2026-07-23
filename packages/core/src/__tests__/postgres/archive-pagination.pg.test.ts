@@ -16,7 +16,7 @@ import {
   getArchivedRowCount,
   listArchivedTaskEntriesPage,
   upsertArchivedTask,
-} from "../../async-archive-db.js";
+} from "../../async-stores/async-archive-db.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 
 const PG_TEST_URL_BASE =

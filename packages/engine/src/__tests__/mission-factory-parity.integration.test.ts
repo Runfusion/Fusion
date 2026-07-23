@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mission, MissionStore, TaskStore, Task } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
-import { MissionAutopilot } from "../mission-autopilot.js";
+import { MissionAutopilot } from "../missions/mission-autopilot.js";
 
 // ── Mock Factories ─────────────────────────────────────────────────
 

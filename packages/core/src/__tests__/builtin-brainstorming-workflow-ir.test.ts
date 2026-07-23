@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_BRAINSTORMING_WORKFLOW_IR } from "../builtin-brainstorming-workflow-ir.js";
-import { parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
-import type { WorkflowIrV2 } from "../workflow-ir-types.js";
+import { BUILTIN_BRAINSTORMING_WORKFLOW_IR } from "../workflows/builtin-brainstorming-workflow-ir.js";
+import { parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
+import type { WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 /*
 FNXC:WorkflowBrainstorming 2026-07-05-00:00:

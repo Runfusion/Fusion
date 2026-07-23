@@ -6,7 +6,7 @@ import {
   pinnedWorktreeSlug,
   pinnedWorktreePathForTask,
   preservedWorktreeTargetPathForTask,
-} from "../worktree-pinning.js";
+} from "../worktree/worktree-pinning.js";
 
 describe("worktree-pinning", () => {
   describe("isTaskPinnedWorktreeNaming", () => {

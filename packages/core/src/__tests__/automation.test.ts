@@ -10,7 +10,7 @@ import {
   type ScheduleType,
   type ScheduledTask,
   type ScheduledTaskCreateInput,
-} from "../automation.js";
+} from "../automation/automation.js";
 
 const expectedPresetMap = {
   hourly: "0 * * * *",

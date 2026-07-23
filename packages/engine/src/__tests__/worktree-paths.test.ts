@@ -9,7 +9,7 @@ import {
   resolveTaskWorktreePath,
   resolveTaskWorktreePathForBackend,
   resolveWorktreesDir,
-} from "../worktree-paths.js";
+} from "../worktree/worktree-paths.js";
 
 describe("worktree-paths", () => {
   const rootDir = "/tmp/repo-name";

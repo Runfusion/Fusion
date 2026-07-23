@@ -12,11 +12,11 @@ import "@fusion/core"; // registers built-in traits into the shared registry
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 import { computeWorkflowIrPin } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import {
   type WorkflowColumnBoundaryAuditEvent,
   createWorkflowColumnBoundary,
-} from "../workflow-column-boundary.js";
+} from "../workflows/workflow-column-boundary.js";
 
 function settingsOn() {
   return { experimentalFeatures: { workflowGraphExecutor: true } };

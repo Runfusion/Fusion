@@ -2,8 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { MockSessionPurpose } from "@fusion/core";
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
-import type { SessionPurpose } from "../runtime-resolution.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
+import type { SessionPurpose } from "../execution/runtime-resolution.js";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 function resolveProjectRootFromWorktree(cwd: string): string | undefined {

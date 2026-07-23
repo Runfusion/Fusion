@@ -1,8 +1,8 @@
 import { getStepParser } from "@fusion/core";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
-import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflow-graph-executor.js";
-import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflow-node-runner.js";
+import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflows/workflow-node-runner.js";
 
 /** The implicit default step-source artifact when a workflow declares no artifacts. */
 export const PARSE_STEPS_DEFAULT_ARTIFACT = "PROMPT.md";

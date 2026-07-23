@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BranchConflictError } from "../branch-conflicts.js";
-import { classifyTaskError } from "../error-classifier.js";
+import { BranchConflictError } from "../execution/branch-conflicts.js";
+import { classifyTaskError } from "../errors/error-classifier.js";
 
 describe("classifyTaskError", () => {
   it("classifies branch-conflict-stale", () => {

@@ -3,7 +3,7 @@ import {
   FRONTEND_UX_CRITERIA_SECTION,
   applyFrontendUxCriteria,
   matchesFrontendUxPath,
-} from "../frontend-ux-policy.js";
+} from "../tasks/frontend-ux-policy.js";
 
 const EXACT_FRONTEND_UX_CRITERIA = `## Frontend UX Criteria
 

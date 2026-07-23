@@ -6,9 +6,9 @@ import { MAX_TASK_LIST_TEXT_CHARS, type AgentPermissionPolicy, type Task, type T
 import { createPlanningBoardTools } from "../../../dashboard/src/planning-board-tools.js";
 import { createTaskReadTools } from "../agent-tools.js";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
-import { evaluateAgentActionGate } from "../agent-action-gate.js";
-import { COORDINATION_EXEMPT_TOOLS, READONLY_FN_TOOLS } from "../gating-classifications.js";
-import { classifyPermanentAgentToolCall } from "../permanent-agent-gating.js";
+import { evaluateAgentActionGate } from "../agents/agent-action-gate.js";
+import { COORDINATION_EXEMPT_TOOLS, READONLY_FN_TOOLS } from "../execution/gating-classifications.js";
+import { classifyPermanentAgentToolCall } from "../agents/permanent-agent-gating.js";
 import { TriageProcessor } from "../triage.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -14,15 +14,15 @@ import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequ
 import * as schema from "../postgres/schema/index.js";
 import { and, eq } from "drizzle-orm";
 import "../builtin-traits.js";
-import {allowsAutoMergeProcessing} from "../task-merge.js";
-import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS} from "../in-review-stall.js";
-import {getAgentLogFilePath} from "../agent-log-file-store.js";
-import {getInReviewStalledSignal} from "../in-review-stalled.js";
-import {getStalePausedReviewSignal} from "../stale-paused-review.js";
-import {getStalePausedTodoSignal} from "../stale-paused-todo.js";
-import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../task-age-staleness.js";
-import {detectStalledReview} from "../stalled-review-detector.js";
-import {computeRetrySummary} from "../retry-summary.js";
+import {allowsAutoMergeProcessing} from "../merge/task-merge.js";
+import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS} from "../tasks/in-review-stall.js";
+import {getAgentLogFilePath} from "../agents/agent-log-file-store.js";
+import {getInReviewStalledSignal} from "../tasks/in-review-stalled.js";
+import {getStalePausedReviewSignal} from "../tasks/stale-paused-review.js";
+import {getStalePausedTodoSignal} from "../tasks/stale-paused-todo.js";
+import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../tasks/task-age-staleness.js";
+import {detectStalledReview} from "../tasks/stalled-review-detector.js";
+import {computeRetrySummary} from "../tasks/retry-summary.js";
 
 /** Merge storage tiers while preserving primary-source authority and order. */
 function mergePrimaryById<T extends { id: string }>(primary: T[], secondary: T[]): T[] {
@@ -95,14 +95,14 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow, readLiveTaskRows} from "../task-store/async-persistence.js";
-import {searchTasksTsvector, searchTasksLike} from "../task-store/async-search.js";
+import {readTaskRow, readLiveTaskRows} from "../task-store/async/async-persistence.js";
+import {searchTasksTsvector, searchTasksLike} from "../task-store/async/async-search.js";
 import {
   getArchivedTask,
   listArchivedTasks as listArchivedTaskEntries,
   listArchivedTasksByCreatedOrder,
   searchArchivedTasks,
-} from "../async-archive-db.js";
+} from "../async-stores/async-archive-db.js";
 
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {

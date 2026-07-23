@@ -8,7 +8,7 @@ import {
   performTaskRevert,
   resolveTaskRevertCommits,
   TaskRevertError,
-} from "../task-revert.js";
+} from "../execution/task-revert.js";
 import type { Task, TaskCommitAssociation } from "@fusion/core";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;

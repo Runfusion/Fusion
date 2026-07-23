@@ -4,7 +4,7 @@ import {
   rankAssignedTasksForWakeDelta,
   WAKE_DELTA_ASSIGNED_TASKS_CAP,
   type AssignedTaskLike,
-} from "../assigned-task-ranking.js";
+} from "../agents/assigned-task-ranking.js";
 
 function task(partial: Partial<AssignedTaskLike> & Pick<AssignedTaskLike, "id" | "column">): AssignedTaskLike {
   return {

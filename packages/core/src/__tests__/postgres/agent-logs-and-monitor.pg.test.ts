@@ -23,7 +23,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateActivityAnalytics, aggregateMonitorMetrics } from "../../activity-analytics.js";
+import { aggregateActivityAnalytics, aggregateMonitorMetrics } from "../../board/activity-analytics.js";
 import { sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 

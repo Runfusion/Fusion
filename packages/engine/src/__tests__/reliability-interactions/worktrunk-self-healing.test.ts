@@ -31,7 +31,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-vi.mock("../../worktree-pool.js", async () => {
+vi.mock("../../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../../worktree-pool.js");
   return {
     ...actual,
@@ -41,7 +41,7 @@ vi.mock("../../worktree-pool.js", async () => {
   };
 });
 
-vi.mock("../../branch-conflicts.js", async () => {
+vi.mock("../../execution/branch-conflicts.js", async () => {
   const actual = await vi.importActual<any>("../../branch-conflicts.js");
   return {
     ...actual,

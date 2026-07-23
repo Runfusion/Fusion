@@ -15,7 +15,7 @@ vi.mock("@fusion/dashboard/app/components/ViewHeader", () => ({
 const { artifactMediaUrlWithToken } = vi.hoisted(() => ({
   artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/tokenized/${id}?projectId=${projectId}`),
 }));
-vi.mock("@fusion/dashboard/app/api/task-content", () => ({ artifactMediaUrlWithToken }));
+vi.mock("@fusion/dashboard/app/api/tasks/task-content", () => ({ artifactMediaUrlWithToken }));
 
 import { QualityDashboardView, isVerificationVideo } from "../dashboard-view";
 

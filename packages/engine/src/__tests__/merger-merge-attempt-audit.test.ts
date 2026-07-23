@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunAuditEventInput, TaskStore } from "@fusion/core";
-import { createRunAuditor } from "../run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import { emitMergeAttemptAuditEvent } from "../merger.js";
 
 function createStore(recordImpl?: (input: RunAuditEventInput) => Promise<void>) {

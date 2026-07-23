@@ -6,12 +6,12 @@ import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
   reanchorBranchToBase,
-} from "../branch-conflicts.js";
-import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../auto-recovery.js";
-import { activeSessionRegistry } from "../active-session-registry.js";
-import { resolveIntegrationBranch } from "../integration-branch.js";
+} from "../execution/branch-conflicts.js";
+import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { createLogger, type Logger } from "../logger.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const execAsync = promisify(exec);
 const baseLog = createLogger("auto-recovery:branch-worktree");

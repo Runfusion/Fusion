@@ -11,34 +11,35 @@
 // resolves only to this file (types.ts), not the package barrel, so the types must
 // be re-exported here (type-only — no engine/runtime code crosses into the browser
 // bundle) rather than requiring dashboard code to import the source module path.
-export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
-export type { ExecutorEscalationTarget, InReviewStallCode, InReviewStallSignal, ProviderErrorClassification } from "./in-review-stall.js";
-export type { InReviewStalledCode, InReviewStalledSignal } from "./in-review-stalled.js";
-export type { StalePausedReviewCode, StalePausedReviewSignal } from "./stale-paused-review.js";
-export type { StalePausedTodoCode, StalePausedTodoSignal } from "./stale-paused-todo.js";
-export type { StalledReviewSignal } from "./stalled-review-detector.js";
-export type { TaskAgeStalenessLevel, TaskAgeStalenessSignal } from "./task-age-staleness.js";
+
+export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner/planner-overseer-state.js";
+export type { ExecutorEscalationTarget, InReviewStallCode, InReviewStallSignal, ProviderErrorClassification } from "./tasks/in-review-stall.js";
+export type { InReviewStalledCode, InReviewStalledSignal } from "./tasks/in-review-stalled.js";
+export type { StalePausedReviewCode, StalePausedReviewSignal } from "./tasks/stale-paused-review.js";
+export type { StalePausedTodoCode, StalePausedTodoSignal } from "./tasks/stale-paused-todo.js";
+export type { StalledReviewSignal } from "./tasks/stalled-review-detector.js";
+export type { TaskAgeStalenessLevel, TaskAgeStalenessSignal } from "./tasks/task-age-staleness.js";
 // FNXC:UpdateChannels 2026-07-19-12:30: re-export type-only so browser-side
 // dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
 // package barrel) can name the update channel union.
-export type { UpdateChannel } from "./app-version.js";
+export type { UpdateChannel } from "./i18n/app-version.js";
 
 export {
   computeCapacityRisk,
   DEFAULT_CAPACITY_RISK_TODO_THRESHOLD,
-} from "./capacity.js";
-export type { CapacityRiskSignal } from "./capacity.js";
+} from "./board/capacity.js";
+export type { CapacityRiskSignal } from "./board/capacity.js";
 
 // FNXC:McpConfig 2026-06-26-02:10: The dashboard Vite build aliases @fusion/core to this browser-safe module, so the pure MCP config helpers are re-exported here for Settings UI import/export, validation, and project-over-global resolution without pulling Node-only stores into the client bundle.
-export { exportMcpServersJson, importMcpServersJson, mapPluginMcpServerContribution, resolveEffectiveMcpServers } from "./mcp-config.js";
+export { exportMcpServersJson, importMcpServersJson, mapPluginMcpServerContribution, resolveEffectiveMcpServers } from "./config/mcp-config.js";
 export {
   DEFAULT_GITLAB_API_BASE_URL,
   DEFAULT_GITLAB_INSTANCE_URL,
   resolveGitlabConfig,
   resolveGitlabEnabled,
-} from "./gitlab-config.js";
-export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput } from "./gitlab-config.js";
-export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./settings-validation.js";
+} from "./git/gitlab-config.js";
+export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput } from "./git/gitlab-config.js";
+export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./config/settings-validation.js";
 
 /*
  * FNXC:WorkflowDeprecation 2026-07-15-16:35:
@@ -66,8 +67,8 @@ import {
   normalizeColumn, normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
-} from "./types/board.js";
-import type { ThinkingLevel, Column, ColumnId, TaskPriority } from "./types/board.js";
+} from "./types/board/board.js";
+import type { ThinkingLevel, Column, ColumnId, TaskPriority } from "./types/board/board.js";
 export {
   THINKING_LEVELS,
   COLUMNS,
@@ -84,7 +85,7 @@ import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   WORKFLOW_WORK_ITEM_KINDS,
   WORKFLOW_WORK_ITEM_STATES,
-} from "./types/merge-queue.js";
+} from "./types/merge/merge-queue.js";
 import type {
   MergeRequestState,
   WorkflowWorkItemKind,
@@ -102,7 +103,7 @@ import type {
   MergeQueueReleaseOutcome,
   HandoffEvidence,
   HandoffToReviewOptions,
-} from "./types/merge-queue.js";
+} from "./types/merge/merge-queue.js";
 export {
   MERGE_REQUEST_STATES,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
@@ -142,7 +143,7 @@ import {
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   isLocale,
-} from "./types/execution-and-ui.js";
+} from "./types/ui/execution-and-ui.js";
 import type {
   ExecutionMode,
   PlannerOversightLevel,
@@ -151,7 +152,7 @@ import type {
   ThemeMode,
   ColorTheme,
   Locale,
-} from "./types/execution-and-ui.js";
+} from "./types/ui/execution-and-ui.js";
 export {
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
   STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
@@ -194,7 +195,7 @@ import {
   normalizeMergerMode,
   AUTO_RECOVERY_MODES,
   normalizeAutoRecovery,
-} from "./types/merge-policy.js";
+} from "./types/merge/merge-policy.js";
 import type {
   PrStatus,
   MergeStrategy,
@@ -213,7 +214,7 @@ import type {
   AutoRecoverySettings,
   UnavailableNodePolicy,
   OwningNodeHandoffPolicy,
-} from "./types/merge-policy.js";
+} from "./types/merge/merge-policy.js";
 export {
   __resetLegacyCwdMainWarningForTests,
   normalizeMergeIntegrationWorktreeMode,
@@ -252,7 +253,7 @@ export type {
   OwningNodeHandoffPolicy,
 };
 
-import { NOTIFICATION_EVENTS } from "./types/workflow-steps.js";
+import { NOTIFICATION_EVENTS } from "./types/workflow/workflow-steps.js";
 import type {
   ModelPreset,
   WorkflowStepMode,
@@ -270,7 +271,7 @@ import type {
   WorkflowRunStepInstanceStatus,
   WorkflowRunStepInstance,
   WorkflowStepTemplate,
-} from "./types/workflow-steps.js";
+} from "./types/workflow/workflow-steps.js";
 export { NOTIFICATION_EVENTS };
 export type {
   ModelPreset,
@@ -305,7 +306,7 @@ import type {
   TaskGitLabTracking,
   TaskGithubTracking,
   TaskSourceIssue,
-} from "./types/task-tracking.js";
+} from "./types/task/task-tracking.js";
 export type {
   PrConflictState,
   PrConflictDiagnostics,
@@ -359,7 +360,9 @@ import type {
   SteeringComment,
   TaskComment,
   TaskCommentInput,
-} from "./types/task-log.js";
+
+} from "./types/task/task-log.js";
+
 export type {
   StepStatus,
   WorkflowTransitionNotificationKind,
@@ -408,7 +411,7 @@ import type {
   TaskReviewSummary,
   TaskReviewDataItem,
   TaskReviewData,
-} from "./types/task-review.js";
+} from "./types/task/task-review.js";
 export type {
   TaskReviewMode,
   TaskReviewSource,
@@ -452,7 +455,7 @@ import {
   LIVE_DEMO_ARTIFACT_MIME_TYPE,
   DOCUMENT_KEY_RE,
   REPO_OVERRIDE_RE,
-} from "./types/documents-artifacts.js";
+} from "./types/task/documents-artifacts.js";
 export {
   isReviewArtifact,
   parseReviewArtifactsModeOverride,
@@ -489,7 +492,7 @@ import type {
   GoalCitationInput,
   GoalCitation,
   GoalCitationFilter,
-} from "./types/documents-artifacts.js";
+} from "./types/task/documents-artifacts.js";
 export type {
   ArtifactType,
   ReviewArtifactTaskClassification,
@@ -523,7 +526,9 @@ import {
   CheckoutConflictError,
   WorkspaceTaskMergeError,
   DUPLICATE_OF_METADATA_KEY,
-} from "./types/task-core.js";
+
+} from "./types/task/task-core.js";
+
 export {
   assertNotWorkspaceTaskMerge,
   isWorkspaceTask,
@@ -573,7 +578,9 @@ import type {
   TaskDetail,
   InboxTask,
   TaskCreateInput,
-} from "./types/task-core.js";
+
+} from "./types/task/task-core.js";
+
 export type {
   SourceType,
   TaskBranchGroupSource,
@@ -622,7 +629,9 @@ export type {
 
 import {
   SHARED_STATE_SNAPSHOT_VERSION,
-} from "./types/todo-list.js";
+
+} from "./types/task/todo-list.js";
+
 export {
   SHARED_STATE_SNAPSHOT_VERSION,
 };
@@ -635,7 +644,9 @@ import type {
   TodoItemCreateInput,
   TodoItemUpdateInput,
   TodoListWithItems,
-} from "./types/todo-list.js";
+
+} from "./types/task/todo-list.js";
+
 export type {
   TodoList,
   TodoItem,
@@ -666,7 +677,9 @@ import {
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,
-} from "./types/settings-scope.js";
+
+} from "./types/settings/settings-scope.js";
+
 export {
   isMcpSecretRef,
   DEFAULT_GLOBAL_SETTINGS,
@@ -735,7 +748,9 @@ import type {
   SecretsEnvSettings,
   ProjectSettings,
   Settings,
-} from "./types/settings-scope.js";
+
+} from "./types/settings/settings-scope.js";
+
 export type {
   SettingsScope,
   WebSearchBackend,
@@ -794,7 +809,9 @@ import {
   COLUMN_LABELS,
   COLUMN_DESCRIPTIONS,
   VALID_TRANSITIONS,
-} from "./types/board-config.js";
+
+} from "./types/board/board-config.js";
+
 export {
   COLUMN_LABELS,
   COLUMN_DESCRIPTIONS,
@@ -818,7 +835,9 @@ import type {
   MergeResult,
   TaskCommitAssociation,
   CommitAssociationDiffBackfillReport,
-} from "./types/board-config.js";
+
+} from "./types/board/board-config.js";
+
 export type {
   AutostashOutcome,
   TaskCommitAssociationMatchSource,
@@ -845,7 +864,9 @@ import {
   formatPlanningPlanMd,
   validateDockerNodeConfig,
   sanitizeDockerNodeConfigForResponse,
-} from "./types/archive-planning.js";
+
+} from "./types/mesh/archive-planning.js";
+
 export {
   formatPlanningPlanMd,
   validateDockerNodeConfig,
@@ -931,7 +952,9 @@ import type {
   DockerNodeResourceConfig,
   DockerProvisionInput,
   DockerProvisionResult,
-} from "./types/archive-planning.js";
+
+} from "./types/mesh/archive-planning.js";
+
 export type {
   PlanningQuestionType,
   IsolationMode,
@@ -1021,8 +1044,8 @@ import {
   AGENT_VALID_TRANSITIONS,
   isEphemeralAgent,
   hasAgentIdentity,
-} from "./types/agent-state.js";
-import type { AgentState } from "./types/agent-state.js";
+} from "./types/agents/agent-state.js";
+import type { AgentState } from "./types/agents/agent-state.js";
 export {
   AGENT_STATES,
   AGENT_VALID_TRANSITIONS,
@@ -1032,7 +1055,7 @@ export {
 export type { AgentState };
 
 /** Heartbeat event/run types peeled into types/agents.ts */
-import type { AgentHeartbeatEvent, AgentHeartbeatRun, HeartbeatInvocationSource } from "./types/agents.js";
+import type { AgentHeartbeatEvent, AgentHeartbeatRun, HeartbeatInvocationSource } from "./types/agents/agents.js";
 export type { AgentHeartbeatEvent, AgentHeartbeatRun, HeartbeatInvocationSource };
 
 /*
@@ -1054,7 +1077,7 @@ export interface BlockedStateSnapshot {
 }
 
 /** Capabilities/roles an agent can have */
-import type { AgentCapability } from "./types/agents.js";
+import type { AgentCapability } from "./types/agents/agents.js";
 export type { AgentCapability };
 
 /** A configurable agent role prompt template. */
@@ -1089,7 +1112,9 @@ export interface AgentPromptsConfig {
 import type {
   PluginActivation,
   PluginActivationInput,
-} from "./types/plugin-activation.js";
+
+} from "./types/plugins/plugin-activation.js";
+
 export type {
   PluginActivation,
   PluginActivationInput,
@@ -1104,7 +1129,7 @@ import type {
   RunAuditEventFilter,
   RunAuditEventInput,
   RunAuditMutationType,
-} from "./types/run-audit.js";
+} from "./types/audit/run-audit.js";
 export type {
   RunAuditDomain,
   RunAuditEvent,
@@ -1118,7 +1143,7 @@ export type {
 
 import {
   OVERSEER_INTERVENTION_MUTATION,
-} from "./types/planner-intervention.js";
+} from "./types/audit/planner-intervention.js";
 export {
   OVERSEER_INTERVENTION_MUTATION,
 };
@@ -1128,7 +1153,7 @@ import type {
   PlannerInterventionOutcome,
   PlannerInterventionSourceLink,
   PlannerOversightStage,
-} from "./types/planner-intervention.js";
+} from "./types/audit/planner-intervention.js";
 export type {
   PlannerInterventionAction,
   PlannerInterventionEntry,
@@ -1164,7 +1189,7 @@ import {
   getSafeAgentAssetIdSegment,
   isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
-} from "./types/agents.js";
+} from "./types/agents/agents.js";
 export {
   AGENT_PERMISSIONS,
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
@@ -1248,7 +1273,7 @@ import type {
   SandboxProvisioningApprovalMode,
   SecretAccessPolicy,
   TaskAssignSource,
-} from "./types/agents.js";
+} from "./types/agents/agents.js";
 export type {
   Agent,
   AgentAccessState,
@@ -1319,7 +1344,9 @@ import type {
   SetupCompletionResult,
   MigrationOptions,
   MigrationResult,
-} from "./types/multiproject-setup.js";
+
+} from "./types/mesh/multiproject-setup.js";
+
 export type {
   DetectedProject,
   SetupState,
@@ -1337,7 +1364,7 @@ import {
   DASHBOARD_USER_ID,
   normalizeMessageParticipant,
   resolveEphemeralTaskCreationPolicy,
-} from "./types/messages.js";
+} from "./types/messaging/messages.js";
 export {
   DASHBOARD_USER_ID,
   normalizeMessageParticipant,
@@ -1354,7 +1381,7 @@ import type {
   Message,
   MessageCreateInput,
   MessageFilter,
-} from "./types/messages.js";
+} from "./types/messaging/messages.js";
 export type {
   ParticipantType,
   MessageType,
@@ -1446,11 +1473,11 @@ export interface Mailbox {
 
 
 // Re-export PROMPT_KEY_CATALOG for backward compatibility with vite alias
-export { PROMPT_KEY_CATALOG } from "./prompt-overrides.js";
+export { PROMPT_KEY_CATALOG } from "./tasks/prompt-overrides.js";
 
 // Re-exported here so the dashboard's `@fusion/core` → types.ts alias resolves
 // client-side consumers (see packages/dashboard/vite.config.ts).
-export { getErrorMessage } from "./error-message.js";
+export { getErrorMessage } from "./process/error-message.js";
 export {
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,
@@ -1461,11 +1488,11 @@ export {
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
-} from "./model-resolution.js";
-export type { ResolvedModelSelection } from "./model-resolution.js";
-export { resolveResearchSettings } from "./research-settings.js";
-export { resolveResearchFindingId } from "./research-types.js";
-export type { ResolvedResearchSettings } from "./research-settings.js";
+} from "./ai/model-resolution.js";
+export type { ResolvedModelSelection } from "./ai/model-resolution.js";
+export { resolveResearchSettings } from "./research/research-settings.js";
+export { resolveResearchFindingId } from "./research/research-types.js";
+export type { ResolvedResearchSettings } from "./research/research-settings.js";
 
 /*
 FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
@@ -1475,10 +1502,10 @@ fixes that insert the canonical completion-summary node. Both helpers are
 pure (types + string constants only), so they are safe to re-export through
 this browser-safe alias entry.
 */
-export { analyzeWorkflowLifecycle } from "./workflow-lifecycle-validation.js";
-export type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "./workflow-lifecycle-validation.js";
+export { analyzeWorkflowLifecycle } from "./workflows/workflow-lifecycle-validation.js";
+export type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "./workflows/workflow-lifecycle-validation.js";
 export {
   completionSummaryNode,
   isCompletionSummaryNode,
   COMPLETION_SUMMARY_NODE_ID,
-} from "./builtin-completion-summary-node.js";
+} from "./workflows/builtin-completion-summary-node.js";

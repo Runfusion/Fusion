@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTaskSessionAdvisorEnabled } from "../session-advisor.js";
+import { resolveTaskSessionAdvisorEnabled } from "../agents/session-advisor.js";
 
 describe("resolveTaskSessionAdvisorEnabled", () => {
   it("defaults to off when nothing is set", () => {

@@ -33,7 +33,7 @@ import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { execSync } from "node:child_process";
-import { createSecretCipher } from "../../secrets-crypto.js";
+import { createSecretCipher } from "../../secrets/secrets-crypto.js";
 import * as schema from "../../postgres/schema/index.js";
 
 const PG_ADMIN_URL =

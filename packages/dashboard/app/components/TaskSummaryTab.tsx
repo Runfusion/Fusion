@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TaskDetail, TaskStep, WorkflowStepResult } from "@fusion/core";
-import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
+import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { createMermaidCodeComponent, sharedRehypePlugins } from "./markdownPipeline";
 import { ProviderIcon } from "./ProviderIcon";
 import { MergeDetails } from "./MergeDetails";

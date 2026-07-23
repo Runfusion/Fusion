@@ -7,9 +7,9 @@ byte-identical on the default workflow. The custom cases prove KTD-10 fallback.
 */
 import { describe, expect, it } from "vitest";
 import "../builtin-traits.js"; // register built-in traits
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "../workflow-lifecycle-traits.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "../workflows/workflow-lifecycle-traits.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 
 describe("columnsWithFlag — builtin:coding trait→columnIds (R8)", () => {
   const ir = BUILTIN_CODING_WORKFLOW_IR;

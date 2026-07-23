@@ -5,9 +5,9 @@ import {
   normalizeVerdictToken,
   inferVerdictFromProse,
   runCliAgentValidation,
-} from "../cli-agent-validator.js";
+} from "../cli-runtime/cli-agent-validator.js";
 import type { OneShotResult } from "../cli-agent/one-shot-session.js";
-import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agents/agent-runtime.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 function success(parsed: Record<string, unknown>, text = ""): OneShotResult {

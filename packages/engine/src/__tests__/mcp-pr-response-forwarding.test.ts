@@ -10,7 +10,7 @@ const { createResolvedAgentSessionMock, promptWithFallbackMock } = vi.hoisted(()
   promptWithFallbackMock: vi.fn(async () => undefined),
 }));
 
-vi.mock("../agent-session-helpers.js", () => ({
+vi.mock("../agents/agent-session-helpers.js", () => ({
   createResolvedAgentSession: createResolvedAgentSessionMock,
   resolveMergerSessionModel: vi.fn((settings: Settings) => ({
     provider: settings.defaultProvider,
@@ -29,7 +29,7 @@ vi.mock("../pi.js", () => ({
   promptWithFallback: promptWithFallbackMock,
 }));
 
-import { makePrResponseAgentRunner } from "../pr-response-run-ops.js";
+import { makePrResponseAgentRunner } from "../merge/pr-response-run-ops.js";
 
 const settings = {
   defaultProvider: "anthropic",

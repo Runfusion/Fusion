@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
-import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth-storage.js";
+import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth/auth-storage.js";
 
 /*
 FNXC:ProviderAuth 2026-07-07-00:00:

@@ -21,7 +21,7 @@ vi.mock("dockerode", dockerodeModuleFactoryMock);
 vi.mock("node:child_process", () => ({ exec: execMock }));
 vi.mock("node:fs/promises", () => ({ readFile: readFileMock }));
 
-import { DockerClientService } from "../docker-client";
+import { DockerClientService } from "../docker/docker-client.js";
 
 describe("DockerClientService", () => {
   beforeEach(() => {
@@ -153,7 +153,7 @@ describe("DockerClientService", () => {
         },
       }));
 
-      const { DockerClientService: FreshDockerClientService } = await import("../docker-client");
+      const { DockerClientService: FreshDockerClientService } = await import("../docker/docker-client.js");
       const service = new FreshDockerClientService();
       const result = await service.testConnection();
 
@@ -169,7 +169,7 @@ describe("DockerClientService", () => {
         },
       }));
 
-      const { DockerClientService: FreshDockerClientService } = await import("../docker-client");
+      const { DockerClientService: FreshDockerClientService } = await import("../docker/docker-client.js");
       const service = new FreshDockerClientService();
       const result = await service.testConnection();
 
@@ -181,7 +181,7 @@ describe("DockerClientService", () => {
       vi.resetModules();
       vi.doMock("dockerode", dockerodeModuleFactoryMock);
 
-      const { DockerClientService: FreshDockerClientService } = await import("../docker-client");
+      const { DockerClientService: FreshDockerClientService } = await import("../docker/docker-client.js");
       const service = new FreshDockerClientService();
 
       await service.testConnection();

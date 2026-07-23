@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems } from "../mobile-nav-primary-items.js";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems } from "../board/mobile-nav-primary-items.js";
 
 describe("resolveMobileNavPrimaryItems", () => {
   it("uses the existing six-tab order for unset or empty values", () => {

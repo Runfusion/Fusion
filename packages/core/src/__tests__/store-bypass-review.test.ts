@@ -5,7 +5,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
-import { queryRunAuditEvents } from "../task-store/async-audit.js";
+import { queryRunAuditEvents } from "../task-store/async/async-audit.js";
 
 /*
  * FNXC:ReviewLaneBypass 2026-07-09-00:00:

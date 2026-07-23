@@ -30,12 +30,12 @@ import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
-import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async/async-persistence.js";
 import {
   findLiveLineageChildren,
   hasLiveLineageChildren,
   removeLineageReferences,
-} from "../../task-store/async-lifecycle.js";
+} from "../../task-store/async/async-lifecycle.js";
 import {
   enqueueMergeQueue,
   enqueueMergeQueueInTransaction,
@@ -45,7 +45,7 @@ import {
   peekMergeQueue,
   cleanupStaleMergeQueueRowsInTransaction,
   rowToMergeQueueEntry,
-} from "../../task-store/async-merge-coordination.js";
+} from "../../task-store/async/async-merge-coordination.js";
 import { recordRunAuditEventWithinTransaction } from "../../postgres/data-layer.js";
 import type { MergeQueueRow } from "../../task-store/row-types.js";
 

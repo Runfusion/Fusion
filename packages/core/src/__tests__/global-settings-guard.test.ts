@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveGlobalDir } from "../global-settings.js";
+import { resolveGlobalDir } from "../config/global-settings.js";
 
 function withTempHome<T>(fn: (homeDir: string) => T): T {
   const originalHome = process.env.HOME;

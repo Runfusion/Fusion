@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 import type {
   WorkflowBranchPersistence,
   WorkflowBranchProgress,
   WorkflowBranchRunState,
-} from "../workflow-graph-branches.js";
+} from "../workflows/workflow-graph-branches.js";
 
 const task = { id: "FN-FANOUT" } as TaskDetail;
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });

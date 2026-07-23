@@ -6,7 +6,7 @@ import {
   redactForLog,
   type EncryptedSecret,
   type MasterKeyProvider,
-} from "../secrets-crypto.js";
+} from "../secrets/secrets-crypto.js";
 
 function createCachedProvider(key?: Buffer): MasterKeyProvider {
   const resolved = key ?? randomBytes(32);

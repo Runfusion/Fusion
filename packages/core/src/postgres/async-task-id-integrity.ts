@@ -26,7 +26,7 @@ import type { DrizzleDb } from "./data-layer.js";
 import type {
   TaskIdIntegrityAnomaly,
   TaskIdIntegrityReport,
-} from "../task-id-integrity.js";
+} from "../tasks/task-id-integrity.js";
 import { PROJECT_SCHEMA } from "./schema/_shared.js";
 
 const TASK_ID_PATTERN = /^([A-Z][A-Z0-9]*)-(\d+)$/;

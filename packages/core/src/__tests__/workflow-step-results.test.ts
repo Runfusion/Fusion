@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { upsertWorkflowStepResult, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS } from "../workflow-step-results.js";
+import { upsertWorkflowStepResult, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS } from "../workflows/workflow-step-results.js";
 import type { WorkflowStepResult } from "../types.js";
 
 function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepResult {

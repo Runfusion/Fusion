@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { McpSecretReader } from "@fusion/core";
-import { resolveMcpServersForRuntime } from "../mcp-resolution.js";
+import { resolveMcpServersForRuntime } from "../mcp/mcp-resolution.js";
 
 function secrets(values: Record<string, string>): McpSecretReader {
   return {
@@ -84,7 +84,7 @@ describe("resolveMcpServersForRuntime", () => {
   });
 
   it("resolves through the TaskStore-compatible settings split seam", async () => {
-    const { resolveMcpServersForStore } = await import("../mcp-resolution.js");
+    const { resolveMcpServersForStore } = await import("../mcp/mcp-resolution.js");
     const result = await resolveMcpServersForStore({
       async getSettingsByScope() {
         return {
@@ -104,7 +104,7 @@ describe("resolveMcpServersForRuntime", () => {
   });
 
   it("treats a missing settings seam as a genuine empty configuration", async () => {
-    const { resolveMcpServersForStore } = await import("../mcp-resolution.js");
+    const { resolveMcpServersForStore } = await import("../mcp/mcp-resolution.js");
     await expect(resolveMcpServersForStore({})).resolves.toEqual({ servers: [], errors: [] });
   });
 

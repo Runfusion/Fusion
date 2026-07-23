@@ -28,8 +28,8 @@ vi.mock("node:fs/promises", () => ({
   copyFile: mockCopyFile,
 }));
 
-vi.mock("../../plugin-types.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../plugin-types.js")>();
+vi.mock("../plugin-types.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../plugin-types.js")>();
   return { ...actual, validatePluginManifest: mockValidatePluginManifest };
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkflowIr } from "@fusion/core";
-import { isUnplannedForExecution, resolvePreReleasePlanReviewNode } from "../hold-release.js";
+import { isUnplannedForExecution, resolvePreReleasePlanReviewNode } from "../execution/hold-release.js";
 
 function workflow(reviewColumn = "todo"): WorkflowIr {
   return {

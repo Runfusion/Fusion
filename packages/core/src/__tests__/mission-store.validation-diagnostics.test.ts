@@ -5,7 +5,7 @@ import {
   renderValidationFailureDescription,
   VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION,
   VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES,
-} from "../mission-types.js";
+} from "../missions/mission-types.js";
 
 describe("validation diagnostics normalization", () => {
   it("preserves order, limits evidence, and records omissions", () => {

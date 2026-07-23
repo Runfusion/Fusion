@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentStore } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
-import { resolveExecutorSessionModel } from "../agent-session-helpers.js";
+import { resolveExecutorSessionModel } from "../agents/agent-session-helpers.js";
 
 function createStore() {
   return {

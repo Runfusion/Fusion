@@ -4,7 +4,7 @@ import {
   DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS,
   resolveMergingPhaseSilenceFloorMs,
   shouldReclaimWedgedMerge,
-} from "../merge-reclaim-policy.js";
+} from "../merge/merge-reclaim-policy.js";
 
 /*
 FNXC:MergeQueue 2026-07-15-10:05:

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assembleOrgBundle, materializeOrgBundle, scrubOrgBundleSecrets, type OrgBundle } from "../org-bundle.js";
+import { assembleOrgBundle, materializeOrgBundle, scrubOrgBundleSecrets, type OrgBundle } from "../agents/org-bundle.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });

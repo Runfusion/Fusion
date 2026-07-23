@@ -18,14 +18,14 @@ import {
   serializeWorkflowIr,
 } from "@fusion/core";
 
-import { WorkflowTaskRuntime } from "../workflow-task-runtime.js";
+import { WorkflowTaskRuntime } from "../workflows/workflow-task-runtime.js";
 import {
   createWorkflowColumnBoundary,
   type WorkflowColumnBoundary,
-} from "../workflow-column-boundary.js";
-import { isUnplannedForExecution } from "../hold-release.js";
-import type { WorkflowNodeHandler } from "../workflow-graph-executor.js";
-import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+} from "../workflows/workflow-column-boundary.js";
+import { isUnplannedForExecution } from "../execution/hold-release.js";
+import type { WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 
 /*
 FNXC:WorkflowBuiltins 2026-07-19-11:30:

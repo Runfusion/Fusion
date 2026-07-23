@@ -8,13 +8,13 @@ import {
   normalizeAgentPermissionPolicy,
   normalizeAgentPermissionPolicyFromPreset,
   resolveEffectiveAgentPermissionPolicy,
-} from "../agent-permission-policy.js";
+} from "../agents/agent-permission-policy.js";
 import { AGENT_PERMISSION_POLICY_ACTION_CATEGORIES } from "../types.js";
 import {
   ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,
   COORDINATION_EXEMPT_TOOLS,
   READONLY_FN_TOOLS,
-} from "../../../engine/src/gating-classifications.js";
+} from "../../../engine/src/execution/gating-classifications.js";
 
 // FN-7733: the GitLab browse tools are read-only discovery tools (they list issues/MRs without
 // creating task rows) and must never be governed as task_agent_mutation examples.

@@ -6,7 +6,7 @@ import type {
   ProjectRuntimeEvents,
   RuntimeMetrics,
   RuntimeStatus,
-} from "../project-runtime.js";
+} from "../project/project-runtime.js";
 import { remoteNodeLog } from "../logger.js";
 import {
   RemoteNodeClient,

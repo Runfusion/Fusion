@@ -28,7 +28,7 @@ import type {
   RuntimeStatus,
   RuntimeMetrics,
   ProjectRuntimeEvents,
-} from "../project-runtime.js";
+} from "../project/project-runtime.js";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 import { ChildProcessRuntime } from "../runtimes/child-process-runtime.js";
 

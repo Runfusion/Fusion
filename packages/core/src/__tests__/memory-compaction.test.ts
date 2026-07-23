@@ -8,7 +8,7 @@ import {
   DEFAULT_AUTO_SUMMARIZE_SCHEDULE,
   AiServiceError,
   __resetCompactionState,
-} from "../memory-compaction.js";
+} from "../memory/memory-compaction.js";
 
 describe("memory-compaction", () => {
   beforeEach(() => {

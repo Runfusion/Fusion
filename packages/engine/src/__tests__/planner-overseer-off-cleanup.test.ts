@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
 import { ProjectEngine } from "../project-engine.js";
-import { PlannerOverseerMonitor } from "../planner-overseer.js";
+import { PlannerOverseerMonitor } from "../overseer/planner-overseer.js";
 
 type PollStore = {
   tasks: Task[];

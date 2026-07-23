@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { claimDueWorkflowWorkItem } from "../workflow-work-scheduler.js";
+import { claimDueWorkflowWorkItem } from "../workflows/workflow-work-scheduler.js";
 
 const item = { id: "WW-1", taskId: "FN-1", runId: "run-1", nodeId: "execute", kind: "execute" } as any;
 

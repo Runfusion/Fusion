@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutorOverseerSignalMemory, PlannerInterventionEntry } from "@fusion/core";
-import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../planner-overseer.js";
+import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
 import {
   deriveExecutorSignalMemory,
   evaluateNoOpFinalizeExecutorVeto,
   NO_OP_FINALIZE_EXECUTOR_VETO_REASON,
   type NoOpFinalizeExecutorVetoTask,
-} from "../overseer-noop-finalize-veto.js";
+} from "../overseer/overseer-noop-finalize-veto.js";
 
 /**
  * FNXC:Lifecycle 2026-07-16-09:40:

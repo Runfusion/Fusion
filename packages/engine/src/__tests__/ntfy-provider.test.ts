@@ -5,8 +5,8 @@ const mocks = vi.hoisted(() => ({
   buildNtfyClickUrl: vi.fn(() => "http://dash/?project=p1&task=FN-1"),
 }));
 
-vi.mock("../notifier.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../notifier.js")>();
+vi.mock("../util/notifier.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../util/notifier.js")>();
   return {
     ...actual,
     sendNtfyNotificationWithResult: mocks.sendNtfyNotificationWithResult,

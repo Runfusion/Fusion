@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BranchConflictError } from "../branch-conflicts.js";
-import { NativeWorktreeBackend } from "../worktree-backend.js";
+import { BranchConflictError } from "../execution/branch-conflicts.js";
+import { NativeWorktreeBackend } from "../worktree/worktree-backend.js";
 
 function git(repo: string, command: string): string {
   return execSync(command, { cwd: repo, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();

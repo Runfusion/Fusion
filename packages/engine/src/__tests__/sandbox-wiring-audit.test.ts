@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunAuditEventInput, Routine, RoutineStore, TaskStore } from "@fusion/core";
 import { __runConfiguredCommandForTests } from "../executor.js";
-import { createRunAuditor } from "../run-audit.js";
-import { RoutineRunner } from "../routine-runner.js";
+import { createRunAuditor } from "../util/run-audit.js";
+import { RoutineRunner } from "../scheduling/routine-runner.js";
 import { __resetSandboxBackendForTests, __setSandboxBackendForTests } from "../sandbox/index.js";
 import type { HeartbeatMonitor } from "../agent-heartbeat.js";
 

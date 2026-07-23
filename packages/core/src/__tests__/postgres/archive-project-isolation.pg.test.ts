@@ -8,8 +8,8 @@ import {
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import * as schema from "../../postgres/schema/index.js";
 import type { ArchivedTaskEntry } from "../../types.js";
-import { insertTaskRow } from "../../task-store/async-persistence.js";
-import { getLiveTaskColumn } from "../../task-store/async-comments-attachments.js";
+import { insertTaskRow } from "../../task-store/async/async-persistence.js";
+import { getLiveTaskColumn } from "../../task-store/async/async-comments-attachments.js";
 import {
   archiveParentTaskWithLineageGate,
   deleteArchivedTaskEntry,
@@ -17,7 +17,7 @@ import {
   findArchivedTaskEntry,
   listArchivedTaskEntries,
   restoreTaskFromArchive,
-} from "../../task-store/async-archive-lineage.js";
+} from "../../task-store/async/async-archive-lineage.js";
 
 pgDescribe("archive project isolation", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({

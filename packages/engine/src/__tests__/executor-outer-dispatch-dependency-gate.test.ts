@@ -7,7 +7,7 @@ import {
   clearPreHeldExecutorSlotsForTests,
   hasPreHeldExecutorSlot,
   registerPreHeldExecutorSlot,
-} from "../concurrency.js";
+} from "../concurrency/concurrency.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 /*

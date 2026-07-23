@@ -2,7 +2,7 @@ import "./executor-test-helpers.js";
 import { describe, expect, it, vi } from "vitest";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { TaskExecutor } from "../executor.js";
-import { connectMcpSessionTools, type McpSessionClient } from "../mcp-session-tools.js";
+import { connectMcpSessionTools, type McpSessionClient } from "../mcp/mcp-session-tools.js";
 
 function createStore(options: { secretFailure?: boolean } = {}) {
   const revealSecret = vi.fn(async () => {

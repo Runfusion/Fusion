@@ -3,7 +3,7 @@ import { ContainerSandboxBackend } from "./container.js";
 import { NativeSandboxBackend } from "./native.js";
 import { SandboxExecBackend } from "./sandbox-exec-backend.js";
 import { withSandboxAudit } from "./audit.js";
-import type { RunAuditor } from "../run-audit.js";
+import type { RunAuditor } from "../util/run-audit.js";
 import type { SandboxBackend, SandboxCapabilities } from "./types.js";
 
 export { buildContainerArgv } from "./container-argv.js";

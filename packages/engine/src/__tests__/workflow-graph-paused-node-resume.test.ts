@@ -7,8 +7,8 @@ import {
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WorkflowGraphExecutor,
   type WorkflowNodeResult,
-} from "../workflow-graph-executor.js";
-import { WorkflowGraphTaskRunner, type WorkflowGraphRunnerStore } from "../workflow-graph-task-runner.js";
+} from "../workflows/workflow-graph-executor.js";
+import { WorkflowGraphTaskRunner, type WorkflowGraphRunnerStore } from "../workflows/workflow-graph-task-runner.js";
 
 const now = "2026-06-28T18:15:00.000Z";
 const flagOn = { experimentalFeatures: { workflowGraphExecutor: true } } as unknown as Pick<Settings, "experimentalFeatures">;

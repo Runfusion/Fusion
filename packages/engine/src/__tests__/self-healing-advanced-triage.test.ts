@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { SelfHealingManager } from "../self-healing.js";
 
 function task(id: string, overrides: Partial<Task> = {}): Task {

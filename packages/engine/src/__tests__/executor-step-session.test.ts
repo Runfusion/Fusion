@@ -2,23 +2,23 @@
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "./executor-test-helpers.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
 import { createFnAgent } from "../pi.js";
-import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
+import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
-import { WorktreePool } from "../worktree-pool.js";
-import { generateWorktreeName, slugify } from "../worktree-names.js";
+import { WorktreePool } from "../worktree/worktree-pool.js";
+import { generateWorktreeName, slugify } from "../worktree/worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { StepSessionExecutor } from "../step-session-executor.js";
+import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { executorLog } from "../logger.js";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
-import { MAX_RECOVERY_RETRIES } from "../recovery-policy.js";
-import { executingTaskLock } from "../active-session-registry.js";
-import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
+import { MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
+import { executingTaskLock } from "../agents/active-session-registry.js";
+import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
@@ -1080,7 +1080,7 @@ describe("Real-time steering injection", () => {
       createdAt: new Date().toISOString(),
       author: "user" as const,
     };
-    const { StepSessionExecutor: ActualStepSessionExecutor } = await vi.importActual<typeof import("../step-session-executor.js")>("../step-session-executor.js");
+    const { StepSessionExecutor: ActualStepSessionExecutor } = await vi.importActual<typeof import("../execution/step-session-executor.js")>("../execution/step-session-executor.js");
     const stepExecutor = new ActualStepSessionExecutor({
       taskDetail: makeSteeringTask() as any,
       worktreePath: "/tmp/test",

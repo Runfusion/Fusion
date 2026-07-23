@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { createTaskStoreForBackend } from "../../postgres/startup-factory.js";
 import { getSqliteMigrationState } from "../../postgres/sqlite-migrator.js";
 import { mkdirSync } from "node:fs";
-import { DatabaseSync } from "../../sqlite-adapter.js";
+import { DatabaseSync } from "../../db/sqlite-adapter.js";
 import postgres from "postgres";
 import { sql } from "drizzle-orm";
 

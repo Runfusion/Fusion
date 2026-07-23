@@ -17,7 +17,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { AgentStore } from "../../agent-store.js";
+import { AgentStore } from "../../agents/agent-store.js";
 
 const pgTest = pgDescribe;
 

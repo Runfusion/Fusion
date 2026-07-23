@@ -9,7 +9,7 @@ import {
   computeEngineSocketPath,
   EngineAlreadyRunningError,
   type EngineSingletonLock,
-} from "../engine-singleton-lock.js";
+} from "../project/engine-singleton-lock.js";
 
 function uniqueProjectId(label: string): string {
   return `proj_${label}_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

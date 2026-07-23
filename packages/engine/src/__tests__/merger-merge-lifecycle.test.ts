@@ -113,15 +113,15 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-vi.mock("../rate-limit-retry.js", () => ({
+vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
 
-vi.mock("../context-limit-detector.js", () => ({
+vi.mock("../errors/context-limit-detector.js", () => ({
   isContextLimitError: vi.fn(),
 }));
 
-vi.mock("../merger-squash-audit.js", () => ({
+vi.mock("../merge/merger-squash-audit.js", () => ({
   MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS: 30,
   auditSquashMerge: vi.fn(async () => ({
     strategy: "squash",
@@ -141,7 +141,7 @@ vi.mock("../merger-squash-audit.js", () => ({
   })),
 }));
 
-vi.mock("../merger-overlap-guard.js", () => ({
+vi.mock("../merge/merger-overlap-guard.js", () => ({
   detectMergeOverlap: vi.fn(async () => ({
     overlappingFiles: [],
     recentMainCommitsByFile: new Map(),
@@ -177,9 +177,9 @@ import {
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
 import { createFnAgent } from "../pi.js";
-import { auditSquashMerge } from "../merger-squash-audit.js";
-import { finalizeProvenAutoMergeTask } from "../auto-merge-finalization.js";
-import { detectMergeOverlap, restoreBranchWinsFiles } from "../merger-overlap-guard.js";
+import { auditSquashMerge } from "../merge/merger-squash-audit.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { detectMergeOverlap, restoreBranchWinsFiles } from "../merge/merger-overlap-guard.js";
 import { execSync, exec } from "node:child_process";
 import * as core from "@fusion/core";
 import { type TaskStore, type Task, type MergeResult, DEFAULT_SETTINGS } from "@fusion/core";

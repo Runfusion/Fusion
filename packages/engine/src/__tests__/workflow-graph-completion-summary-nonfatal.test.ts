@@ -9,7 +9,7 @@ import {
 } from "@fusion/core";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 
 /*
  * FNXC:WorkflowCompletion 2026-07-01-16:30:

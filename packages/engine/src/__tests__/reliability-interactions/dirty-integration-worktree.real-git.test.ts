@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { git, hasGit } from "./_helpers.js";
-import { advanceIntegrationBranchRef, __test__ } from "../../merger-ref-update-advance.js";
+import { advanceIntegrationBranchRef, __test__ } from "../../merge/merger-ref-update-advance.js";
 
 // Vitest's forks pool SIGTERMs a fork when a test times out, which skips any
 // in-test `finally { rmSync(...) }` and leaves `fusion-test-ref-*-project-*`

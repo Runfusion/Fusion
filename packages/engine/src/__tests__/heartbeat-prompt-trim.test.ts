@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "../heartbeat-prompt-trim.js";
+import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "../agents/heartbeat-prompt-trim.js";
 
 const TASK_MARKER = "… (truncated, use fn_task_show for full)";
 const COMMENT_MARKER = "… (older comments hidden, fetch via fn_task_show)";

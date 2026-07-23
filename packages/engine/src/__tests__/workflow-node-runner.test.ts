@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import {
   WorkflowNodeRunnerRegistry,
   handlerBackedRunner,
   type WorkflowNodeRunner,
-} from "../workflow-node-runner.js";
+} from "../workflows/workflow-node-runner.js";
 import { createMergeAttemptHandler } from "../workflow-node-runners/merge-runner.js";
 
 const task = { id: "FN-7300" } as TaskDetail;

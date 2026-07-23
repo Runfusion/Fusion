@@ -25,8 +25,8 @@ vi.mock("../logger.js", () => ({
   piLog: mockPiLog,
 }));
 
-import { buildSessionSkillContext } from "../session-skill-context.js";
-import { resolveSessionSkills, createSkillsOverrideFromSelection } from "../skill-resolver.js";
+import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
+import { resolveSessionSkills, createSkillsOverrideFromSelection } from "../cli-runtime/skill-resolver.js";
 import type { Agent, AgentStore } from "@fusion/core";
 
 // ── Mock Setup ───────────────────────────────────────────────────────────────

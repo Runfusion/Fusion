@@ -3,7 +3,7 @@ import type { Goal } from "@fusion/core";
 import {
   buildGoalContextSection,
   DEFAULT_GOAL_INJECTION_CHAR_BUDGET,
-} from "../goal-context-injector.js";
+} from "../goals/goal-context-injector.js";
 
 function goal(id: string, title: string, createdAt: string): Goal {
   return {

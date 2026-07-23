@@ -15,7 +15,7 @@ import {
   applyOriginalDescription,
   buildOriginalDescriptionSection,
   extractOriginalDescriptionBody,
-} from "../original-description-policy.js";
+} from "../tasks/original-description-policy.js";
 
 const SAMPLE_DESC = "Fix the board blank state when autoMerge is off on mobile Android.";
 

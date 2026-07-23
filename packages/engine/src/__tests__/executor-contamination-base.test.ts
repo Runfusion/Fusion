@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, mockedCreateFnAgent, mockedExec, resetExecutorMocks } from "./executor-test-helpers.js";
-import * as branchConflicts from "../branch-conflicts.js";
+import * as branchConflicts from "../execution/branch-conflicts.js";
 
 /**
  * FN-4417 regression: the contamination check must compute its own fresh

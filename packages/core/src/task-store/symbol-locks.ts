@@ -12,7 +12,7 @@ import type {
   SymbolLockConflict,
   SymbolLockIdentity,
   SymbolLockOwner,
-} from "../symbol-lock-types.js";
+} from "../tasks/symbol-lock-types.js";
 
 /**
  * FNXC:SymbolLock 2026-07-30-14:00:

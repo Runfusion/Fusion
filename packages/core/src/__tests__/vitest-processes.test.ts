@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { execFile as nodeExecFile } from "node:child_process";
-import { findVitestProcessIds } from "../vitest-processes.js";
+import { findVitestProcessIds } from "../process/vitest-processes.js";
 
 type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
 

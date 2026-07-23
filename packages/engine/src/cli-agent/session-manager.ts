@@ -35,7 +35,7 @@ import {
   type CliSessionPurpose,
   type CliTerminationReason,
 } from "@fusion/core";
-import { loadPtyModule } from "../pty-native.js";
+import { loadPtyModule } from "../cli-runtime/pty-native.js";
 import type { IPty } from "node-pty";
 import type { CliAdapterRegistry, CliAgentAdapter, CliLaunchSpec, CliReadinessDetector } from "./adapter.js";
 

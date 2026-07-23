@@ -4,12 +4,12 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { BUILTIN_OVERSIGHT_SETTINGS, BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
+import { BUILTIN_OVERSIGHT_SETTINGS, BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
 import {
   resolveEffectivePlannerHeartbeatPatrolEnabled,
   resolveEffectiveSettingsById,
   type WorkflowSettingsResolverStore,
-} from "../workflow-settings-resolver.js";
+} from "../workflows/workflow-settings-resolver.js";
 
 const PROJECT = "proj-1";
 

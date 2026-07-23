@@ -921,7 +921,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
 
   const ensureDefaults = async (): Promise<Record<string, unknown>> => {
     if (!defaultSettingsCache) {
-      const { DEFAULT_PROJECT_SETTINGS } = await import("../settings-schema.js");
+      const { DEFAULT_PROJECT_SETTINGS } = await import("../config/settings-schema.js");
       defaultSettingsCache = DEFAULT_PROJECT_SETTINGS as Record<string, unknown>;
     }
     return defaultSettingsCache;

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { DEFAULT_SETTINGS } from "@fusion/core";
-import { checkDiffVolume, DiffVolumeRegressionError } from "../merger-diff-volume-gate.js";
+import { checkDiffVolume, DiffVolumeRegressionError } from "../merge/merger-diff-volume-gate.js";
 import { attemptWithSideStrategy, commitOrAmendMergeWithFixes, executeMergeAttempt } from "../merger.js";
 
 function git(dir: string, command: string): string {

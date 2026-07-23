@@ -9,7 +9,7 @@ import {
   setMaxConcurrentVerifications,
   unregisterProjectVerificationLimit,
   withVerificationSlot,
-} from "../verification-concurrency.js";
+} from "../concurrency/verification-concurrency.js";
 
 describe("verification concurrency", () => {
   beforeEach(() => {

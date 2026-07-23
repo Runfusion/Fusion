@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import type { Task } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
-import { removeWorktree } from "../worktree-pool.js";
+import { removeWorktree } from "../worktree/worktree-pool.js";
 import {
   createMockStore,
   mockCleanup,

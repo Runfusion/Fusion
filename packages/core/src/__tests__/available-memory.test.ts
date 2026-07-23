@@ -8,7 +8,7 @@ vi.mock("node:os", () => ({
   freemem: freememMock,
 }));
 
-import { getAvailableMemoryBytes, getAvailableMemoryInfo } from "../available-memory.js";
+import { getAvailableMemoryBytes, getAvailableMemoryInfo } from "../process/available-memory.js";
 
 type ProcessWithAvailableMemory = NodeJS.Process & { availableMemory?: () => number };
 

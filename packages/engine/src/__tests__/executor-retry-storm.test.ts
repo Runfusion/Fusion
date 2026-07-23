@@ -6,7 +6,7 @@ import {
   serializeRetryStormError,
   type TaskDetail,
 } from "@fusion/core";
-import { recordRetry } from "../retry-burned-logger.js";
+import { recordRetry } from "../errors/retry-burned-logger.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {

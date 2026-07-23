@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { logMcpForwardingSkipped, runtimeSupportsMcp } from "../mcp-runtime-support.js";
+import { logMcpForwardingSkipped, runtimeSupportsMcp } from "../mcp/mcp-runtime-support.js";
 
 describe("runtimeSupportsMcp", () => {
   it("allows the default pi runtime for non-mock providers", () => {

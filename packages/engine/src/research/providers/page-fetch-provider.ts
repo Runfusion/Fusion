@@ -1,7 +1,7 @@
 import type { ResearchProviderConfig, ResearchSource } from "@fusion/core";
-import type { ResearchProvider } from "../../research-step-runner.js";
+import type { ResearchProvider } from "../research-step-runner.js";
 import { createLogger } from "../../logger.js";
-import { fetchWebContent, WebFetchError } from "../../web-fetch.js";
+import { fetchWebContent, WebFetchError } from "../../util/web-fetch.js";
 import { ResearchProviderError, type ResearchFetchResult } from "../types.js";
 
 const log = createLogger("research:page-fetch");

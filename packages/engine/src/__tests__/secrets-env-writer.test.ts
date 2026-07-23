@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { cleanupSecretsEnvFile, writeSecretsEnvFile } from "../secrets-env-writer.js";
+import { cleanupSecretsEnvFile, writeSecretsEnvFile } from "../worktree/secrets-env-writer.js";
 
 const dirs: string[] = [];
 

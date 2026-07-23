@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_MERGE_PIPELINE_STATUSES, isActiveMergeStatus } from "../active-merge-status.js";
+import { ACTIVE_MERGE_PIPELINE_STATUSES, isActiveMergeStatus } from "../merge/active-merge-status.js";
 
 describe("isActiveMergeStatus", () => {
   it("treats the full AI/PR merge pipeline as active merge", () => {

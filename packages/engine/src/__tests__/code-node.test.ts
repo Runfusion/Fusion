@@ -21,8 +21,8 @@ import {
   CODE_NODE_MAX_SOURCE_BYTES,
   CODE_NODE_OUTPUT_CAP_BYTES,
   type CodeNodeResult,
-} from "../code-node-runner.js";
-import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflow-node-handlers.js";
+} from "../execution/code-node-runner.js";
+import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 
 const RESULT_BEGIN = "__FUSION_CODE_NODE_RESULT_BEGIN__";
 const RESULT_END = "__FUSION_CODE_NODE_RESULT_END__";

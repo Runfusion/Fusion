@@ -17,10 +17,10 @@ import {
   parseWorkflowIr,
   resolveCreationColumn,
 } from "../index.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
-import { planReviewOptionalGroupNode } from "../builtin-plan-review-group.js";
-import { completionSummaryNode } from "../builtin-completion-summary-node.js";
-import { computeRemovedOccupiedColumns } from "../workflow-reconciliation.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
+import { planReviewOptionalGroupNode } from "../workflows/builtin-plan-review-group.js";
+import { completionSummaryNode } from "../workflows/builtin-completion-summary-node.js";
+import { computeRemovedOccupiedColumns } from "../workflows/workflow-reconciliation.js";
 
 // ── Column descriptions ───────────────────────────────────────────────────────
 

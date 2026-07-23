@@ -16,9 +16,9 @@ import {
   resolveReviewLevelBackfill,
   planLegacyAdoption,
   resolveOrphanedPendingStepResults,
-} from "../legacy-adoption.js";
-import { CODE_REVIEW_GROUP_ID } from "../builtin-code-review-group.js";
-import { PLAN_REVIEW_GROUP_ID } from "../builtin-plan-review-group.js";
+} from "../db/legacy-adoption.js";
+import { CODE_REVIEW_GROUP_ID } from "../workflows/builtin-code-review-group.js";
+import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
 import { adoptLegacyTaskRowsOnOpen } from "../task-store/lifecycle-ops.js";
 import type { TaskStore } from "../store.js";
 import type { Task } from "../types.js";

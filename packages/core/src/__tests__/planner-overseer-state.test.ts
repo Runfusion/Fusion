@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { derivePlannerOverseerState } from "../planner-overseer-state.js";
+import { derivePlannerOverseerState } from "../planner/planner-overseer-state.js";
 
 describe("derivePlannerOverseerState", () => {
   it("returns idle when oversightLevel is off, regardless of other inputs", () => {

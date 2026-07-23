@@ -4,7 +4,7 @@ import {
   buildAgentGatedActionSummary,
   classifyPermanentAgentToolCall,
   resolvePermanentAgentToolDecision,
-} from "../permanent-agent-gating.js";
+} from "../agents/permanent-agent-gating.js";
 
 const unrestrictedPolicy: AgentPermissionPolicy = {
   presetId: "unrestricted",

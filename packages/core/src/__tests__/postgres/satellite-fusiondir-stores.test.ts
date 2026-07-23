@@ -84,7 +84,7 @@ async function teardownCtx(ctx: StoreTestCtx | null): Promise<void> {
  * states) referencing project.agents.id can be inserted.
  */
 async function seedAgent(layer: AsyncDataLayer, agentId: string): Promise<void> {
-  const { writeAgent } = await import("../../async-agent-store.js");
+  const { writeAgent } = await import("../../async-stores/async-agent-store.js");
   const now = new Date().toISOString();
   await writeAgent(layer.db, {
     id: agentId,
@@ -109,7 +109,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AutomationStore: create → get → list → update (upsert) → due query → delete", async () => {
     ctx = await setupCtx();
-    const { upsertSchedule, getSchedule, findSchedule, listSchedules, deleteSchedule, getDueSchedules } = await import("../../async-automation-store.js");
+    const { upsertSchedule, getSchedule, findSchedule, listSchedules, deleteSchedule, getDueSchedules } = await import("../../async-stores/async-automation-store.js");
     const layer = { ...ctx.layer, projectId: "automation-round-trip" } as AsyncDataLayer;
     const now = new Date().toISOString();
     const past = new Date(Date.now() - 60_000).toISOString();
@@ -187,8 +187,8 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
    */
   it("AutomationStore: isolates duplicate IDs and due-run claims across two bound projects", async () => {
     ctx = await setupCtx();
-    const { upsertSchedule, listSchedules } = await import("../../async-automation-store.js");
-    const { AutomationStore } = await import("../../automation-store.js");
+    const { upsertSchedule, listSchedules } = await import("../../async-stores/async-automation-store.js");
+    const { AutomationStore } = await import("../../automation/automation-store.js");
     const layerA = { ...ctx.layer, projectId: "project-a" } as AsyncDataLayer;
     const layerB = { ...ctx.layer, projectId: "project-b" } as AsyncDataLayer;
     const now = new Date().toISOString();
@@ -247,7 +247,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("RoutineStore: create (cron trigger) → get → list → update → due query → delete", async () => {
     ctx = await setupCtx();
-    const { upsertRoutine, getRoutine, findRoutine, listRoutines, deleteRoutine, getDueRoutines } = await import("../../async-routine-store.js");
+    const { upsertRoutine, getRoutine, findRoutine, listRoutines, deleteRoutine, getDueRoutines } = await import("../../async-stores/async-routine-store.js");
     const now = new Date().toISOString();
     const past = new Date(Date.now() - 60_000).toISOString();
 
@@ -317,7 +317,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("RoutineStore: webhook + api trigger config round-trips through jsonb", async () => {
     ctx = await setupCtx();
-    const { upsertRoutine, getRoutine } = await import("../../async-routine-store.js");
+    const { upsertRoutine, getRoutine } = await import("../../async-stores/async-routine-store.js");
     const now = new Date().toISOString();
 
     const webhookRoutine = {
@@ -370,7 +370,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
       registerPlugin, getPlugin, listPlugins, enablePlugin, disablePlugin,
       updatePluginState, updatePluginSettings, updatePluginInstall, unregisterPlugin,
       getProjectState,
-    } = await import("../../async-plugin-store.js");
+    } = await import("../../async-stores/async-plugin-store.js");
 
     const projectPath = "/test/project";
     const manifest = {
@@ -456,7 +456,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("PluginStore: duplicate registration throws EEXISTS", async () => {
     ctx = await setupCtx();
-    const { registerPlugin } = await import("../../async-plugin-store.js");
+    const { registerPlugin } = await import("../../async-stores/async-plugin-store.js");
     const manifest = { id: "dup-plugin", name: "Dup", version: "1.0.0", dependencies: [] };
     await registerPlugin(ctx.layer, { manifest, path: "/p", projectPath: "/proj" });
     await expect(
@@ -472,7 +472,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
    */
   it("AgentStore: unbound backend heartbeat/run APIs fail closed", async () => {
     ctx = await setupCtx();
-    const { AgentStore } = await import("../../agent-store.js");
+    const { AgentStore } = await import("../../agents/agent-store.js");
     const store = new AgentStore({ rootDir: "/tmp/fusion-unbound-agent-store", asyncLayer: ctx.layer });
     const run = {
       id: "unbound-run",
@@ -498,7 +498,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: write/read agent (jsonb data) → list → find by name → delete", async () => {
     ctx = await setupCtx();
-    const { writeAgent, readAgent, listAgentRows, findAgentRowsByName, deleteAgent, agentToData } = await import("../../async-agent-store.js");
+    const { writeAgent, readAgent, listAgentRows, findAgentRowsByName, deleteAgent, agentToData } = await import("../../async-stores/async-agent-store.js");
     const now = new Date().toISOString();
     const agent = {
       id: `agent-${randomUUID().slice(0, 8)}`,
@@ -554,7 +554,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: heartbeat event + history round-trip", async () => {
     ctx = await setupCtx();
-    const { writeAgent, recordHeartbeat, getHeartbeatHistory } = await import("../../async-agent-store.js");
+    const { writeAgent, recordHeartbeat, getHeartbeatHistory } = await import("../../async-stores/async-agent-store.js");
     const now = new Date().toISOString();
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await writeAgent(ctx.layer.db, { id: agentId, name: "HB", role: "worker", state: "active", createdAt: now, updatedAt: now, metadata: {} });
@@ -571,7 +571,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: run save/get/recent/active-list/status-counts round-trip", async () => {
     ctx = await setupCtx();
-    const { saveRun, getRunDetail, getRunById, getRecentRuns, listActiveHeartbeatRuns, getRunStatusCounts, insertRunIfAbsent } = await import("../../async-agent-store.js");
+    const { saveRun, getRunDetail, getRunById, getRecentRuns, listActiveHeartbeatRuns, getRunStatusCounts, insertRunIfAbsent } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await seedAgent(ctx.layer, agentId);
     const run = {
@@ -610,7 +610,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: task session upsert/get/delete", async () => {
     ctx = await setupCtx();
-    const { upsertTaskSession, getTaskSession, deleteTaskSession } = await import("../../async-agent-store.js");
+    const { upsertTaskSession, getTaskSession, deleteTaskSession } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await seedAgent(ctx.layer, agentId);
     const taskId = "FN-1";
@@ -630,7 +630,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: API key insert/list/revoke", async () => {
     ctx = await setupCtx();
-    const { insertApiKey, readApiKeys, revokeApiKeyRow } = await import("../../async-agent-store.js");
+    const { insertApiKey, readApiKeys, revokeApiKeyRow } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await seedAgent(ctx.layer, agentId);
     const now = new Date().toISOString();
@@ -650,7 +650,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: config revision append/read/find", async () => {
     ctx = await setupCtx();
-    const { appendConfigRevision, readConfigRevisions, findConfigRevisionById } = await import("../../async-agent-store.js");
+    const { appendConfigRevision, readConfigRevisions, findConfigRevisionById } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await seedAgent(ctx.layer, agentId);
     const revision = {
@@ -675,7 +675,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: rating add/get/filter/delete with score CHECK constraint", async () => {
     ctx = await setupCtx();
-    const { addRating, getRatings, deleteRating } = await import("../../async-agent-store.js");
+    const { addRating, getRatings, deleteRating } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
 
@@ -705,7 +705,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: blocked state set/get/clear + all-blocked snapshot", async () => {
     ctx = await setupCtx();
-    const { getLastBlockedState, setLastBlockedState, clearLastBlockedState, getAllBlockedStates } = await import("../../async-agent-store.js");
+    const { getLastBlockedState, setLastBlockedState, clearLastBlockedState, getAllBlockedStates } = await import("../../async-stores/async-agent-store.js");
     const agentId = `agent-${randomUUID().slice(0, 8)}`;
     await seedAgent(ctx.layer, agentId);
     const state = { taskId: "FN-1", reason: "stuck", at: new Date().toISOString() } as never;
@@ -729,7 +729,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   it("AgentStore: __meta migration marker upsert/get", async () => {
     ctx = await setupCtx();
-    const { getMetaValue, upsertMetaValue } = await import("../../async-agent-store.js");
+    const { getMetaValue, upsertMetaValue } = await import("../../async-stores/async-agent-store.js");
     const key = "testMigrationMarker";
 
     expect(await getMetaValue(ctx.layer.db, key)).toBeUndefined();

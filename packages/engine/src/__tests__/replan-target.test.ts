@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:55:

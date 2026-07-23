@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isContextLimitError } from "../context-limit-detector.js";
+import { isContextLimitError } from "../errors/context-limit-detector.js";
 
 describe("isContextLimitError", () => {
   // ── Positive matches: known provider patterns ──────────────────────

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
-import { decideOwningNodeHandoff } from "../node-routing-policy.js";
+import { decideOwningNodeHandoff } from "../project/node-routing-policy.js";
 
 const baseTask: Task = {
   id: "FN-1",

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { copyConfiguredWorktreeFiles } from "../worktree-copy-files.js";
+import { copyConfiguredWorktreeFiles } from "../worktree/worktree-copy-files.js";
 
 const cleanupPaths: string[] = [];
 function makeDir(prefix: string): string {

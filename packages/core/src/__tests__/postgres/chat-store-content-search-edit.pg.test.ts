@@ -24,8 +24,8 @@ import {
   getChatMessages,
   searchChatSessionsByMessageContent,
   updateChatMessageMetadata,
-} from "../../async-chat-store.js";
-import type { ChatMessage, ChatSession } from "../../chat-types.js";
+} from "../../async-stores/async-chat-store.js";
+import type { ChatMessage, ChatSession } from "../../chat/chat-types.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";

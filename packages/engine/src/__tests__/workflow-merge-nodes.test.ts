@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail } from "@fusion/core";
-import { classifyMergePrimitiveResult, runWorkflowMergeAttemptNode } from "../workflow-merge-nodes.js";
-import type { WorkflowPrimitiveContext } from "../runtime-primitives.js";
+import { classifyMergePrimitiveResult, runWorkflowMergeAttemptNode } from "../workflows/workflow-merge-nodes.js";
+import type { WorkflowPrimitiveContext } from "../execution/runtime-primitives.js";
 
 const task = { id: "FN-MERGE" } as TaskDetail;
 const ctx: WorkflowPrimitiveContext = {

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Agent, AgentStore, Task, TaskStore } from "@fusion/core";
-import { EphemeralWorkerManager } from "../ephemeral-worker-manager.js";
+import { EphemeralWorkerManager } from "../agents/ephemeral-worker-manager.js";
 
 const BASE_TIME = "2026-07-03T00:00:00.000Z";
 

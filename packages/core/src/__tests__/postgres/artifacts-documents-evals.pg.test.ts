@@ -19,10 +19,10 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { AsyncEvalStore } from "../../async-eval-store.js";
-import { runScheduledEvalBatch } from "../../eval-automation.js";
+import { AsyncEvalStore } from "../../async-stores/async-eval-store.js";
+import { runScheduledEvalBatch } from "../../eval/eval-automation.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
-import type { EvalRunStatus } from "../../eval-types.js";
+import type { EvalRunStatus } from "../../eval/eval-types.js";
 
 const pgTest = pgDescribe;
 

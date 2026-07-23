@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 import { TaskExecutor } from "../executor.js";
-import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 
 function task(overrides: Partial<Task>): Task {
   return {

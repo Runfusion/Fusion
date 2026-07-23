@@ -1,10 +1,10 @@
 import type { TaskStore } from "@fusion/core";
-import { classifyForeignOnlyContamination } from "../branch-conflicts.js";
-import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure, AutoRecoveryHandlers } from "../auto-recovery.js";
+import { classifyForeignOnlyContamination } from "../execution/branch-conflicts.js";
+import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure, AutoRecoveryHandlers } from "../healing/auto-recovery.js";
 import { createLogger, type Logger } from "../logger.js";
 import { recoverForeignOnlyContamination } from "../recovery/foreign-only-contamination.js";
-import { resolveIntegrationBranch } from "../integration-branch.js";
-import type { RunAuditor } from "../run-audit.js";
+import { resolveIntegrationBranch } from "../merge/integration-branch.js";
+import type { RunAuditor } from "../util/run-audit.js";
 
 const baseLog = createLogger("auto-recovery:contamination");
 

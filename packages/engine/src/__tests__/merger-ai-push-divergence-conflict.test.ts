@@ -26,7 +26,7 @@ vi.mock("../pi.js", async (importOriginal) => {
   };
 });
 
-import { pushAfterMergeToRemote, runAiMerge } from "../merger-ai.js";
+import { pushAfterMergeToRemote, runAiMerge } from "../merge/merger-ai.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();

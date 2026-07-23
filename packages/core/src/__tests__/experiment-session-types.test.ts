@@ -9,7 +9,7 @@ import {
   isHookRecord,
   isRunRecord,
   type ExperimentSessionRecord,
-} from "../experiment-session-types.js";
+} from "../eval/experiment-session-types.js";
 
 describe("experiment-session-types", () => {
   it("defines constants with expected members and order", () => {

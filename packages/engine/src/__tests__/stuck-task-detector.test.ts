@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { StuckTaskDetector } from "../stuck-task-detector.js";
+import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import type { TaskStore } from "@fusion/core";
 
 // Mock store factory

@@ -1,8 +1,8 @@
 import type { NotificationEvent, NotificationPayload } from "@fusion/core";
 
 import { schedulerLog } from "../logger.js";
-import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflow-graph-executor.js";
-import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflow-node-runner.js";
+import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
+import type { WorkflowNodeRunner, WorkflowNodeRunnerContext } from "../workflows/workflow-node-runner.js";
 
 const WORKFLOW_ID_CONTEXT_KEY = "workflow:id";
 

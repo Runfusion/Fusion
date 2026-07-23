@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BranchAttributionError, SilentNoOpAttributionMismatchError } from "../branch-attribution.js";
-import * as attributionModule from "../branch-attribution.js";
+import { BranchAttributionError, SilentNoOpAttributionMismatchError } from "../execution/branch-attribution.js";
+import * as attributionModule from "../execution/branch-attribution.js";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, mockedExistsSync, type Task } from "./merger-test-helpers.js";
 import * as mergerModule from "../merger.js";
 

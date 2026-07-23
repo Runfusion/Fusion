@@ -13,8 +13,8 @@ import {
   MEMORY_DREAMS_SCHEDULE_NAME,
   processAgentMemoryDreams,
   syncMemoryDreamsAutomation,
-} from "../memory-dreams.js";
-import * as memoryBackend from "../memory-backend.js";
+} from "../memory/memory-dreams.js";
+import * as memoryBackend from "../memory/memory-backend.js";
 
 describe("extractDreamProcessorResult", () => {
   it("parses dreams and long-term updates from well-formed output", () => {

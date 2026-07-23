@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import type { ChatRoomMessage, Message, NotificationProvider, Settings, Task } from "@fusion/core";
 import { NotificationService } from "../notification/notification-service.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
-import { DEFAULT_NTFY_EVENTS } from "../notifier.js";
+import { DEFAULT_NTFY_EVENTS } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
 
 vi.mock("../logger.js", () => ({

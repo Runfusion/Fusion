@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./reliability-interactions/_helpers.js";
 

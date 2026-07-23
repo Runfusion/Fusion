@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth-storage.js";
+import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth/auth-storage.js";
 
 function encodeBase64Url(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url");

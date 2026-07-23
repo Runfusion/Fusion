@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Settings } from "../types.js";
-import { applyWorkflowSettingsOverlay } from "../effective-settings-overlay.js";
+import { applyWorkflowSettingsOverlay } from "../config/effective-settings-overlay.js";
 
 describe("applyWorkflowSettingsOverlay", () => {
   it("applies the two-tier workflow settings overlay without mutating base settings", () => {

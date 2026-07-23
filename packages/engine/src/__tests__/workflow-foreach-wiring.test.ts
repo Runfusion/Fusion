@@ -11,13 +11,13 @@ import type { TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
  *  is not exported via the barrel; derive it from the method signature). */
 type SaveInstanceArg = Parameters<TaskStore["saveWorkflowRunStepInstanceAsync"]>[0];
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import type {
   IntegrationGitOps,
   IntegrationProjection,
-} from "../step-integration.js";
-import type { WorkflowStepInstancePersistence, WorkflowStepInstanceState } from "../workflow-graph-foreach.js";
-import { type WorkflowLegacySeams } from "../workflow-node-handlers.js";
+} from "../execution/step-integration.js";
+import type { WorkflowStepInstancePersistence, WorkflowStepInstanceState } from "../workflows/workflow-graph-foreach.js";
+import { type WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
 
 /**
  * runId/foreachNodeId wiring regression coverage (FIX 1). These tests wire the

@@ -11,16 +11,16 @@ import type {
   PluginSkillContribution,
   PluginMcpServerContribution,
   PluginWorkflowStepContribution,
-} from "../plugin-types.js";
+} from "../plugins/plugin-types.js";
 import type {
   WorkflowExtensionContribution,
   WorkflowExtensionFallback,
   WorkflowExtensionKind,
-} from "../workflow-extension-types.js";
+} from "../workflows/workflow-extension-types.js";
 import {
   validatePluginManifest,
   validateWorkflowExtensionContribution,
-} from "../plugin-types.js";
+} from "../plugins/plugin-types.js";
 
 describe("plugin contribution type constraints", () => {
   it("accepts setup check result status variants", () => {

@@ -12,7 +12,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   });
 });
 
-vi.mock("../reviewer.js", () => ({
+vi.mock("../execution/reviewer.js", () => ({
   reviewStep: vi.fn().mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" }),
 }));
 

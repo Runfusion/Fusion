@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { classifyMisroutedForeignCommit } from "../branch-conflicts.js";
+import { classifyMisroutedForeignCommit } from "../execution/branch-conflicts.js";
 
 function git(dir: string, cmd: string): string {
   return execSync(cmd, { cwd: dir, stdio: "pipe" }).toString().trim();

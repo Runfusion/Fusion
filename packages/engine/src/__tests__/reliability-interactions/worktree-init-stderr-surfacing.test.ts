@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { acquireTaskWorktree } from "../../worktree-acquisition.js";
+import { acquireTaskWorktree } from "../../worktree/worktree-acquisition.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 

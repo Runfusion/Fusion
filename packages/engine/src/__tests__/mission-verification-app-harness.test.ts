@@ -31,7 +31,7 @@ import {
   type BundleBuilder,
   type LaunchedAppProcess,
   type AppLaunchOptions,
-} from "../mission-verification-app-harness.js";
+} from "../missions/mission-verification-app-harness.js";
 
 afterEach(() => {
   vi.restoreAllMocks();

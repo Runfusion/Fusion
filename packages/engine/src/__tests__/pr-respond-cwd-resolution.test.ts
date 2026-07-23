@@ -8,7 +8,7 @@ const agentRunnerCalls = vi.hoisted(
 );
 const gitOpsResolvers = vi.hoisted(() => [] as Array<(entity: unknown) => string>);
 
-vi.mock("../pr-response-run-ops.js", () => ({
+vi.mock("../merge/pr-response-run-ops.js", () => ({
   makePrResponseAgentRunner: vi.fn(
     (_settings: unknown, taskId: string, cwd: string, store: unknown) => {
       agentRunnerCalls.push({ taskId, cwd, store });
@@ -25,11 +25,11 @@ vi.mock("../pr-response-run-ops.js", () => ({
   }),
 }));
 
-vi.mock("../pr-response-run.js", () => ({
+vi.mock("../merge/pr-response-run.js", () => ({
   runPrResponseRun: vi.fn(async () => ({ value: "resolved-all" })),
 }));
 
-import { buildRespondCallback } from "../pr-nodes.js";
+import { buildRespondCallback } from "../merge/pr-nodes.js";
 
 const entity = {
   id: "pr-entity-1",

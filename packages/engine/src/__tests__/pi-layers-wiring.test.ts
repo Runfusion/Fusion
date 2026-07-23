@@ -81,7 +81,7 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("../custom-providers.js", () => ({
+vi.mock("../auth/custom-providers.js", () => ({
   readCustomProviders: readCustomProvidersMock,
 }));
 

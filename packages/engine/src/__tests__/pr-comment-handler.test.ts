@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PrCommentHandler } from "../pr-comment-handler.js";
+import { PrCommentHandler } from "../merge/pr-comment-handler.js";
 import type { TaskStore, Task } from "@fusion/core";
 
 const mockStore = {

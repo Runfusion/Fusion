@@ -30,7 +30,7 @@ import { FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE } from "../executor.js";
 import {
   createSkillsOverrideFromSelection,
   resolveSessionSkills,
-} from "../skill-resolver.js";
+} from "../cli-runtime/skill-resolver.js";
 
 vi.mock("../logger.js", () => {
   const mk = () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() });

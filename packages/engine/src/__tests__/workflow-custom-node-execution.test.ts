@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowColumnAgent, WorkflowIrNode } from "@fusion/core";
 
-import { WorkflowCustomNodeExecutionService } from "../workflow-custom-node-execution.js";
+import { WorkflowCustomNodeExecutionService } from "../workflows/workflow-custom-node-execution.js";
 
 describe("WorkflowCustomNodeExecutionService", () => {
   it("adapts a custom-node executor into the graph runner contract with column binding", async () => {

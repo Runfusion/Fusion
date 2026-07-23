@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
-import { DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS } from "../merge-reclaim-policy.js";
+import { DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS } from "../merge/merge-reclaim-policy.js";
 
 /*
 FNXC:MergeQueue 2026-07-15-10:05:

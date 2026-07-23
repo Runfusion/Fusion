@@ -4,7 +4,7 @@ import {
   computeContentFingerprint,
   findDuplicateMatches,
   type DuplicateCandidate,
-} from "../duplicate-detection.js";
+} from "../duplicates/duplicate-detection.js";
 
 describe("computeContentFingerprint", () => {
   it("returns identical fingerprint for identical title and description", () => {

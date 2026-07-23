@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getCreateInteractiveAiSessionFactory,
   setCreateInteractiveAiSessionFactory,
-} from "../ai-engine-loader.js";
-import { PluginLoader } from "../plugin-loader.js";
+} from "../ai/ai-engine-loader.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
 import type {
   CreateInteractiveAiSessionFactory,
   InteractiveAiSession,
   InteractiveAiSessionEvent,
-} from "../plugin-types.js";
+} from "../plugins/plugin-types.js";
 import type { PlanningQuestion } from "../types.js";
 
 /**
