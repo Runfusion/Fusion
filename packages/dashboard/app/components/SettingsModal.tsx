@@ -3879,7 +3879,14 @@ export function SettingsModal({
       if (activeSectionResetEntry.scope === "global") {
         const patch: Record<string, unknown> = {};
         for (const key of activeSectionResetEntry.keys) {
-          patch[key] = (DEFAULT_GLOBAL_SETTINGS as Record<string, unknown>)[key];
+          /*
+          FNXC:SettingsReset 2026-07-22-23:55:
+          Issue #2411: global keys whose canonical default is undefined (e.g.
+          embeddedPostgresMaxConnections, resolved platform-aware server-side)
+          must reset via null-as-delete. A literal undefined is dropped by JSON
+          serialization, so the stored value would silently survive the reset.
+          */
+          patch[key] = (DEFAULT_GLOBAL_SETTINGS as Record<string, unknown>)[key] ?? null;
         }
         await updateGlobalSettings(patch);
       } else {

@@ -35,6 +35,9 @@ import {
   DEFAULT_START_TIMEOUT_MS,
   DEFAULT_EMBEDDED_POSTGRES_FLAGS,
   defaultEmbeddedPostgresFlagsFor,
+  resolveEmbeddedMaxConnections,
+  DEFAULT_EMBEDDED_MAX_CONNECTIONS,
+  DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
@@ -1458,6 +1461,46 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("embedded-lifecycle: platform-aware max_connections default (issue #2411)", () => {
+  /*
+   * FNXC:PostgresEmbedded 2026-07-22-23:55:
+   * Issue #2411: on Windows each connection is a separate postgres.exe process; a
+   * max_connections=500 cap exhausts the non-interactive desktop heap during
+   * backend spawn bursts and forked backends die with 0xC0000142, taking the
+   * cluster (and dashboard) down. The reporter confirmed stability after lowering
+   * the cap. The UNSET default must therefore be lower on win32 (150) than
+   * elsewhere (500), while an explicit operator setting is honored on every
+   * platform, clamped to [32, 2000].
+   */
+  it.each([
+    ["win32", DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32],
+    ["darwin", DEFAULT_EMBEDDED_MAX_CONNECTIONS],
+    ["linux", DEFAULT_EMBEDDED_MAX_CONNECTIONS],
+  ] as const)("unset resolves the platform default on %s", (platform, expected) => {
+    expect(resolveEmbeddedMaxConnections(undefined, platform)).toBe(expected);
+  });
+
+  it("keeps the win32 default materially below the general default", () => {
+    expect(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32).toBeLessThan(DEFAULT_EMBEDDED_MAX_CONNECTIONS);
+    expect(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32).toBeLessThanOrEqual(150);
+  });
+
+  it.each(["win32", "darwin", "linux"] as const)(
+    "an explicit operator setting is honored and clamped to [32, 2000] on %s",
+    (platform) => {
+      expect(resolveEmbeddedMaxConnections(100, platform)).toBe(100);
+      expect(resolveEmbeddedMaxConnections(500, platform)).toBe(500);
+      expect(resolveEmbeddedMaxConnections(5, platform)).toBe(32);
+      expect(resolveEmbeddedMaxConnections(9_999, platform)).toBe(2_000);
+    },
+  );
+
+  it("treats non-integer configured values as unset", () => {
+    expect(resolveEmbeddedMaxConnections(Number.NaN, "win32")).toBe(DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32);
+    expect(resolveEmbeddedMaxConnections(250.5, "linux")).toBe(DEFAULT_EMBEDDED_MAX_CONNECTIONS);
   });
 });
 

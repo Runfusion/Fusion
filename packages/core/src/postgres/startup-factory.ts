@@ -397,7 +397,7 @@ async function bootSchemaBackendOnce(
   let resolvedBackend = backend;
   let embeddedDataDir: string | null = null;
   if (backend.mode === "embedded") {
-    const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
+    const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE, resolveEmbeddedMaxConnections } =
       await import("./embedded-lifecycle.js");
     const { GlobalSettingsStore } = await import("../global-settings.js");
     // Tests that boot an embedded backend intentionally do not have an
@@ -406,9 +406,17 @@ async function bootSchemaBackendOnce(
     const configuredMaxConnections = process.env.VITEST === "true" && !options.globalSettingsDir
       ? undefined
       : (await new GlobalSettingsStore(options.globalSettingsDir).getSettings()).embeddedPostgresMaxConnections;
-    const maxConnections = Number.isInteger(configuredMaxConnections)
-      ? Math.min(2_000, Math.max(32, configuredMaxConnections!))
-      : 500;
+    /*
+    FNXC:PostgresEmbedded 2026-07-22-23:55:
+    Issue #2411: the unset default is platform-aware (win32 150, else 500) because
+    Windows backends are separate processes and a 500-connection cap exhausts the
+    desktop heap under load, killing forked backends with 0xC0000142 and taking the
+    dashboard down. embeddedPostgresMaxConnections is deliberately undefined in
+    DEFAULT_GLOBAL_SETTINGS so this server-side resolution can see "operator never
+    set it" — a concrete schema default would be merged in by getSettings() and
+    mask the platform choice.
+    */
+    const maxConnections = resolveEmbeddedMaxConnections(configuredMaxConnections);
     const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
     embeddedDataDir = dataDir;
     log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
