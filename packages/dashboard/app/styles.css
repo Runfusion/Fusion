@@ -1240,10 +1240,18 @@ Map it to the established triage token so the decorative header indicator remain
   animation: count-flash-bg 1400ms ease-out;
 }
 
+/*
+FNXC:WorkflowColumnDescriptions 2026-07-22-12:35:
+Custom workflow descriptions are author-entered explanatory text shared by selected,
+aggregate, and archived board columns. Preserve explicit line breaks and break long
+unspaced values so narrow desktop and mobile lanes do not clip the copy.
+*/
 .column-desc {
   font-size: 0.6875rem;
   color: var(--text-dim);
   padding: var(--space-xs) calc(var(--space-lg) - 2px) calc(var(--space-md) - 2px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .column-body {

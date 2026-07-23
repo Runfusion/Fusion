@@ -2177,3 +2177,7 @@ Chat can queue `fn_task_request_verification` for an **in-progress** task that h
 
 
 Productivity duration uses total agent-active time: planning (`cumulativePlanningMs`) plus execution (`cumulativeActiveMs`); queued column dwell is not included.
+
+### Custom workflow column descriptions
+
+Custom workflow authors can add optional explanatory copy beneath each column name in the workflow editor. The description appears on selected, aggregate, and archived workflow board columns. Clearing it removes the custom metadata; columns then continue to use the standard lifecycle description when one exists.
