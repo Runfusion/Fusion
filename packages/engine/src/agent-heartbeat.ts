@@ -2528,7 +2528,17 @@ export class HeartbeatMonitor {
 
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
-          heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir, sourceAgentId: agentId }));
+          /*
+          FNXC:MissionAdmission 2026-07-22-13:07:
+          Idle-patrol delegation has no parent task to inherit lineage from.
+          Keep the same requireMissionLineage contract as fn_task_create so
+          freeform off-mission delegation cannot slip past FN-8307 via delegate.
+          */
+          heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, {
+            rootDir: this.rootDir,
+            sourceAgentId: agentId,
+            requireMissionLineage: true,
+          }));
           heartbeatTools.push(createTaskAssignTool(this.store, taskStore));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
           heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));

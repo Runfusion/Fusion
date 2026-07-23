@@ -886,6 +886,136 @@ describe("TaskDetailModal", () => {
       expect((container.querySelector(".detail-tabs") as HTMLElement).style.borderBottom).toBe("");
     });
 
+    it("keeps every mobile task footer control shrinkable on one row from 320 CSS px through 768px", () => {
+      const css = readDashboardStylesSource();
+      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".task-detail-content .modal-actions");
+      const footerBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .modal-actions");
+      const spacerBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .modal-actions-spacer");
+      const inReviewBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .detail-move-actions-in-review");
+      const buttonBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .modal-actions .btn");
+      const labelBlock = getExactCssRuleBlock(
+        mobileBlock,
+        ".task-detail-content .detail-footer-button-label,\n  .task-detail-content .detail-move-btn__label",
+      );
+      const dropdownBlock = getExactCssRuleBlock(
+        mobileBlock,
+        ".task-detail-content .detail-actions-dropdown,\n  .task-detail-content .detail-move-dropdown",
+      );
+      const desktopMoveDropdownBlock = getExactCssRuleBlock(css, ".detail-move-dropdown");
+      const expandedChatBlock = getExactCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-actions");
+
+      /*
+      FNXC:TaskDetailModalResponsive 2026-07-22-00:00:
+      FN-8492's supported mobile fit contract is 320 CSS px through 768px. Keep
+      these source assertions together: `nowrap` without shrink guards and
+      text ellipsis would merely turn the original second row into overflow.
+      */
+      expect(footerBlock).toContain("flex-wrap: nowrap;");
+      expect(footerBlock).not.toContain("flex-wrap: wrap;");
+      expect(footerBlock).toContain("align-items: center;");
+      expect(footerBlock).toContain("gap: var(--space-xs);");
+      expect(spacerBlock).toContain("flex: 1 1 0;");
+      expect(spacerBlock).toContain("min-width: 0;");
+      expect(dropdownBlock).toContain("min-width: 0;");
+      expect(dropdownBlock).toContain("flex-shrink: 1;");
+      // FNXC:TaskDetailModalResponsive 2026-07-22-17:12: The Actions + Move
+      // symptom regressed when Move grew into the spacer's middle region. This
+      // mobile-only contract leaves all surplus width to the spacer, making the
+      // move control trailing-aligned without changing desktop dropdown layout.
+      expect(mobileBlock).toMatch(/\.task-detail-content \.detail-move-dropdown\s*\{\s*flex:\s*0 1 auto;/);
+      expect(mobileBlock).not.toMatch(/\.task-detail-content \.detail-move-dropdown\s*\{\s*flex:\s*1 1 auto;/);
+      expect(desktopMoveDropdownBlock).not.toContain("flex:");
+      expect(inReviewBlock).toContain("display: flex;");
+      expect(inReviewBlock).toContain("flex-wrap: nowrap;");
+      expect(inReviewBlock).toContain("min-width: 0;");
+      expect(inReviewBlock).toContain("gap: var(--space-xs);");
+      expect(buttonBlock).toContain("flex: 0 1 auto;");
+      expect(buttonBlock).toContain("min-width: 0;");
+      expect(buttonBlock).toContain("padding-inline: var(--space-xs);");
+      expect(buttonBlock).toContain("white-space: nowrap;");
+      expect(buttonBlock).toContain("overflow: hidden;");
+      expect(buttonBlock).toContain("text-overflow: ellipsis;");
+      expect(labelBlock).toContain("min-width: 0;");
+      expect(labelBlock).toContain("white-space: nowrap;");
+      expect(labelBlock).toContain("overflow: hidden;");
+      expect(labelBlock).toContain("text-overflow: ellipsis;");
+      expect(expandedChatBlock).toContain("display: none;");
+      expect(css).toMatch(/\.task-detail-content--planner-chat-expanded \.modal-actions,[\s\S]*?\{\s*display:\s*none;/);
+    });
+
+    it("keeps dense in-review and standard task controls in their shared footer", () => {
+      const { container, unmount } = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ column: "in-review" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      const inReviewFooter = container.querySelector(".modal-actions");
+
+      expect(inReviewFooter).toBeTruthy();
+      expect(inReviewFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
+      expect(inReviewFooter?.querySelector(".detail-move-btn")).toBeTruthy();
+      expect(inReviewFooter?.contains(screen.getByRole("button", { name: "Merge & Close" }))).toBe(true);
+
+      unmount();
+
+      const standard = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ column: "in-progress" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      const standardFooter = standard.container.querySelector(".modal-actions");
+
+      expect(standardFooter).toBeTruthy();
+      expect(standardFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
+      expect(standardFooter?.querySelector(".detail-move-btn")).toBeTruthy();
+
+      const footerChildren = Array.from(standardFooter?.children ?? []);
+      const actionsIndex = footerChildren.findIndex((child) => child.classList.contains("detail-actions-dropdown"));
+      const spacerIndex = footerChildren.findIndex((child) => child.classList.contains("modal-actions-spacer"));
+      const moveIndex = footerChildren.findIndex((child) => child.classList.contains("detail-move-dropdown"));
+
+      // The shared modal, embedded panel, dock, and mobile sheet all mount this
+      // canonical footer order: leading Actions, flexible spacer, trailing Move.
+      expect(actionsIndex).toBeGreaterThanOrEqual(0);
+      expect(spacerIndex).toBeGreaterThan(actionsIndex);
+      expect(moveIndex).toBeGreaterThan(spacerIndex);
+    });
+
+    it("keeps the triage footer usable when Actions is absent", () => {
+      const { container } = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ column: "triage" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      const footer = container.querySelector(".modal-actions");
+
+      expect(footer?.querySelector(".detail-actions-dropdown")).toBeNull();
+      expect(footer?.querySelector(".modal-actions-spacer")).toBeTruthy();
+      expect(footer?.querySelector(".detail-move-dropdown .detail-move-btn")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Delete task" })).toBeTruthy();
+    });
+
     it("modal-actions contains Delete and Pause buttons for non-done tasks (via Actions dropdown)", () => {
       render(
         <TaskDetailModal
@@ -1678,7 +1808,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const button = screen.getByText("Awaiting PR checks") as HTMLButtonElement;
+      const button = screen.getByText("Awaiting PR checks").closest("button") as HTMLButtonElement;
       expect(button.disabled).toBe(true);
       expect(screen.queryByText("Merge & Close")).toBeNull();
     });
@@ -1697,7 +1827,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const button = screen.getByText("Creating PR…") as HTMLButtonElement;
+      const button = screen.getByText("Creating PR…").closest("button") as HTMLButtonElement;
       expect(button.disabled).toBe(true);
       expect(screen.queryByText("Merge & Close")).toBeNull();
     });

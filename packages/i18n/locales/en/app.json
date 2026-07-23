@@ -3334,7 +3334,7 @@
     "statsInColumn_one": "{{count}} of {{total}} tasks in {{column}}",
     "statsInColumn_other": "{{count}} of {{total}} tasks in {{column}}",
     "statusMergingFix": "Merging fixes…",
-    "statusReplan": "Replan",
+    "statusReplan": "Revising",
     "stuck": "Stuck",
     "taskCreationUnavailable": "Task creation not available",
     "unpauseSelected": "Unpause selected",
@@ -7861,9 +7861,14 @@
     "provenance": {
       "createdBy": "Created by",
       "createdVia": "Created via",
+      "creatingAgent": "Creating agent",
+      "importedFrom": "Imported from",
+      "nearDuplicateOf": "Flagged near-duplicate of",
+      "parentTask": "Parent task",
       "parentTaskOf": "of",
       "createdToUndo": "Created to undo",
-      "undoTask": "Undo task"
+      "undoTask": "Undo task",
+      "title": "Provenance"
     },
     "recoveryState": "Recovery state",
     "refine": {
@@ -8461,7 +8466,7 @@
     "showSteps": "Show steps",
     "stalled": "Stalled",
     "statusMergingFix": "Merging fixes…",
-    "statusReplan": "Replan",
+    "statusReplan": "Revising",
     "stepCount_one": "{{count}} step",
     "stepCount_other": "{{count}} steps",
     "stuck": "Stuck",

@@ -1806,3 +1806,7 @@ Escalation is enabled only when the toggle is true and either a complete provide
 ### `mobileNavPrimaryItems`
 
 Project-scoped ordered list of up to six mobile footer quick actions. The default remains `command-center`, `tasks`, `agents`, `missions`, `chat`, `mailbox`. Settings shows selected items in order with move/remove controls and an add dropdown for eligible navigation destinations (including More-sheet actions and gated views); edits preview in the live footer and auto-save after editing. Unknown ids plus `more`, Terminal/scripts, shell controls, plugin views, and separators are ignored. Omitted available destinations remain reachable in More, whose trailing footer tab is always present. Disabled feature-gated destinations render nowhere until their feature is enabled.
+
+### Plugin-provided MCP servers
+
+Enabled plugins may declare `mcpServers` declaratively. The contribution is project-scoped: only plugins enabled in that project's plugin state participate. Resolution is global → enabled plugin declarations → project settings, by server `name`; later declarations win and a project `enabled:false` entry removes an inherited plugin server. The Global MCP card never includes plugin declarations. Project MCP UI identifies them as `plugin:<id>` and writes only project overrides or tombstones.

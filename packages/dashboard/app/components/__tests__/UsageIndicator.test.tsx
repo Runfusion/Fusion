@@ -1536,6 +1536,23 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("Moonshot")).toBeInTheDocument();
   });
 
+  it("maps Xiaomi MiMo usage labels through the shared provider inference", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: [
+        { name: "xiaomi/MiMo-V2-Flash", icon: "🟠", status: "ok", windows: [] },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(screen.getByTestId("xiaomi-icon")).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="xiaomi"]')).toBeInTheDocument();
+  });
+
   it("maps Cursor provider to the cursor-cli icon and renders usage windows", () => {
     mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [

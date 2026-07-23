@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.73.0-beta.2",
+  "version": "0.73.0-beta.3",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -12,6 +12,7 @@
     "pi-package"
   ],
   "bin": {
+    "agent-browser": "./agent-browser.mjs",
     "fn": "./bin.mjs",
     "fusion": "./bin.mjs"
   },
@@ -28,6 +29,7 @@
     "access": "public"
   },
   "files": [
+    "agent-browser.mjs",
     "bin.mjs",
     "dist/**/*.js",
     "dist/**/*.d.ts",
@@ -64,6 +66,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.24.0",
+    "agent-browser": "0.26.0",
     "@earendil-works/pi-ai": "0.81.1",
     "@earendil-works/pi-coding-agent": "0.81.1",
     "claude-code-cli-acp": "0.1.1",

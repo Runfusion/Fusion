@@ -25,6 +25,11 @@ import {
 
 function makeStore() {
   return {
+    startStep: vi.fn().mockResolvedValue({
+      accepted: true,
+      disposition: "started",
+      task: makeTask([{ name: "Implement", status: "in-progress" }]),
+    }),
     updateStep: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
   };
@@ -72,11 +77,9 @@ describe("runTaskStep", () => {
     // Baseline is captured BEFORE the step runs.
     expect(gitRevParse).toHaveBeenCalledWith("/wt");
     expect(runStep).toHaveBeenCalledWith(0);
-    // Projection ordering: in-progress before done.
-    expect(store.updateStep.mock.calls).toEqual([
-      ["FN-001", 0, "in-progress"],
-      ["FN-001", 0, "done"],
-    ]);
+    // FNXC:StepLifecycle 2026-07-22-10:30: The accepted start projection must precede terminal completion.
+    expect(store.startStep).toHaveBeenCalledWith("FN-001", 0);
+    expect(store.updateStep.mock.calls).toEqual([["FN-001", 0, "done"]]);
   });
 
   it("passes graph projection source through in-progress and done writes", async () => {
@@ -96,8 +99,8 @@ describe("runTaskStep", () => {
       { projectionSource: "graph" },
     );
 
+    expect(store.startStep).toHaveBeenCalledWith("FN-001", 0, { source: "graph" });
     expect(store.updateStep.mock.calls).toEqual([
-      ["FN-001", 0, "in-progress", { source: "graph" }],
       ["FN-001", 0, "done", { source: "graph" }],
     ]);
   });
@@ -140,10 +143,72 @@ describe("runTaskStep", () => {
     );
 
     expect(result).toEqual({ outcome: "failure", baselineSha: "baseSHA", checkpointId: "leaf" });
-    // Only the in-progress write happened — the failed step is left non-done.
-    expect(store.updateStep.mock.calls).toEqual([["FN-001", 0, "in-progress"]]);
+    // FNXC:StepLifecycle 2026-07-22-10:30: A failed run preserves the accepted non-terminal start.
+    expect(store.startStep).toHaveBeenCalledWith("FN-001", 0);
+    expect(store.updateStep).not.toHaveBeenCalled();
     expect(store.updateStep).not.toHaveBeenCalledWith("FN-001", 0, "done");
     expect(store.updateStep).not.toHaveBeenCalledWith("FN-001", 0, "skipped");
+  });
+
+  /*
+   * FNXC:StepLifecycle 2026-07-22-10:30:
+   * Exercise both sides of the atomic verdict: corrupted in-progress state must not run,
+   * while a dependency-valid in-progress restart remains resumable.
+   */
+  it("does not execute a step whose atomic start is blocked despite an in-progress status", async () => {
+    const store = makeStore();
+    store.startStep.mockResolvedValue({
+      accepted: false,
+      disposition: "blocked",
+      blockingStepIndex: 0,
+      task: makeTask([
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "in-progress" },
+      ]),
+    });
+    const runStep = vi.fn().mockResolvedValue({ success: true });
+    const gitRevParse = vi.fn().mockResolvedValue("baseSHA");
+
+    const result = await runTaskStep(
+      { store, worktreePath: "/wt", runStep, gitRevParse },
+      makeTask([
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "in-progress" },
+      ]),
+      1,
+      { projectionSource: "graph" },
+    );
+
+    expect(result).toEqual({ outcome: "failure" });
+    expect(runStep).not.toHaveBeenCalled();
+    expect(gitRevParse).not.toHaveBeenCalled();
+    expect(store.updateStep).not.toHaveBeenCalled();
+  });
+
+  it("executes a valid in-progress resume accepted by the atomic start", async () => {
+    const store = makeStore();
+    store.startStep.mockResolvedValue({
+      accepted: true,
+      disposition: "resumed",
+      task: makeTask([
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "in-progress" },
+      ]),
+    });
+    const runStep = vi.fn().mockResolvedValue({ success: false });
+
+    const result = await runTaskStep(
+      { store, worktreePath: "/wt", runStep, gitRevParse: async () => "baseSHA" },
+      makeTask([
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "in-progress" },
+      ]),
+      1,
+      { projectionSource: "graph" },
+    );
+
+    expect(result.outcome).toBe("failure");
+    expect(runStep).toHaveBeenCalledWith(1);
   });
 
   it("still returns a result when baseline capture fails (best-effort)", async () => {

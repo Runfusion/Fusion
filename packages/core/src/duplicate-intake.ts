@@ -78,12 +78,37 @@ export function computeParentIntentClaimId(input: SameAgentDuplicateInput): stri
   return parentId && anchor ? `agent-parent-intent:${parentId}:${anchor}` : null;
 }
 
-const DIAGNOSTIC_ACTION_PATTERN = /\b(?:fix|investigate|repair|resolve|restore)\b/i;
-const DIAGNOSTIC_FAILURE_PATTERN = /\b(?:cannot|can't|error|fail(?:ed|ure|s)?|missing|ts\d{4}|typecheck|unresolved)\b/i;
+/*
+FNXC:TaskCreationDeduplication 2026-07-22-14:30:
+Widened after the FN-8510/8511/8513/8514 incident: four executors on unrelated parent tasks
+each filed "fix the oversized .changeset/mobile-board-pointercancel-settle.md summary" follow-ups,
+and none converged at creation time because the failure was phrased as "exceeds the limit /
+blocking pnpm check:changesets / so check:changesets passes" with a file path — not as the
+"missing/unresolved <module>" shape the original diagnostic patterns required.
+The action/failure gates now cover remediation verbs (shorten, correct, unblock) and
+gate-failure idioms (exceeds, oversized, blocks/blocking, "so <command> passes").
+"blocked" is deliberately excluded: "blocked by FN-XXXX" is dependency prose, not a failure report.
+*/
+const DIAGNOSTIC_ACTION_PATTERN = /\b(?:correct|fix|investigate|repair|resolve|restore|shorten|unblock)\b/i;
+const DIAGNOSTIC_FAILURE_PATTERN = /\b(?:cannot|can't|error|exceed(?:s|ed|ing)?|fail(?:ed|ure|s)?|missing|oversized|block(?:s|ing)|ts\d{4}|typecheck|unresolved)\b|\bso\b[^.\n]*\bpass(?:es)?\b/i;
 const DIAGNOSTIC_OBJECT_PATTERNS = [
   /\b(?:missing|unresolved)\s+([`'"]?[@a-z0-9][@a-z0-9._/-]*[`'"]?)/gi,
   /\b(?:cannot|can't)\s+(?:find|resolve)(?:\s+module)?\s+(?:the\s+)?([`'"]?[@a-z0-9][@a-z0-9._/-]*[`'"]?)/gi,
 ];
+/*
+FNXC:TaskCreationDeduplication 2026-07-22-14:30:
+Fallback objects for failure-shaped text with no missing/unresolved-style object.
+A file path (segments joined by "/" with an extension) is a safe global convergence anchor:
+two repair tasks naming the same file within the 24h window are the same follow-up.
+Path objects normalize to their basename stem when the stem is a distinctive multi-hyphen slug
+(>= 3 hyphen-separated segments), so ".changeset/foo-bar-baz.md" and prose that names only
+"foo-bar-baz" converge; generic stems like "index" keep the full path so
+"packages/alpha/index.ts" and "packages/beta/index.ts" stay distinct.
+Bare multi-hyphen slugs are extracted for the same reason (FN-8513 named the changeset only
+by its slug, never by path).
+*/
+const DIAGNOSTIC_PATH_PATTERN = /(?:^|[\s`'"(])(\.?[a-z0-9_@-]+(?:\/[a-z0-9._@-]+)+\.[a-z0-9]+)/gim;
+const DIAGNOSTIC_SLUG_PATTERN = /\b([a-z0-9]+(?:-[a-z0-9]+){2,})\b/gi;
 const IGNORED_DIAGNOSTIC_OBJECTS = new Set(["a", "an", "dependency", "module", "the", "type", "types"]);
 
 function normalizeDiagnosticObject(value: string): string | null {
@@ -94,6 +119,25 @@ function normalizeDiagnosticObject(value: string): string | null {
   // Only code-shaped objects are safe for global convergence. Generic prose
   // such as "missing button" must remain scoped to its parent task.
   return /[0-9@./_-]/.test(normalized) ? normalized : null;
+}
+
+/*
+FNXC:TaskCreationDeduplication 2026-07-22-15:20:
+A distinctive slug must have at least one non-hex segment. Dates ("2026-07-22") and
+UUIDs are hyphen-shaped but identify WHEN/WHICH RUN, not WHAT is broken: two unrelated
+failure reports quoting the same date must not silently converge into one task, and a
+date must never outrank a real file-path anchor in the sorted-first object pick.
+*/
+function isDistinctiveSlug(value: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+){2,}$/.test(value)
+    && value.split("-").some((segment) => !/^[0-9a-f]+$/.test(segment));
+}
+
+function normalizeDiagnosticPath(value: string): string {
+  const path = value.toLowerCase().replace(/^[`'".]+|[`'".,;:)]+$/g, "");
+  const basename = path.split("/").at(-1) ?? path;
+  const stem = basename.replace(/\.[a-z0-9]+$/, "");
+  return isDistinctiveSlug(stem) ? stem : path;
 }
 
 /**
@@ -111,7 +155,21 @@ export function computeCrossParentDiagnosticClaim(input: Pick<SameAgentDuplicate
       .map((match) => normalizeDiagnosticObject(match[1] ?? ""))
       .filter((value): value is string => value !== null),
   );
-  const diagnosticObject = [...new Set(objects)].sort()[0];
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-22-14:30:
+  Primary missing/unresolved objects take precedence over path/slug fallbacks so that a text
+  naming both (e.g. "app/utils/capture-screenshot.ts imports unresolved html2canvas") keeps
+  converging on the precise object regardless of how the paraphrase spells the path.
+  */
+  if (objects.length === 0) {
+    objects.push(
+      ...[...text.matchAll(DIAGNOSTIC_PATH_PATTERN)].map((match) => normalizeDiagnosticPath(match[1] ?? "")),
+      ...[...text.matchAll(DIAGNOSTIC_SLUG_PATTERN)]
+        .map((match) => (match[1] ?? "").toLowerCase())
+        .filter(isDistinctiveSlug),
+    );
+  }
+  const diagnosticObject = [...new Set(objects.filter(Boolean))].sort()[0];
   if (!diagnosticObject) return null;
   const fingerprint = computeContentFingerprint({ title: "agent-diagnostic-intent", description: diagnosticObject });
   return fingerprint ? { id: `agent-diagnostic-intent:${fingerprint}`, searchTerm: diagnosticObject } : null;

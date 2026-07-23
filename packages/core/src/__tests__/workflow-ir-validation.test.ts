@@ -22,6 +22,36 @@ import { planReviewOptionalGroupNode } from "../builtin-plan-review-group.js";
 import { completionSummaryNode } from "../builtin-completion-summary-node.js";
 import { computeRemovedOccupiedColumns } from "../workflow-reconciliation.js";
 
+// ── Column descriptions ───────────────────────────────────────────────────────
+
+describe("workflow IR validation — column descriptions", () => {
+  it("preserves omitted and populated descriptions through parsing", () => {
+    const parsed = parseWorkflowIr({
+      ...BUILTIN_CODING_WORKFLOW_IR,
+      columns: BUILTIN_CODING_WORKFLOW_IR.columns.map((column, index) => (
+        index === 0 ? { ...column, description: "Explain this workflow stage" } : { ...column }
+      )),
+    });
+
+    expect(parsed.columns[0]).toMatchObject({ description: "Explain this workflow stage" });
+    expect(parsed.columns.slice(1).every((column) => column.description === undefined)).toBe(true);
+  });
+
+  it("rejects a non-string description without weakening duplicate-column validation", () => {
+    expect(() => parseWorkflowIr({
+      ...BUILTIN_CODING_WORKFLOW_IR,
+      columns: BUILTIN_CODING_WORKFLOW_IR.columns.map((column, index) => (
+        index === 0 ? { ...column, description: 42 } : { ...column }
+      )),
+    } as unknown as WorkflowIr)).toThrow("Workflow IR column 'triage' description must be a string");
+
+    expect(() => parseWorkflowIr({
+      ...BUILTIN_CODING_WORKFLOW_IR,
+      columns: [...BUILTIN_CODING_WORKFLOW_IR.columns, { ...BUILTIN_CODING_WORKFLOW_IR.columns[0] }],
+    })).toThrow("Workflow IR has duplicate column id 'triage'");
+  });
+});
+
 // ── Save-time hard errors ─────────────────────────────────────────────────────
 
 describe("workflow IR validation — capacity release topology (hard error)", () => {

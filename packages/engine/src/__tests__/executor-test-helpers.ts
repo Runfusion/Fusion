@@ -654,6 +654,15 @@ export function createMockStore() {
       applyPatch(id, { steps });
       return { ...current, steps };
     }),
+    // FNXC:EngineTests 2026-07-22-10:30: Mirror the production atomic-start surface while retaining this helper's write-through projection behavior.
+    startStep: vi.fn(async (id: string, stepIndex: number, options?: { source?: "graph" }) => {
+      const task = await store.updateStep(id, stepIndex, "in-progress", options);
+      return {
+        task,
+        accepted: task.steps?.[stepIndex]?.status === "in-progress",
+        disposition: task.steps?.[stepIndex]?.status === "in-progress" ? "started" as const : "blocked" as const,
+      };
+    }),
     getWorkflowStep: vi.fn().mockResolvedValue(undefined),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     setPluginWorkflowStepTemplates: vi.fn(),

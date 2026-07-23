@@ -874,7 +874,31 @@ export async function createTaskStoreForBackend(
     try {
       const fusionDir = join(rootDir, ".fusion");
       const legacySqlitePath = join(fusionDir, "fusion.db");
-      if (existsSync(legacySqlitePath)) {
+      const {
+        migrateSqliteToPostgres,
+        defaultMigrationSources,
+        formatMigrationProgress,
+        isSqliteMigrationComplete,
+        completeSqliteMigration,
+        recordSqliteMigrationComplete,
+        CENTRAL_SQLITE_MIGRATION_KEY,
+      } = await import("./sqlite-migrator.js");
+      const fallbackProjectId = fallbackProjectIdForRoot(rootDir);
+      let migrationProjectId = options.projectId
+        ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir))
+        ?? fallbackProjectId;
+      let migrationKey = `project:${migrationProjectId}`;
+      let migrationComplete = await isSqliteMigrationComplete(connections.migration, migrationKey);
+
+      /*
+      FNXC:PostgresMigration 2026-07-22-12:00:
+      A completed source marker, not a retained backup's existence, is the
+      terminal cutover boundary. Resolve identity from explicit options or the
+      PostgreSQL registry before considering legacy SQLite; this makes retained
+      fusion.db and archive.db inert on every later CLI, dashboard, desktop,
+      and engine boot.
+      */
+      if (!migrationComplete && existsSync(legacySqlitePath)) {
         let globalDir = options.globalSettingsDir;
         if (!globalDir) {
           try {
@@ -885,10 +909,19 @@ export async function createTaskStoreForBackend(
           }
         }
 
-        let migrationProjectId = options.projectId
-          ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
+        let resolvedFromLegacyCentral = false;
+        const centralMigrationComplete = await isSqliteMigrationComplete(
+          connections.migration, CENTRAL_SQLITE_MIGRATION_KEY,
+        );
         const legacyCentralPath = globalDir ? join(globalDir, "fusion-central.db") : undefined;
-        if (!migrationProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
+        /*
+        FNXC:PostgresMigration 2026-07-22-12:00:
+        Central identity recovery is itself a legacy SQLite read, so its
+        independent completion marker must gate it even when project migration
+        remains pending. A completed central backup is never reopened merely to
+        resolve a fallback project key.
+        */
+        if (!centralMigrationComplete && migrationProjectId === fallbackProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
           const { DatabaseSync } = await import("../sqlite-adapter.js");
           // FNXC:LegacySqliteBoundary 2026-07-14-18:42: central identity lookup is migration-only and read-only.
           const legacyCentral = new DatabaseSync(legacyCentralPath, { readOnly: true });
@@ -896,15 +929,14 @@ export async function createTaskStoreForBackend(
             const row = legacyCentral.prepare(`SELECT id FROM projects WHERE path = ? LIMIT 1`).get(rootDir) as
               | { id: string }
               | undefined;
-            migrationProjectId = row?.id;
+            migrationProjectId = row?.id ?? migrationProjectId;
+            resolvedFromLegacyCentral = Boolean(row?.id);
           } catch {
             // A pre-registry central database leaves legacy single-project startup unbound.
           } finally {
             legacyCentral.close();
           }
         }
-        const fallbackProjectId = fallbackProjectIdForRoot(rootDir);
-        migrationProjectId ??= fallbackProjectId;
         if (migrationProjectId !== fallbackProjectId) {
           try {
             await rekeyFallbackProjectPartition(connections.migration, fallbackProjectId, migrationProjectId);
@@ -944,9 +976,8 @@ export async function createTaskStoreForBackend(
         already populated) still avoid opening SQLite entirely. It runs only
         on the empty-PG path where one-time auto-migration is considered.
         */
-        const migrationKey = `project:${migrationProjectId ?? rootDir}`;
-        const { migrateSqliteToPostgres, migrateLegacyProjectPluginRows, defaultMigrationSources, formatMigrationProgress, isSqliteMigrationComplete, completeSqliteMigration, recordSqliteMigrationComplete, CENTRAL_SQLITE_MIGRATION_KEY } = await import("./sqlite-migrator.js");
-        const migrationComplete = await isSqliteMigrationComplete(connections.migration, migrationKey);
+        migrationKey = `project:${migrationProjectId}`;
+        migrationComplete = await isSqliteMigrationComplete(connections.migration, migrationKey);
         if (!migrationComplete && isValidSqliteDatabaseFile(legacySqlitePath)) {
           // The central (global-dir) source is optional: when no global dir is
           // resolvable (e.g. tests without an explicit dir), migrate only the
@@ -955,9 +986,6 @@ export async function createTaskStoreForBackend(
           FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
           The central SQLite database is cluster-global, not a per-project source. Migrate and verify it once, then exclude it from later registered-project cutovers so mutable global rows are not compared with each project's accumulated PostgreSQL state.
           */
-          const centralMigrationComplete = await isSqliteMigrationComplete(
-            connections.migration, CENTRAL_SQLITE_MIGRATION_KEY,
-          );
           const sources = defaultMigrationSources(fusionDir, globalDir ?? join(fusionDir, "__no-global-dir__"))
             .filter((source) => !centralMigrationComplete || source.pgSchema !== "central")
             .filter((source) => existsSync(source.sqlitePath) && isValidSqliteDatabaseFile(source.sqlitePath));
@@ -1037,6 +1065,18 @@ export async function createTaskStoreForBackend(
                 rootDir,
               });
             }
+            /*
+            FNXC:PostgresMigration 2026-07-22-12:00:
+            A legacy-central identity can be marked complete only after the
+            same canonical rootDir resolves to it in PostgreSQL. Otherwise the
+            next rootDir-only boot would need SQLite to rediscover its key.
+            */
+            if (resolvedFromLegacyCentral) {
+              const registeredId = await lookupRegisteredProjectIdByPath(connections.migration, rootDir);
+              if (registeredId !== migrationProjectId) {
+                throw new Error(`legacy project identity ${migrationProjectId} was not materialized for ${rootDir} before migration completion`);
+              }
+            }
             await completeSqliteMigration(connections.migration, migrationKey);
             if (sources.some((source) => source.pgSchema === "central")) {
               await recordSqliteMigrationComplete(
@@ -1059,18 +1099,16 @@ export async function createTaskStoreForBackend(
             log.log(`startup-factory: SQLite → PostgreSQL auto-migration complete (${migratedRows} row(s) across ${report.tables.length} table(s))`);
           }
         }
-        /*
-        FNXC:PluginLegacyMigration 2026-07-15-02:09:
-        The retained-SQLite plugin bridge requires schema-marker and central plugin writes, so steady-state startup must run it through the privileged migration connection before that connection is replaced by the project-scoped fusion_runtime role. This bridge remains independently marker-gated because projects that completed the core cutover before plugin migration existed still need their plugin state recovered; every runtime surface receives the already-migrated store and PluginStore.init stays DDL-free.
-        */
-        if (isValidSqliteDatabaseFile(legacySqlitePath)) {
-          await migrateLegacyProjectPluginRows(
-            connections.migration,
-            legacySqlitePath,
-            rootDir,
-          );
-        }
       }
+      /*
+      FNXC:PostgresMigration 2026-07-22-12:00:
+      Core and plugin sources have independent completion markers. Dispatch the
+      plugin bridge after the core branch so a completed project cutover cannot
+      suppress a still-pending plugin adoption; the bridge itself checks its
+      marker before validating or opening the retained SQLite file.
+      */
+      const { migrateLegacyProjectPluginRows } = await import("./sqlite-migrator.js");
+      await migrateLegacyProjectPluginRows(connections.migration, legacySqlitePath, rootDir);
     } catch (err) {
       await connections.close().catch(() => undefined);
       await stopEmbeddedRuntime(

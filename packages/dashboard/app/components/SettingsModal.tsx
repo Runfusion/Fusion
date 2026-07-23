@@ -8,7 +8,7 @@ import {
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { resolveScopedMcpSettings, splitSettingsSave, type McpSettingsScope } from "./settings/save-split";
 import {
@@ -90,6 +90,7 @@ import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibilit
 import { SETTINGS_SEARCH_ENTRIES } from "./settings/search/entries";
 import { rankSettingsSearchResults, matchedSectionIds } from "./settings/search/match";
 import { SettingsSearchHighlightProvider } from "./settings/SettingsSearchHighlightContext";
+import { subscribeSse } from "../sse-bus";
 
 // ---------------------------------------------------------------------------
 // GitHub star count — cached locally and refreshed only while Settings is visible.
@@ -304,6 +305,14 @@ Settings opens in a focused mode that omits specialist integration, runtime, dia
 FNXC:SettingsNavigation 2026-07-16-12:00:
 FN-8128 returns CLI Binary to the default Settings view. It is deliberately absent from this Advanced-only set so desktop navigation, the mobile picker, and search expose binary install and diagnostic controls without requiring the browser-local Advanced preference.
 */
+const RUNTIME_PLUGIN_SECTION_IDS: ReadonlyMap<string, string> = new Map([
+  ["fusion-plugin-hermes-runtime", "hermes-runtime"],
+  ["fusion-plugin-openclaw-runtime", "openclaw-runtime"],
+  ["fusion-plugin-paperclip-runtime", "paperclip-runtime"],
+] as const);
+
+const RUNTIME_SETTINGS_SECTION_IDS = new Set(RUNTIME_PLUGIN_SECTION_IDS.values());
+
 const ADVANCED_SETTINGS_SECTION_IDS = new Set([
   "node-sync",
   "global-mcp",
@@ -1258,6 +1267,55 @@ export function SettingsModal({
   }, [form]);
   // Find the first non-group-header section for visibility fallback handling
   const firstNonHeaderSection = SETTINGS_SECTIONS.find((s) => !s.isGroupHeader);
+  const [installedRuntimeSectionIds, setInstalledRuntimeSectionIds] = useState<Set<string>>(() => new Set());
+  const [runtimeVisibilitySettled, setRuntimeVisibilitySettled] = useState(false);
+  const runtimeVisibilityRequestRef = useRef(0);
+  const refreshInstalledRuntimeSections = useCallback(async () => {
+    /*
+    FNXC:SettingsRuntimeNavigation 2026-07-22-12:00:
+    Runtime settings pages are backed only by installed plugin records, not the built-in catalog or runtime binary detection. Disabled installed records remain navigable so operators can inspect and re-enable them.
+    Every refresh clears visibility first: loading, undefined lists, and errors fail closed until a successful project-scoped GET /plugins response restores precisely its deduplicated runtime records.
+    */
+    const requestId = ++runtimeVisibilityRequestRef.current;
+    setRuntimeVisibilitySettled(false);
+    setInstalledRuntimeSectionIds(new Set());
+    try {
+      const plugins = await fetchPlugins(projectId);
+      const next = new Set<string>();
+      for (const plugin of plugins ?? []) {
+        const sectionId = RUNTIME_PLUGIN_SECTION_IDS.get(plugin.id);
+        if (sectionId) next.add(sectionId);
+      }
+      if (requestId !== runtimeVisibilityRequestRef.current) return;
+      setInstalledRuntimeSectionIds(next);
+      setRuntimeVisibilitySettled(true);
+    } catch {
+      // Fail closed; a later successful lifecycle/reconnect refresh restores entries.
+      if (requestId !== runtimeVisibilityRequestRef.current) return;
+      setInstalledRuntimeSectionIds(new Set());
+      setRuntimeVisibilitySettled(true);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refreshInstalledRuntimeSections();
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    return subscribeSse(`/api/events${query}`, {
+      events: {
+        "plugin:lifecycle": (event) => {
+          try {
+            const payload = JSON.parse(event.data) as { scope?: string; projectId?: string };
+            if (payload.scope === "project" && (payload.projectId ?? projectId) !== projectId) return;
+            void refreshInstalledRuntimeSections();
+          } catch {
+            // Ignore malformed lifecycle data; reconnect still re-syncs authoritative state.
+          }
+        },
+      },
+      onReconnect: () => void refreshInstalledRuntimeSections(),
+    });
+  }, [projectId, refreshInstalledRuntimeSections]);
+
   const [activeSection, setActiveSection] = useState<SectionId>(() => {
     if (initialSection === "pi-extensions") {
       return "plugins";
@@ -1406,6 +1464,10 @@ export function SettingsModal({
       return false;
     }
 
+    if (RUNTIME_SETTINGS_SECTION_IDS.has(section.id) && !installedRuntimeSectionIds.has(section.id)) {
+      return false;
+    }
+
     if (section.id === "research-global" || section.id === "research-project") {
       return researchViewEnabled;
     }
@@ -1415,7 +1477,7 @@ export function SettingsModal({
     }
 
     return true;
-  })), [researchViewEnabled, evalsViewEnabled, showAdvancedSettings]);
+  })), [researchViewEnabled, evalsViewEnabled, installedRuntimeSectionIds, showAdvancedSettings]);
   const firstVisibleSectionId = visibleSections.some((section) => section.id === DEFAULT_SETTINGS_SECTION)
     ? DEFAULT_SETTINGS_SECTION
     : resolveFirstSelectableSettingsSection(visibleSections, firstNonHeaderSection?.id ?? "general");
@@ -1545,6 +1607,7 @@ export function SettingsModal({
     }
 
     if (!visibleSections.some((section) => section.id === activeSection)) {
+      if (RUNTIME_SETTINGS_SECTION_IDS.has(activeSection) && !runtimeVisibilitySettled) return;
       setActiveSection(firstVisibleSectionId);
       return;
     }
@@ -1552,7 +1615,7 @@ export function SettingsModal({
     if (hasSettingsSearchQuery && hasSettingsSearchResults && !searchMatchedSections.some((section) => section.id === activeSection)) {
       setActiveSection(firstSearchMatchedSectionId);
     }
-  }, [activeSection, researchViewEnabled, evalsViewEnabled, firstVisibleSectionId, firstSearchMatchedSectionId, hasSettingsSearchQuery, hasSettingsSearchResults, searchMatchedSections, visibleSections]);
+  }, [activeSection, researchViewEnabled, evalsViewEnabled, firstVisibleSectionId, firstSearchMatchedSectionId, hasSettingsSearchQuery, hasSettingsSearchResults, runtimeVisibilitySettled, searchMatchedSections, visibleSections]);
 
   // Auth state (independent of the settings save flow)
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
@@ -4438,6 +4501,7 @@ export function SettingsModal({
             addToast={addToast}
             activePluginsSubsection={activePluginsSubsection}
             setActivePluginsSubsection={setActivePluginsSubsection}
+            onPluginsChanged={refreshInstalledRuntimeSections}
           />
         );
       case "authentication":

@@ -12,7 +12,7 @@ the store-alignment fix and failed lint as unused; keep manager construction on 
 store/chatStore pair only.
 */
 import { getOrCreateScopedChatManager, resolveProjectChatContext } from "../chat-project-services.js";
-import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
+import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_VIDEO_ATTACHMENT_SIZE, getChatAttachmentMaxSize } from "./chat-attachment-config.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import { TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "../chat.js";
@@ -49,7 +49,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
       const multerError = err as { code?: string; message?: string };
       if (multerError?.code === "LIMIT_FILE_SIZE") {
-        next(badRequest(`File too large. Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`));
+        next(badRequest(`File too large. Maximum: ${CHAT_MAX_VIDEO_ATTACHMENT_SIZE} bytes (100MB)`));
         return;
       }
       next(err as Error);
@@ -64,7 +64,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
       const multerError = err as { code?: string; message?: string };
       if (multerError?.code === "LIMIT_FILE_SIZE") {
-        next(badRequest(`File too large. Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`));
+        next(badRequest(`File too large. Maximum: ${CHAT_MAX_VIDEO_ATTACHMENT_SIZE} bytes (100MB)`));
         return;
       }
       next(err as Error);
@@ -80,8 +80,9 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       throw badRequest(`Invalid mime type '${file.mimetype}'`);
     }
 
-    if (file.size > CHAT_MAX_ATTACHMENT_SIZE) {
-      throw badRequest(`File too large (${file.size} bytes). Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`);
+    const maxSize = getChatAttachmentMaxSize(file.mimetype);
+    if (file.size > maxSize) {
+      throw badRequest(`File too large (${file.size} bytes). Maximum: ${maxSize} bytes (${file.mimetype.startsWith("video/") ? "100MB" : "5MB"})`);
     }
 
     const sessionDir = resolve(rootDir, ".fusion", "chat-attachments", sessionId);

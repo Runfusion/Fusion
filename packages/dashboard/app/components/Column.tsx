@@ -11,6 +11,8 @@ import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
+import { isTaskAgentActive } from "../utils/taskActivity";
+import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 import { ChevronDown, ChevronUp, MoreVertical } from "lucide-react";
@@ -185,6 +187,8 @@ interface ColumnProps {
   defaultWorkflowId?: string | null;
   /** Display name for this column, from the workflow definition. */
   columnDisplayName?: string;
+  /** Optional explanatory copy from the workflow definition. */
+  columnDescription?: string;
   /** Resolved trait flags for this column (workflow mode). */
   columnFlags?: BoardWorkflowColumnFlags;
   /** Ordered workflow columns for deriving context-menu move targets in workflow mode. */
@@ -206,7 +210,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -229,6 +233,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   // Workflow mode: per-card promote in-flight ids + inline capacity feedback.
   const [promotingIds, setPromotingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [inlineFeedback, setInlineFeedback] = useState<string | null>(null);
+  /*
+  FNXC:WorkflowColumnDescriptions 2026-07-22-12:30:
+  Whitespace-only values can exist in pre-editor/custom IR. Treat them as
+  absent so they retain lifecycle fallback rather than creating a blank shell.
+  */
+  const resolvedColumnDescription = columnDescription?.trim() ? columnDescription : COLUMN_DESCRIPTIONS[column];
   const menuRef = useRef<HTMLDivElement | null>(null);
   const countFlashing = useFlashOnIncrease(tasks.length);
   const { confirm } = useConfirm();
@@ -291,10 +301,22 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   FNXC:BoardColumnCount 2026-07-21-19:30:
   Column header is executing/total (e.g. 3/4). Executing uses the same Running predicate as the
   footer (unpaused WIP, live planners, active review). Total is the card count in this lane.
+
+  FNXC:BoardColumnCount 2026-07-22-06:10:
+  The header must agree with the cards below it: a Todo card parked in the durable
+  `needs-replan` stage keeps its REVISING badge and activity chrome (FN-8494), so a header
+  that only counts live agents read 0/2 under a glowing card. Union the shared Running
+  predicate with the card's own activity-chrome predicate (isTaskAgentActive, same
+  globalPaused/stuck gates the card applies) so the count equals the number of visibly
+  active cards. Footer Running and admission intentionally keep the live-agent-only truth —
+  a parked replan must not consume top-level concurrency capacity.
   */
   const activeTaskCount = useMemo(
-    () => tasks.filter((task) => isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))).length,
-    [tasks, columnFlags],
+    () => tasks.filter((task) =>
+      isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))
+      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs) }),
+    ).length,
+    [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
   );
   // When search is active, skip pagination so all matching tasks are visible
   const shouldPaginate = !isArchived && !isSearchActive && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
@@ -443,9 +465,15 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     (input: TaskCreateInput) => {
       if (!onQuickCreate) return Promise.resolve();
       if (workflowMode) {
+        /*
+        FNXC:QuickAddStart 2026-07-22-17:45:
+        The Quick Add Start intent may carry a workflow-validated initial Todo column.
+        Preserve that explicit create destination; ordinary Save has no column and continues
+        to inherit this rendered intake column.
+        */
         return onQuickCreate({
           ...input,
-          column,
+          column: input.column ?? column,
           ...(input.workflowId !== undefined ? { workflowId: input.workflowId } : (workflowId ? { workflowId } : {})),
         });
       }
@@ -835,8 +863,8 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
           </div>
         )}
       </div>
-      {!isCollapsed && COLUMN_DESCRIPTIONS[column] !== undefined && (
-        <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
+      {!isCollapsed && resolvedColumnDescription && (
+        <p className="column-desc">{resolvedColumnDescription}</p>
       )}
       {!isCollapsed && inlineFeedback && (
         <p className="column-inline-feedback" role="status" data-testid="column-inline-feedback">
@@ -848,6 +876,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
           {canCreateInColumn && (
             <QuickEntryBox 
               onCreate={handleQuickCreate}
+              onMoveTask={onMoveTask}
               addToast={addToast} 
               tasks={allTasks ?? []}
               availableModels={availableModels}

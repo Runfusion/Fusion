@@ -258,6 +258,30 @@ describe("SettingsModal navigation rail resize", () => {
     expect(getSettingsNavigation().style.getPropertyValue("--settings-nav-width")).toBe("");
   });
 
+  it("uses one fixed non-shrinking icon slot for fallback and custom desktop rows", async () => {
+    const iconBlock = getCssBlock(settingsModalCss, ".settings-scope-icon");
+    expect(iconBlock).toContain("inline-size: var(--space-md);");
+    expect(iconBlock).toContain("block-size: var(--space-md);");
+    expect(iconBlock).toContain("flex: 0 0 var(--space-md);");
+
+    renderModal({ initialSection: "appearance" });
+    await waitForSettingsModalReady();
+
+    const fallbackGlobal = screen.getByRole("button", { name: /Appearance$/ });
+    const fallbackProject = screen.getByRole("button", { name: /General · Project$/ });
+    const customIcon = screen.getByRole("button", { name: /Source Control · Global$/ });
+    expect(fallbackGlobal?.querySelector("svg.settings-scope-icon")).toBeTruthy();
+    expect(fallbackProject?.querySelector("svg.settings-scope-icon")).toBeTruthy();
+    expect(customIcon?.querySelector("svg.settings-scope-icon")).toBeTruthy();
+
+    const preferencesHeader = screen.getByText("Preferences").closest(".settings-group-header");
+    expect(preferencesHeader?.querySelector(".settings-scope-icon")).toBeNull();
+
+    fireEvent.change(screen.getByTestId("settings-search-input"), { target: { value: "source control" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Source Control · Global$/ }).querySelector("svg.settings-scope-icon")).toBeTruthy());
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
+  });
+
   it("does not render the resize handle when the Settings media query matches mobile", async () => {
     setMatchMediaMatches(true);
 

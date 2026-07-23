@@ -35,6 +35,68 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
     expect(updated.steps[2].status).toBe("pending");
   });
 
+  it("does not start a later step when an earlier ordered step is still in progress", async () => {
+    const store = h.store();
+    const task = await h.createTaskWithSteps();
+
+    await store.updateStep(task.id, 0, "in-progress");
+    await Promise.all([
+      store.updateStep(task.id, 1, "done"),
+      store.updateStep(task.id, 2, "in-progress"),
+    ]);
+
+    const updated = await store.getTask(task.id);
+    expect(updated.steps.map((step) => step.status)).toEqual([
+      "in-progress",
+      "pending",
+      "pending",
+    ]);
+    expect(updated.currentStep).toBe(0);
+    expect(updated.log.map((entry) => entry.action)).toContainEqual(
+      expect.stringContaining("Ignored out-of-order in-progress for step 2"),
+    );
+  });
+
+  /*
+   * FNXC:StepLifecycle 2026-07-22-10:30:
+   * Legacy state can already contain the inversion being repaired. The atomic start verdict
+   * must report the dependency rejection even though the target remains in-progress.
+   */
+  it("reports blocked for a corrupted in-progress step with an unfinished predecessor", async () => {
+    const store = h.store();
+    const task = await h.createTaskWithSteps();
+    await store.updateTask(task.id, {
+      steps: task.steps.map((step, index) => ({
+        ...step,
+        status: index < 2 ? "in-progress" as const : step.status,
+      })),
+    });
+
+    const result = await store.startStep(task.id, 1);
+
+    expect(result).toMatchObject({
+      accepted: false,
+      disposition: "blocked",
+      blockingStepIndex: 0,
+    });
+    expect(result.task.steps[1].status).toBe("in-progress");
+  });
+
+  it("reports resumed for a valid in-progress step whose predecessors are terminal", async () => {
+    const store = h.store();
+    const task = await h.createTaskWithSteps();
+    await store.updateStep(task.id, 0, "done");
+    await store.updateStep(task.id, 1, "in-progress");
+
+    const result = await store.startStep(task.id, 1);
+
+    expect(result).toMatchObject({
+      accepted: true,
+      disposition: "resumed",
+    });
+    expect(result.task.steps[1].status).toBe("in-progress");
+  });
+
   it("allows an explicitly independent step to finish out of index order", async () => {
     const store = h.store();
     const task = await h.createTaskWithSteps();
@@ -77,6 +139,25 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
     expect(updated.log.at(-1)?.action).toContain("dependency step 1");
   });
 
+  it("blocks a start when an explicit dependency is still in progress", async () => {
+    const store = h.store();
+    const task = await h.createTaskWithSteps();
+    await store.updateTask(task.id, {
+      steps: task.steps.map((step, index) =>
+        index === 2 ? { ...step, dependsOn: [1] } : step,
+      ),
+    });
+
+    await store.updateStep(task.id, 0, "done");
+    const started = await store.updateStep(task.id, 1, "in-progress");
+    expect(started.steps[1].status).toBe("in-progress");
+
+    const updated = await store.updateStep(task.id, 2, "in-progress");
+
+    expect(updated.steps[2].status).toBe("pending");
+    expect(updated.log.at(-1)?.action).toContain("dependency step 1");
+  });
+
   it("allows a satisfied explicit dependency while an unrelated earlier step is pending", async () => {
     const store = h.store();
     const task = await h.createTaskWithSteps();
@@ -110,6 +191,21 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
     const updated = await store.updateStep(task.id, 2, "done", { source: "graph" });
 
     expect(updated.steps[2].status).toBe("done");
+  });
+
+  it("blocks a graph-source start while its implicit predecessor is unfinished", async () => {
+    const store = h.store();
+    const task = await h.createTaskWithSteps();
+
+    const updated = await store.updateStep(task.id, 2, "in-progress", { source: "graph" });
+
+    expect(updated.steps[2].status).toBe("pending");
+    expect(updated.log.map((entry) => entry.action)).toContainEqual(
+      expect.stringContaining("Ignored dependency-order in-progress for step 2"),
+    );
+    expect(updated.log.map((entry) => entry.action)).toContainEqual(
+      expect.stringContaining("[integrity-warning] graph-source updateStep suppressed"),
+    );
   });
 
   it.each([{ dependsOn: [2] }, { dependsOn: [99] }, { dependsOn: [-1] }, { dependsOn: [1.5] }])(

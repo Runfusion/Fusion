@@ -1,5 +1,5 @@
-import type { McpServerDefinition, TaskStore } from "@fusion/core";
-import { validateMcpServerDefinitionDetailed } from "@fusion/core";
+import type { McpServerDefinition, PluginMcpServerContribution, TaskStore } from "@fusion/core";
+import { mapPluginMcpServerContribution, validateMcpServerDefinitionDetailed } from "@fusion/core";
 import {
   discoverMcpServers,
   resolveMcpServersForRuntime,
@@ -108,12 +108,36 @@ export const registerConfigMcpPiSettingsRoutes: ApiRouteRegistrar = (ctx) => {
       const settings = await scopedStore.getSettingsFast();
       res.json({
         maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2,
+        maxTriageConcurrent: settings.maxTriageConcurrent ?? 2,
         maxWorktrees: settings.maxWorktrees ?? 4,
         rootDir: scopedStore.getRootDir(),
       });
     } catch {
       const { store: scopedStore } = await getProjectContext(req);
-      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
+      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxTriageConcurrent: 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
+    }
+  });
+
+  router.get("/mcp/plugin-servers", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const provider = scopedStore as TaskStore & {
+        getProjectScopedPluginMcpServers?: () => Promise<Array<{ pluginId: string; server: PluginMcpServerContribution }>> | Array<{ pluginId: string; server: PluginMcpServerContribution }>;
+      };
+      // FNXC:PluginMcpServers 2026-07-22-12:00:
+      // FN-8491 exposes only the active project's provider-filtered entries.
+      // This route must not enumerate a raw loader/runner because its output is
+      // not constrained by project_plugin_states and could leak across projects.
+      const entries = typeof provider.getProjectScopedPluginMcpServers === "function"
+        ? await provider.getProjectScopedPluginMcpServers()
+        : [];
+      res.json({
+        servers: entries
+          .filter((entry) => mapPluginMcpServerContribution(entry?.server))
+          .map((entry) => ({ pluginId: entry.pluginId, server: entry.server })),
+      });
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to load project plugin MCP servers");
     }
   });
 

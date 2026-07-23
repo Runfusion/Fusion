@@ -158,6 +158,23 @@ describe("CLI package.json publishing config", () => {
     expect(deps).toContain("ioredis");
   });
 
+  /*
+  FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+  Keep this unit test scoped to publish-manifest wiring. The cross-platform
+  agent-browser install workflow is authoritative for packed consumer installs,
+  npm-generated platform launchers, and native executable invariants.
+  */
+  it("preserves agent-browser publish-manifest wiring", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.dependencies?.["agent-browser"]).toBe("0.26.0");
+    expect(publishedPkg.dependencies?.["agent-browser"]).toBe(pkg.dependencies["agent-browser"]);
+    expect(pkg.bin?.["agent-browser"]).toBe("./agent-browser.mjs");
+    expect(publishedPkg.bin?.["agent-browser"]).toBe(pkg.bin["agent-browser"]);
+    expect(pkg.files).toContain("agent-browser.mjs");
+    expect(publishedPkg.files).toContain("agent-browser.mjs");
+  });
+
   /**
    * FNXC:Packaging 2026-06-13-16:36:
    * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo, while leaving typebox as the optional-peer control because Fusion does not import it at runtime.

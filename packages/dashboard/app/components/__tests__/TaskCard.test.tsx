@@ -2292,6 +2292,19 @@ describe("TaskCard", () => {
     expect(screen.getByText("executing")).toBeDefined();
   });
 
+  it("FN-8493 renders Revising, not Replan, for a bare needs-replan Board card", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "needs-replan" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Revising")).toHaveClass("card-status-badge");
+    expect(screen.queryByText("Replan")).not.toBeInTheDocument();
+  });
+
   it.each([
     { column: "todo" as const, status: "planning" },
     { column: "in-progress" as const, status: "planning" },
@@ -2636,6 +2649,37 @@ describe("TaskCard", () => {
     );
     expect(container.querySelector(".card")).not.toHaveClass("agent-active");
     expect(container.querySelector(".card-status-badge")).toBeNull();
+  });
+
+  it("keeps board replan cards glowing and their status badge pulsing", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ id: "FN-8494-board", column: "triage", status: "needs-replan" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")).toHaveClass("agent-active");
+    expect(screen.getByText("Revising")).toHaveClass("card-status-badge", "pulsing");
+  });
+
+  it.each([
+    ["global pause", { globalPaused: true }, {}],
+    ["render queue", { queued: true }, {}],
+    ["task pause", {}, { paused: true }],
+  ])("suppresses board replan activity during $name", (_name, props, taskOverrides) => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ id: `FN-8494-${_name}`, column: "triage", status: "needs-replan", ...taskOverrides })}
+        onOpenDetail={noop}
+        addToast={noop}
+        {...props}
+      />,
+    );
+
+    expect(container.querySelector(".card")).not.toHaveClass("agent-active");
+    expect(container.querySelector(".card-status-badge")).not.toHaveClass("pulsing");
   });
 
   /*

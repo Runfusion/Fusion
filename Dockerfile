@@ -10,6 +10,9 @@ RUN apt-get update \
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# FNXC:DockerBuild 2026-07-22-13:00: The dependency-cache layer must include every
+# selected workspace manifest before frozen install; otherwise pnpm omits a package's
+# dependencies and the later full-workspace build can fail despite its source being copied.
 COPY packages/cli/package.json ./packages/cli/package.json
 COPY packages/cli-alias/package.json ./packages/cli-alias/package.json
 COPY packages/core/package.json ./packages/core/package.json
@@ -36,12 +39,15 @@ COPY plugins/fusion-plugin-openclaw-runtime/package.json ./plugins/fusion-plugin
 COPY plugins/fusion-plugin-hermes-runtime/package.json ./plugins/fusion-plugin-hermes-runtime/package.json
 COPY plugins/fusion-plugin-droid-runtime/package.json ./plugins/fusion-plugin-droid-runtime/package.json
 COPY plugins/fusion-plugin-cursor-runtime/package.json ./plugins/fusion-plugin-cursor-runtime/package.json
+COPY plugins/fusion-plugin-grok-runtime/package.json ./plugins/fusion-plugin-grok-runtime/package.json
+COPY plugins/fusion-plugin-claude-runtime/package.json ./plugins/fusion-plugin-claude-runtime/package.json
+COPY plugins/fusion-plugin-omp-runtime/package.json ./plugins/fusion-plugin-omp-runtime/package.json
+COPY plugins/fusion-plugin-quality/package.json ./plugins/fusion-plugin-quality/package.json
 COPY plugins/fusion-plugin-agent-browser/package.json ./plugins/fusion-plugin-agent-browser/package.json
 COPY plugins/fusion-plugin-whatsapp-chat/package.json ./plugins/fusion-plugin-whatsapp-chat/package.json
 COPY plugins/fusion-plugin-roadmap/package.json ./plugins/fusion-plugin-roadmap/package.json
 COPY plugins/fusion-plugin-even-realities-glasses/package.json ./plugins/fusion-plugin-even-realities-glasses/package.json
 COPY plugins/fusion-plugin-reports/package.json ./plugins/fusion-plugin-reports/package.json
-COPY plugins/fusion-plugin-linear-import/package.json ./plugins/fusion-plugin-linear-import/package.json
 
 RUN pnpm install --frozen-lockfile
 

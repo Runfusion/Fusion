@@ -58,6 +58,7 @@ import {
   mockFetchRemoteUrl,
   mockTriggerMemoryDreams,
   mockFetchPluginUiSlots,
+  mockFetchPlugins,
   mockFetchDroidCliStatus,
   mockSetDroidCliEnabled,
   mockFetchCursorCliStatus,
@@ -79,6 +80,15 @@ import {
 } from "./SettingsModal.test-harness";
 
 const mockListDiscussionCategories = vi.fn(async () => ({ categories: [] }));
+let pluginLifecycleListener: ((event: MessageEvent) => void) | undefined;
+const mockSubscribeSse = vi.fn((_url: string, options: { events?: Record<string, (event: MessageEvent) => void> }) => {
+  pluginLifecycleListener = options.events?.["plugin:lifecycle"];
+  return () => {};
+});
+
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (...args: unknown[]) => mockSubscribeSse(...args),
+}));
 
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
@@ -138,6 +148,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchRemoteUrl: (...args: unknown[]) => mockFetchRemoteUrl(...args),
     triggerMemoryDreams: (...args: unknown[]) => mockTriggerMemoryDreams(...args),
     fetchPluginUiSlots: (...args: unknown[]) => mockFetchPluginUiSlots(...args),
+    fetchPlugins: (...args: unknown[]) => mockFetchPlugins(...args),
     fetchDroidCliStatus: (...args: unknown[]) => mockFetchDroidCliStatus(...args),
     setDroidCliEnabled: (...args: unknown[]) => mockSetDroidCliEnabled(...args),
     fetchCursorCliStatus: (...args: unknown[]) => mockFetchCursorCliStatus(...args),
@@ -210,6 +221,53 @@ vi.mock("../FileBrowser", () => ({
 describe("SettingsModal", () => {
   // Keep Advanced off by default so disclosure default/persist tests stay truthful.
   installSettingsModalEnv({ advancedSettings: false });
+
+  it("shows only installed runtime pages and keeps disabled installations navigable", async () => {
+    mockFetchPlugins.mockResolvedValue([
+      { id: "fusion-plugin-openclaw-runtime", enabled: false },
+      { id: "fusion-plugin-openclaw-runtime", enabled: false },
+    ]);
+    renderModal({ initialSection: "openclaw-runtime" });
+    await waitForSettingsModalReady();
+    await waitFor(() => expect(screen.getByRole("button", { name: /OpenClaw/ })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Hermes/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Paperclip/ })).not.toBeInTheDocument();
+  });
+
+  it("refreshes active runtime navigation after an external lifecycle uninstall", async () => {
+    mockFetchPlugins.mockResolvedValue([{ id: "fusion-plugin-openclaw-runtime", enabled: true }]);
+    renderModal({ initialSection: "openclaw-runtime", projectId: "project-a" });
+    await waitForSettingsModalReady();
+    await waitFor(() => expect(screen.getByRole("button", { name: /OpenClaw/ })).toBeInTheDocument());
+    expect(pluginLifecycleListener).toBeTypeOf("function");
+
+    mockFetchPlugins.mockResolvedValueOnce([]);
+    await act(async () => {
+      pluginLifecycleListener?.(new MessageEvent("plugin:lifecycle", {
+        data: JSON.stringify({ scope: "project", projectId: "project-a", transition: "uninstalled" }),
+      }));
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /OpenClaw/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+
+    mockFetchPlugins.mockResolvedValueOnce([{ id: "fusion-plugin-openclaw-runtime", enabled: true }]);
+    await act(async () => {
+      pluginLifecycleListener?.(new MessageEvent("plugin:lifecycle", {
+        data: JSON.stringify({ scope: "project", projectId: "project-a", transition: "installed" }),
+      }));
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: /OpenClaw/ })).toBeInTheDocument());
+  });
+
+  it("fails closed and falls back from an uninstalled initial runtime section", async () => {
+    mockFetchPlugins.mockResolvedValue([]);
+    renderModal({ initialSection: "openclaw-runtime" });
+    await waitForSettingsModalReady();
+    await waitFor(() => expect(mockFetchPlugins).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /OpenClaw/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenClaw Runtime")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
 
   afterEach(() => {
     viewportMode = "mobile";

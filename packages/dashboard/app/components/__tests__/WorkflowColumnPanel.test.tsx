@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, TraitCatalogEntry } from "../../api";
@@ -109,6 +109,40 @@ describe("WorkflowColumnPanel", () => {
     expect(screen.getByTestId("wf-column-agent-select-triage")).toBeDisabled();
   });
 
+  it("edits populated descriptions, omits cleared values, and leaves new columns description-free", () => {
+    const onChange = vi.fn();
+    render(
+      <WorkflowColumnPanel
+        columns={[{ id: "triage", name: "Triage", description: "Plan work", traits: [{ trait: "intake" }] }]}
+        onChange={onChange}
+        violations={[]}
+        readOnly={false}
+        addToast={vi.fn()}
+        columnAgentsEnabled
+      />,
+    );
+
+    const description = screen.getByRole("textbox", { name: /Column description/i });
+    expect(description).toHaveValue("Plan work");
+    fireEvent.change(description, { target: { value: "Refined planning guidance" } });
+    expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ description: "Refined planning guidance" })]);
+
+    fireEvent.change(description, { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith([expect.not.objectContaining({ description: expect.anything() })]);
+
+    fireEvent.change(description, { target: { value: " \n\t " } });
+    expect(onChange).toHaveBeenLastCalledWith([expect.not.objectContaining({ description: expect.anything() })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Add column/i }));
+    const added = onChange.mock.calls.at(-1)?.[0][1];
+    expect(added).not.toHaveProperty("description");
+  });
+
+  it("keeps the description control visible and disabled for read-only workflows", () => {
+    renderPanel({ readOnly: true, columns: [{ id: "triage", name: "Triage", description: "Built-in guidance", traits: [] }] });
+    expect(screen.getByRole("textbox", { name: /Column description/i })).toBeDisabled();
+  });
+
   it("defines tokenized CSS rules for every column-panel selector themed by FN-6400", () => {
     const css = readFileSync(resolve(__dirname, "../WorkflowNodeEditor.css"), "utf8");
     const selectors = [
@@ -118,6 +152,8 @@ describe("WorkflowColumnPanel", () => {
       ".wf-column-panel-empty",
       ".wf-column-panel-errors",
       ".wf-column-name",
+      ".wf-column-description-field",
+      ".wf-column-description",
       ".wf-column-traits",
       ".wf-column-agent",
       ".wf-column-agent-label",

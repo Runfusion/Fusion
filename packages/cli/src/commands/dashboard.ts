@@ -2535,6 +2535,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     /*
     FNXC:GrokCliRouting 2026-07-15-10:17:
     UI-only mode has no ProjectEngine PluginRunner. Pass pluginRunner undefined (not pluginLoader) so Grok auto-derive surfaces dual-remediation instead of getRuntimeById TypeError. Plugin management routes that need reloadPlugin degrade via optional chaining on options.pluginRunner.
+
+    FNXC:PluginRoutes 2026-07-22-09:55:
+    createPluginRouter still mounts plugin-defined HTTP routes from pluginLoader when pluginRunner is undefined. Do not pass pluginLoader as pluginRunner here — that reintroduces the Grok getRuntimeById TypeError — and do not skip pluginLoadingPromise; CE /sessions and /artifacts depend on the loaded plugin route table.
     */
     app = createServer(store, {
       onMerge: uiOnlyOnMerge,

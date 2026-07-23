@@ -2071,6 +2071,46 @@ Fusion tokens so light/dark themes never show browser-default white controls.
   cursor: not-allowed;
 }
 
+.wf-column-description-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.wf-column-description {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--wf-editor-touch-target) * 2);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  resize: vertical;
+}
+
+.wf-column-description:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.wf-column-description:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-description:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
 .wf-column-item-actions {
   display: flex;
   gap: 2px;
@@ -2544,6 +2584,7 @@ Column trait toggles are left-sidebar workflow controls; keep their enabled and 
   .wf-field textarea,
   .wf-field select,
   .wf-column-name,
+  .wf-column-description,
   .wf-column-agent-select,
   .wf-templates-filter,
   .wf-ai-prompt {

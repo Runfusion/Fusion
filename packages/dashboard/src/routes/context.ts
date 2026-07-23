@@ -1,6 +1,11 @@
 import { Router, type Request } from "express";
 import { resolve, sep } from "node:path";
-import type { TaskStore } from "@fusion/core";
+import {
+  createProjectScopedPluginMcpProvider,
+  PluginLoader,
+  type PluginStore,
+  type TaskStore,
+} from "@fusion/core";
 import type { ServerOptions } from "../server.js";
 import { ApiError, internalError } from "../api-error.js";
 import { getOrCreateProjectStore } from "../project-store-resolver.js";
@@ -279,7 +284,126 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
   }
 
   const resolveScopedStore = (req: Request): Promise<TaskStore> => getScopedStore(req, store, options);
-  const resolveProjectContext = (req: Request): Promise<ProjectContext> => getProjectContext(req, store, options);
+
+  /*
+  FNXC:PluginEnablementScope 2026-07-21-12:00:
+  Plugin installation metadata is global, but every enabled/state decision belongs to the
+  TaskStore selected for the request's project. A dashboard launched from project A must not
+  use A's host loader after mutating project B: that loader reads A's project_plugin_states row
+  and can immediately report B's newly enabled plugin as disabled. Prefer B's running engine
+  loader; only reuse the host loader when it owns the same PluginStore, otherwise bind a loader
+  directly to B's TaskStore.
+
+  FNXC:PluginEnablementScope 2026-07-21-15:30:
+  A project without a live engine still needs one loader for its dashboard lifetime.
+  Creating one per request starts a plugin in enable(), then loses that instance before
+  disable(), UI-slot, contribution, and runtime reads. Cache by the resolved TaskStore so
+  all fallback readers share the same project_plugin_states key and loaded plugin instance.
+
+  FNXC:PluginEnablementScope 2026-07-22-20:30:
+  Moved here from register-plugins-automation.ts so plugin-defined HTTP route dispatch
+  (plugin-routes.ts) resolves through the SAME loader cache as dashboard-views/ui-slots/
+  enable/disable. When these used separate loader instances, a plugin enabled after boot or
+  enabled only in a non-launch project rendered its dashboard view while every one of its
+  API routes 404'd (Compound Engineering "Failed to load sessions: Not found").
+  */
+  const fallbackProjectLoaders = new WeakMap<TaskStore, {
+    loader: PluginLoader;
+    initialized: Promise<void>;
+  }>();
+
+  const getProjectPluginLoader = async (
+    scopedStore: TaskStore,
+    engine?: { getPluginRunner?: () => { getLoader?: () => PluginLoader } | undefined },
+  ): Promise<PluginLoader | undefined> => {
+    const engineLoader = engine?.getPluginRunner?.()?.getLoader?.();
+    if (engineLoader) return engineLoader;
+
+    const scopedPluginStore = scopedStore.getPluginStore();
+    if (scopedPluginStore === options?.pluginStore) return options?.pluginLoader;
+
+    let fallback = fallbackProjectLoaders.get(scopedStore);
+    if (!fallback) {
+      const loader = new PluginLoader({ pluginStore: scopedPluginStore as PluginStore, taskStore: scopedStore });
+      /*
+      FNXC:PluginEnablementScope 2026-07-21-20:15:
+      Dashboard-only projects lack an engine startup pass, so initialize their persistent scoped
+      loader once before introspection. Reusing this promise prevents ui-slots, contributions,
+      runtimes, and views from observing an empty loader after a dashboard restart.
+      */
+      fallback = {
+        loader,
+        initialized: loader.loadAllPlugins().then(() => undefined),
+      };
+      fallbackProjectLoaders.set(scopedStore, fallback);
+    }
+    await fallback.initialized;
+    return fallback.loader;
+  };
+
+  const fallbackMcpLoaders = new WeakMap<TaskStore, { loader: PluginLoader; initialized: Promise<void> }>();
+  const projectMcpProviders = new WeakMap<PluginLoader, ReturnType<typeof createProjectScopedPluginMcpProvider>>();
+
+  const bindProjectScopedPluginMcpProvider = async (context: ProjectContext): Promise<void> => {
+    const scopedStore = context.store as TaskStore & {
+      getProjectScopedPluginMcpServers?: () => Promise<unknown>;
+    };
+    // A live runtime already owns the provider for its TaskStore. Dashboard-only
+    // contexts install the same core provider below rather than falling back to
+    // raw plugin enumeration.
+    if (typeof scopedStore.getProjectScopedPluginMcpServers === "function") return;
+
+    const engineLoader = (context.engine as { getPluginRunner?: () => { getLoader?: () => PluginLoader } | undefined } | undefined)
+      ?.getPluginRunner?.()?.getLoader?.();
+    // The host loader is valid only for the TaskStore that owns its PluginStore;
+    // another root needs its own non-persisting loader before the core provider
+    // filters enabled IDs.
+    const hostLoader = context.store.getPluginStore() === options?.pluginStore ? options?.pluginLoader : undefined;
+    let loader = engineLoader ?? hostLoader;
+    if (!loader) {
+      let fallback = fallbackMcpLoaders.get(context.store);
+      if (!fallback) {
+        const fallbackLoader = new PluginLoader({
+          pluginStore: context.store.getPluginStore() as PluginStore,
+          taskStore: context.store,
+        });
+        fallback = {
+          loader: fallbackLoader,
+          initialized: context.store.getPluginStore().init().then(() => fallbackLoader.loadAllPlugins()).then(() => undefined),
+        };
+        fallbackMcpLoaders.set(context.store, fallback);
+      }
+      await fallback.initialized;
+      loader = fallback.loader;
+    }
+
+    let provider = projectMcpProviders.get(loader);
+    if (!provider) {
+      provider = createProjectScopedPluginMcpProvider({
+        hostRootDir: context.store.getRootDir(),
+        hostLoader: loader,
+        createScopedLoader: (otherStore) => new PluginLoader({
+          pluginStore: otherStore.getPluginStore() as PluginStore,
+          taskStore: otherStore as TaskStore,
+        }),
+      });
+      projectMcpProviders.set(loader, provider);
+    }
+    scopedStore.getProjectScopedPluginMcpServers = () => provider.get(context.store);
+    /*
+     * FNXC:PluginMcpServers 2026-07-22-15:35:
+     * FN-8491 / #2401 makes API and dashboard session contexts project-aware.
+     * Every non-runtime scoped store receives the same core provider so an
+     * active project other than the host cannot silently resolve no plugin MCP
+     * servers or inherit a different project's enabled-plugin state.
+     */
+  };
+
+  const resolveProjectContext = async (req: Request): Promise<ProjectContext> => {
+    const context = await getProjectContext(req, store, options);
+    await bindProjectScopedPluginMcpProvider(context);
+    return context;
+  };
   const disposeCallbacks: Array<() => void> = [];
 
   function emitAuthSyncAuditLog(input: AuthSyncAuditLogInput): void {
@@ -419,6 +543,7 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
     getProjectIdFromRequest,
     getScopedStore: resolveScopedStore,
     getProjectContext: resolveProjectContext,
+    getProjectPluginLoader,
     emitRemoteRouteDiagnostic: (input) => emitRemoteRouteDiagnostic(runtimeLogger, input),
     emitAuthSyncAuditLog,
     parseScopeParam,

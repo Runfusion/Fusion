@@ -364,6 +364,10 @@ export interface WorkflowColumnAgent {
 export interface WorkflowIrColumn {
   id: string;
   name: string;
+  /** Optional author-defined explanatory copy. Omission is the compatible default
+   *  for columns without custom copy, allowing board renderers to use lifecycle
+   *  descriptions where available. */
+  description?: string;
   traits: WorkflowIrColumnTrait[];
   /** Plugin-namespaced extension metadata keyed as `plugin:<pluginId>:<extensionId>`. */
   extensions?: Record<string, Record<string, unknown>>;

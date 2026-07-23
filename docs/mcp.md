@@ -287,3 +287,7 @@ Read-only sessions do not receive MCP tools automatically. Interactive planning 
 Expected outcome: enabling a server makes it available to subsequent supported AI sessions and explicitly opted-in planning/mission read-only sessions, while unsupported sessions and read-only sessions without the opt-in continue without MCP tools and without logging secret-bearing server definitions.
 
 See [Settings Reference](./settings-reference.md) for the `mcpServers` settings contract and [Agents](./agents.md) for runtime/model lane behavior.
+
+## Plugin-provided servers
+
+A plugin can declaratively contribute an MCP server without modifying project settings. Fusion includes it only when that plugin is enabled for the active project, then applies normal project override and `enabled:false` tombstone semantics by name. The server binary remains the consuming project's responsibility; an unavailable command produces the normal isolated MCP spawn failure. Plugin declarations may contain only Fusion secret references for sensitive values.

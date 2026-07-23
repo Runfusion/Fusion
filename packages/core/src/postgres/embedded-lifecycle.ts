@@ -70,6 +70,8 @@ import type { ResolvedBackend } from "./backend-resolver.js";
 import {
   isWindowsElevatedAdmin,
   startServerElevatedRestricted,
+  WindowsPostgresFatalDetector,
+  withWindowsNativeBinPath,
   type ElevatedServerHandle,
   type ElevatedStartOptions,
 } from "./embedded-windows-elevated.js";
@@ -455,6 +457,38 @@ let electronAsarNativePathPatchRestore: (() => void) | null = null;
 type MutableSpawnModule = {
   spawn: (...args: unknown[]) => unknown;
 };
+
+type SpawnOptionsLike = { env?: NodeJS.ProcessEnv; windowsHide?: boolean };
+
+function isWindowsEmbeddedPostgresBinary(command: unknown): command is string {
+  return process.platform === "win32" &&
+    typeof command === "string" &&
+    /[\\/]bin[\\/](?:postgres|initdb|pg_ctl)\.exe$/i.test(command);
+}
+
+/**
+ * Add the sibling bundled bin directory only to a native PostgreSQL spawn.
+ *
+ * FNXC:PostgresEmbedded 2026-07-22-16:10:
+ * `embedded-postgres` copies process.env when it spawns normal Windows
+ * postmasters. Patch that narrow spawn seam rather than mutating process.env,
+ * so npm/pnpm, standalone runtime-bin, and Electron materialized payloads all
+ * give descendants their DLL directory without changing unrelated children.
+ */
+function withWindowsPostgresSpawnEnvironment(command: unknown, rest: unknown[]): unknown[] {
+  if (!isWindowsEmbeddedPostgresBinary(command)) return rest;
+  const args = [...rest];
+  const optionIndex = args.length - 1;
+  const existing = args[optionIndex] as SpawnOptionsLike | undefined;
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)) return args;
+  const binDir = dirname(command);
+  const nativeRoot = dirname(binDir);
+  args[optionIndex] = {
+    ...existing,
+    env: withWindowsNativeBinPath(existing.env ?? process.env, nativeRoot),
+  } satisfies SpawnOptionsLike;
+  return args;
+}
 type MutableFsPromisesModule = {
   stat: (...args: unknown[]) => unknown;
   chmod: (...args: unknown[]) => unknown;
@@ -500,7 +534,10 @@ export function installElectronAsarNativePathPatch(): void {
   childProcessMod.spawn = (command: unknown, ...rest: unknown[]) => {
     const fixedCommand =
       typeof command === "string" ? resolveElectronAsarUnpackedPath(command) : command;
-    return originalSpawn(fixedCommand, ...rest);
+    return originalSpawn(
+      fixedCommand,
+      ...withWindowsPostgresSpawnEnvironment(fixedCommand, rest),
+    );
   };
 
   const fsPromisesMod = require("fs/promises") as MutableFsPromisesModule;
@@ -750,12 +787,20 @@ export interface EmbeddedDylibNormalization {
   readonly created: boolean;
 }
 
+/*
+FNXC:PostgresEmbedded 2026-07-22-14:34:
+The bundled libicui18n.68.2.dylib records libicuuc.68.dylib as its loader
+name. macOS dyld must find that ABI-specific compatibility name before initdb
+runs, so normalize it only from the packaged libicuuc.68.<patch>.dylib payload
+rather than adding a broad unversioned ICU link or relying on system libraries.
+*/
 const MACOS_EMBEDDED_DYLIB_SYMLINKS: readonly EmbeddedDylibSymlinkSpec[] = [
   { expected: "libpq.5.dylib", candidate: /^libpq\.5\..+\.dylib$/ },
   { expected: "libzstd.1.dylib", candidate: /^libzstd\.1\..+\.dylib$/ },
   { expected: "liblz4.1.dylib", candidate: /^liblz4\.1\..+\.dylib$/ },
   { expected: "libz.1.dylib", candidate: /^libz\.1\..+\.dylib$/ },
   { expected: "libicui18n.dylib", candidate: /^libicui18n\..+\.dylib$/ },
+  { expected: "libicuuc.68.dylib", candidate: /^libicuuc\.68\..+\.dylib$/ },
 ];
 
 function sortDylibCandidates(files: readonly string[], candidate: RegExp): string[] {
@@ -768,10 +813,11 @@ function sortDylibCandidates(files: readonly string[], candidate: RegExp): strin
  * Normalize macOS embedded-postgres library names before initdb/postgres spawn.
  *
  * The @embedded-postgres/darwin-* packages can contain fully-versioned dylibs
- * (for example libpq.5.15.dylib, libzstd.1.5.7.dylib) while the bundled
- * binaries link against ABI compatibility names such as libpq.5.dylib and
- * libzstd.1.dylib via @loader_path/../lib/.... When the package postinstall
- * symlink hydration is skipped or incomplete, dyld fails before initdb can run.
+ * (for example libpq.5.15.dylib, libzstd.1.5.7.dylib, and
+ * libicuuc.68.2.dylib) while the bundled binaries link against ABI compatibility
+ * names such as libpq.5.dylib, libzstd.1.dylib, and libicuuc.68.dylib via
+ * @loader_path/../lib/.... When the package postinstall symlink hydration is
+ * skipped or incomplete, dyld fails before initdb can run.
  *
  * This is intentionally local to the embedded binary package and idempotent:
  * existing compatibility names are left alone; missing compatibility names are
@@ -1113,6 +1159,10 @@ export class EmbeddedPostgresLifecycle {
    * on a failure that is handled before the timeout fires.
    */
   private startTimer: NodeJS.Timeout | null = null;
+  private readonly windowsFatalDetector = new WindowsPostgresFatalDetector();
+  private recoveryAttempts = 0;
+  private recoveryInFlight: Promise<void> | null = null;
+  private stopRequested = false;
 
   constructor(opts: EmbeddedLifecycleOptions) {
     this.options = {
@@ -1129,6 +1179,16 @@ export class EmbeddedPostgresLifecycle {
         opts.onError ?? ((err: string | Error | unknown) => log.error(String(err))),
     };
   }
+
+  /**
+   * Forward native process output to the existing sink, then schedule recovery
+   * only for a confirmed owned Windows fatal shutdown sequence.
+   */
+  private forwardPostgresLog = (message: string): void => {
+    this.options.onLog(message);
+    if (process.platform !== "win32" || !this.running || !this.ownsProcess) return;
+    if (this.windowsFatalDetector.push(message)) void this.recoverWindowsFatalOnce();
+  };
 
   /** The configured or discovered port. Undefined until assigned (explicit or discovered in `start()`). */
   getPort(): number | undefined {
@@ -1247,11 +1307,20 @@ export class EmbeddedPostgresLifecycle {
         migrationUrlOverridden: false,
       };
     }
+    return this.startBounded();
+  }
+
+  /**
+   * Start an owned postmaster with the same cancellation and timeout contract
+   * used by public startup. Recovery calls this directly because it must not
+   * join a stale pid file or allocate a new endpoint between pool reconnects.
+   */
+  private async startBounded(preferredPort?: number): Promise<ResolvedBackend> {
     if (this.options.startTimeoutMs <= 0) {
-      return this.startInternal();
+      return this.startInternal(undefined, preferredPort);
     }
     const controller = new AbortController();
-    const startAttempt = this.startInternal(controller.signal);
+    const startAttempt = this.startInternal(controller.signal, preferredPort);
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
@@ -1263,7 +1332,6 @@ export class EmbeddedPostgresLifecycle {
           ),
         );
       }, this.options.startTimeoutMs);
-      // Unref so the timer alone does not keep the event loop alive.
       if (timer && typeof timer.unref === "function") timer.unref();
     });
     this.startTimer = timer ?? null;
@@ -1271,8 +1339,6 @@ export class EmbeddedPostgresLifecycle {
       return await Promise.race([startAttempt, timeout]);
     } catch (err) {
       controller.abort();
-      // On timeout (or any failure), best-effort clean up the partial state so
-      // a retry starts fresh. stop() is safe to call even when not fully running.
       await this.stop().catch(() => undefined);
       throw err;
     } finally {
@@ -1281,12 +1347,15 @@ export class EmbeddedPostgresLifecycle {
     }
   }
 
-  /**
-   * The actual start sequence, with no timeout wrapper. Called by {@link start}
-   * either directly (timeout disabled) or via Promise.race with the timeout.
-   */
-  private async startInternal(signal?: AbortSignal): Promise<ResolvedBackend> {
-    const port = this.options.port ?? (await findFreePort());
+  /** The actual start sequence, invoked only through {@link startBounded}. */
+  private async startInternal(signal?: AbortSignal, preferredPort?: number): Promise<ResolvedBackend> {
+    /*
+    FNXC:PostgresEmbedded 2026-07-22-23:05:
+    A Windows crash recovery must retain the originally resolved endpoint even
+    when no explicit port was configured. Reallocating here strands existing
+    task-store pools on the dead port, so only a first launch may find a port.
+    */
+    const port = this.options.port ?? preferredPort ?? this.resolvedPort ?? (await findFreePort());
     if (signal?.aborted) throw new EmbeddedStartCancelledError(this.options.dataDir);
     this.resolvedPort = port;
 
@@ -1303,7 +1372,7 @@ export class EmbeddedPostgresLifecycle {
       authMethod: "password",
       initdbFlags: [...this.options.initdbFlags],
       postgresFlags: [...this.options.postgresFlags],
-      onLog: this.options.onLog,
+      onLog: this.forwardPostgresLog,
       onError: this.options.onError,
     });
     this.pg = pg;
@@ -1360,7 +1429,7 @@ export class EmbeddedPostgresLifecycle {
           dataDir: this.options.dataDir,
           port,
           postgresFlags: this.options.postgresFlags,
-          onLog: this.options.onLog,
+          onLog: this.forwardPostgresLog,
           onError: this.options.onError,
           startTimeoutMs: this.options.startTimeoutMs,
           signal,
@@ -1476,6 +1545,44 @@ export class EmbeddedPostgresLifecycle {
       migrationUrl: runtimeUrl,
       migrationUrlOverridden: false,
     };
+  }
+
+  /**
+   * FNXC:PostgresEmbedded 2026-07-22-16:25:
+   * A 0xC0000142 backend crash shuts down its whole PostgreSQL cluster. One
+   * lifecycle-owned retry reuses the initialized directory and same resolved
+   * port; joiners, stop/detach, and a second incident are deliberately inert.
+   */
+  private async recoverWindowsFatalOnce(): Promise<void> {
+    if (this.recoveryInFlight || this.recoveryAttempts >= 1 || this.stopRequested || !this.ownsProcess) return;
+    this.recoveryAttempts += 1;
+    this.recoveryInFlight = (async () => {
+      this.options.onLog("embedded postgres: detected Windows DLL initialization shutdown; attempting one owned-cluster recovery");
+      try {
+        if (this.nonAdminHandle) await this.nonAdminHandle.stop();
+        else await this.pg?.stop();
+        this.pg = null;
+        this.nonAdminHandle = null;
+        this.running = false;
+        runningInstances.delete(this.options.dataDir);
+        if (this.stopRequested || !this.ownsProcess) return;
+        const recoveryPort = this.resolvedPort;
+        if (recoveryPort === undefined) {
+          throw new Error("embedded postgres: recovery lost its resolved port");
+        }
+        await this.startBounded(recoveryPort);
+        this.options.onLog("embedded postgres: Windows owned-cluster recovery completed; existing pools may reconnect");
+      } catch (error) {
+        this.running = false;
+        runningInstances.delete(this.options.dataDir);
+        this.options.onError(
+          `embedded postgres: Windows DLL initialization recovery failed after one retry; restart Fusion and inspect the System log. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        this.recoveryInFlight = null;
+      }
+    })();
+    await this.recoveryInFlight;
   }
 
   private async settleCancelledStart(pg: EmbeddedPostgresInstance): Promise<void> {
@@ -1640,6 +1747,7 @@ export class EmbeddedPostgresLifecycle {
   */
   detachWithoutStop(): void {
     this.uninstallShutdownHook();
+    this.nonAdminHandle?.stopMonitoring();
     this.pg = null;
     this.nonAdminHandle = null;
     this.running = false;
@@ -1648,6 +1756,7 @@ export class EmbeddedPostgresLifecycle {
   }
 
   async stop(): Promise<void> {
+    this.stopRequested = true;
     this.uninstallShutdownHook();
 
     // FNXC:PostgresCutover 2026-06-27-11:10:

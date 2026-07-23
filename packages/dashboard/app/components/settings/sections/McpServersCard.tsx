@@ -8,6 +8,7 @@ import {
   exportMcpServersJson,
   importMcpServersJson,
   isMcpSecretRef,
+  mapPluginMcpServerContribution,
   resolveEffectiveMcpServers,
   validateMcpServerDefinitionDetailed,
   validateMcpServerDefinitionsDetailed,
@@ -15,6 +16,7 @@ import {
   type McpSecretRef,
   type McpServerDefinition,
   type McpServersSettings,
+  type PluginMcpServerContribution,
   type Settings,
 } from "@fusion/core";
 
@@ -23,7 +25,7 @@ type ToastKind = "info" | "success" | "error";
 type SecretScope = "project" | "global";
 type Transport = McpServerDefinition["transport"];
 type ValidationStatus = "idle" | "pending" | "valid" | "unreachable" | "error";
-type DisplayState = "configured" | "disabled" | "inherited" | "overridden" | "project-local" | "disabled-global";
+type DisplayState = "configured" | "disabled" | "inherited" | "overridden" | "project-local" | "disabled-global" | "plugin" | "plugin-overridden" | "plugin-disabled";
 
 type FormSetter = Dispatch<SetStateAction<Settings>>;
 
@@ -92,6 +94,8 @@ export interface McpServersCardProps {
   setForm: FormSetter;
   globalSettings?: Pick<GlobalSettings, "mcpServers"> | null;
   projectId?: string;
+  /** Already project-scoped contributions supplied by the API/provider. */
+  pluginServers?: Array<{ pluginId: string; server: PluginMcpServerContribution }>;
   addToast: (message: string, type?: ToastKind) => void;
 }
 
@@ -231,6 +235,8 @@ function getValidateDotClass(status: ValidationStatus): string {
 function getStateLabel(state: DisplayState): string {
   if (state === "disabled-global") return "disabled global";
   if (state === "project-local") return "project local";
+  if (state === "plugin-overridden") return "plugin overridden";
+  if (state === "plugin-disabled") return "plugin disabled";
   return state;
 }
 
@@ -245,9 +251,13 @@ function getValidationLabel(status: ValidationStatus): string {
  * MCP settings are edited through one card for global and project scopes. Sensitive env/header/token-like values are modeled only as Fusion secret references; this component never writes plaintext sensitive values into the settings form.
  *
  * FNXC:McpConfig 2026-06-26-01:17:
+ * FNXC:PluginMcpServers 2026-07-22-12:00:
+ * FN-8491 renders plugin provenance only for the project card. Global settings
+ * remain plugin-free; project actions persist only local overrides or tombstones.
+ *
  * Project MCP declarations override global servers by matching name and may save enabled:false tombstones to disable inherited global servers. The project card shows inherited, overridden, local, and disabled states so operators can see effective behavior before saving.
  */
-export function McpServersCard({ scope, form, setForm, globalSettings, projectId, addToast }: McpServersCardProps) {
+export function McpServersCard({ scope, form, setForm, globalSettings, projectId, pluginServers = [], addToast }: McpServersCardProps) {
   const { t } = useTranslation("app");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const settings = normalizeMcpSettings(form.mcpServers ?? EMPTY_MCP_SETTINGS);
@@ -300,9 +310,14 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
   }, [scanDiscoveredServers]);
 
   const effectiveServers = useMemo(
-    () => scope === "project" ? resolveEffectiveMcpServers({ mcpServers: globalMcp }, { mcpServers: form.mcpServers }) : configuredServers.filter((server) => server.enabled !== false),
-    [configuredServers, form.mcpServers, globalMcp, scope],
+    () => scope === "project" ? resolveEffectiveMcpServers({ mcpServers: globalMcp }, { mcpServers: form.mcpServers }, pluginServers) : configuredServers.filter((server) => server.enabled !== false),
+    [configuredServers, form.mcpServers, globalMcp, pluginServers, scope],
   );
+  const pluginByName = useMemo(() => new Map(pluginServers
+    .filter((entry) => entry.server.enabledByDefault !== false)
+    .map((entry) => ({ ...entry, definition: mapPluginMcpServerContribution(entry.server) }))
+    .filter((entry): entry is { pluginId: string; server: PluginMcpServerContribution; definition: McpServerDefinition } => Boolean(entry.definition))
+    .map((entry) => [entry.definition.name, entry])), [pluginServers]);
 
   const globalByName = useMemo(() => new Map(globalServers.map((server) => [server.name, server])), [globalServers]);
   const projectByName = useMemo(() => new Map(configuredServers.map((server) => [server.name, server])), [configuredServers]);
@@ -321,21 +336,28 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
     if (scope === "global") return configuredServers.map((server): { server: McpServerDefinition; state: DisplayState } => ({ server, state: server.enabled === false ? "disabled" : "configured" }));
     const effectiveByName = new Set(effectiveServers.map((server) => server.name));
     const rows: Array<{ server: McpServerDefinition; state: DisplayState }> = [];
-    for (const globalServer of globalServers) {
-      const projectServer = projectByName.get(globalServer.name);
+    // FNXC:PluginMcpServers 2026-07-22-12:00:
+    // The project card must display the same global → plugin → project winner
+    // that session resolution uses. In particular, a plugin replaces a
+    // same-name global server rather than being hidden behind it (FN-8491/#2401).
+    const inheritedByName = new Map<string, { server: McpServerDefinition; plugin: boolean }>();
+    for (const server of globalServers) inheritedByName.set(server.name, { server, plugin: false });
+    for (const [name, entry] of pluginByName) inheritedByName.set(name, { server: entry.definition, plugin: true });
+    for (const [name, inherited] of inheritedByName) {
+      const projectServer = projectByName.get(name);
       if (projectServer?.enabled === false) {
-        rows.push({ server: projectServer, state: "disabled-global" });
+        rows.push({ server: projectServer, state: inherited.plugin ? "plugin-disabled" : "disabled-global" });
       } else if (projectServer) {
-        rows.push({ server: projectServer, state: effectiveByName.has(projectServer.name) ? "overridden" : "disabled" });
+        rows.push({ server: projectServer, state: inherited.plugin ? "plugin-overridden" : effectiveByName.has(name) ? "overridden" : "disabled" });
       } else {
-        rows.push({ server: globalServer, state: effectiveByName.has(globalServer.name) ? "inherited" : "disabled" });
+        rows.push({ server: inherited.server, state: inherited.plugin ? (effectiveByName.has(name) ? "plugin" : "plugin-disabled") : (effectiveByName.has(name) ? "inherited" : "disabled") });
       }
     }
     for (const server of configuredServers) {
-      if (!globalByName.has(server.name)) rows.push({ server, state: server.enabled === false || !effectiveByName.has(server.name) ? "disabled" : "project-local" });
+      if (!inheritedByName.has(server.name)) rows.push({ server, state: server.enabled === false || !effectiveByName.has(server.name) ? "disabled" : "project-local" });
     }
     return rows;
-  }, [configuredServers, effectiveServers, globalByName, globalServers, projectByName, scope]);
+  }, [configuredServers, effectiveServers, globalServers, pluginByName, projectByName, scope]);
 
   const updateMcpSettings = (next: McpServersSettings) => {
     setForm((current) => ({ ...current, mcpServers: next }));
@@ -395,7 +417,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
   };
 
   const disableInheritedServer = (name: string) => {
-    const inherited = globalByName.get(name);
+    const inherited = pluginByName.get(name)?.definition ?? globalByName.get(name);
     const tombstone: McpServerDefinition = inherited?.transport === "sse" || inherited?.transport === "streamable-http"
       ? { name, enabled: false, transport: inherited.transport, url: inherited.url }
       : { name, enabled: false, transport: "stdio", command: inherited?.transport === "stdio" ? inherited.command : "disabled" };
@@ -591,7 +613,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
                 <div className="mcp-server-row__main">
                   <div className="mcp-server-row__titleline">
                     <strong>{server.name}</strong>
-                    <span className={`mcp-state-badge mcp-state-badge--${state}`} data-state={state}>{getStateLabel(state)}</span>
+                    <span className={`mcp-state-badge mcp-state-badge--${state}`} data-state={state}>{getStateLabel(state)}</span>{scope === "project" && pluginByName.has(server.name) ? <span className="mcp-state-badge" data-testid={`mcp-plugin-provenance-${server.name}`}>{`plugin:${pluginByName.get(server.name)!.pluginId}`}</span> : null}
                     <span className="mcp-transport-badge">{server.transport}</span>
                   </div>
                   <p>{serverSummary(server)}</p>
@@ -599,8 +621,8 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
                 </div>
                 <div className="mcp-server-row__actions">
                   <button type="button" className="btn btn-sm touch-target" onClick={() => void validateServer(server)} disabled={validation.status === "pending"}><Play aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {validation.status === "pending" ? t("settings.mcp.testing", "Testing…") : t("settings.mcp.test", "Test")}</button>
-                  {state === "inherited" ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.override", "Override")}</button> : null}
-                  {state === "inherited" ? <button type="button" className="btn btn-warning btn-sm touch-target" onClick={() => disableInheritedServer(server.name)}>{t("settings.mcp.disableInherited", "Disable")}</button> : null}
+                  {(state === "inherited" || state === "plugin") ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.override", "Override")}</button> : null}
+                  {(state === "inherited" || state === "plugin") ? <button type="button" className="btn btn-warning btn-sm touch-target" onClick={() => disableInheritedServer(server.name)}>{t("settings.mcp.disableInherited", "Disable")}</button> : null}
                   {editable ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("actions.edit", "Edit")}</button> : null}
                   {editable ? <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeServer", "Remove {{name}}", { name: server.name })} onClick={() => removeServer(server.name)}><Trash2 aria-hidden="true" /></button> : null}
                 </div>

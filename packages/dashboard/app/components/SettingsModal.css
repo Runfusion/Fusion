@@ -1369,11 +1369,17 @@ Settings section headings should preserve hierarchy through spacing and type onl
   padding-bottom: var(--space-md);
 }
 
-/* Scope indicators in sidebar nav items */
+/*
+FNXC:SettingsNavigation 2026-07-22-23:05:
+Desktop Settings rows render custom section glyphs alongside global Globe and project Folder fallbacks.
+Every rendered glyph must occupy the same non-shrinking Lucide-sized box so row labels share one
+start edge; mobile hides the sidebar and keeps its icon-free picker without creating a blank slot.
+*/
 .settings-scope-icon {
-  margin-right: 6px;
-  display: inline-flex;
-  vertical-align: middle;
+  inline-size: var(--space-md);
+  block-size: var(--space-md);
+  flex: 0 0 var(--space-md);
+  margin-right: var(--space-xs);
   color: var(--text-muted);
 }
 

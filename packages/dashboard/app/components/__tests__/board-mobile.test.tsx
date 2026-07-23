@@ -212,11 +212,11 @@ describe("Board and Column mobile CSS", () => {
     expectRuleToContain(mobileSection, ".board", "scroll-snap-type: x proximity;");
   });
 
-  it("contains .board scroll-behavior: smooth in the mobile media block", () => {
+  it("keeps .board scroll-behavior auto for the JavaScript hard settle", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".board", "scroll-behavior: smooth;");
+    expectRuleToContain(mobileSection, ".board", "scroll-behavior: auto;");
   });
 
   it("contains .board > .column width: 300px in the mobile media block", () => {

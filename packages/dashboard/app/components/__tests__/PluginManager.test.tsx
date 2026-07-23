@@ -1209,22 +1209,33 @@ describe("PluginManager", () => {
       });
     });
 
-    it("handles plugin uninstalled SSE event", async () => {
-      vi.mocked(fetchPlugins).mockResolvedValueOnce(mockPlugins);
+    it("removes a runtime toggle after its uninstalled lifecycle event", async () => {
+      const hermesRuntime: PluginInstallation = {
+        id: "fusion-plugin-hermes-runtime",
+        name: "Hermes Runtime",
+        version: "1.0.0",
+        state: "started",
+        enabled: true,
+        path: "./plugins/fusion-plugin-hermes-runtime",
+        settings: {},
+        settingsSchema: {},
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      vi.mocked(fetchPlugins).mockResolvedValueOnce([hermesRuntime]);
 
       render(<PluginManager addToast={addToast} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Test Plugin A")).toBeTruthy();
-      });
+      const installedCard = await waitFor(() => getBuiltInPluginCard("Hermes Runtime"));
+      expect(within(installedCard).getByRole("checkbox", { name: "Disable Hermes Runtime" })).toBeChecked();
 
       const eventSourceInstance = (globalThis as any).__testEventSourceInstance;
       const eventHandler = eventSourceInstance?.handlers?.["plugin:lifecycle"];
-      
+
       act(() => {
         eventHandler({
           data: JSON.stringify({
-            pluginId: "plugin-a",
+            pluginId: hermesRuntime.id,
             transition: "uninstalled",
             sourceEvent: "plugin:unregistered",
             timestamp: new Date().toISOString(),
@@ -1237,7 +1248,10 @@ describe("PluginManager", () => {
       });
 
       await waitFor(() => {
-        expect(screen.queryByText("Test Plugin A")).toBeNull();
+        const card = getBuiltInPluginCard("Hermes Runtime");
+        expect(within(card).getByRole("button", { name: "Install Hermes Runtime" })).toBeVisible();
+        expect(within(card).queryByRole("checkbox")).not.toBeInTheDocument();
+        expect(card.querySelector("label.toggle-switch")).toBeNull();
       });
     });
 

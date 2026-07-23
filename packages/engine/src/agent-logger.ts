@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TaskStore, AgentLogEntry, AgentRole } from "@fusion/core";
 import { categorizeToolName } from "@fusion/core";
 import { createLogger } from "./logger.js";
@@ -108,10 +109,24 @@ function summarizeToolResultDetail(result: unknown): string | undefined {
   }
 }
 
+/** Bound structured-arg fallback summaries so agent-log detail stays dashboard-safe. */
+const STRUCTURED_ARG_SUMMARY_MAX = 240;
+/** Hex prefix of sha256 of the full structured JSON when the log summary is truncated. */
+const STRUCTURED_ARG_HASH_HEX_LEN = 12;
+
 /**
  * Produce a human-readable summary from tool arguments.
- * Returns the full argument value without truncation.
- * Returns `undefined` for unknown tools or when no meaningful arg is found.
+ * Returns the full argument value without truncation for common string primaries.
+ * Returns `undefined` when no args or only empty objects.
+ *
+ * FNXC:StuckDetector 2026-07-22-20:20:
+ * Prefer a compact JSON fallback for custom tools whose args are only numbers/bools/objects.
+ * Without that, every call collapses to a bare tool name and the stuck detector can false-positive
+ * productive structured-arg work as a loop (Greptile P1 on PR #2404).
+ *
+ * FNXC:StuckDetector 2026-07-22-20:25:
+ * When truncating long structured JSON for logs, append a short hash of the FULL payload so
+ * differences past the visible prefix remain distinct for stuck-loop fingerprints.
  */
 export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
   if (!args) return undefined;
@@ -132,7 +147,21 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
     if (typeof val === "string") return val;
   }
 
-  return undefined;
+  // Structured-arg fallback: distinct non-string payloads stay distinguishable.
+  const keys = Object.keys(args);
+  if (keys.length === 0) return undefined;
+  try {
+    const json = JSON.stringify(args);
+    if (!json || json === "{}" || json === "[]") return undefined;
+    if (json.length <= STRUCTURED_ARG_SUMMARY_MAX) return json;
+    const hash = createHash("sha256").update(json).digest("hex").slice(0, STRUCTURED_ARG_HASH_HEX_LEN);
+    // Reserve room for "…#" + hash so the suffix always survives.
+    const suffix = `…#${hash}`;
+    const keep = Math.max(0, STRUCTURED_ARG_SUMMARY_MAX - suffix.length);
+    return `${json.slice(0, keep)}${suffix}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -163,8 +192,11 @@ export interface AgentLoggerOptions {
   agent?: AgentRole;
   /** Optional callback invoked alongside text logging (e.g. for SSE streaming). */
   onAgentText?: (taskId: string, delta: string) => void;
-  /** Optional callback invoked alongside tool logging (e.g. for SSE streaming). */
-  onAgentTool?: (taskId: string, toolName: string) => void;
+  /**
+   * Optional callback invoked alongside tool logging (e.g. for SSE streaming / stuck detection).
+   * `detail` is the primary-arg summary from {@link summarizeToolArgs} when available.
+   */
+  onAgentTool?: (taskId: string, toolName: string, detail?: string) => void;
   /*
   FNXC:PlannerOversight 2026-07-13-23:00:
   Session-advisor seam: after durable entries flush, notify the overseer
@@ -222,7 +254,7 @@ export class AgentLogger {
   private readonly appendLogCb?: (entry: AgentLogEntry) => Promise<void>;
   private readonly agent?: AgentRole;
   private readonly externalTextCb?: (taskId: string, delta: string) => void;
-  private readonly externalToolCb?: (taskId: string, toolName: string) => void;
+  private readonly externalToolCb?: (taskId: string, toolName: string, detail?: string) => void;
   private readonly onEntriesFlushedCb?: (taskId: string, entries: AgentLogEntry[]) => void | Promise<void>;
   private readonly log = createLogger("agent-logger");
   private readonly persistAgentToolOutput: boolean;
@@ -356,13 +388,18 @@ export class AgentLogger {
    * tool name with a detail summary. Compatible with `AgentOptions.onToolStart`.
    */
   onToolStart(name: string, args?: Record<string, unknown>): void {
-    this.externalToolCb?.(this.taskId, name);
     // Flush any pending text/thinking before recording the tool entry
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
     this.flushTextBuffer();
     if (this.thinkingFlushTimer) { clearTimeout(this.thinkingFlushTimer); this.thinkingFlushTimer = null; }
     this.flushThinkingBuffer();
     const detail = summarizeToolArgs(name, args);
+    /*
+    FNXC:StuckDetector 2026-07-22-18:05:
+    Pass primary-arg detail so StuckTaskDetector can fingerprint tool novelty for loop classification.
+    Call after summarizeToolArgs so detail matches the agent-log row.
+    */
+    this.externalToolCb?.(this.taskId, name, detail);
     this.writeEntry(name, "tool", detail, `Failed to log tool start "${name}" for ${this.taskId}`);
     // agent-log type "tool" maps to usage_events kind "tool_call". meta carries
     // only non-sensitive descriptors (category) — never the tool arguments.

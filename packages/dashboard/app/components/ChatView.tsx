@@ -204,19 +204,28 @@ interface PendingAttachment {
   previewUrl: string;
 }
 
+/*
+FNXC:ChatAttachments 2026-08-03-00:00:
+Chat must offer precisely the task-store attachment MIME set so picker, paste, and drop never stage
+files that its upload routes reject. Keep this list aligned with CHAT_ALLOWED_MIME_TYPES on the API.
+*/
 const ALLOWED_ATTACHMENT_TYPES = [
   "image/png",
   "image/jpeg",
   "image/gif",
   "image/webp",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
   "text/plain",
+  "text/markdown",
   "application/json",
   "text/yaml",
-  "text/markdown",
+  "text/x-toml",
   "text/csv",
   "application/xml",
-  "text/x-log",
 ];
+const CHAT_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.txt,.md,.json,.yaml,.yml,.toml,.csv,.xml";
 
 /**
  * ChatView's local name for the shared slash-trigger matcher used by both
@@ -1650,11 +1659,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, []);
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const clipboardFiles = event.clipboardData?.files;
-    if (!clipboardFiles || clipboardFiles.length === 0) return;
-    const imageFiles = Array.from(clipboardFiles).filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
-    handleAttachmentFiles(imageFiles);
+    /*
+    FNXC:ChatAttachments 2026-08-03-00:00:
+    Chat paste must use the same MIME validation path as picker and drop. Filtering clipboard data
+    to images made supported text files disappear before the authoritative server validation ran.
+    */
+    handleAttachmentFiles(event.clipboardData?.files);
   }, [handleAttachmentFiles]);
 
   // Handle create session
@@ -1858,8 +1868,34 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       return;
     }
 
-    clearComposerState();
-    sendMessage(trimmed, files);
+    const sentFiles = new Set(files);
+    /*
+    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    Keep direct-chat previews alive until useChat confirms multipart delivery. A direct-session
+    upload fails asynchronously, so clearComposerState() here would revoke the only retryable File
+    references before its stream error handler can report the rejection.
+    */
+    setMessageInput("");
+    try {
+      sendMessage(trimmed, files, {
+        onDelivered: () => {
+          setPendingAttachments((prev) => {
+            for (const attachment of prev) {
+              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
+                URL.revokeObjectURL(attachment.previewUrl);
+              }
+            }
+            return prev.filter((attachment) => !sentFiles.has(attachment.file));
+          });
+        },
+        onFailed: () => {
+          // Do not overwrite text the user entered while the failed request was in flight.
+          setMessageInput((current) => current || trimmed);
+        },
+      });
+    } catch {
+      setMessageInput(trimmed);
+    }
   }, [
     messageInput,
     pendingAttachments,
@@ -1907,12 +1943,32 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
       roomSendInFlightRef.current = true;
       const previousInput = messageInput;
-      clearComposerState();
+      const sentFiles = new Set(files);
+      // Clear only the text optimistically. Keeping staged attachments until upload succeeds lets a
+      // rejected room send be retried without silently losing its photo or file.
+      setMessageInput("");
 
       try {
         await rooms.sendRoomMessage(trimmed, { files });
+        setPendingAttachments((prev) => {
+          for (const attachment of prev) {
+            if (sentFiles.has(attachment.file) && attachment.previewUrl) {
+              URL.revokeObjectURL(attachment.previewUrl);
+            }
+          }
+          return prev.filter((attachment) => !sentFiles.has(attachment.file));
+        });
       } catch (error) {
         if (error instanceof RoomMessageDeliveredButReplyFailedError) {
+          // The server accepted this turn, so release only the attachments that were dispatched.
+          setPendingAttachments((prev) => {
+            for (const attachment of prev) {
+              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
+                URL.revokeObjectURL(attachment.previewUrl);
+              }
+            }
+            return prev.filter((attachment) => !sentFiles.has(attachment.file));
+          });
           const message = error.message.trim()
             ? error.message
             : t("chat.messageSentButReplyFailed", "Message sent, but assistant reply failed");
@@ -2845,7 +2901,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         ref={fileInputRef}
         type="file"
         data-testid="chat-file-input"
-        accept="image/*,.txt,.json,.yaml,.yml,.log,.csv,.xml,.md"
+        accept={CHAT_ATTACHMENT_ACCEPT}
         multiple
         style={{ display: "none" }}
         onChange={(event) => {
@@ -3830,7 +3886,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,.txt,.json,.yaml,.yml,.log,.csv,.xml,.md"
+                accept={CHAT_ATTACHMENT_ACCEPT}
                 multiple
                 style={{ display: "none" }}
                 onChange={(event) => {

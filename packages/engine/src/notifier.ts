@@ -26,7 +26,10 @@ const DEFAULT_NTFY_RETRY_DELAY_MS = 500;
 export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "in-review",
   "merged",
+  // FNXC:TaskWedgeNotifications 2026-07-22-19:00: Wedge episodes are operator
+  // escalation events, so normal Ntfy defaults must not silently filter them.
   "failed",
+  "task-wedged",
   "awaiting-approval",
   "awaiting-user-review",
   "planning-awaiting-input",
