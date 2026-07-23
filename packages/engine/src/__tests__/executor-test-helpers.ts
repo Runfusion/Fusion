@@ -201,7 +201,7 @@ vi.mock("../worktree/worktree-names.js", async () => {
 });
 vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../worktree/worktree-pool.js")>();
-  const backend = await vi.importActual<typeof import("../worktree/worktree-backend.js")>("../worktree-backend.js");
+  const backend = await vi.importActual<typeof import("../worktree/worktree-backend.js")>("../worktree/worktree-backend.js");
   return {
     ...actual,
     ActiveSessionWorktreeRemovalError: backend.ActiveSessionWorktreeRemovalError,
@@ -218,7 +218,7 @@ vi.mock("../worktree/worktree-hooks.js", () => ({
 }));
 
 vi.mock("../worktree/worktree-stale-lock.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-lock.js")>("../worktree-stale-lock.js");
+  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-lock.js")>("../worktree/worktree-stale-lock.js");
   return {
     ...actual,
     parseIndexLockPath: vi.fn(actual.parseIndexLockPath),
@@ -228,7 +228,7 @@ vi.mock("../worktree/worktree-stale-lock.js", async () => {
 });
 
 vi.mock("../worktree/worktree-stale-registration.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-registration.js")>("../worktree-stale-registration.js");
+  const actual = await vi.importActual<typeof import("../worktree/worktree-stale-registration.js")>("../worktree/worktree-stale-registration.js");
   return {
     ...actual,
     parseStaleRegistrationPath: vi.fn(actual.parseStaleRegistrationPath),
@@ -359,7 +359,7 @@ vi.mock("../worktree/worktree-db-hydrate.js", () => ({
   }),
 }));
 vi.mock("../execution/verification-utils.js", async () => {
-  const actual = await vi.importActual<typeof import("../execution/verification-utils.js")>("../verification-utils.js");
+  const actual = await vi.importActual<typeof import("../execution/verification-utils.js")>("../execution/verification-utils.js");
   return {
     ...actual,
     runVerificationCommand: vi.fn(),
