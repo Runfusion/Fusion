@@ -317,7 +317,12 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
                 <dt>{t("taskDetail.provenance.importedFrom", "Imported from")}</dt>
                 <dd>
                   {/^https?:\/\//i.test(task.sourceMetadata.issueUrl) ? (
-                    <a href={task.sourceMetadata.issueUrl} target="_blank" rel="noreferrer">
+                    /*
+                    FNXC:TaskStatsProvenance 2026-07-22-21:47:
+                    Imported-source links use the active accent rather than the browser default so the
+                    shared Stats panel remains theme-aware on desktop and narrow/mobile task detail.
+                    */
+                    <a className="task-token-stats-panel__imported-source-link" href={task.sourceMetadata.issueUrl} target="_blank" rel="noreferrer">
                       {task.sourceMetadata.issueUrl}
                     </a>
                   ) : (

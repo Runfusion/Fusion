@@ -1943,6 +1943,25 @@ describe("WorkflowNodeEditor — U10 columns/traits/holds", () => {
     expect(ir.nodes.every((node) => node.column === undefined || columnIds.has(node.column))).toBe(true);
   });
 
+  it("serializes populated column descriptions on save", async () => {
+    const definition = v2Def();
+    if (definition.ir.version === "v2") definition.ir.columns[0] = {
+      ...definition.ir.columns[0],
+      description: "Initial planning guidance",
+    };
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const [description] = await screen.findAllByRole("textbox", { name: /Column description/i });
+    fireEvent.change(description, { target: { value: "Saved planning guidance" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const saved = vi.mocked(updateWorkflow).mock.calls.at(-1)?.[1] as { ir: { columns: { description?: string }[] } };
+    expect(saved.ir.columns[0].description).toBe("Saved planning guidance");
+
+  });
+
   it("saves a valid v2 workflow round-tripping columns to the API", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
     vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({

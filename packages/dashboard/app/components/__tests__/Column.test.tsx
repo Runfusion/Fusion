@@ -290,6 +290,25 @@ describe("Column legacy descriptions", () => {
 });
 
 describe("Column workflow mode (U9)", () => {
+  it("preserves multiline workflow descriptions and uses overflow-safe board styling", () => {
+    const description = `Send work to this lane.\nhttps://example.test/${"unbroken-token-".repeat(24)}`;
+    render(
+      <Column
+        {...defaultProps}
+        column={"custom-col" as ColumnType}
+        workflowMode
+        columnDisplayName="Custom lane"
+        columnDescription={description}
+        tasks={[]}
+      />,
+    );
+
+    const descriptionElement = document.querySelector(".column-desc");
+    expect(descriptionElement?.textContent).toBe(description);
+    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.column-desc\s*\{[\s\S]*white-space:\s*pre-wrap;[\s\S]*overflow-wrap:\s*anywhere;/);
+  });
+
   it("uses the workflow column display name instead of the legacy label", () => {
     render(
       <Column

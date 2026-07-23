@@ -885,6 +885,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     getProjectIdFromRequest,
     getScopedStore,
     getProjectContext,
+    getProjectPluginLoader,
     emitRemoteRouteDiagnostic,
     emitAuthSyncAuditLog,
     parseScopeParam,
@@ -909,6 +910,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     getProjectIdFromRequest,
     getScopedStore,
     getProjectContext,
+    getProjectPluginLoader,
     emitRemoteRouteDiagnostic,
     emitAuthSyncAuditLog,
     parseScopeParam,
@@ -2002,6 +2004,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         options.pluginLoader,
         pluginRunner,
         store,
+        /*
+        FNXC:PluginRoutes 2026-07-22-20:30:
+        Per-request project-scoped loader resolution for plugin-defined routes — the
+        same getProjectPluginLoader cache the plugin management registrar uses — so a
+        plugin enabled after boot, or enabled only in a non-launch project, serves its
+        API routes the moment its dashboard view appears.
+        */
+        async (req) => {
+          const { store: scopedStore, engine } = await routeContext.getProjectContext(req);
+          return routeContext.getProjectPluginLoader(scopedStore, engine);
+        },
       ),
     );
   }

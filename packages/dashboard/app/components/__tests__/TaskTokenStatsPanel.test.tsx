@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { createInstance } from "i18next";
@@ -5,6 +7,8 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { TaskTokenStatsPanel } from "../TaskTokenStatsPanel";
 import type { Task } from "@fusion/core";
 import realEnApp from "../../../../i18n/locales/en/app.json";
+
+const taskTokenStatsPanelCss = readFileSync(resolve(__dirname, "../TaskTokenStatsPanel.css"), "utf8");
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -309,6 +313,32 @@ describe("TaskTokenStatsPanel", () => {
     expect(screen.getByText("FN-8510")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "https://github.com/Runfusion/Fusion/issues/2356" }))
       .toHaveAttribute("href", "https://github.com/Runfusion/Fusion/issues/2356");
+  });
+
+  /*
+  FNXC:TaskStatsProvenance 2026-07-22-21:47:
+  The desktop and narrow/mobile task detail both mount this shared Stats panel. A populated
+  imported task must keep its safe external-link contract while component CSS binds its color to
+  the active theme accent instead of browser-default blue.
+  */
+  it("uses the active theme accent for populated imported-source links across shared Stats surfaces", () => {
+    const issueUrl = "https://github.com/Runfusion/Fusion/issues/2410";
+    render(<TaskTokenStatsPanel loading={false} tokenUsage={undefined} task={makeTask({
+      sourceType: "github",
+      sourceMetadata: { issueUrl },
+    })} />);
+
+    const importedSource = screen.getByRole("link", { name: issueUrl });
+    expect(importedSource).toHaveClass("task-token-stats-panel__imported-source-link");
+    expect(importedSource).toHaveAttribute("href", issueUrl);
+    expect(importedSource).toHaveAttribute("target", "_blank");
+    expect(importedSource).toHaveAttribute("rel", "noreferrer");
+    expect(taskTokenStatsPanelCss).toMatch(
+      /\.task-token-stats-panel__imported-source-link\s*\{[^}]*color:\s*var\(--accent\);[^}]*\}/,
+    );
+    expect(taskTokenStatsPanelCss).not.toMatch(
+      /\.task-token-stats-panel__imported-source-link\s*\{[^}]*color:\s*(?:blue|#[0-9a-f]{3,8}|rgb)/i,
+    );
   });
 
   it("renders a non-http issueUrl as plain text, never as a link", () => {

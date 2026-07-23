@@ -185,4 +185,117 @@ describe("createPluginRouter wiring under /api/plugins", () => {
     expect(started.body).toEqual({ session: { id: "ce-1", status: "launching" } });
     expect(startHandler).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:PluginRoutes 2026-07-22-20:30:
+  Plugin routes were a boot-time snapshot of the launch loader. Two failure modes survived
+  the loader-mount fix above: a plugin enabled AFTER boot rendered its dashboard view
+  (served live) while its API routes 404'd until restart, and a plugin enabled only in a
+  NON-LAUNCH project never got routes at all. Dispatch is per-request now — these tests
+  pin both invariants.
+  */
+  it("serves routes for a plugin enabled after the router was created (no restart)", async () => {
+    const helloHandler = vi.fn(async () => ({ ok: true }));
+    const routeTable: Array<{ pluginId: string; route: { method: string; path: string; handler: unknown } }> = [];
+
+    const pluginStore = {
+      listPlugins: vi.fn(async () => []),
+      getPlugin: vi.fn(async (id: string) => ({ id, settings: {}, enabled: true, manifest: { id, name: id, version: "1.0.0", description: "" } })),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      updatePluginSettings: vi.fn(),
+      updatePluginState: vi.fn(),
+    } as any;
+
+    const pluginLoader = {
+      getPlugin: vi.fn((id: string) => (id === "late-plugin" && routeTable.length > 0 ? { manifest: { id } } : undefined)),
+      getPluginRoutes: vi.fn(() => [...routeTable]),
+      createRouteContext: vi.fn(async () => ({
+        pluginId: "late-plugin",
+        taskStore: {},
+        settings: {},
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        emitEvent: vi.fn(),
+      })),
+      loadPlugin: vi.fn(),
+      stopPlugin: vi.fn(),
+    } as any;
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/plugins", createPluginRouter(pluginStore, pluginLoader, undefined, {} as any));
+    app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+    // Before enable: no routes exist for the plugin.
+    const before = await performGet(app, "/api/plugins/late-plugin/hello");
+    expect(before.status).toBe(404);
+
+    // Enable-after-boot: the loader's route table grows; no router rebuild or restart.
+    routeTable.push({ pluginId: "late-plugin", route: { method: "GET", path: "/hello", handler: helloHandler } });
+
+    const after = await performGet(app, "/api/plugins/late-plugin/hello");
+    expect(after.status).toBe(200);
+    expect(after.body).toEqual({ ok: true });
+    expect(helloHandler).toHaveBeenCalled();
+  });
+
+  it("serves routes from the request's project-scoped loader and executes against it", async () => {
+    const projectHandler = vi.fn(async () => ({ project: true }));
+
+    const pluginStore = {
+      listPlugins: vi.fn(async () => []),
+      getPlugin: vi.fn(async (id: string) => ({ id, settings: {}, enabled: true, manifest: { id, name: id, version: "1.0.0", description: "" } })),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      updatePluginSettings: vi.fn(),
+      updatePluginState: vi.fn(),
+    } as any;
+
+    // Launch/host loader has NO plugins — mirrors a daemon launched from a project
+    // where the plugin is not enabled.
+    const hostLoader = {
+      getPlugin: vi.fn(() => undefined),
+      getPluginRoutes: vi.fn(() => []),
+      createRouteContext: vi.fn(),
+      loadPlugin: vi.fn(),
+      stopPlugin: vi.fn(),
+    } as any;
+
+    const projectRouteContext = {
+      pluginId: "project-only-plugin",
+      taskStore: {},
+      settings: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      emitEvent: vi.fn(),
+    };
+    const projectLoader = {
+      getPlugin: vi.fn((id: string) => (id === "project-only-plugin" ? { manifest: { id } } : undefined)),
+      getPluginRoutes: vi.fn(() => [
+        { pluginId: "project-only-plugin", route: { method: "GET", path: "/data", handler: projectHandler } },
+      ]),
+      createRouteContext: vi.fn(async () => projectRouteContext),
+      loadPlugin: vi.fn(),
+      stopPlugin: vi.fn(),
+    } as any;
+
+    const resolveProjectPluginLoader = vi.fn(async () => projectLoader);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/plugins", createPluginRouter(pluginStore, hostLoader, undefined, {} as any, resolveProjectPluginLoader));
+    app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+    const res = await performGet(app, "/api/plugins/project-only-plugin/data");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ project: true });
+    expect(projectHandler).toHaveBeenCalled();
+    expect(resolveProjectPluginLoader).toHaveBeenCalled();
+    // Execution resolved through the project loader, never the host loader.
+    expect(projectLoader.createRouteContext).toHaveBeenCalledWith("project-only-plugin", expect.anything());
+    expect(hostLoader.createRouteContext).not.toHaveBeenCalled();
+  });
 });

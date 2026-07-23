@@ -72,10 +72,18 @@ type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | Non
 
 /** Default values for global (user-level) settings. */
 export const DEFAULT_GLOBAL_SETTINGS = {
-  // Embedded PostgreSQL is shared by all local Fusion projects and processes.
-  // Keep this well above the conservative external-pool budget while still
-  // bounded for a local machine.
-  embeddedPostgresMaxConnections: 500,
+  /*
+  FNXC:PostgresEmbedded 2026-07-22-23:55:
+  Embedded PostgreSQL is shared by all local Fusion projects and processes.
+  Deliberately undefined (not 500): getSettings() merges these defaults, so a
+  concrete value here would be indistinguishable from an operator choice and
+  would mask the platform-aware server-side default in
+  resolveEmbeddedMaxConnections (win32 150, else 500). Issue #2411: Windows
+  backends are separate processes; a 500-connection cap exhausts the desktop
+  heap under load and forked backends die with 0xC0000142, taking the embedded
+  cluster and dashboard down.
+  */
+  embeddedPostgresMaxConnections: undefined,
   /*
   FNXC:DashboardTheming 2026-07-03-00:00:
   Fresh installs must follow the operating system theme until the user explicitly chooses Light, Dark, or System. Keep this global default aligned with dashboard and desktop pre-hydration fallbacks.

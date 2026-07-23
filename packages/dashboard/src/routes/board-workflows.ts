@@ -43,6 +43,8 @@ export const DEFAULT_WORKFLOW_LANE_ID = "builtin:coding";
 export interface BoardWorkflowColumn {
   id: string;
   name: string;
+  /** Optional author-defined explanatory copy; omitted keeps client lifecycle fallback. */
+  description?: string;
   flags: TraitFlags;
 }
 
@@ -103,6 +105,7 @@ function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWo
   return v2.columns.map((col) => ({
     id: col.id,
     name: displayColumnName(col.id, col.name, canonicalizeLifecycle),
+    ...(col.description ? { description: col.description } : {}),
     flags: resolveColumnFlags(col),
   }));
 }

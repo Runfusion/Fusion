@@ -70,6 +70,8 @@ import type { ResolvedBackend } from "./backend-resolver.js";
 import {
   isWindowsElevatedAdmin,
   startServerElevatedRestricted,
+  WindowsPostgresFatalDetector,
+  withWindowsNativeBinPath,
   type ElevatedServerHandle,
   type ElevatedStartOptions,
 } from "./embedded-windows-elevated.js";
@@ -455,6 +457,38 @@ let electronAsarNativePathPatchRestore: (() => void) | null = null;
 type MutableSpawnModule = {
   spawn: (...args: unknown[]) => unknown;
 };
+
+type SpawnOptionsLike = { env?: NodeJS.ProcessEnv; windowsHide?: boolean };
+
+function isWindowsEmbeddedPostgresBinary(command: unknown): command is string {
+  return process.platform === "win32" &&
+    typeof command === "string" &&
+    /[\\/]bin[\\/](?:postgres|initdb|pg_ctl)\.exe$/i.test(command);
+}
+
+/**
+ * Add the sibling bundled bin directory only to a native PostgreSQL spawn.
+ *
+ * FNXC:PostgresEmbedded 2026-07-22-16:10:
+ * `embedded-postgres` copies process.env when it spawns normal Windows
+ * postmasters. Patch that narrow spawn seam rather than mutating process.env,
+ * so npm/pnpm, standalone runtime-bin, and Electron materialized payloads all
+ * give descendants their DLL directory without changing unrelated children.
+ */
+function withWindowsPostgresSpawnEnvironment(command: unknown, rest: unknown[]): unknown[] {
+  if (!isWindowsEmbeddedPostgresBinary(command)) return rest;
+  const args = [...rest];
+  const optionIndex = args.length - 1;
+  const existing = args[optionIndex] as SpawnOptionsLike | undefined;
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)) return args;
+  const binDir = dirname(command);
+  const nativeRoot = dirname(binDir);
+  args[optionIndex] = {
+    ...existing,
+    env: withWindowsNativeBinPath(existing.env ?? process.env, nativeRoot),
+  } satisfies SpawnOptionsLike;
+  return args;
+}
 type MutableFsPromisesModule = {
   stat: (...args: unknown[]) => unknown;
   chmod: (...args: unknown[]) => unknown;
@@ -500,7 +534,10 @@ export function installElectronAsarNativePathPatch(): void {
   childProcessMod.spawn = (command: unknown, ...rest: unknown[]) => {
     const fixedCommand =
       typeof command === "string" ? resolveElectronAsarUnpackedPath(command) : command;
-    return originalSpawn(fixedCommand, ...rest);
+    return originalSpawn(
+      fixedCommand,
+      ...withWindowsPostgresSpawnEnvironment(fixedCommand, rest),
+    );
   };
 
   const fsPromisesMod = require("fs/promises") as MutableFsPromisesModule;
@@ -645,6 +682,37 @@ export function defaultEmbeddedPostgresFlagsFor(platform: NodeJS.Platform): read
 }
 
 export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = defaultEmbeddedPostgresFlagsFor(process.platform);
+
+/*
+ * FNXC:PostgresEmbedded 2026-07-22-23:55:
+ * Issue #2411 (operator-confirmed on 0.73.0-beta.2): on Windows every PostgreSQL
+ * connection is a separate postgres.exe process, and standing up backends against a
+ * max_connections=500 cap exhausts the non-interactive desktop heap during connection
+ * bursts. A forked backend then dies in DLL/session init with exception 0xC0000142,
+ * the postmaster terminates all other backends, and the whole embedded cluster — and
+ * with it the dashboard — goes down. The reporter measured stability at a cap of 100
+ * after repeated crashes at 500. Default the cap platform-aware: 150 on win32 (well
+ * above Fusion's own pool usage of ~3 connections per connection set), 500 elsewhere.
+ * An operator-configured embeddedPostgresMaxConnections is always honored, clamped to
+ * [32, 2000] on every platform — the lower win32 number is only the unset default.
+ * This complements, not replaces, the FN-8522 child PATH hardening and single-restart
+ * recovery for the same 0xC0000142 signature.
+ */
+export const DEFAULT_EMBEDDED_MAX_CONNECTIONS = 500;
+export const DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32 = 150;
+export const EMBEDDED_MAX_CONNECTIONS_MIN = 32;
+export const EMBEDDED_MAX_CONNECTIONS_MAX = 2_000;
+
+/** Resolve the effective embedded-cluster max_connections from the optional operator setting. */
+export function resolveEmbeddedMaxConnections(
+  configured: number | undefined,
+  platform: NodeJS.Platform = process.platform,
+): number {
+  if (typeof configured === "number" && Number.isInteger(configured)) {
+    return Math.min(EMBEDDED_MAX_CONNECTIONS_MAX, Math.max(EMBEDDED_MAX_CONNECTIONS_MIN, configured));
+  }
+  return platform === "win32" ? DEFAULT_EMBEDDED_MAX_CONNECTIONS_WIN32 : DEFAULT_EMBEDDED_MAX_CONNECTIONS;
+}
 
 /*
 FNXC:PostgresEmbedded 2026-07-18-00:20:
@@ -1122,6 +1190,10 @@ export class EmbeddedPostgresLifecycle {
    * on a failure that is handled before the timeout fires.
    */
   private startTimer: NodeJS.Timeout | null = null;
+  private readonly windowsFatalDetector = new WindowsPostgresFatalDetector();
+  private recoveryAttempts = 0;
+  private recoveryInFlight: Promise<void> | null = null;
+  private stopRequested = false;
 
   constructor(opts: EmbeddedLifecycleOptions) {
     this.options = {
@@ -1138,6 +1210,16 @@ export class EmbeddedPostgresLifecycle {
         opts.onError ?? ((err: string | Error | unknown) => log.error(String(err))),
     };
   }
+
+  /**
+   * Forward native process output to the existing sink, then schedule recovery
+   * only for a confirmed owned Windows fatal shutdown sequence.
+   */
+  private forwardPostgresLog = (message: string): void => {
+    this.options.onLog(message);
+    if (process.platform !== "win32" || !this.running || !this.ownsProcess) return;
+    if (this.windowsFatalDetector.push(message)) void this.recoverWindowsFatalOnce();
+  };
 
   /** The configured or discovered port. Undefined until assigned (explicit or discovered in `start()`). */
   getPort(): number | undefined {
@@ -1256,11 +1338,20 @@ export class EmbeddedPostgresLifecycle {
         migrationUrlOverridden: false,
       };
     }
+    return this.startBounded();
+  }
+
+  /**
+   * Start an owned postmaster with the same cancellation and timeout contract
+   * used by public startup. Recovery calls this directly because it must not
+   * join a stale pid file or allocate a new endpoint between pool reconnects.
+   */
+  private async startBounded(preferredPort?: number): Promise<ResolvedBackend> {
     if (this.options.startTimeoutMs <= 0) {
-      return this.startInternal();
+      return this.startInternal(undefined, preferredPort);
     }
     const controller = new AbortController();
-    const startAttempt = this.startInternal(controller.signal);
+    const startAttempt = this.startInternal(controller.signal, preferredPort);
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
@@ -1272,7 +1363,6 @@ export class EmbeddedPostgresLifecycle {
           ),
         );
       }, this.options.startTimeoutMs);
-      // Unref so the timer alone does not keep the event loop alive.
       if (timer && typeof timer.unref === "function") timer.unref();
     });
     this.startTimer = timer ?? null;
@@ -1280,8 +1370,6 @@ export class EmbeddedPostgresLifecycle {
       return await Promise.race([startAttempt, timeout]);
     } catch (err) {
       controller.abort();
-      // On timeout (or any failure), best-effort clean up the partial state so
-      // a retry starts fresh. stop() is safe to call even when not fully running.
       await this.stop().catch(() => undefined);
       throw err;
     } finally {
@@ -1290,12 +1378,15 @@ export class EmbeddedPostgresLifecycle {
     }
   }
 
-  /**
-   * The actual start sequence, with no timeout wrapper. Called by {@link start}
-   * either directly (timeout disabled) or via Promise.race with the timeout.
-   */
-  private async startInternal(signal?: AbortSignal): Promise<ResolvedBackend> {
-    const port = this.options.port ?? (await findFreePort());
+  /** The actual start sequence, invoked only through {@link startBounded}. */
+  private async startInternal(signal?: AbortSignal, preferredPort?: number): Promise<ResolvedBackend> {
+    /*
+    FNXC:PostgresEmbedded 2026-07-22-23:05:
+    A Windows crash recovery must retain the originally resolved endpoint even
+    when no explicit port was configured. Reallocating here strands existing
+    task-store pools on the dead port, so only a first launch may find a port.
+    */
+    const port = this.options.port ?? preferredPort ?? this.resolvedPort ?? (await findFreePort());
     if (signal?.aborted) throw new EmbeddedStartCancelledError(this.options.dataDir);
     this.resolvedPort = port;
 
@@ -1312,7 +1403,7 @@ export class EmbeddedPostgresLifecycle {
       authMethod: "password",
       initdbFlags: [...this.options.initdbFlags],
       postgresFlags: [...this.options.postgresFlags],
-      onLog: this.options.onLog,
+      onLog: this.forwardPostgresLog,
       onError: this.options.onError,
     });
     this.pg = pg;
@@ -1369,7 +1460,7 @@ export class EmbeddedPostgresLifecycle {
           dataDir: this.options.dataDir,
           port,
           postgresFlags: this.options.postgresFlags,
-          onLog: this.options.onLog,
+          onLog: this.forwardPostgresLog,
           onError: this.options.onError,
           startTimeoutMs: this.options.startTimeoutMs,
           signal,
@@ -1485,6 +1576,44 @@ export class EmbeddedPostgresLifecycle {
       migrationUrl: runtimeUrl,
       migrationUrlOverridden: false,
     };
+  }
+
+  /**
+   * FNXC:PostgresEmbedded 2026-07-22-16:25:
+   * A 0xC0000142 backend crash shuts down its whole PostgreSQL cluster. One
+   * lifecycle-owned retry reuses the initialized directory and same resolved
+   * port; joiners, stop/detach, and a second incident are deliberately inert.
+   */
+  private async recoverWindowsFatalOnce(): Promise<void> {
+    if (this.recoveryInFlight || this.recoveryAttempts >= 1 || this.stopRequested || !this.ownsProcess) return;
+    this.recoveryAttempts += 1;
+    this.recoveryInFlight = (async () => {
+      this.options.onLog("embedded postgres: detected Windows DLL initialization shutdown; attempting one owned-cluster recovery");
+      try {
+        if (this.nonAdminHandle) await this.nonAdminHandle.stop();
+        else await this.pg?.stop();
+        this.pg = null;
+        this.nonAdminHandle = null;
+        this.running = false;
+        runningInstances.delete(this.options.dataDir);
+        if (this.stopRequested || !this.ownsProcess) return;
+        const recoveryPort = this.resolvedPort;
+        if (recoveryPort === undefined) {
+          throw new Error("embedded postgres: recovery lost its resolved port");
+        }
+        await this.startBounded(recoveryPort);
+        this.options.onLog("embedded postgres: Windows owned-cluster recovery completed; existing pools may reconnect");
+      } catch (error) {
+        this.running = false;
+        runningInstances.delete(this.options.dataDir);
+        this.options.onError(
+          `embedded postgres: Windows DLL initialization recovery failed after one retry; restart Fusion and inspect the System log. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        this.recoveryInFlight = null;
+      }
+    })();
+    await this.recoveryInFlight;
   }
 
   private async settleCancelledStart(pg: EmbeddedPostgresInstance): Promise<void> {
@@ -1649,6 +1778,7 @@ export class EmbeddedPostgresLifecycle {
   */
   detachWithoutStop(): void {
     this.uninstallShutdownHook();
+    this.nonAdminHandle?.stopMonitoring();
     this.pg = null;
     this.nonAdminHandle = null;
     this.running = false;
@@ -1657,6 +1787,7 @@ export class EmbeddedPostgresLifecycle {
   }
 
   async stop(): Promise<void> {
+    this.stopRequested = true;
     this.uninstallShutdownHook();
 
     // FNXC:PostgresCutover 2026-06-27-11:10:
