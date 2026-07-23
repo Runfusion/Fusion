@@ -124,14 +124,27 @@ jobs:
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
-      # Dist-artifact cache (same contract as full-suite.yml): exact-match
-      # key only, NO restore-keys (stale dist is the known failure mode,
-      # FN-4232/FN-4605), NEVER node_modules (breaks Windows pnpm junctions).
+      # FNXC:CIGateSpeed 2026-07-22-23:30:
+      # Gate-scoped INCREMENTAL dist cache (`gate-dist-*` namespace, distinct from
+      # the shard jobs' exact-match `dist-*` contract). Unlike the shard jobs —
+      # where restore-keys is forbidden because tests consume restored dist
+      # WITHOUT a build (stale dist was the FN-4232/FN-4605 failure mode) — the
+      # gate always runs `pnpm build` after restore. build-workspace.mjs verifies
+      # every package's git content hash against .fusion/cache/plugin-build-cache.json
+      # (cached below alongside dist) and rebuilds anything changed, missing, or
+      # unhashed, so a near-match restore can only speed the build up, never let
+      # stale dist through. Measured before this change: every PR missed the
+      # exact key and paid a full ~6-8 min build for ~45s of actual gate tests.
+      # NEVER add node_modules here (breaks Windows pnpm junctions elsewhere).
+      # The warm-gate-build-cache job in full-suite.yml saves this same cache
+      # (identical path list — actions/cache versions caches by path list, so
+      # the two blocks must stay in sync) on every push to main so a PR's FIRST
+      # gate run restores main's build instead of building cold.
       - name: Compute dist source hash
         id: dist-hash
         run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache built dist artifacts
+      - name: Cache built dist artifacts (incremental)
         id: dist-cache
         uses: actions/cache@v4
         with:
@@ -140,20 +153,34 @@ jobs:
             packages/dashboard/dist
             packages/engine/dist
             packages/plugin-sdk/dist
+            packages/cli/dist
             plugins/fusion-plugin-dependency-graph/dist
             plugins/fusion-plugin-hermes-runtime/dist
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
-          key: dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+            .fusion/cache/plugin-build-cache.json
+          key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+          restore-keys: |
+            gate-dist-${{ runner.os }}-
 
+      # Only seed the mtime-defeating artifact hash-cache on an EXACT hit; on a
+      # restore-keys near-hit the restored dist may be stale for changed
+      # packages, and `pnpm build` below is what reconciles it.
       - name: Seed artifact hash-cache on cache hit
         if: steps.dist-cache.outputs.cache-hit == 'true'
         run: node scripts/ensure-test-artifacts.mjs --seed-artifact-cache
 
-      # Boot smoke needs the full built workspace (CLI dist is not in the
-      # cache list above); cached packages make this incremental-fast.
+      # FNXC:CIGateSpeed 2026-07-22-23:30:
+      # Boot smoke needs the built workspace including the CLI. Fast CLI
+      # packaging (bin.js + extension.js, no desktop/bundled-plugin/DTS staging)
+      # is sufficient for boot smoke + test:gate and is the same shape
+      # `pnpm verify:fast` proves locally; CI=true would otherwise force the
+      # multi-minute full packaging tail on every gate run. Full CLI packaging
+      # coverage stays blocking in the separate Build job.
       - name: Build
         run: pnpm build
+        env:
+          FUSION_CLI_FULL_PACKAGE: "0"
 
       - name: Boot smoke (app starts and serves)
         run: node scripts/boot-smoke.mjs

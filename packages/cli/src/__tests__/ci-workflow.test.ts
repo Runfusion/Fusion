@@ -186,6 +186,50 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
   });
 
   /*
+  FNXC:CIGateSpeed 2026-07-22-23:30:
+  The Gate job's dist cache is INCREMENTAL (`gate-dist-*` with restore-keys), which is only
+  safe because `pnpm build` always runs after restore and reconciles a near-match restore via
+  the content-hash skip cache (.fusion/cache/plugin-build-cache.json, cached alongside dist).
+  Pin the coupled invariants so no future edit keeps restore-keys while dropping the build
+  (stale-dist FN-4232/FN-4605), drops the hash-cache path (full rebuild every run), or lets
+  the exact-hit-only seed step fire on a near-hit restore.
+  */
+  it("gate dist cache is incremental and reconciled by a mandatory build", () => {
+    const gateSteps = workflow.jobs?.gate?.steps ?? [];
+    const cacheStep = gateSteps.find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(cacheStep).toBeDefined();
+    expect(cacheStep.with?.key).toContain("gate-dist-");
+    expect(cacheStep.with?.["restore-keys"]).toContain("gate-dist-");
+    expect(cacheStep.with?.path).toContain(".fusion/cache/plugin-build-cache.json");
+    expect(cacheStep.with?.path).toContain("packages/cli/dist");
+    expect(cacheStep.with?.path).not.toContain("node_modules");
+
+    // restore-keys is only safe with the reconciling build; the build must run
+    // AFTER the cache restore and BEFORE boot smoke / gate tests.
+    const buildIndex = gateSteps.findIndex(
+      (step: any) => step.name === "Build" && typeof step.run === "string" && step.run.includes("pnpm build"),
+    );
+    expect(buildIndex).toBeGreaterThan(gateSteps.indexOf(cacheStep));
+    const smokeIndex = gateSteps.findIndex(
+      (step: any) => typeof step.run === "string" && step.run.includes("boot-smoke.mjs"),
+    );
+    expect(smokeIndex).toBeGreaterThan(buildIndex);
+
+    // Fast CLI packaging in the gate (verify:fast shape); the blocking Build
+    // job keeps full CI packaging coverage.
+    expect(gateSteps[buildIndex].env?.FUSION_CLI_FULL_PACKAGE).toBe("0");
+
+    // The mtime-defeating seed must stay exact-hit-only: on a near-hit restore
+    // the dist is stale for changed packages until the build reconciles it.
+    const seedStep = gateSteps.find(
+      (step: any) => typeof step.run === "string" && step.run.includes("--seed-artifact-cache"),
+    );
+    expect(seedStep?.if).toContain("cache-hit == 'true'");
+  });
+
+  /*
   FNXC:CITestGate 2026-06-26-06:40:
   The merge gate is the thin trusted CI surface. ci-workflow.test.ts must pin not only that the Gate job invokes `pnpm test:gate`, but also test:gate's internal composition (guards + engine test:core + cli test:ci-shape) and that engine test:core references the engine-core vitest project — otherwise a rename could hollow the gate while this CI-shape test stays green (FN-7059).
   */
@@ -352,6 +396,39 @@ describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
         (step: any) => step.name === "Build" || (typeof step.run === "string" && step.run.includes("pnpm build")),
       ),
     ).toBe(false);
+  });
+
+  /*
+  FNXC:CIGateSpeed 2026-07-22-23:30:
+  Caches saved on a PR merge ref are invisible to other PRs, so the gate's
+  incremental `gate-dist-*` cache must be warmed from main or every PR's first
+  gate run builds cold. Pin the warm job's existence AND that its cache path
+  list is byte-identical to the Gate job's — actions/cache versions caches by
+  path list, so a drifted list silently makes the warm cache unrestorable.
+  */
+  it("warms the gate build cache from main with a path list identical to the gate's", () => {
+    const warmSteps = workflow.jobs?.["warm-gate-build-cache"]?.steps ?? [];
+    const warmCache = warmSteps.find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(warmCache).toBeDefined();
+    expect(warmCache.with?.key).toContain("gate-dist-");
+    expect(warmCache.with?.["restore-keys"]).toContain("gate-dist-");
+
+    const gateWorkflow = loadWorkflow("pr-checks.yml").parsed;
+    const gateCache = (gateWorkflow.jobs?.gate?.steps ?? []).find(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/cache"),
+    );
+    expect(warmCache.with?.path).toBe(gateCache?.with?.path);
+    expect(warmCache.with?.key).toBe(gateCache?.with?.key);
+
+    // The warm job must actually build (that is what populates dist + the
+    // content-hash cache), in the gate's fast-CLI-packaging shape.
+    const warmBuild = warmSteps.find(
+      (step: any) => typeof step.run === "string" && step.run.includes("pnpm build"),
+    );
+    expect(warmBuild).toBeDefined();
+    expect(warmBuild.env?.FUSION_CLI_FULL_PACKAGE).toBe("0");
   });
 });
 

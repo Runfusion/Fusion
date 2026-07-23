@@ -247,3 +247,53 @@ jobs:
 
       - name: Run engine-slow with non-empty-execution assertion
         run: node scripts/assert-engine-slow-nonempty.mjs
+
+  # FNXC:CIGateSpeed 2026-07-22-23:30:
+  # Warm the PR gate's incremental build cache from main. The Gate job in
+  # pr-checks.yml restores `gate-dist-*` with restore-keys; caches saved on a
+  # PR merge ref are invisible to other PRs, so without this job every PR's
+  # FIRST gate run builds cold (~6-8 min). Saving main's built dist plus
+  # .fusion/cache/plugin-build-cache.json here lets that first run rebuild only
+  # the packages the PR actually changed. The path list MUST stay byte-identical
+  # to the Gate job's cache block (actions/cache versions caches by path list —
+  # a drifted list makes the caches mutually invisible). Fast CLI packaging
+  # matches the Gate's consumer shape. This is a cache warmer, not a test or
+  # verification step; the blocking Build job on PRs keeps full-build coverage.
+  warm-gate-build-cache:
+    name: Warm gate build cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache built dist artifacts (incremental)
+        id: dist-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            packages/cli/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+            .fusion/cache/plugin-build-cache.json
+          key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+          restore-keys: |
+            gate-dist-${{ runner.os }}-
+
+      - name: Build (incremental against restored cache)
+        run: pnpm build
+        env:
+          FUSION_CLI_FULL_PACKAGE: "0"
