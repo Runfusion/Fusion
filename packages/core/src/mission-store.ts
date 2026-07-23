@@ -2461,6 +2461,21 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       );
     }
 
+    if (feature.taskId && feature.taskId !== taskId) {
+      throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
+    }
+    const conflictingFeature = this.db
+      .prepare(`SELECT id FROM mission_features WHERE taskId = ? AND id != ? LIMIT 1`)
+      .get(taskId, featureId) as { id: string } | undefined;
+    if (conflictingFeature) {
+      throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+    }
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-12:00:
+    Keep sync test-contract parity with PostgreSQL: a defined feature's first
+    task claim is exclusive and must never overwrite another feature backlink.
+    */
     const linkage = this.resolveTaskLinkage(feature.sliceId);
 
     // When first linking (loopState is idle or falsy), transition to implementing

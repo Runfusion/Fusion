@@ -83,6 +83,12 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 
 > Replies require a running engine for the same project (for example `fn` dashboard or `fn serve`).
 
+## Mission lineage and task creation
+
+`fn_task_create` and `fn_delegate_task` use two distinct controls. In an autonomous no-task heartbeat, the caller must provide approved `mission_lineage` (mission, slice, and feature); a rejection states that approved mission lineage is required, and no permission grant overrides it. In interactive/user-supervised and task-scoped sessions, lineage is optional and `task_agent_mutation` category rules and exact-tool overrides decide whether creation is allowed, requires approval, or is blocked.
+
+A valid active lineage can bootstrap the first task for a hand-authored `defined` feature. The feature is linked to that exact task and promoted to `triaged`; later autonomous scheduler work still requires a `triaged` or `in-progress` feature.
+
 ## Agent configuration updates from agents
 
 The `fn_agent_update` extension tool lets chat/extension callers update existing non-ephemeral agents in place instead of deleting and recreating them. It accepts `agent_id` plus any editable subset of:

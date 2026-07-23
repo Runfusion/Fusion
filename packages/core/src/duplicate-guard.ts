@@ -139,8 +139,10 @@ export async function reconcileDeterministicDuplicate(
     windowMs?: number;
     sourceParentTaskId?: string | null;
     logger?: { warn(msg: string, data?: Record<string, unknown>): void };
+    /** Handle a duplicate without archiving `createdTask` (e.g. claimed feature bootstrap). */
+    onDuplicate?: (canonical: Task) => Promise<"keep-created" | "archive-created">;
   },
-): Promise<{ outcome: "kept" | "archived"; canonical: Task }> {
+): Promise<{ outcome: "kept" | "archived" | "kept-duplicate"; canonical: Task }> {
   if (!args.fingerprint) {
     return { outcome: "kept", canonical: args.createdTask };
   }
@@ -158,6 +160,16 @@ export async function reconcileDeterministicDuplicate(
     );
     if (!olderSibling) {
       return { outcome: "kept", canonical: args.createdTask };
+    }
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-20:00:
+    A defined-feature bootstrap has already transactionally made its inserted
+    task feature.taskId. Let that caller reconcile the older sibling without
+    routing the generic duplicate path through an archive of the claimed row.
+    */
+    if (await args.onDuplicate?.(olderSibling) === "keep-created") {
+      return { outcome: "kept-duplicate", canonical: args.createdTask };
     }
 
     await store.updateTask(args.createdTask.id, {

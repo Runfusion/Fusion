@@ -1022,25 +1022,196 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return outcome.feature;
   }
 
-  async linkFeatureToTask(featureId: string, taskId: string): Promise<MissionFeature> {
-    const feature = await getFeature(this.db, featureId);
-    if (!feature) throw new Error(`Feature ${featureId} not found`);
-    const liveTask = await getLiveTaskById(this.db, taskId);
-    if (!liveTask) {
-      throw new Error(
-        `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
-      );
+  /**
+   * Atomically claim a hand-authored defined feature for a task already inserted
+   * in the caller's transaction. This is intentionally narrower than
+   * linkFeatureToTask(): existing manual links may establish task lineage,
+   * whereas a duplicate bootstrap canonical must already prove this lineage.
+   */
+  async claimDefinedFeatureTaskInTransaction(
+    tx: import("./postgres/data-layer.js").DbTransaction,
+    input: { featureId: string; taskId: string; missionId: string; sliceId: string; requireExistingFeatureLink?: boolean },
+  ): Promise<MissionFeature> {
+    /*
+    FNXC:MissionAdmission 2026-07-23-15:30:
+    Defined is creation-admissible only at the first-task claim boundary. Check
+    the project-scoped task's existing lineage before updating either record so
+    a deterministic duplicate from another mission can never be repurposed.
+    */
+    /*
+    FNXC:MissionAdmission 2026-08-10-00:00:
+    Concurrent bootstrap requests must serialize on the defined Feature before
+    either inserts its task. READ COMMITTED alone permits both readers to claim
+    it; this row lock makes the second request re-read the committed taskId and
+    reject, preserving one exclusive first-task claim.
+    */
+    const lockedFeatures = await tx
+      .select({ id: schema.project.missionFeatures.id })
+      .from(schema.project.missionFeatures)
+      .where(eq(schema.project.missionFeatures.id, input.featureId))
+      .for("update");
+    if (lockedFeatures.length === 0) throw new Error(`Feature ${input.featureId} not found`);
+    const feature = await getFeature(tx, input.featureId);
+    if (!feature) throw new Error(`Feature ${input.featureId} not found`);
+    if (feature.sliceId !== input.sliceId) throw new Error(`Feature ${input.featureId} does not belong to slice ${input.sliceId}`);
+    if (feature.taskId && feature.taskId !== input.taskId) {
+      throw new Error(`Feature ${input.featureId} is already linked to task ${feature.taskId}`);
     }
-    const linkage = await this.resolveTaskLinkage(feature.sliceId);
+    if (feature.status !== "defined" && feature.taskId !== input.taskId) {
+      throw new Error(`Feature ${input.featureId} is not available for first-task bootstrap`);
+    }
+    /*
+    FNXC:MissionAdmission 2026-07-23-17:20:
+    A duplicate canonical was not inserted in this transaction. It may be
+    reused only after this feature already owns it; allowing an arbitrary
+    unlinked task from the same slice would silently assign another feature's
+    work to this bootstrap request.
+    */
+    if (input.requireExistingFeatureLink === true && feature.taskId !== input.taskId) {
+      throw new Error(`Cannot bootstrap feature ${input.featureId}: pre-existing task ${input.taskId} is not linked to this feature`);
+    }
+
+    const projectId = this.layer.projectId;
+    if (!projectId) throw new Error("Defined-feature bootstrap requires a project-scoped data layer");
+    const taskRows = await tx
+      .select({ id: schema.project.tasks.id, missionId: schema.project.tasks.missionId, sliceId: schema.project.tasks.sliceId, column: schema.project.tasks.column })
+      .from(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, input.taskId),
+        sql`${schema.project.tasks.deletedAt} is null`,
+      ));
+    const task = taskRows[0];
+    if (!task || task.column === "archived") {
+      throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
+    }
+    if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
+      throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} has unrelated mission lineage`);
+    }
+    const conflict = await getConflictingFeatureByTaskId(tx, input.taskId, input.featureId);
+    if (conflict) throw new Error(`Task ${input.taskId} is already linked to feature ${conflict.id}`);
+
+    const now = new Date().toISOString();
     const shouldTransitionLoop = !feature.loopState || feature.loopState === "idle";
-    const loopStateUpdates: Partial<MissionFeature> = shouldTransitionLoop
-      ? { loopState: "implementing", implementationAttemptCount: 1 }
-      : {};
-    const updated = await this.updateFeature(featureId, { taskId, status: "triaged", ...loopStateUpdates });
-    await setTaskMissionLinkage(this.db, taskId, linkage.missionId, linkage.sliceId);
-    await this.recomputeSliceStatus(updated.sliceId);
-    this.emit("feature:linked", { feature: updated, taskId });
+    const updated: MissionFeature = {
+      ...feature,
+      taskId: input.taskId,
+      status: "triaged",
+      ...(shouldTransitionLoop ? { loopState: "implementing", implementationAttemptCount: 1 } : {}),
+      updatedAt: now,
+    };
+    await updateFeature(tx, updated);
+    // The inserted task already carries this verified linkage; retain this write
+    // for retry parity when the same canonical is claimed again.
+    await setTaskMissionLinkage(tx, input.taskId, input.missionId, input.sliceId);
     return updated;
+  }
+
+  async claimDefinedFeatureTask(input: { featureId: string; taskId: string; missionId: string; sliceId: string }): Promise<MissionFeature> {
+    const feature = await this.layer.transactionImmediate((tx) => this.claimDefinedFeatureTaskInTransaction(tx, { ...input, requireExistingFeatureLink: true }));
+    this.emit("feature:updated", feature);
+    this.emit("feature:linked", { feature, taskId: input.taskId });
+    await this.recomputeSliceStatus(feature.sliceId);
+    return feature;
+  }
+
+  /**
+   * Keep the task that atomically claimed a defined Feature as the sole live
+   * deterministic-duplicate canonical. This compensates for a duplicate that
+   * became visible only after the create preflight, without ever allowing the
+   * generic intake path to archive feature.taskId.
+   */
+  async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
+    /*
+    FNXC:MissionAdmission 2026-07-23-21:10:
+    Project-agnostic legacy stores remain scoped to their reserved RLS
+    partition, so reconciliation never falls back to an unscoped task ID.
+    */
+    const projectId = this.layer.projectId || "__legacy_unscoped__";
+    await this.layer.transactionImmediate(async (tx) => {
+      /*
+      FNXC:MissionAdmission 2026-07-23-20:00:
+      A late deterministic duplicate must not reverse the first-task claim and
+      archive feature.taskId. Verify that the feature still owns the claimed,
+      project-scoped live task, then archive only the competing live task in
+      this transaction. `defined` remains scheduler-ineligible throughout.
+      */
+      const feature = await getFeature(tx, input.featureId);
+      if (!feature || feature.taskId !== input.taskId || feature.status !== "triaged") {
+        throw new Error(`Cannot reconcile defined-feature bootstrap duplicate for ${input.featureId}`);
+      }
+      const claimed = await tx.select({ id: schema.project.tasks.id })
+        .from(schema.project.tasks)
+        .where(and(
+          eq(schema.project.tasks.projectId, projectId),
+          eq(schema.project.tasks.id, input.taskId),
+          sql`${schema.project.tasks.deletedAt} is null`,
+          sql`${schema.project.tasks.column} <> 'archived'`,
+        ));
+      if (!claimed[0]) throw new Error(`Cannot reconcile defined-feature bootstrap duplicate: claimed task ${input.taskId} is not live`);
+      /*
+      FNXC:MissionAdmission 2026-07-23-21:10:
+      Fingerprint equality does not make work interchangeable across Features.
+      A late sibling already claimed by another Feature remains live; archiving
+      it here would corrupt that Feature's canonical task. Keep both tasks and
+      let each feature retain its own transactional bootstrap claim.
+      */
+      const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
+      if (duplicateFeature) return;
+      await tx.update(schema.project.tasks)
+        .set({ column: "archived", updatedAt: new Date().toISOString() })
+        .where(and(
+          eq(schema.project.tasks.projectId, projectId),
+          eq(schema.project.tasks.id, input.duplicateTaskId),
+          sql`${schema.project.tasks.deletedAt} is null`,
+          sql`${schema.project.tasks.column} <> 'archived'`,
+        ));
+    });
+  }
+
+  async linkFeatureToTask(featureId: string, taskId: string): Promise<MissionFeature> {
+    /*
+    FNXC:MissionAdmission 2026-07-23-12:00:
+    First-task bootstrap must claim the feature, promote it, and backlink the
+    exact project-scoped task as one transaction. Never overwrite a feature's
+    existing taskId: retries may reuse only that same canonical task.
+    */
+    const outcome = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await getFeature(tx, featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      if (feature.taskId && feature.taskId !== taskId) {
+        throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
+      }
+      const liveTask = await getLiveTaskById(tx, taskId);
+      if (!liveTask) {
+        throw new Error(
+          `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+        );
+      }
+      const conflictingFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
+      if (conflictingFeature) {
+        throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+      }
+      const slice = await getSlice(tx, feature.sliceId);
+      const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+      if (!slice || !milestone) throw new Error(`Feature ${featureId} has incomplete mission hierarchy`);
+      const shouldTransitionLoop = !feature.loopState || feature.loopState === "idle";
+      const now = new Date().toISOString();
+      const updated: MissionFeature = {
+        ...feature,
+        taskId,
+        status: "triaged",
+        ...(shouldTransitionLoop ? { loopState: "implementing", implementationAttemptCount: 1 } : {}),
+        updatedAt: now,
+      };
+      await updateFeature(tx, updated);
+      await setTaskMissionLinkage(tx, taskId, milestone.missionId, slice.id);
+      return updated;
+    });
+    this.emit("feature:updated", outcome);
+    this.emit("feature:linked", { feature: outcome, taskId });
+    await this.recomputeSliceStatus(outcome.sliceId);
+    return outcome;
   }
 
   async unlinkFeatureFromTask(featureId: string): Promise<MissionFeature> {

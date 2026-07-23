@@ -23,6 +23,14 @@ Mission: Improve Reliability
         Task: FN-214
 ```
 
+## Agent task-creation admission
+
+Mission lineage is an admission requirement only for **autonomous no-task heartbeat** creates and delegations. Those idle patrol calls must supply a valid active Mission → Milestone → Slice → Feature chain; an allow rule for `task_agent_mutation` cannot bypass this requirement. Missing or invalid lineage is rejected before a task is persisted with an explicit mission-lineage remedy.
+
+Interactive/user-supervised, task-scoped heartbeat, executor, triage, and workflow-step calls may create or delegate freeform tasks without lineage. They remain governed by the normal `task_agent_mutation` permission policy, including category and exact-tool allow, approval, and block rules.
+
+A valid active lineage may name a hand-authored `defined` feature only for its first task. Fusion atomically claims the feature, links that exact task, and promotes the feature to `triaged`; an already-linked feature rejects rather than overwriting its canonical task. This bootstrap exception does not make `defined` executable: later scheduler and symbol-lock admission still uses the stricter contract below.
+
 ## Canonical lineage approval for autonomous symbol locks
 
 Before autonomous scheduler work may acquire a symbol lock, it resolves the task's Mission → Milestone → Slice → Feature lineage and evaluates the single `@fusion/core` contract: `evaluateMissionLineageApproval`. Resolution and lock acquisition remain scheduler responsibilities; downstream schedulers must not redefine the approval rule.
@@ -32,7 +40,7 @@ Approval requires every one of these statuses:
 - Mission: `active`
 - Milestone: `active`
 - Slice: `active`
-- Feature: `triaged` or `in-progress`
+- Feature: `triaged` or `in-progress` (never `defined`; defined is only allowed at the first-task bootstrap boundary)
 
 When the scheduler passes `planApprovalRequired: true`, the linked task must also have an `approvedPlanFingerprint` that is a non-empty string after trimming whitespace. The predicate does not recompute the fingerprint; `plan-approval.ts` owns its generation and validation. When plan approval is not required, the fingerprint is ignored.
 
@@ -722,4 +730,4 @@ A completed cited research finding may become a normal Mission Feature. Its feat
 
 ### Autonomous mission admission
 
-Heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link. Missing or invalid lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.
+Autonomous no-task heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. Interactive and task-scoped calls remain governed by `task_agent_mutation` policy as described in [Agent task-creation admission](#agent-task-creation-admission). The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link except at the documented `defined`-feature first-task bootstrap. Missing or invalid autonomous lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.

@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
-import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy } from "@fusion/core";
+import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy, DbTransaction } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
@@ -979,6 +979,8 @@ type MissionLineageReference = {
   missionId: string;
   sliceId: string;
   featureId: string;
+  /** Defined features are admitted only to atomically claim their first task. */
+  bootstrapDefinedFeature?: boolean;
 };
 
 /**
@@ -1040,14 +1042,108 @@ async function resolveApprovedMissionLineage(
   const approval = fusionCore.evaluateMissionLineageApproval({
     feature, slice, milestone, mission, task: {}, planApprovalRequired: false,
   });
-  if (!approval.approved) return { error: `Mission lineage is not approved (${approval.reason}); no task was created.` };
+  /*
+  FNXC:MissionAdmission 2026-07-23-12:00:
+  A hand-authored defined Feature has no first task to link, so scheduler-only
+  approval would dead-end task creation. Admit it solely as a bootstrap claim;
+  symbol-lock admission remains triaged/in-progress in the core predicate.
+  */
+  if (!approval.approved) {
+    if (approval.reason === "feature-not-implementable" && feature.status === "defined" && !feature.taskId) {
+      return { missionId: mission.id, sliceId: slice.id, featureId: feature.id, bootstrapDefinedFeature: true };
+    }
+    return { error: `Mission lineage is not approved (${approval.reason}); no task was created.` };
+  }
   return { missionId: mission.id, sliceId: slice.id, featureId: feature.id };
+}
+
+type DefinedFeatureBootstrapStore = {
+  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
+  claimDefinedFeatureTask: (input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
+  archiveDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
+};
+
+type AgentTaskInputWithBootstrap = TaskCreateInput & {
+  afterTaskInsert?: (tx: DbTransaction, task: Task) => Promise<void>;
+  validateDuplicateCanonical?: (task: Task) => Promise<void>;
+  skipSameAgentDuplicateIntake?: boolean;
+  preflightSameAgentDuplicate?: boolean;
+  reconcileCreatedDuplicate?: (duplicate: Task, created: Task) => Promise<void>;
+};
+
+function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null): Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate"> {
+  if (!lineage?.bootstrapDefinedFeature) return {};
+  const missionStore = store.getMissionStore() as Partial<DefinedFeatureBootstrapStore>;
+  if (!missionStore.claimDefinedFeatureTaskInTransaction || !missionStore.claimDefinedFeatureTask || !missionStore.archiveDefinedFeatureBootstrapDuplicate) {
+    throw new Error("Defined-feature bootstrap requires the PostgreSQL mission store; no task was created.");
+  }
+  const claim = (taskId: string) => ({ featureId: lineage.featureId, taskId, missionId: lineage.missionId, sliceId: lineage.sliceId });
+  return {
+    /*
+    FNXC:MissionAdmission 2026-07-23-15:30:
+    The first defined-feature task and feature promotion are one PostgreSQL
+    transaction. Do not replace this hook with create-then-link compensation:
+    a failed claim must roll back the task row before any task is observable.
+    */
+    afterTaskInsert: async (tx, task) => { await missionStore.claimDefinedFeatureTaskInTransaction!(tx, claim(task.id)); },
+    validateDuplicateCanonical: async (task) => { await missionStore.claimDefinedFeatureTask!(claim(task.id)); },
+    /*
+    FNXC:MissionAdmission 2026-07-23-20:00:
+    The ordinary same-agent intake runs after task-row commit and could archive
+    feature.taskId. Suppress only that path; deterministic reconciliation below
+    retains the claimed task and atomically archives a late competing duplicate.
+    */
+    skipSameAgentDuplicateIntake: true,
+    preflightSameAgentDuplicate: true,
+    reconcileCreatedDuplicate: async (duplicate, created) => {
+      await missionStore.archiveDefinedFeatureBootstrapDuplicate!({
+        featureId: lineage.featureId,
+        taskId: created.id,
+        duplicateTaskId: duplicate.id,
+      });
+    },
+  };
 }
 
 /*
 FNXC:AgentRouting 2026-07-29-00:00:
 FN-8207 requires deterministic-duplicate canonical tasks to honor an explicit delegate's owner and todo-column request. Carry both mutations in the engine task-creation seam so every canonical return path is truthful without changing the shared core duplicate-guard API.
 */
+async function findDefinedFeatureBootstrapDuplicate(
+  store: TaskStore,
+  input: TaskCreateInput,
+  sourceAgentId: string | undefined,
+  sourceParentTaskId: string | undefined,
+): Promise<Task | undefined> {
+  if (!sourceAgentId && !sourceParentTaskId) return undefined;
+  const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
+  const byId = new Map(candidates.map((task) => [task.id, task]));
+  const matches = findSameAgentDuplicates({
+    title: input.title,
+    description: input.description,
+    sourceParentTaskId,
+  }, candidates.flatMap((task) => {
+    const createdAt = Date.parse(task.createdAt);
+    /*
+    FNXC:MissionAdmission 2026-07-23-21:10:
+    Defined-feature retry preflight follows the normal duplicate guard's live
+    task boundary. An archived sibling cannot be a bootstrap canonical because
+    claimDefinedFeatureTask rejects non-live task rows.
+    */
+    if (Number.isNaN(createdAt) || task.deletedAt || task.column === "archived") return [];
+    return [{
+      id: task.id,
+      title: task.title ?? "",
+      description: task.description,
+      column: task.column,
+      createdAt,
+      sourceAgentId: task.sourceAgentId ?? null,
+      sourceParentTaskId: task.sourceParentTaskId ?? null,
+    }];
+  }), { sourceAgentId: sourceAgentId ?? null });
+  return matches[0] ? byId.get(matches[0].id) : undefined;
+}
+
 async function carryCanonicalTaskRouting(
   store: TaskStore,
   canonical: Task,
@@ -1071,6 +1167,7 @@ export async function createAgentTask(
   input: TaskCreateInput,
   options?: AgentTaskCreationOptions,
 ): Promise<{ task: Awaited<ReturnType<TaskStore["createTask"]>>; wasDuplicate: boolean }> {
+  const validateDuplicateCanonical = (input as AgentTaskInputWithBootstrap).validateDuplicateCanonical;
   const settings = typeof (store as { getSettings?: unknown }).getSettings === "function"
     ? await store.getSettings()
     : {} as Settings;
@@ -1106,6 +1203,7 @@ export async function createAgentTask(
 
   try {
     if (guard.action === "duplicate" && guard.existing) {
+      await validateDuplicateCanonical?.(guard.existing);
       return {
         task: await carryCanonicalTaskRouting(store, guard.existing, input),
         wasDuplicate: true,
@@ -1130,6 +1228,7 @@ export async function createAgentTask(
           .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
         const canonical = candidates[0];
         if (canonical) {
+          await validateDuplicateCanonical?.(canonical);
           return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
         }
       } catch (error) {
@@ -1161,6 +1260,7 @@ export async function createAgentTask(
         const match = matches.find((candidate) => !acknowledged.has(candidate.id));
         const canonical = match ? candidates.find((candidate) => candidate.id === match.id) : undefined;
         if (canonical) {
+          await validateDuplicateCanonical?.(canonical);
           return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
         }
       } catch (error) {
@@ -1169,6 +1269,21 @@ export async function createAgentTask(
           error: error instanceof Error ? error.message : String(error),
         });
         throw new Error(`Unable to verify parent-scoped task uniqueness for ${sourceParentTaskId}`, { cause: error });
+      }
+    }
+
+    /*
+    FNXC:MissionAdmission 2026-07-23-20:00:
+    Probe same-agent duplicates before a defined Feature is claimed. The generic
+    intake probe happens after commit and can archive feature.taskId; an existing
+    canonical must already belong to this feature or creation fails with no new
+    task, rather than silently repurposing unrelated work.
+    */
+    if ((input as AgentTaskInputWithBootstrap).preflightSameAgentDuplicate && validateDuplicateCanonical) {
+      const duplicate = await findDefinedFeatureBootstrapDuplicate(store, input, sourceAgentId, sourceParentTaskId);
+      if (duplicate) {
+        await validateDuplicateCanonical(duplicate);
+        return { task: await carryCanonicalTaskRouting(store, duplicate, input), wasDuplicate: true };
       }
     }
 
@@ -1220,21 +1335,35 @@ export async function createAgentTask(
       onProposalClaimConflict: () => { proposalClaimConflict = true; },
     });
 
+    const reconcileCreatedDuplicate = (input as AgentTaskInputWithBootstrap).reconcileCreatedDuplicate;
     const reconcile = await reconcileDeterministicDuplicate(store, {
       createdTask,
       fingerprint: guard.fingerprint,
       sourceParentTaskId,
       logger: log,
+      onDuplicate: reconcileCreatedDuplicate
+        ? async (duplicate) => {
+          await reconcileCreatedDuplicate(duplicate, createdTask);
+          return "keep-created";
+        }
+        : undefined,
     });
 
-    return {
-      task: proposalClaimConflict
-        ? await carryCanonicalTaskRouting(store, createdTask, input)
-        : reconcile.outcome === "archived"
-        ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
-        : reconcile.canonical,
-      wasDuplicate: proposalClaimConflict || reconcile.outcome === "archived",
-    };
+    const wasDuplicate = proposalClaimConflict || reconcile.outcome === "archived" || reconcile.outcome === "kept-duplicate";
+    const canonical = proposalClaimConflict
+      ? await carryCanonicalTaskRouting(store, createdTask, input)
+      : reconcile.outcome === "archived"
+      ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
+      : reconcile.canonical;
+    /*
+    FNXC:MissionAdmission 2026-07-23-17:20:
+    A proposal-claim race and post-create reconciliation both select an existing
+    canonical after createTask returns. Revalidate that canonical before reporting
+    duplicate success so a defined feature cannot remain unlinked or claim an
+    archived/unrelated loser.
+    */
+    if (wasDuplicate) await validateDuplicateCanonical?.(canonical);
+    return { task: canonical, wasDuplicate };
   } finally {
     guard.releaseLock();
   }
@@ -1334,6 +1463,7 @@ export function createTaskCreateTool(
           priority: params.priority,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
+          ...definedFeatureBootstrapInput(store, lineage),
           source: {
             sourceType: provenance?.sourceType ?? "api",
             sourceAgentId: provenance?.sourceAgentId,
@@ -4672,6 +4802,7 @@ export function createDelegateTaskTool(
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
+          ...definedFeatureBootstrapInput(taskStore, lineage),
           source: {
             sourceType: "api",
             sourceParentTaskId: options?.sourceTaskId,
