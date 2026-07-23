@@ -841,7 +841,10 @@ function AppInner() {
   }), [taskPopupsBoardListOnly, taskView]);
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible; navigating away unmounts scoped FloatingWindow shells without deleting their state.
+  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible.
+
+  FNXC:TaskPopupViewGating 2026-07-22-13:15:
+  FN remount-churn fix R7: this memo no longer drives the render list (all entries render; off-view windows hide via FloatingWindow `hidden`). It remains the "currently visible" set consumed by the Escape/back-navigation shortcut handler below, which must only dismiss windows the user can actually see.
   */
   const visiblePoppedOutTaskEntries = useMemo(
     () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
@@ -2064,18 +2067,20 @@ function AppInner() {
       moves either overlapping surface above the other. Other utility windows retain their separate,
       higher utility band and cannot be reordered by task-popup interaction.
 
-      FNXC:TaskPopupViewGating 2026-07-15-15:20:
-      Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
+      FNXC:TaskPopupViewGating 2026-07-22-13:15:
+      FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
+      {poppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
         const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
         const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
+        const popupVisible = taskPopupsVisibleOnCurrentView(originTaskView);
         return (
           <FloatingWindow
             key={popupKey}
             windowKey={`task-detail-${snapshot.id}-${originTaskView ?? "global"}`}
             title={liveTask.id}
+            hidden={!popupVisible}
             onClose={close}
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
@@ -2090,6 +2095,7 @@ function AppInner() {
               initialTab={initialTab}
               projectId={currentProject?.id}
               tasks={tasks}
+              active={popupVisible}
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
               onMoveTask={moveTask}

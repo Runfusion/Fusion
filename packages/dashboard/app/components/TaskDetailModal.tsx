@@ -409,6 +409,11 @@ export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   onPopOut, when supplied, renders a Maximize2 "Pop out" button in the gray header. List/Board wire it to push this task into App's floating task-detail window array, opening the same embedded TaskDetailContent inside a movable, resizable, non-blocking FloatingWindow. It is independent of embedded/onBackToBoard so List split-pane and the board full-panel can both expose it.
   */
   onPopOut?: (task: Task) => void;
+  /*
+  FNXC:TaskPopupViewGating 2026-07-22-13:15:
+  Keep-alive visibility gate (FN remount-churn fix R7/R8). Popped-out task FloatingWindows now hide instead of unmounting when the user leaves their origin view, so the embedded TaskDetailContent stays mounted with its terminal WebSocket alive. While `active` is false the detail's SSE subscriptions (workflow results, CLI session state) and useAgentLogs EventSource are closed, and the tab-level `active` gates (chat, planner-chat, terminal) are forced inactive — the terminal WS itself intentionally stays open. Defaults to true so every other host is unaffected.
+  */
+  active?: boolean;
 };
 
 function truncate(s: string, max: number): string {
@@ -690,6 +695,7 @@ export function TaskDetailContent({
   taskDetailChatFirst = false,
   mobileHeaderMode = "close",
   embedded = false,
+  active = true,
   onRequestClose,
   onBackToBoard,
   onPopOut,
@@ -1415,7 +1421,8 @@ export function TaskDetailContent({
 
   // Subscribe to SSE for real-time workflow result updates while workflow tab is active
   useEffect(() => {
-    if (activeTab !== "workflow") return;
+    // FNXC:TaskPopupViewGating 2026-07-22-13:15: hidden kept-alive popups close this channel (R8).
+    if (activeTab !== "workflow" || !active) return;
 
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
 
@@ -1434,7 +1441,7 @@ export function TaskDetailContent({
     return subscribeSse(`/api/events${query}`, {
       events: { "task:updated": handleTaskUpdated },
     });
-  }, [activeTab, task.id, projectId]);
+  }, [activeTab, active, task.id, projectId]);
 
   // Load the CLI agent session for this task (drives the terminal tab + matrix).
   useEffect(() => {
@@ -1501,10 +1508,12 @@ export function TaskDetailContent({
         /* skip malformed events */
       }
     };
+    // FNXC:TaskPopupViewGating 2026-07-22-13:15: hidden kept-alive popups close this channel (R8); reveal re-subscribes.
+    if (!active) return;
     return subscribeSse(`/api/events${query}`, {
       events: { "cli:session:state": handleCliState },
     });
-  }, [task.id, projectId]);
+  }, [active, task.id, projectId]);
 
   // Reset dependency search when dropdown closes
   useEffect(() => {
@@ -2432,7 +2441,8 @@ export function TaskDetailContent({
     loadingMore: agentLogLoadingMore,
   } = useAgentLogs(
     task.id,
-    task.status === "failed" || (activeTab === "chat" && activitySegment === "raw-logs"),
+    // FNXC:TaskPopupViewGating 2026-07-22-13:15: `active` forces the EventSource closed while a kept-alive popup is hidden (R8).
+    active && (task.status === "failed" || (activeTab === "chat" && activitySegment === "raw-logs")),
     projectId,
   );
   useEffect(() => {
@@ -5128,7 +5138,7 @@ export function TaskDetailContent({
                 <TaskChatTab
                   task={workingTask}
                   projectId={projectId}
-                  active={activeTab === "chat" && activitySegment === "current"}
+                  active={active && activeTab === "chat" && activitySegment === "current"}
                   addToast={addToast}
                   sessionLive={isCliSessionLive(cliSession)}
                   onTaskUpdated={handleChatTaskUpdated}
@@ -6218,7 +6228,7 @@ export function TaskDetailContent({
                 <TaskPlannerChatTab
                   task={workingTask}
                   projectId={projectId}
-                  active={activeTab === "planner-chat"}
+                  active={active && activeTab === "planner-chat"}
                   expanded={isPlannerChatExpanded}
                   onExpandedChange={setPlannerChatExpanded}
                   planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
@@ -6237,7 +6247,7 @@ export function TaskDetailContent({
                       sessionId={cliSession.id}
                       projectId={projectId}
                       posture={cliPosture}
-                      active={activeTab === "terminal"}
+                      active={active && activeTab === "terminal"}
                       readOnly={
                         cliTabVisibility.kind === "replay" ||
                         (cliTabVisibility.kind === "live" && cliTabVisibility.readOnly)
