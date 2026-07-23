@@ -139,6 +139,26 @@ describe("PlanningModeModal keep-alive gating", () => {
     expect(mockFetchAiSession.mock.calls.length).toBeGreaterThan(loadsBeforeHide);
   });
 
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-13:55:
+  Surface Enumeration: the keep-alive gating must hold on the mobile breakpoint too (landscape phones included) — same suspend/reveal contract as desktop.
+  */
+  it("suspends and restores the session-list SSE across hide/reveal on the mobile breakpoint", async () => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSession.mockResolvedValue(awaitingQuestionSession);
+
+    const { rerender } = render(<PlanningModeModal {...planningProps(true)} />);
+    await waitFor(() => expect(mockSseState.subscribeCalls).toBeGreaterThanOrEqual(1));
+    const subscribedWhileVisible = mockSseState.subscribeCalls;
+
+    rerender(<PlanningModeModal {...planningProps(false)} />);
+    await waitFor(() => expect(mockSseState.unsubscribeCalls).toBe(subscribedWhileVisible));
+
+    rerender(<PlanningModeModal {...planningProps(true)} />);
+    await waitFor(() => expect(mockSseState.subscribeCalls).toBe(subscribedWhileVisible + 1));
+    expect(screen.getByTestId("planning-question-text")).toHaveTextContent("What is the scope?");
+  });
+
   it("records remount on first activation and route-active (not remount) on keep-alive reveal", async () => {
     mockFetchAiSession.mockResolvedValue(awaitingQuestionSession);
 
