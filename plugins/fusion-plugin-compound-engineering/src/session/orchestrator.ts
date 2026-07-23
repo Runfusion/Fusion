@@ -109,6 +109,21 @@ export class CeTurnTimeoutError extends Error {
   }
 }
 
+/*
+FNXC:CompoundEngineeringConcurrency 2026-07-23-10:55:
+Port of the planning turn-admission invariant (see FNXC:PlanningTurnAdmission in packages/dashboard/src/planning.ts, 2026-07-22).
+Mobile view unmount/remount can re-submit an answer or resume while the previous turn is still running; without a guard the second entry rehydrates or re-prompts the SAME live handle, displacing the first turn — the displaced/disposed agent then yields an empty assistant message and the surviving turn dies with "Failed to parse agent response: AI returned no valid JSON".
+Invariant: at most one turn (opening / answer / resume-rehydration) may be admitted per CE session at any time, reserved SYNCHRONOUSLY before any await and held until the turn fully settles (including detached background turns). A concurrent entry is rejected with CeTurnInProgressError (routes map it to HTTP 409) instead of displacing a healthy in-flight turn. cancel()/discard() intentionally bypass the guard — they are explicit teardown, and the displaced turn settles as interrupted through the existing no-silent-loss path.
+*/
+export class CeTurnInProgressError extends Error {
+  constructor(sessionId: string) {
+    super(
+      `A turn is already in progress for CE session ${sessionId}. Wait for it to settle (watch the live output) instead of re-submitting.`,
+    );
+    this.name = "CeTurnInProgressError";
+  }
+}
+
 /**
  * Which session backend a CE stage runs on (U9 seam).
  *
@@ -292,6 +307,14 @@ export class CeOrchestrator {
   private readonly progressPersistence = new Map<string, Promise<void>>();
   /** Process-local terminal state used only when detached failure persistence itself fails. */
   private readonly detachedFailureFallbacks = new Map<string, { session: CeSession; durableFingerprint: string }>();
+  /**
+   * Sessions with an admitted in-flight turn (see CeTurnInProgressError),
+   * keyed to a per-reservation token so a stale release (from a turn that
+   * cancel()/discard() force-cleared) can never drop a NEWER turn's
+   * reservation. Membership is toggled SYNCHRONOUSLY — no await between check
+   * and add — so two overlapping entries cannot both pass the guard.
+   */
+  private readonly turnReservations = new Map<string, symbol>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -492,6 +515,25 @@ export class CeOrchestrator {
   }
 
   /**
+   * Synchronously reserve the session's single turn slot; returns the
+   * idempotent release fn. Throws CeTurnInProgressError when a turn is already
+   * admitted. Callers MUST release when the turn fully settles (finally on the
+   * sync path, promise-finally on the detached path).
+   */
+  private reserveTurn(sessionId: string): () => void {
+    if (this.turnReservations.has(sessionId)) {
+      throw new CeTurnInProgressError(sessionId);
+    }
+    const token = Symbol(sessionId);
+    this.turnReservations.set(sessionId, token);
+    return () => {
+      if (this.turnReservations.get(sessionId) === token) {
+        this.turnReservations.delete(sessionId);
+      }
+    };
+  }
+
+  /**
    * Start a fresh session for a registered stage and run the opening turn.
    *
    * `detach: true` (the route posture) returns as soon as the session row
@@ -533,18 +575,34 @@ export class CeOrchestrator {
       ? await this.store.createWithPlanHandoffClaimAsync(sessionInput, handoffArtifactPath)
       : await this.store.createAsync(sessionInput);
     await this.store.appendHistoryAsync(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
+    // The row is brand-new, so nothing can hold this reservation yet — but the
+    // opening turn must HOLD it so an answer/resume racing in mid-turn is
+    // rejected instead of displacing the live handle.
+    const releaseTurn = this.reserveTurn(session.id);
     if (opts.detach) {
-      let accepted = await this.requireSession(session.id);
-      const turn = Promise.resolve().then(() => this.runOpeningTurn(
-        session.id,
-        stage,
-        opts.openingMessage,
-        (active) => { accepted = active; },
-      ));
+      let accepted: CeSession;
+      try {
+        accepted = await this.requireSession(session.id);
+      } catch (err) {
+        releaseTurn();
+        throw err;
+      }
+      const turn = Promise.resolve()
+        .then(() => this.runOpeningTurn(
+          session.id,
+          stage,
+          opts.openingMessage,
+          (active) => { accepted = active; },
+        ))
+        .finally(releaseTurn);
       this.detachTurn(() => accepted, "opening turn", turn);
       return { session: accepted };
     }
-    return this.runOpeningTurn(session.id, stage, opts.openingMessage);
+    try {
+      return await this.runOpeningTurn(session.id, stage, opts.openingMessage);
+    } finally {
+      releaseTurn();
+    }
   }
 
   /** Resolve the newest durable same-project Brainstorm handoff accepted for in-place Plan enrichment. */
@@ -613,35 +671,49 @@ export class CeOrchestrator {
     response: unknown,
     opts: { detach?: boolean } = {},
   ): Promise<CeStepResult> {
-    const session = await this.requireSession(sessionId);
-    if (session.status !== "awaiting_input") {
-      throw new Error(`Session ${sessionId} is not awaiting input (status=${session.status}).`);
-    }
-    // Validate the questionId BEFORE mutating any persisted state. A stale/wrong
-    // questionId must NOT clear `currentQuestion` or flip status to active —
-    // doing so would destroy the recovery anchor while the seam rejects the
-    // mismatch, leaving the DB diverged from the live session. Reject cleanly and
-    // leave `currentQuestion`/status intact so the session stays answerable.
-    if (questionId !== session.currentQuestion?.id) {
-      throw new Error(
-        `Session ${sessionId} is awaiting question "${session.currentQuestion?.id ?? "(none)"}", not "${questionId}".`,
-      );
-    }
-    const live = this.live.get(sessionId);
-    if (!live && !this.factory) {
-      throw new Error(INTERACTIVE_AI_UNAVAILABLE_MESSAGE);
-    }
+    // Turn admission FIRST, synchronously — a re-submitted answer from a
+    // remounted mobile view must be rejected before it can touch persisted
+    // state or the live handle (see CeTurnInProgressError).
+    const releaseTurn = this.reserveTurn(sessionId);
+    // Once the detached background turn is armed, its promise-finally owns the
+    // release; until then (validation throws) the finally below owns it.
+    let releaseHandedOff = false;
+    try {
+      const session = await this.requireSession(sessionId);
+      if (session.status !== "awaiting_input") {
+        throw new Error(`Session ${sessionId} is not awaiting input (status=${session.status}).`);
+      }
+      // Validate the questionId BEFORE mutating any persisted state. A stale/wrong
+      // questionId must NOT clear `currentQuestion` or flip status to active —
+      // doing so would destroy the recovery anchor while the seam rejects the
+      // mismatch, leaving the DB diverged from the live session. Reject cleanly and
+      // leave `currentQuestion`/status intact so the session stays answerable.
+      if (questionId !== session.currentQuestion?.id) {
+        throw new Error(
+          `Session ${sessionId} is awaiting question "${session.currentQuestion?.id ?? "(none)"}", not "${questionId}".`,
+        );
+      }
+      const live = this.live.get(sessionId);
+      if (!live && !this.factory) {
+        throw new Error(INTERACTIVE_AI_UNAVAILABLE_MESSAGE);
+      }
 
-    if (opts.detach) {
-      // If the process lost its live handle, rehydration can take time. Mirror
-      // resume(detach): mark the row active immediately while the background
-      // turn re-creates the handle and converges through persisted state.
-      const accepted = await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null, error: null }) ?? session;
-      const turn = Promise.resolve().then(() => this.runAnswerTurn(accepted, questionId, response));
-      this.detachTurn(() => accepted, "answer turn", turn);
-      return { session: accepted };
+      if (opts.detach) {
+        // If the process lost its live handle, rehydration can take time. Mirror
+        // resume(detach): mark the row active immediately while the background
+        // turn re-creates the handle and converges through persisted state.
+        const accepted = await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null, error: null }) ?? session;
+        const turn = Promise.resolve()
+          .then(() => this.runAnswerTurn(accepted, questionId, response))
+          .finally(releaseTurn);
+        releaseHandedOff = true;
+        this.detachTurn(() => accepted, "answer turn", turn);
+        return { session: accepted };
+      }
+      return await this.runAnswerTurn(session, questionId, response);
+    } finally {
+      if (!releaseHandedOff) releaseTurn();
     }
-    return this.runAnswerTurn(session, questionId, response);
   }
 
   private async runAnswerTurn(session: CeSession, questionId: string, response: unknown): Promise<CeStepResult> {
@@ -691,62 +763,72 @@ export class CeOrchestrator {
    * left `interrupted` with a clear error explaining it can't be continued here.
    */
   async resume(sessionId: string, opts: { detach?: boolean } = {}): Promise<CeStepResult> {
-    const session = await this.requireSession(sessionId);
+    // Turn admission FIRST, synchronously — a resume racing an in-flight
+    // opening/answer turn (mobile re-entry, double-tapped Resume) must not
+    // rehydrate a second live handle over the one the running turn is using.
+    const releaseTurn = this.reserveTurn(sessionId);
+    let releaseHandedOff = false;
+    try {
+      const session = await this.requireSession(sessionId);
 
-    // Terminal / already-answerable-with-a-live-handle cases need no rehydration.
-    if (session.status === "completed") return { session };
-    if (session.status === "awaiting_input" && this.live.has(sessionId)) {
-      return { session }; // already live + answerable.
-    }
-
-    // No pending question → nothing to re-prime to. Mark active so the caller can
-    // re-run the turn with fresh input (retry for `error`, resume for others).
-    if (!session.currentQuestion) {
-      const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
-      return { session: next };
-    }
-
-    // A live handle already exists (e.g. interrupted but not disposed) — just
-    // restore the answerable status.
-    if (this.live.has(sessionId)) {
-      const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
-      return { session: next };
-    }
-
-    // Rehydration path: re-create the live session and replay history back to the
-    // current question.
-    if (!this.factory) {
-      // Honest status: we cannot back an answerable state in this process, so do
-      // not pretend the session is resumable here. Surface a clear error.
-      const next =
-        await this.store.updateAsync(sessionId, {
-          status: "interrupted",
-          error: INTERACTIVE_AI_UNAVAILABLE_MESSAGE,
-        }) ?? session;
-      return { session: next };
-    }
-
-    const rehydration = (async (): Promise<CeStepResult> => {
-      try {
-        await this.rehydrate(session);
-      } catch (err) {
-        // Rehydration failed — keep progress, surface the failure, do not
-        // advertise an answerable status we can't back.
-        return { session: await this.interruptSession(sessionId, err) };
+      // Terminal / already-answerable-with-a-live-handle cases need no rehydration.
+      if (session.status === "completed") return { session };
+      if (session.status === "awaiting_input" && this.live.has(sessionId)) {
+        return { session }; // already live + answerable.
       }
-      const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
-      return { session: next };
-    })();
 
-    if (opts.detach) {
-      // Rehydration replays the conversation against the live model and can be
-      // slow; the route posture marks the session active and converges via
-      // push/poll.
-      const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
-      this.detachTurn(() => next, "rehydration", rehydration);
-      return { session: next };
+      // No pending question → nothing to re-prime to. Mark active so the caller can
+      // re-run the turn with fresh input (retry for `error`, resume for others).
+      if (!session.currentQuestion) {
+        const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
+        return { session: next };
+      }
+
+      // A live handle already exists (e.g. interrupted but not disposed) — just
+      // restore the answerable status.
+      if (this.live.has(sessionId)) {
+        const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
+        return { session: next };
+      }
+
+      // Rehydration path: re-create the live session and replay history back to the
+      // current question.
+      if (!this.factory) {
+        // Honest status: we cannot back an answerable state in this process, so do
+        // not pretend the session is resumable here. Surface a clear error.
+        const next =
+          await this.store.updateAsync(sessionId, {
+            status: "interrupted",
+            error: INTERACTIVE_AI_UNAVAILABLE_MESSAGE,
+          }) ?? session;
+        return { session: next };
+      }
+
+      const rehydration = (async (): Promise<CeStepResult> => {
+        try {
+          await this.rehydrate(session);
+        } catch (err) {
+          // Rehydration failed — keep progress, surface the failure, do not
+          // advertise an answerable status we can't back.
+          return { session: await this.interruptSession(sessionId, err) };
+        }
+        const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
+        return { session: next };
+      })().finally(releaseTurn);
+      releaseHandedOff = true;
+
+      if (opts.detach) {
+        // Rehydration replays the conversation against the live model and can be
+        // slow; the route posture marks the session active and converges via
+        // push/poll.
+        const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
+        this.detachTurn(() => next, "rehydration", rehydration);
+        return { session: next };
+      }
+      return await rehydration;
+    } finally {
+      if (!releaseHandedOff) releaseTurn();
     }
-    return rehydration;
   }
 
   /**
@@ -873,6 +955,11 @@ export class CeOrchestrator {
     // before disposeLive clears the transient buffers (same as runTurn failure).
     const interrupted = await this.interruptSession(sessionId, new Error("Cancelled by user"));
     this.disposeLive(sessionId);
+    // Explicit teardown clears the turn reservation: the displaced turn's agent
+    // is disposed (it settles as interrupted), and the session must accept a
+    // fresh turn even if that turn's own release was wedged (e.g. a hung
+    // rehydration, which runs without a watchdog).
+    this.turnReservations.delete(sessionId);
     return interrupted;
   }
 
@@ -885,6 +972,9 @@ export class CeOrchestrator {
   async discard(sessionId: string): Promise<boolean> {
     await this.drainProgressPersistence(sessionId);
     this.disposeLive(sessionId);
+    // Same reservation clear as cancel(): the row is going away; never leave a
+    // stale reservation behind for a reused orchestrator instance.
+    this.turnReservations.delete(sessionId);
     const deleted = await this.store.deleteAsync(sessionId);
     if (deleted) this.detachedFailureFallbacks.delete(sessionId);
     return deleted;

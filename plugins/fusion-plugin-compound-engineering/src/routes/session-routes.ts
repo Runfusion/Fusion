@@ -1,5 +1,5 @@
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/core";
-import { CeOrchestrator } from "../session/orchestrator.js";
+import { CeOrchestrator, CeTurnInProgressError } from "../session/orchestrator.js";
 import { recoverStaleSessionsForContext } from "../session/session-recovery.js";
 import { asCeSessionStatus } from "../session/session-store.js";
 import { getCePipelineStore } from "../sync/pipeline-store.js";
@@ -102,6 +102,13 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
           const result = await orch.resume(id, { detach: true });
           return { status: 200, body: { session: result.session } };
         } catch (err) {
+          /*
+           * FNXC:CompoundEngineeringConcurrency 2026-07-23-11:05:
+           * A resume racing an in-flight turn is a retryable conflict (409), not a missing session (404) — the mobile client re-enters the view and re-fires resume while the previous turn is still settling.
+           */
+          if (err instanceof CeTurnInProgressError) {
+            return { status: 409, body: { error: err.message } };
+          }
           return { status: 404, body: { error: err instanceof Error ? err.message : String(err) } };
         }
       },
