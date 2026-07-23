@@ -609,7 +609,11 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
             const validation = validateStates[server.name] ?? { status: "idle" as const };
             const editable = scope === "global" || state !== "inherited";
             return (
-              <article className="mcp-server-row" key={`${state}:${server.name}`} data-testid={`mcp-server-row-${server.name}`}>
+              /*
+              FNXC:McpSettings 2026-07-22-12:10:
+              Row identity is server.name alone. Embedding the derived `state` in the key remounted the row on every state transition (inherited -> project-local, enable/disable) even though the row represents the same server; validation state lives externally in `validateStates`, so nothing relies on the remount.
+              */
+              <article className="mcp-server-row" key={server.name} data-testid={`mcp-server-row-${server.name}`}>
                 <div className="mcp-server-row__main">
                   <div className="mcp-server-row__titleline">
                     <strong>{server.name}</strong>
