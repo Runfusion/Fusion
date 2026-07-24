@@ -299,20 +299,31 @@ describe("useTasks", () => {
     expect(writePayload).toHaveLength(500);
   });
 
-  it("normalizes invalid column values from initial fetch to triage", async () => {
-    const malformedTask = {
+  /*
+  FNXC:ColumnNormalization 2026-07-24-00:20:
+  b2a7425c7 (IR-driven lifecycle cutover) replaced the six-legacy-id whitelist with
+  normalizeColumnId: custom workflow column ids are real ids and must pass through
+  untouched; only structurally unusable values (non-string/empty) fall back to triage.
+  */
+  it("passes custom column ids through and normalizes structurally invalid columns to triage", async () => {
+    const customColumnTask = {
       ...createMockTask({ id: "FN-099" }),
       column: "unknown-column",
     } as unknown as Task;
-    mockFetchTasks.mockResolvedValueOnce([malformedTask]);
+    const malformedTask = {
+      ...createMockTask({ id: "FN-098" }),
+      column: "",
+    } as unknown as Task;
+    mockFetchTasks.mockResolvedValueOnce([customColumnTask, malformedTask]);
 
     const { result } = renderHook(() => useTasks());
 
     await waitFor(() => {
-      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks).toHaveLength(2);
     });
 
-    expect(result.current.tasks[0].column).toBe("triage");
+    expect(result.current.tasks.find((t) => t.id === "FN-099")?.column).toBe("unknown-column");
+    expect(result.current.tasks.find((t) => t.id === "FN-098")?.column).toBe("triage");
   });
 
   it("exposes refreshTasks and performs exactly one additional fetch when called", async () => {
@@ -775,7 +786,9 @@ describe("useTasks", () => {
       expect(result.current.tasks[0].id).toBe("FN-002");
     });
 
-    it("normalizes invalid column values from SSE created events", async () => {
+    it("passes custom column ids through and normalizes structurally invalid columns from SSE created events", async () => {
+      // FNXC:ColumnNormalization 2026-07-24-00:20: see the initial-fetch variant — post-b2a7425c7,
+      // string column ids are custom-workflow-valid; only non-string/empty falls back to triage.
       mockFetchTasks.mockResolvedValueOnce([]);
       const { result } = renderHook(() => useTasks());
 
@@ -783,17 +796,23 @@ describe("useTasks", () => {
         expect(MockEventSource.instances).toHaveLength(1);
       });
 
-      const malformedTask = {
+      const customColumnTask = {
         ...createMockTask({ id: "FN-003" }),
         column: "bad-column",
       } as unknown as Task;
+      const malformedTask = {
+        ...createMockTask({ id: "FN-004" }),
+        column: "",
+      } as unknown as Task;
 
       act(() => {
+        MockEventSource.instances[0]._emit("task:created", customColumnTask);
         MockEventSource.instances[0]._emit("task:created", malformedTask);
       });
 
-      expect(result.current.tasks).toHaveLength(1);
-      expect(result.current.tasks[0].column).toBe("triage");
+      expect(result.current.tasks).toHaveLength(2);
+      expect(result.current.tasks.find((t) => t.id === "FN-003")?.column).toBe("bad-column");
+      expect(result.current.tasks.find((t) => t.id === "FN-004")?.column).toBe("triage");
     });
   });
 
