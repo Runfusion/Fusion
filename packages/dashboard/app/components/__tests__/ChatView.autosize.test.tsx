@@ -155,7 +155,9 @@ describe("ChatView composer autosize", () => {
     await userEvent.click(screen.getAllByTestId("chat-send-btn")[0]);
 
     await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith("line one\nline two\nline three", []);
+      // FNXC:ChatAttachments 2026-07-23-23:59:
+      // FN-8502 (1cd06746f) added the delivery-callback bag as sendMessage's third argument.
+      expect(sendMessage).toHaveBeenCalledWith("line one\nline two\nline three", [], expect.objectContaining({ onDelivered: expect.any(Function), onFailed: expect.any(Function) }));
       expect(textarea).toHaveValue("");
       const resetHeight = Number.parseInt(textarea.style.height, 10);
       expect(resetHeight).toBeLessThan(expandedHeight);
