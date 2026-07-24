@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StrictMode } from "react";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { useTerminalSessions } from "../useTerminalSessions";
+import { useTerminalSessions, __resetServerPlatformProbeForTests } from "../useTerminalSessions";
 import { scopedKey } from "../../utils/projectStorage";
 import * as apiModule from "../../api";
+import * as systemPanelModule from "../../api/system-panel";
 
 // Mock API
 vi.mock("../../api", () => ({
@@ -12,9 +13,16 @@ vi.mock("../../api", () => ({
   listTerminalSessions: vi.fn(),
 }));
 
+// FNXC:Terminal 2026-07-23-22:40: Windows-UA clients probe the server platform
+// (GET /api/system/info) before deciding whether auto-create is skipped.
+vi.mock("../../api/system-panel", () => ({
+  fetchSystemInfo: vi.fn(),
+}));
+
 const mockCreateTerminalSession = vi.mocked(apiModule.createTerminalSession);
 const mockKillPtyTerminalSession = vi.mocked(apiModule.killPtyTerminalSession);
 const mockListTerminalSessions = vi.mocked(apiModule.listTerminalSessions);
+const mockFetchSystemInfo = vi.mocked(systemPanelModule.fetchSystemInfo);
 
 // Mock localStorage
 const localStorageMock = {
@@ -47,6 +55,9 @@ describe("useTerminalSessions", () => {
     });
     mockKillPtyTerminalSession.mockResolvedValue({ killed: true });
     mockListTerminalSessions.mockResolvedValue([]);
+    // Default: non-Windows host so the Windows-UA probe resolves permissive.
+    __resetServerPlatformProbeForTests();
+    mockFetchSystemInfo.mockResolvedValue({ platform: "darwin" } as systemPanelModule.SystemInfoResponse);
   });
 
   afterEach(() => {
@@ -329,12 +340,18 @@ describe("useTerminalSessions", () => {
 
   /*
   FNXC:Terminal 2026-07-23-14:30:
-  GitHub #2121/#2307: Windows browser clients intentionally skip first-tab
+  GitHub #2121/#2307: win32-hosted servers intentionally skip first-tab
   auto-create (embedded shells could spawn Windows Terminal Help/version
   dialogs), but that skip must be observable via `autoCreateDisabled` so the
   modal renders an explicit start action instead of an endless spinner.
+
+  FNXC:Terminal 2026-07-23-22:40:
+  The skip is keyed on the SERVER platform (probed via /api/system/info by
+  Windows-UA clients), not the browser UA: a Windows browser pointed at a
+  mac/linux host must auto-start a session instead of showing the manual
+  "Start terminal" screen.
   */
-  describe("Windows client auto-create skip", () => {
+  describe("Windows host auto-create skip", () => {
     const setUserAgent = (value: string) => {
       Object.defineProperty(window.navigator, "userAgent", {
         value,
@@ -347,8 +364,9 @@ describe("useTerminalSessions", () => {
       setUserAgent(originalUserAgent);
     });
 
-    it("reports autoCreateDisabled and never auto-creates on a Windows browser", async () => {
+    it("reports autoCreateDisabled and never auto-creates when the server is win32", async () => {
       setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "win32" } as systemPanelModule.SystemInfoResponse);
 
       const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
 
@@ -356,13 +374,57 @@ describe("useTerminalSessions", () => {
         expect(result.current.isReady).toBe(true);
       });
 
-      expect(result.current.autoCreateDisabled).toBe(true);
+      await waitFor(() => {
+        expect(result.current.autoCreateDisabled).toBe(true);
+      });
       // Give the (skipped) auto-create effect a chance to fire wrongly.
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
       });
       expect(mockCreateTerminalSession).not.toHaveBeenCalled();
       expect(result.current.tabs.length).toBe(0);
+    });
+
+    it("auto-creates from a Windows browser when the server host is not Windows", async () => {
+      // Regression: the manual "Start terminal" screen appeared for Windows
+      // browsers even against mac/linux-hosted dashboards, where there is no
+      // wt.exe hazard — opening the terminal must start a session directly.
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "darwin" } as systemPanelModule.SystemInfoResponse);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(result.current.autoCreateDisabled).toBe(false);
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the skip (conservatively) when the platform probe fails", async () => {
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockRejectedValue(new Error("network down"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.autoCreateDisabled).toBe(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("never probes the server platform from non-Windows browsers", async () => {
+      setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/126.0");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(mockFetchSystemInfo).not.toHaveBeenCalled();
     });
 
     it("reports autoCreateDisabled=false on non-Windows browsers", async () => {
@@ -397,6 +459,7 @@ describe("useTerminalSessions", () => {
       // The Windows branch used to force isReady(true) on mount, letting xterm
       // connect to a persisted-but-dead session before validation pruned it.
       setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "win32" } as systemPanelModule.SystemInfoResponse);
       const storedTabs = [
         { id: "tab-dead", sessionId: "session-dead", title: "bash", isActive: true, createdAt: 1 },
       ];
