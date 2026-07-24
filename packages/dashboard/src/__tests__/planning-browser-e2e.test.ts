@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 // dashboard package depend on a second copy of the browser protocol client.
 const requireFromEngine = createRequire(new URL("../../../engine/package.json", import.meta.url));
 const { chromium } = requireFromEngine("playwright-core") as {
-  chromium: { launch(options: { executablePath: string; headless: boolean }): Promise<Browser> };
+  chromium: { launch(options: { executablePath: string; headless: boolean; args?: string[] }): Promise<Browser> };
 };
 
 type Browser = {
@@ -70,7 +70,20 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     server = await createServer({ root: process.cwd(), server: { host: "127.0.0.1", port: 0, watch: null }, logLevel: "error" });
     await server.listen();
     baseUrl = server.resolvedUrls?.local[0] ?? "";
-    browser = await chromium.launch({ executablePath, headless: true });
+    /*
+    FNXC:PlanningModeBrowserE2E 2026-07-24-02:45:
+    CI hardening: on GitHub runners headless system Chrome dies at/after launch
+    without --no-sandbox and --disable-dev-shm-usage (small /dev/shm, sandboxed
+    runner user), cascading every test as "browser has been closed" (full-suite
+    run 30081843074 — this lane had been masked by the shard-4 watchdog kill
+    since the file landed, so it had never actually run on CI). Local launches
+    keep the default hardened sandbox.
+    */
+    browser = await chromium.launch({
+      executablePath,
+      headless: true,
+      ...(process.env.CI ? { args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] } : {}),
+    });
   }, 30_000);
 
   afterAll(async () => {
