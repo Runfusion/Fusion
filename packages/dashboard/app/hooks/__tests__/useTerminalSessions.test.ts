@@ -405,6 +405,31 @@ describe("useTerminalSessions", () => {
       expect(result.current.activeTab?.id).toBe("tab-a");
       expect(mockCreateTerminalSession).not.toHaveBeenCalled();
     });
+
+    it("activates the first tab even when server validation FAILS (the motivating wedge)", async () => {
+      // The validation-failure branch keeps tabs exactly as read from storage —
+      // without normalization at the storage boundary, an all-inactive payload
+      // plus an unreachable server left activeTab null forever: the spinner
+      // stayed up and auto-create was blocked by tabs.length > 0.
+      const storedTabs = [
+        { id: "tab-a", sessionId: "session-a", title: "bash", isActive: false, createdAt: 1 },
+        { id: "tab-b", sessionId: "session-b", title: "zsh", isActive: false, createdAt: 2 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockRejectedValue(new Error("server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab).not.toBeNull();
+      expect(result.current.activeTab?.id).toBe("tab-a");
+    });
   });
 
   describe("bootstrap sequencing (FN-7686)", () => {

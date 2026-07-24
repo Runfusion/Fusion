@@ -8541,6 +8541,7 @@
     "shortcuts": "Shortcuts",
     "startingTerminal": "Starting terminal...",
     "manualStartHint": "The terminal is ready — start a session to begin.",
+    "manualStartError": "Failed to start terminal: {{message}}",
     "startTerminal": "Start terminal",
     "statusConnected": "Connected",
     "statusConnecting": "Connecting...",

@@ -1294,6 +1294,75 @@ describe("TerminalModal", () => {
     expect(createTab).toHaveBeenCalledTimes(1);
   });
 
+  it("surfaces a manual-start failure and re-enables the button instead of silently no-oping", async () => {
+    const createTab = vi.fn().mockRejectedValue(new Error("spawn failed"));
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      autoCreateDisabled: true,
+      createTab,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-manual-start")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("terminal-manual-start-btn"));
+
+    // The Windows bootstrap-failure cohort is exactly where creates fail — a
+    // rejected createTab must render the existing terminal-error banner, not
+    // leave a button that silently does nothing.
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-error").textContent).toContain("spawn failed");
+    });
+    const button = screen.getByTestId("terminal-manual-start-btn") as HTMLButtonElement;
+    await waitFor(() => {
+      expect(button.disabled).toBe(false);
+    });
+  });
+
+  it("ignores rapid Start-terminal clicks while a create is already in flight", async () => {
+    let resolveCreate: (tab: typeof defaultTab) => void = () => {};
+    const createTab = vi.fn().mockImplementation(
+      () => new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      autoCreateDisabled: true,
+      createTab,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-manual-start")).toBeTruthy();
+    });
+
+    const button = screen.getByTestId("terminal-manual-start-btn") as HTMLButtonElement;
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    // One PTY session per user intent: while the first create is pending the
+    // button is disabled and the handler short-circuits.
+    expect(createTab).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(button.disabled).toBe(true);
+    });
+
+    await act(async () => {
+      resolveCreate(defaultTab);
+      await Promise.resolve();
+    });
+  });
+
   it("keeps the normal xterm surface when auto-create is disabled but a tab already exists", async () => {
     mockUseTerminalSessions.mockReturnValue({
       ...defaultSessionState,
@@ -7519,8 +7588,12 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
       // and the payload reaches the PTY twice.
       expect(pasteEvent.defaultPrevented).toBe(true);
       await waitFor(() => expect(readText).toHaveBeenCalledTimes(1));
-      expect(mockSendInput).toHaveBeenCalledTimes(1);
-      expect(mockSendInput).toHaveBeenCalledWith("npm test\n");
+      // Delivery must go through terminal.paste() (bracketed-paste wrapping,
+      // \n -> \r normalization), which feeds onData -> sendInput in real xterm —
+      // never through a raw sendInput that bypasses paste semantics.
+      await waitFor(() => expect(mockTerminalInstance.paste).toHaveBeenCalledTimes(1));
+      expect(mockTerminalInstance.paste).toHaveBeenCalledWith("npm test\n");
+      expect(mockSendInput).not.toHaveBeenCalled();
     },
   );
 
@@ -7549,13 +7622,54 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
       const handled = terminalKeyEventHandler?.(pasteEvent);
 
       // Without an async clipboard read the browser's native paste into
-      // xterm's helper textarea is the ONLY working paste path — the handler
-      // must let it run rather than returning false and killing paste dead.
-      expect(handled).toBe(true);
+      // xterm's helper textarea is the ONLY working paste path. The handler
+      // must return false WITHOUT preventDefault: false skips xterm's key
+      // handling (whose non-mac Ctrl+V path would inject \x16 into the PTY
+      // and cancel the browser paste), while the un-prevented default paste
+      // fires xterm's helper-textarea paste listener exactly once.
+      expect(handled).toBe(false);
       expect(pasteEvent.defaultPrevented).toBe(false);
       expect(mockSendInput).not.toHaveBeenCalled();
+      expect(mockTerminalInstance.paste).not.toHaveBeenCalled();
     },
   );
+
+  it("routes Ctrl+V through the native paste path after a clipboard permission denial (sticky)", async () => {
+    const readText = vi.fn().mockRejectedValue(new DOMException("denied"));
+    Object.defineProperty(navigator, "platform", {
+      value: "Win32",
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText },
+      configurable: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(terminalKeyEventHandler).not.toBeNull();
+    });
+
+    // First Ctrl+V: custom path preventDefaults, read rejects (denied) — this
+    // one paste is lost, and the denial must be remembered.
+    const firstPaste = new KeyboardEvent("keydown", { key: "v", ctrlKey: true, cancelable: true });
+    expect(terminalKeyEventHandler?.(firstPaste)).toBe(false);
+    expect(firstPaste.defaultPrevented).toBe(true);
+    await waitFor(() => expect(readText).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Second Ctrl+V: the sticky denial marker must route through the native
+    // helper-textarea paste (no preventDefault, no further readText attempts)
+    // instead of preventDefaulting into a read that will reject again —
+    // otherwise permission-denied users have zero working paste path.
+    const secondPaste = new KeyboardEvent("keydown", { key: "v", ctrlKey: true, cancelable: true });
+    expect(terminalKeyEventHandler?.(secondPaste)).toBe(false);
+    expect(secondPaste.defaultPrevented).toBe(false);
+    expect(readText).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ["rejected clipboard", { readText: vi.fn().mockRejectedValue(new DOMException("denied")) }],

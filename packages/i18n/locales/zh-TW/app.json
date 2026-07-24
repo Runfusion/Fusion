@@ -8531,6 +8531,7 @@
     "shortcuts": "快捷鍵",
     "startingTerminal": "正在啟動終端...",
     "manualStartHint": "終端已就緒 — 啟動工作階段以開始。",
+    "manualStartError": "啟動終端失敗：{{message}}",
     "startTerminal": "啟動終端",
     "statusConnected": "已連線",
     "statusConnecting": "正在連線...",

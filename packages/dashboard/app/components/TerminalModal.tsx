@@ -551,6 +551,8 @@ interface TerminalModalProps {
 export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false }: TerminalModalProps) {
   const { t } = useTranslation("app");
   const [error, setError] = useState<string | null>(null);
+  // FNXC:Terminal 2026-07-23-20:10: In-flight guard for the manual "Start terminal" action (GitHub #2121/#2307 review): rapid clicks must not create duplicate PTY sessions, and the Windows bootstrap-failure cohort this button serves must SEE createTab failures instead of a silently dead button.
+  const [isStartingTerminal, setIsStartingTerminal] = useState(false);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [xtermReady, setXtermReady] = useState(false);
   const [xtermInitError, setXtermInitError] = useState<string | null>(null);
@@ -619,6 +621,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // (which under StrictMode/Vite Fast Refresh could leak a stale listener
   // on the same xterm instance and cause per-character input doubling).
   const sendInputRef = useRef<(data: string) => void>(() => {});
+  // FNXC:Terminal 2026-07-23-20:10: Sticky marker set when navigator.clipboard.readText rejects (permission denied). Once set, Ctrl/Cmd+V routes through the browser's native paste into xterm's helper textarea instead of retrying a read that will keep rejecting — at most one paste is lost, at denial time.
+  const clipboardReadBlockedRef = useRef(false);
   // Window resize listener tied to the live xterm instance — tracked here so
   // it can be removed in step with xterm disposal (modal close, tab switch).
   const windowResizeListenerRef = useRef<(() => void) | null>(null);
@@ -1767,15 +1771,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           if (key === "v") {
             /*
             FNXC:Terminal 2026-07-04-10:24:
-            GitHub #1902 showed that relying only on xterm's helper-textarea paste can swallow physical Ctrl/Cmd+V before clipboard text reaches the PTY. Own platform paste here, then return false so xterm's own key handling cannot also emit input.
+            GitHub #1902 showed that relying only on xterm's helper-textarea paste can swallow physical Ctrl/Cmd+V before clipboard text reaches the PTY. Own platform paste here when the async clipboard API is available.
 
-            FNXC:Terminal 2026-07-23-14:30:
-            Returning false only skips xterm's key handling — it does NOT cancel the browser's default paste, which fires xterm's helper-textarea `paste` listener and delivered every Ctrl/Cmd+V payload to the PTY twice. Call event.preventDefault() so the custom clipboard read is the single delivery path.
-            When the async clipboard API is unavailable (non-HTTPS remote access, older Firefox), return true instead of swallowing the shortcut: the browser's native paste into xterm's helper textarea is then the only working paste path.
+            FNXC:Terminal 2026-07-23-20:10:
+            Paste contract (GitHub #2121/#2307 review), verified against xterm 5.5.0 source:
+            - returning false from attachCustomKeyEventHandler skips xterm's key handling but does NOT cancel the browser's default paste — that default fires xterm's helper-textarea `paste` listener (single delivery). Never return true for paste: on non-mac, xterm's own _keyDown turns Ctrl+V into a \x16 data event and cancels the browser paste.
+            - When readText is available: call event.preventDefault() so the custom clipboard read is the SINGLE delivery path (without it the payload reached the PTY twice), and deliver via terminal.paste() so bracketed-paste wrapping and \n→\r normalization apply.
+            - When readText is missing (non-HTTPS remote, older Firefox) or a prior read was denied: return false with NO preventDefault so the native helper-textarea paste delivers exactly once.
             */
             const readText = navigator.clipboard?.readText;
-            if (!readText) {
-              return true;
+            if (!readText || clipboardReadBlockedRef.current) {
+              return false;
             }
             event.preventDefault();
             readText.call(navigator.clipboard)
@@ -1783,10 +1789,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 if (!text || xtermInitializedRef.current !== currentSessionId) {
                   return;
                 }
-                sendInputRef.current(text);
+                terminal.paste(text);
               })
               .catch(() => {
-                // Ignore clipboard permission/errors so terminal input stays responsive.
+                // Permission denied (or transient failure): stop preventDefaulting future
+                // Ctrl/Cmd+V so the native paste path stays functional.
+                clipboardReadBlockedRef.current = true;
               });
             return false;
           }
@@ -2915,7 +2923,20 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 <div className="terminal-error-actions">
                   <button
                     className="terminal-retry-btn"
-                    onClick={() => void createTab()}
+                    onClick={() => {
+                      if (isStartingTerminal) return;
+                      setIsStartingTerminal(true);
+                      setError(null);
+                      createTab()
+                        .catch((err) => {
+                          const message = getErrorMessage(err);
+                          setError(t("terminal.manualStartError", "Failed to start terminal: {{message}}", { message }));
+                        })
+                        .finally(() => {
+                          setIsStartingTerminal(false);
+                        });
+                    }}
+                    disabled={isStartingTerminal}
                     data-testid="terminal-manual-start-btn"
                   >
                     <Plus size={14} />

@@ -98,6 +98,22 @@ function terminalTabsStorageKey(storageScope?: string): string {
   return trimmed ? `${STORAGE_KEY}:${trimmed}` : STORAGE_KEY;
 }
 
+/*
+FNXC:Terminal 2026-07-23-14:30 (helper extracted 2026-07-23-20:10):
+A tab list where no tab is active must never survive a restore or validation
+pass: TerminalModal derives its whole UI from `activeTab`, and an all-inactive
+tab list leaves the "Starting terminal..." spinner up forever while the
+auto-create effect is blocked by tabs.length > 0. This single helper owns the
+tie-break (activate the first tab) for BOTH the storage-read boundary and the
+server-validation success branch so the two paths cannot drift.
+*/
+function normalizeActiveTab(tabs: TerminalTab[]): TerminalTab[] {
+  if (tabs.length === 0 || tabs.some((tab) => tab.isActive)) {
+    return tabs;
+  }
+  return tabs.map((tab, i) => ({ ...tab, isActive: i === 0 }));
+}
+
 function readTabsFromStorage(projectId?: string, storageScope?: string): TerminalTab[] {
   if (typeof window === "undefined") return [];
 
@@ -106,19 +122,9 @@ function readTabsFromStorage(projectId?: string, storageScope?: string): Termina
     if (stored) {
       const parsed = JSON.parse(stored) as TerminalTab[];
       if (!Array.isArray(parsed)) return [];
-      /*
-      FNXC:Terminal 2026-07-23-14:30:
-      A persisted payload where no tab is active must never survive the restore:
-      TerminalModal derives its whole UI from `activeTab`, and an all-inactive
-      tab list leaves the "Starting terminal..." spinner up forever while the
-      auto-create effect is blocked by tabs.length > 0. The success path of
-      server validation normalizes this, but the validation-failure path keeps
-      tabs as-read, so normalize at the storage boundary instead.
-      */
-      if (parsed.length > 0 && !parsed.some((tab) => tab.isActive)) {
-        return parsed.map((tab, i) => ({ ...tab, isActive: i === 0 }));
-      }
-      return parsed;
+      // Normalize here (not only in server validation) because the
+      // validation-FAILURE path keeps tabs exactly as read from storage.
+      return normalizeActiveTab(parsed);
     }
   } catch {
     // Ignore localStorage errors
@@ -288,17 +294,8 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
           // Strip internal _verified property and return clean TerminalTab objects
           const cleanTabs = remainingTabs.map(({ _verified: _unused, ...tab }) => tab);
 
-          // Ensure exactly one tab is active
-          const activeTab = cleanTabs.find((t) => t.isActive);
-          if (!activeTab) {
-            // No active tab, activate the first one
-            return cleanTabs.map((tab, i) => ({
-              ...tab,
-              isActive: i === 0,
-            }));
-          }
-
-          return cleanTabs;
+          // Ensure at least one tab is active (shared tie-break with the storage-read boundary)
+          return normalizeActiveTab(cleanTabs);
         });
         
         // Mark as ready after validation

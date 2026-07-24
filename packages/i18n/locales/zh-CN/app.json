@@ -8531,6 +8531,7 @@
     "shortcuts": "快捷键",
     "startingTerminal": "启动终端中...",
     "manualStartHint": "终端已就绪 — 启动会话以开始。",
+    "manualStartError": "启动终端失败：{{message}}",
     "startTerminal": "启动终端",
     "statusConnected": "已连接",
     "statusConnecting": "连接中...",
