@@ -328,34 +328,51 @@ describe("PlanningModeModal sequential flow", () => {
     renderSession();
     const documentNode = await screen.findByTestId("planning-plan-markdown");
     const selectQuote = (quote: string) => {
-      const walker = document.createTreeWalker(documentNode, NodeFilter.SHOW_TEXT);
-      let textNode: Node | null = walker.nextNode();
-      while (textNode && !textNode.textContent?.includes(quote)) textNode = walker.nextNode();
-      expect(textNode).not.toBeNull();
-      const range = document.createRange();
-      range.selectNodeContents(textNode!);
-      window.getSelection()?.removeAllRanges();
-      window.getSelection()?.addRange(range);
-      fireEvent.mouseUp(documentNode);
+      act(() => {
+        const walker = document.createTreeWalker(documentNode, NodeFilter.SHOW_TEXT);
+        let textNode: Node | null = walker.nextNode();
+        while (textNode && !textNode.textContent?.includes(quote)) textNode = walker.nextNode();
+        expect(textNode).not.toBeNull();
+        const range = document.createRange();
+        range.selectNodeContents(textNode!);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+        fireEvent.mouseUp(documentNode);
+      });
     };
     selectQuote("Build authentication system");
     const actionBar = screen.getByTestId("planning-plan-actions");
     const documentTrigger = document.querySelector(".planning-add-comment--document");
     const mobileTrigger = document.querySelector(".planning-add-comment--mobile");
-    expect(documentTrigger?.closest(".planning-plan-document")).toContainElement(documentTrigger);
-    expect(actionBar).toContainElement(mobileTrigger);
+    expect(documentTrigger).toBeInstanceOf(HTMLElement);
+    expect(mobileTrigger).toBeInstanceOf(HTMLElement);
+    expect(documentTrigger?.closest(".planning-plan-document")).toContainElement(documentTrigger as HTMLElement);
+    expect(actionBar).toContainElement(mobileTrigger as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Add comment to selection" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".planning-add-comment--document")));
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    Opening the composer moves the native selection into the suggestion field. Cancel leaves
+    that selection collapsed, so the trigger dismisses with the selection instead of staying
+    sticky after the selection is done. Re-select to comment again.
+    */
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Add comment to selection" })).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Add comment to selection" }));
+    selectQuote("Build authentication system");
+    fireEvent.click(await screen.findByRole("button", { name: "Add comment to selection" }));
     const suggestionInput = screen.getByLabelText("Suggestion");
     fireEvent.change(suggestionInput, { target: { value: "Explain the audit path." } });
     // Editor selections are not plan selections: the captured quote must remain the Markdown text.
-    suggestionInput.setSelectionRange(0, suggestionInput.value.length);
-    fireEvent.mouseUp(suggestionInput);
+    act(() => {
+      suggestionInput.setSelectionRange(0, suggestionInput.value.length);
+      fireEvent.mouseUp(suggestionInput);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(screen.getByLabelText("Add plan comment")).toHaveTextContent("Build authentication system");
     fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
-    await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".planning-add-comment--document")));
+    // Adding a comment clears the selection, so the trigger dismisses with it.
+    await waitFor(() => expect(document.querySelector(".planning-add-comment")).toBeNull());
     expect(screen.getByTestId("planning-comment-tray")).toHaveTextContent("Explain the audit path.");
     expect(screen.getByRole("button", { name: "Refine" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
@@ -363,6 +380,36 @@ describe("PlanningModeModal sequential flow", () => {
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith("session-1", {
       contextualComments: [{ quote: expect.stringContaining("Build authentication system"), suggestion: "Explain the audit path." }],
     }, "project-1"));
+  });
+
+  it("dismisses the selection comment trigger when the plan selection collapses", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-1", type: "text", question: "Anything else?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+    renderSession();
+    const documentNode = await screen.findByTestId("planning-plan-markdown");
+    const walker = document.createTreeWalker(documentNode, NodeFilter.SHOW_TEXT);
+    let textNode: Node | null = walker.nextNode();
+    while (textNode && !textNode.textContent?.includes("Build authentication system")) textNode = walker.nextNode();
+    expect(textNode).not.toBeNull();
+    act(() => {
+      const range = document.createRange();
+      range.selectNodeContents(textNode!);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(await screen.findByRole("button", { name: "Add comment to selection" })).toBeInTheDocument();
+
+    act(() => {
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Add comment to selection" })).toBeNull());
   });
 
   it("rehydrates a restored idle session when another tab advances its question", async () => {

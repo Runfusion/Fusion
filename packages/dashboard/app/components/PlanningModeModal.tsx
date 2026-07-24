@@ -678,21 +678,36 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const addCommentTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileAddCommentTriggerRef = useRef<HTMLButtonElement>(null);
   const restoreCommentTriggerFocusRef = useRef(false);
+  const isCommentEditorOpenRef = useRef(false);
+
+  const setCommentEditorOpen = useCallback((open: boolean) => {
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    Flip the lock ref synchronously with the state write. Waiting for useEffect left a window
+    where focusing the suggestion field emitted selectionchange while the ref was still false,
+    which cleared the quote and unmounted the composer before the operator could type.
+    */
+    isCommentEditorOpenRef.current = open;
+    setIsCommentEditorOpen(open);
+  }, []);
 
   const focusAddCommentTrigger = useCallback(() => {
-    const isMobile = window.matchMedia?.("(max-width: 768px)").matches ?? false;
-    (isMobile ? mobileAddCommentTriggerRef : addCommentTriggerRef).current?.focus();
+    const isMobileViewport = window.matchMedia?.("(max-width: 768px)").matches ?? false;
+    (isMobileViewport ? mobileAddCommentTriggerRef : addCommentTriggerRef).current?.focus();
   }, []);
 
   /*
   FNXC:PlanningComments 2026-07-23-09:30:
-  Closing the conditional comment editor unmounts its trigger during the state transition. Restore focus only in the post-render effect, after Cancel or Add comment remounts the desktop or mobile trigger.
+  Closing the conditional comment editor unmounts its trigger during the state transition. Restore focus only in the post-render effect when Cancel leaves a live plan selection and remounts the trigger.
   */
   useEffect(() => {
-    if (!isCommentEditorOpen && restoreCommentTriggerFocusRef.current) {
-      restoreCommentTriggerFocusRef.current = false;
-      focusAddCommentTrigger();
-    }
+    if (isCommentEditorOpen || !restoreCommentTriggerFocusRef.current) return;
+    restoreCommentTriggerFocusRef.current = false;
+    queueMicrotask(() => {
+      if (addCommentTriggerRef.current || mobileAddCommentTriggerRef.current) {
+        focusAddCommentTrigger();
+      }
+    });
   }, [focusAddCommentTrigger, isCommentEditorOpen]);
 
   useEffect(() => {
@@ -700,11 +715,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setContextualComments([]);
     setSelectedPlanQuote(null);
     setCommentDraft("");
-    setIsCommentEditorOpen(false);
-  }, [selectedSessionId]);
+    setCommentEditorOpen(false);
+  }, [selectedSessionId, setCommentEditorOpen]);
 
   useEffect(() => {
-    if (isCommentEditorOpen) commentInputRef.current?.focus();
+    if (isCommentEditorOpen) {
+      /*
+      FNXC:PlanningComments 2026-07-23-17:05:
+      The mobile composer is position:fixed; preventScroll keeps the plan markdown under the
+      selection instead of scrolling the document to the editor's former in-flow slot.
+      */
+      commentInputRef.current?.focus({ preventScroll: true });
+    }
   }, [isCommentEditorOpen]);
 
   useEffect(() => {
@@ -2649,16 +2671,59 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
   }, [connectToPlanningStream, projectId, refinementInstructions, t, view, workspaceQuestion]);
 
+  /*
+  FNXC:PlanningComments 2026-07-23-17:05:
+  Plan selection must track document-level selectionchange (not only mouseup/touchend on the
+  markdown root). On mobile, the selection often finalizes after touchend, so waiting on the
+  element handlers left the Add-comment control missing until a later scroll/gesture. Collapsed
+  or out-of-plan selections clear the quote so the control dismisses when the selection is done.
+  While the comment editor is open the quote stays locked — opening the editor collapses the
+  native selection, and clearing here would unmount the composer mid-edit.
+  */
   const capturePlanSelection = useCallback(() => {
+    if (isCommentEditorOpenRef.current) return;
+
     const selection = window.getSelection();
     const root = planDocumentRef.current;
-    if (!selection || selection.rangeCount === 0 || !root || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) {
+    if (
+      !selection
+      || selection.rangeCount === 0
+      || selection.isCollapsed
+      || !root
+      || !root.contains(selection.anchorNode)
+      || !root.contains(selection.focusNode)
+    ) {
       setSelectedPlanQuote(null);
       return;
     }
+
     const quote = selection.toString().replace(/\s+/g, " ").trim();
     setSelectedPlanQuote(quote || null);
   }, []);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", capturePlanSelection);
+    document.addEventListener("mouseup", capturePlanSelection);
+    document.addEventListener("touchend", capturePlanSelection);
+    document.addEventListener("keyup", capturePlanSelection);
+    return () => {
+      document.removeEventListener("selectionchange", capturePlanSelection);
+      document.removeEventListener("mouseup", capturePlanSelection);
+      document.removeEventListener("touchend", capturePlanSelection);
+      document.removeEventListener("keyup", capturePlanSelection);
+    };
+  }, [capturePlanSelection]);
+
+  useEffect(() => {
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    Composer focus collapses the native selection. When the editor closes, re-sync so a done
+    selection dismisses the Add-comment control instead of leaving a sticky orphaned quote.
+    */
+    if (!isCommentEditorOpen) {
+      capturePlanSelection();
+    }
+  }, [capturePlanSelection, isCommentEditorOpen]);
 
   const handleAddContextualComment = useCallback(() => {
     const quote = selectedPlanQuote;
@@ -2666,11 +2731,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (!quote || !suggestion) return;
     setContextualComments((comments) => [...comments, { quote, suggestion }]);
     setCommentDraft("");
-    // FNXC:PlanningComments 2026-07-23-09:30: Keep the quote while closing the editor so its conditional trigger remounts and can receive restored focus after adding a comment.
-    restoreCommentTriggerFocusRef.current = true;
-    setIsCommentEditorOpen(false);
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    Adding a comment clears the native selection, so the quote must dismiss with it. Do not restore
+    focus onto a remounted trigger — that path only applies when Cancel keeps an active selection.
+    */
+    restoreCommentTriggerFocusRef.current = false;
+    setCommentEditorOpen(false);
+    setSelectedPlanQuote(null);
     window.getSelection()?.removeAllRanges();
-  }, [commentDraft, selectedPlanQuote]);
+  }, [commentDraft, selectedPlanQuote, setCommentEditorOpen]);
 
   const handleSubmitContextualComments = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -2941,13 +3011,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           Contextual quotes must originate exclusively in rendered plan Markdown. The editor and
           action controls remain outside this selection root so typing or selecting a suggestion
           cannot replace the captured plan quote.
+
+          FNXC:PlanningComments 2026-07-23-17:05:
+          Selection capture is document-level (selectionchange/mouseup/touchend/keyup). This root
+          only scopes which nodes count as plan text — handlers are not required on the element.
           */}
-          <div
-            ref={planDocumentRef}
-            onMouseUp={capturePlanSelection}
-            onTouchEnd={capturePlanSelection}
-            onKeyUp={capturePlanSelection}
-          >
+          <div ref={planDocumentRef} data-testid="planning-plan-selection-root">
             <MailboxMessageContent
               className="planning-plan-markdown markdown-body"
               content={formatPlanningPlanMd(summary)}
@@ -2959,7 +3028,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               ref={addCommentTriggerRef}
               type="button"
               className="btn planning-add-comment planning-add-comment--document"
-              onClick={() => setIsCommentEditorOpen(true)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setCommentEditorOpen(true)}
             >
               <MessageSquarePlus />
               {t("planning.addComment", "Add comment to selection")}
@@ -2973,7 +3043,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <textarea ref={commentInputRef} className="input" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} />
               </label>
               <div className="planning-refine-menu-actions">
-                <button type="button" className="btn" onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setIsCommentEditorOpen(false); }}>{t("common.cancel", "Cancel")}</button>
+                <button type="button" className="btn" onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setCommentEditorOpen(false); }}>{t("common.cancel", "Cancel")}</button>
                 <button type="button" className="btn btn-primary" disabled={!commentDraft.trim()} onClick={handleAddContextualComment}>{t("planning.addComment", "Add comment")}</button>
               </div>
             </div>
@@ -2983,17 +3053,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       <div className="planning-actions planning-summary-actions planning-plan-actions" data-testid="planning-plan-actions">
         {/*
         FNXC:PlanningComments 2026-07-31-00:00:
-        FN-8533 keeps the selection-adjacent control at 769px and wider, but mobile's reachable
-        action rail owns its counterpart. The two variants share the same editor transition and
-        CSS makes exactly one visible/focusable; only established 768px/1024px breakpoint literals
-        are allowed here, while all other dimensions remain design-token based.
+        FN-8533 keeps the selection-adjacent control at 769px and wider, but mobile needs a
+        counterpart that cannot be lost under the document fold.
+
+        FNXC:PlanningComments 2026-07-23-17:05:
+        On ≤768px the mobile trigger is position:fixed to the visual viewport above the mobile
+        nav so it appears immediately after a selection without scrolling, and document-level
+        selectionchange dismisses it when the selection collapses. CSS still shows exactly one
+        of the two variants; only established 768px/1024px breakpoint literals are allowed here,
+        while all other dimensions remain design-token based.
         */}
         {selectedPlanQuote && !isCommentEditorOpen && (
           <button
             ref={mobileAddCommentTriggerRef}
             type="button"
             className="btn planning-add-comment planning-add-comment--mobile"
-            onClick={() => setIsCommentEditorOpen(true)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setCommentEditorOpen(true)}
           >
             <MessageSquarePlus />
             {t("planning.addComment", "Add comment to selection")}

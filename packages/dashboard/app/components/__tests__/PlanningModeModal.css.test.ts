@@ -166,14 +166,21 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expectSomeRule(tabletCss, ".planning-plan-actions", /flex-wrap\s*:\s*nowrap\s*;/);
   });
 
-  it("shows exactly one contextual comment trigger in the mobile plan footer", () => {
+  it("shows exactly one contextual comment trigger fixed to the mobile selection viewport", () => {
     const css = loadPlanningCss();
     const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
+    const mobileTriggerRule = findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
+    const mobileEditorRule = findRule(mobileCss, ".planning-comment-editor");
 
     expect(findRule(css, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*none\s*;/);
     expect(findRule(mobileCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
-    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*inline-flex\s*;/);
-    expect(findRule(mobileCss, ".planning-add-comment--mobile")).toMatch(/margin-top\s*:\s*0\s*;/);
+    expect(mobileTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(mobileTriggerRule).toMatch(/position\s*:\s*fixed\s*;/);
+    expect(mobileTriggerRule).toMatch(/width\s*:\s*auto\s*;/);
+    expect(mobileTriggerRule).toMatch(/var\(--mobile-nav-height/);
+    expect(mobileTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
+    expect(mobileEditorRule).toMatch(/position\s*:\s*fixed\s*;/);
+    expect(mobileEditorRule).toMatch(/var\(--mobile-nav-height/);
   });
 
   it("pins only the plan-selection rail while its document scrolls in portrait and width-independent short landscape", () => {

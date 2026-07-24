@@ -229,16 +229,31 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       const focusable = [...document.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
         .filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden");
       const triggerIndex = visibleButton ? focusable.indexOf(visibleButton) : -1;
+      const buttonRect = visibleButton?.getBoundingClientRect();
       /*
       FNXC:PlanningComments 2026-07-31-09:05:
       Start at the preceding tab stop, then send actual Tab keys. Programmatic focus alone would
       incorrectly accept a tabIndex=-1 contextual-comment trigger as keyboard reachable.
+
+      FNXC:PlanningComments 2026-07-23-17:05:
+      Mobile keeps the trigger in the actions DOM for focus order, but CSS fixes it to the
+      selection so it is inside the visual viewport without scrolling the plan document.
       */
       focusable[triggerIndex - 1]?.focus();
       return {
         totalButtons: buttons.length,
         visibleButtons: visibleButtons.length,
         visibleInActions: Boolean(visibleButton && actions.contains(visibleButton)),
+        positionFixed: visibleButton ? getComputedStyle(visibleButton).position === "fixed" : false,
+        triggerInsideViewport: Boolean(
+          buttonRect
+          && buttonRect.width > 0
+          && buttonRect.height > 0
+          && buttonRect.top >= 0
+          && buttonRect.bottom <= window.innerHeight
+          && buttonRect.left >= 0
+          && buttonRect.right <= window.innerWidth,
+        ),
         triggerHasPreviousTabStop: triggerIndex > 0,
         hiddenButtonsTabbable: buttons.filter((button) => button !== visibleButton && button.tabIndex >= 0 && getComputedStyle(button).display !== "none").length,
         actionLabels: [...actions.querySelectorAll<HTMLButtonElement>("button")]
@@ -251,10 +266,19 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       totalButtons: 2,
       visibleButtons: 1,
       visibleInActions: inFooter,
+      positionFixed: inFooter,
+      // Mobile fixed-to-selection control must be in the visual viewport without scrolling.
+      triggerInsideViewport: inFooter ? true : expect.any(Boolean),
       triggerHasPreviousTabStop: true,
       hiddenButtonsTabbable: 0,
     });
-    if (inFooter) expect(placement.actionLabels).toEqual(expect.arrayContaining(["Add comment to selection", "Refine", "Proceed with plan"]));
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    The mobile trigger is position:fixed out of the action-grid flow, so it no longer appears in
+    the action-rail label list — only Refine/Proceed remain there while the floating control is
+    separately asserted as the sole visible Add-comment button.
+    */
+    if (inFooter) expect(placement.actionLabels).toEqual(expect.arrayContaining(["Refine", "Proceed with plan"]));
     else expect(placement.actionLabels).not.toContain("Add comment to selection");
 
     let reachedTriggerByTab = false;
@@ -269,11 +293,40 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     await page.getByRole("button", { name: "Add comment to selection" }).click();
     await expectVisible(page.getByLabel("Add plan comment"));
     if (inFooter && presentation === "embedded" && process.env.FUSION_CAPTURE_DIR) await page.screenshot({ path: `${process.env.FUSION_CAPTURE_DIR}/planning-comment-mobile-editor.png` });
-    const afterOpen = await page.evaluate(() => ({
-      addCommentButtons: document.querySelectorAll(".planning-add-comment").length,
-      actionChildren: document.querySelector("[data-testid='planning-plan-actions']")?.querySelectorAll(".planning-add-comment").length,
-    }));
-    expect(afterOpen).toEqual({ addCommentButtons: 0, actionChildren: 0 });
+    const afterOpen = await page.evaluate(() => {
+      const editor = document.querySelector<HTMLElement>(".planning-comment-editor");
+      const editorRect = editor?.getBoundingClientRect();
+      return {
+        addCommentButtons: document.querySelectorAll(".planning-add-comment").length,
+        actionChildren: document.querySelector("[data-testid='planning-plan-actions']")?.querySelectorAll(".planning-add-comment").length,
+        editorPosition: editor ? getComputedStyle(editor).position : null,
+        editorInsideViewport: Boolean(
+          editorRect
+          && editorRect.width > 0
+          && editorRect.height > 0
+          && editorRect.top >= 0
+          && editorRect.bottom <= window.innerHeight,
+        ),
+      };
+    });
+    expect(afterOpen).toMatchObject({
+      addCommentButtons: 0,
+      actionChildren: 0,
+      editorPosition: inFooter ? "fixed" : "static",
+      // Mobile pins the composer into the viewport; desktop keeps the in-document editor.
+      editorInsideViewport: inFooter ? true : expect.any(Boolean),
+    });
+
+    await page.evaluate(() => {
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    // Editor stays locked open while composing even if the native selection collapses.
+    await expectVisible(page.getByLabel("Add plan comment"));
+    await page.getByRole("button", { name: "Cancel" }).click();
+    // After cancel with a collapsed selection the trigger must dismiss.
+    await page.waitForTimeout(50);
+    expect(await page.getByRole("button", { name: "Add comment to selection" }).isVisible()).toBe(false);
     await page.close();
   }
 

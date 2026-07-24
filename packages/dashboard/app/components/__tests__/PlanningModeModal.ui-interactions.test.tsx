@@ -16,6 +16,8 @@ describe("PlanningModeModal sequential layout", () => {
     expect(component).toContain("planDocumentRef.current");
     expect(component).toContain("root.contains(selection.anchorNode)");
     expect(component).toContain("root.contains(selection.focusNode)");
+    expect(component).toContain('document.addEventListener("selectionchange", capturePlanSelection)');
+    expect(component).toContain("selection.isCollapsed");
     expect(component).toContain("Add comment to selection");
     expect(component).toContain("planning-add-comment--document");
     expect(component).toContain("planning-add-comment--mobile");
@@ -32,6 +34,8 @@ describe("PlanningModeModal sequential layout", () => {
     expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-plan-actions \.btn\s*\{[^}]*width\s*:\s*100%\s*;/);
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-plan-actions\s*\{[^}]*gap\s*:\s*var\(--space-md\)\s*;[^}]*calc\(var\(--space-sm\) \+ env\(safe-area-inset-bottom\)\)/);
     expect(css).toMatch(/\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*none\s*;/);
-    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-add-comment--document\s*\{[^}]*display\s*:\s*none\s*;[\s\S]*?\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*inline-flex\s*;/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-add-comment--document\s*\{[^}]*display\s*:\s*none\s*;/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-plan-actions \.btn\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*flex\s*;[^}]*position\s*:\s*fixed\s*;[^}]*width\s*:\s*auto\s*;/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-comment-editor\s*\{[^}]*position\s*:\s*fixed\s*;/);
   });
 });
