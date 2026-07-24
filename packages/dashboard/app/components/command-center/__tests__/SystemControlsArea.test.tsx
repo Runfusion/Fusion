@@ -5,6 +5,18 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
 
+/*
+FNXC:CommandCenterSystemTests 2026-07-23-22:35:
+jsdom elements do not implement scrollIntoView, but SystemControlsArea's
+job-section effect calls jobSectionRef.current?.scrollIntoView(...) inside a
+requestAnimationFrame while a rebuild job is running. If that frame fires
+before unmount cleanup, the missing method throws as an unhandled error and
+fails the whole run even though every assertion passed. Stub it module-wide
+(same convention as ChatView tests); the per-test spy below still swaps in
+its own vi.fn() and restores this stub afterwards.
+*/
+Element.prototype.scrollIntoView = vi.fn();
+
 const apiMock = vi.fn();
 const mockFetchSystemInfo = vi.fn();
 const mockFetchCurrentSystemRebuild = vi.fn();
