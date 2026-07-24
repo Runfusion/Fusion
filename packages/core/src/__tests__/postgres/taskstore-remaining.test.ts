@@ -778,11 +778,12 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     const running = await transitionWorkflowWorkItem(ctx.layer, item.id, "running");
     expect(running.state).toBe("running");
 
-    // Transition to 'completed' (terminal).
-    const completed = await transitionWorkflowWorkItem(ctx.layer, item.id, "completed");
-    expect(completed.state).toBe("completed");
+    // Transition to 'succeeded' (terminal). #2378 renamed the terminal
+    // completion state from 'completed' to 'succeeded' (WORKFLOW_WORK_ITEM_STATES).
+    const completed = await transitionWorkflowWorkItem(ctx.layer, item.id, "succeeded");
+    expect(completed.state).toBe("succeeded");
 
-    // Terminal guard: cannot requeue a completed item.
+    // Terminal guard: cannot requeue a succeeded item.
     await expect(
       transitionWorkflowWorkItem(ctx.layer, item.id, "runnable"),
     ).rejects.toThrow(/terminal/);

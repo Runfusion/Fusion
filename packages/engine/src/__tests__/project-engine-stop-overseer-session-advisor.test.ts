@@ -43,6 +43,14 @@ describe("ProjectEngine.stopOverseerTask session advisor cleanup", () => {
       sessionAdvisorLogCursor: cursor,
       plannerObservationEmitDedup: new Map(),
       plannerEscalationEmitDedup: new Set(),
+      /*
+      FNXC:PlannerOversight 2026-07-23-21:20:
+      6422cb93a (#2393) made stopOverseerTask also release the live-retry skip-log dedup keys
+      via clearPlannerLiveRetrySkipLogDedup. This harness builds the engine with
+      Object.create(prototype), which skips class-field initializers, so the Set must be
+      supplied or the stop path throws and degrades to { applied:false, reason:"error" }.
+      */
+      plannerLiveRetrySkipLogDedup: new Set(),
     });
 
     const result = await engine.stopOverseerTask(task.id);

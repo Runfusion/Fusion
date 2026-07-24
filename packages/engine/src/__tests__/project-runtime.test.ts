@@ -5,6 +5,8 @@ vi.mock("@earendil-works/pi-ai", () => ({
     Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
     String: (opts?: unknown) => ({ type: "string", ...((opts as object) ?? {}) }),
     Number: (opts?: unknown) => ({ type: "number", ...((opts as object) ?? {}) }),
+    // FNXC:EngineTests 2026-07-23-21:20: f21d3ce13 (#2375) added Type.Integer to agent-tools document CAS schemas (expected_revision); partial Type mocks must cover it or these files fail at collect time.
+    Integer: (opts?: unknown) => ({ type: "integer", ...((opts as object) ?? {}) }),
     Boolean: (opts?: unknown) => ({ type: "boolean", ...((opts as object) ?? {}) }),
     Optional: (schema: unknown) => schema,
     Array: (schema: unknown, opts?: unknown) => ({ type: "array", items: schema, ...((opts as object) ?? {}) }),

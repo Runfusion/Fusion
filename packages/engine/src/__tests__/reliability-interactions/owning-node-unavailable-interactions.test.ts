@@ -44,6 +44,7 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
 }
 
 function createMockStore(task: Task, settings: Record<string, unknown> = {}): TaskStore {
+  const moveTask = vi.fn().mockResolvedValue(undefined);
   return {
     listTasks: vi.fn().mockResolvedValue([task]),
     getSettings: vi.fn().mockResolvedValue(settings),
@@ -54,7 +55,18 @@ function createMockStore(task: Task, settings: Record<string, unknown> = {}): Ta
     updateSettings: vi.fn().mockResolvedValue(settings),
     getTask: vi.fn().mockResolvedValue(task),
     updateTask: vi.fn().mockResolvedValue(undefined),
-    moveTask: vi.fn().mockResolvedValue(undefined),
+    moveTask,
+    /*
+    FNXC:EngineTests 2026-07-23-21:20:
+    Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da).
+    The fake delegates to the mock `moveTask` after the predicate passes so existing dispatch assertions on `store.moveTask` stay meaningful.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
+      if (!(await predicate(task)) || task.column === column) return { task, moved: false };
+      await moveTask(id, column, opts);
+      task.column = column;
+      return { task, moved: true };
+    }),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/tmp/test"),

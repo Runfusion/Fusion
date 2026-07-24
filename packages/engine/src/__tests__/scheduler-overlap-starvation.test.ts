@@ -46,6 +46,18 @@ function createStore(tasks: Task[], scopes: Record<string, string[]>, settings: 
     if (task) task.column = column;
     return task as Task;
   });
+  /*
+  FNXC:EngineTests 2026-07-23-21:20:
+  Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da).
+  The fake delegates to the mock `moveTask` after the predicate passes so existing dispatch assertions on `store.moveTask` stay meaningful.
+  */
+  const moveTaskIf = vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
+    const task = tasks.find((candidate) => candidate.id === id);
+    if (!task) return { task: task as unknown as Task, moved: false };
+    if (!(await predicate(task)) || task.column === column) return { task, moved: false };
+    const movedTask = await moveTask(id, column, opts);
+    return { task: movedTask ?? task, moved: true };
+  });
 
   return {
     listTasks: vi.fn(async () => tasks),
@@ -58,6 +70,7 @@ function createStore(tasks: Task[], scopes: Record<string, string[]>, settings: 
     parseFileScopeFromPrompt: vi.fn(async (id: string) => scopes[id] ?? []),
     updateTask,
     moveTask,
+    moveTaskIf,
     getTask: vi.fn(async (id: string) => tasks.find((task) => task.id === id) ?? null),
     logEntry: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/project"),

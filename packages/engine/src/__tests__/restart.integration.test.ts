@@ -256,6 +256,8 @@ vi.mock("@earendil-works/pi-ai", () => ({
     Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
     String: (opts?: unknown) => ({ type: "string", ...((opts as object) ?? {}) }),
     Number: (opts?: unknown) => ({ type: "number", ...((opts as object) ?? {}) }),
+    // FNXC:EngineTests 2026-07-23-21:20: f21d3ce13 (#2375) added Type.Integer to agent-tools document CAS schemas (expected_revision); partial Type mocks must cover it or these files fail at collect time.
+    Integer: (opts?: unknown) => ({ type: "integer", ...((opts as object) ?? {}) }),
     Boolean: (opts?: unknown) => ({ type: "boolean", ...((opts as object) ?? {}) }),
     Optional: (schema: unknown) => schema,
     Array: (schema: unknown, opts?: unknown) => ({ type: "array", items: schema, ...((opts as object) ?? {}) }),
@@ -384,6 +386,26 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return { ...(patches.get(id) ?? {}), id };
     }),
     moveTask: makeWriteThroughMoveTask(),
+    /*
+    FNXC:EngineTests 2026-07-23-21:20:
+    Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da #2371).
+    The fake evaluates the live-row predicate against the write-through `getTask` view and delegates to the mock
+    `moveTask` (forwarding the options bag) so existing dispatch assertions on `store.moveTask` — including the
+    `allocateWorktree` option — stay meaningful.
+    */
+    moveTaskIf: vi.fn(
+      async (
+        id: string,
+        column: string,
+        predicate: (live: Task) => boolean | Promise<boolean>,
+        opts?: Record<string, unknown>,
+      ) => {
+        const live = await store.getTask(id);
+        if (!live || !(await predicate(live))) return { task: live, moved: false };
+        const moved = await store.moveTask(id, column, opts);
+        return { task: moved ?? live, moved: true };
+      },
+    ),
     recordActivity: vi.fn().mockResolvedValue({}),
     mergeTask: vi.fn().mockResolvedValue({}),
     getWorkflowStep: vi.fn().mockResolvedValue(undefined),

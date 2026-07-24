@@ -114,6 +114,27 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
       log: [{ action: "code review requested for Step 0 (Step 1)", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
+    /*
+    FNXC:EngineTests 2026-07-23-21:40:
+    The graph's `parse` node re-derives the step list from PROMPT.md and writes every step
+    back as `pending` on each run, so an `in-progress` step on the fixture literal no longer
+    survives to `detectPendingReviewBlock`. The pending-review shape this test pins can only
+    arise from the implementation session itself: the agent starts the step, requests review,
+    and exits without fn_task_done. Simulate exactly that by having each session mark the
+    parsed step `in-progress` (the review-request log line is already on the row).
+    */
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          store._setRow("FN-5436-RI-C", { steps: [{ name: "Preflight", status: "in-progress" }] });
+        }),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        state: {},
+      },
+    }) as any);
 
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(task);

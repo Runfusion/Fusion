@@ -131,6 +131,16 @@ describe("FN-4811 follow-up (FN-4814): concurrent execute() must not produce par
     const executor = new TaskExecutor(store as any, "/tmp/test");
     await executor.execute(makeTask());
     const firstCount = mockedCreateFnAgent.mock.calls.length;
+    /*
+    FNXC:EngineTests 2026-07-23-21:40:
+    The first graph run ends in the no-fn_task_done requeue: the ROW is now parked in
+    `todo` awaiting the scheduler. A direct second execute() against a todo row is no
+    longer a valid dispatch shape — the graph re-requeues it without opening a session
+    (routeGraphFailureToExecutionResume). Emulate the scheduler's re-dispatch move
+    (todo → in-progress) before the second execute so this test keeps measuring what it
+    exists for: the in-memory executing slot was RELEASED and a sequential dispatch runs.
+    */
+    store._setRow("FN-4814", { column: "in-progress" });
     await executor.execute(makeTask());
     const secondCount = mockedCreateFnAgent.mock.calls.length;
 

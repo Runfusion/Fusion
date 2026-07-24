@@ -76,6 +76,9 @@ import {
   SQLITE_MIGRATION_RUNTIME_READ_VERSION,
   WORKFLOW_TASK_CONTINUATIONS_VERSION,
   LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+  TASK_WEDGE_NOTIFICATION_VERSION,
+  MILESTONE_ASSERTION_PROVENANCE_VERSION,
+  MISSION_LINEAGE_STOP_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -640,7 +643,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 93 project tables, 18 central tables, 1 archive table", async () => {
+  it("creates all 96 project tables, 18 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -659,9 +662,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30)
     // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00)
     // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295)
-    // + 1 task_verification_requests + 1 durable symbol_locks table (FN-8305).
+    // + 1 task_verification_requests + 1 durable symbol_locks table (FN-8305)
+    // + 1 mission_lineage_stops (FNXC:MissionLineageBudget FN-8543 / migration 0035).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(95);
+    expect(bySchema.project).toBe(96);
     expect(bySchema.central).toBe(18);
     expect(bySchema.archive).toBe(1);
   });
@@ -1502,6 +1506,35 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CREATE TABLE project.missions (id text PRIMARY KEY);
       /* slice_id required before 0023 research provenance unique index can attach. */
       CREATE TABLE project.mission_features (id text PRIMARY KEY, slice_id text);
+      /*
+      FNXC:MissionValidation 2026-07-23-21:30:
+      Migration 0034 (FN-8542) ALTERs project.mission_contract_assertions and builds
+      the derived-milestone partial unique index on (project_id, milestone_id).
+      Real 0000 databases have the table (baseline since the PG cutover), so this
+      historical fixture must retain milestone_id; project_id arrives via 0006.
+      */
+      CREATE TABLE project.mission_contract_assertions (id text PRIMARY KEY, milestone_id text);
+      /*
+      FNXC:WorkflowContinuations 2026-07-23-21:30:
+      Migration 0031 (#2378) ALTERs project.workflow_work_items and rebuilds its
+      single-active-continuation index. Real 0000 databases have the table (it has
+      been in 0000_initial.sql since the PG cutover), so this historical fixture
+      must retain the column surface 0031 reads: task_id/kind/state for the ranked
+      retirement UPDATE plus lease and updated_at bookkeeping. project_id is added
+      by the 0006 ownership migration before 0031 runs.
+      */
+      CREATE TABLE project.workflow_work_items (
+        id text PRIMARY KEY,
+        task_id text,
+        run_id text,
+        node_id text,
+        kind text,
+        state text,
+        attempt integer,
+        lease_owner text,
+        lease_expires_at text,
+        updated_at text
+      );
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1594,6 +1627,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+      TASK_WEDGE_NOTIFICATION_VERSION,
+      MILESTONE_ASSERTION_PROVENANCE_VERSION,
+      MISSION_LINEAGE_STOP_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1652,6 +1688,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+      TASK_WEDGE_NOTIFICATION_VERSION,
+      MILESTONE_ASSERTION_PROVENANCE_VERSION,
+      MISSION_LINEAGE_STOP_VERSION,
     ]);
   });
 
@@ -1843,6 +1882,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+      TASK_WEDGE_NOTIFICATION_VERSION,
+      MILESTONE_ASSERTION_PROVENANCE_VERSION,
+      MISSION_LINEAGE_STOP_VERSION,
     ]);
   });
 
@@ -1915,6 +1957,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+      TASK_WEDGE_NOTIFICATION_VERSION,
+      MILESTONE_ASSERTION_PROVENANCE_VERSION,
+      MISSION_LINEAGE_STOP_VERSION,
     ]);
   });
 
@@ -1987,6 +2032,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SQLITE_MIGRATION_RUNTIME_READ_VERSION,
       WORKFLOW_TASK_CONTINUATIONS_VERSION,
       LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+      TASK_WEDGE_NOTIFICATION_VERSION,
+      MILESTONE_ASSERTION_PROVENANCE_VERSION,
+      MISSION_LINEAGE_STOP_VERSION,
     ]);
   });
 });

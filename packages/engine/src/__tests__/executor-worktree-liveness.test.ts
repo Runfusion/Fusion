@@ -184,15 +184,25 @@ describe("FN-4114 worktree liveness assertion", () => {
     mockedCreateFnAgent.mockReset();
     mockCompletingAgent();
 
-    store.moveTask.mockReset();
-    store.moveTask.mockResolvedValue({});
-    store.getTask.mockResolvedValue(task({ worktree: allowedWorktree }));
+    /*
+    FNXC:ExecutorTests 2026-07-23-21:20:
+    The accept phase must model a task that is genuinely live in-progress with the allowed
+    worktree. The helper store is write-through (updateTask/moveTask patches are readable back),
+    so reusing the reject phase's store leaks its rebound residue — column "todo", worktree
+    null — into the graph's live-row re-reads, and the graph now ends the run benignly when the
+    live row has already left in-progress instead of dispatching the agent (graph-owned
+    lifecycle cutover, #2342 line). A fresh store per phase keeps the ONLY variable under test
+    the worktree path itself.
+    */
+    const acceptStore = createMockStore();
+    acceptStore.getSettings.mockResolvedValue(mergedSettings);
+    acceptStore.getTask.mockResolvedValue(task({ worktree: allowedWorktree }));
 
-    const acceptExecutor = new TaskExecutor(store as any, "/repo");
+    const acceptExecutor = new TaskExecutor(acceptStore as any, "/repo");
     await acceptExecutor.execute(task({ worktree: allowedWorktree }) as any);
 
     expect(mockedCreateFnAgent).toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
+    expect(acceptStore.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
   it("FN-4114 accepts usable pool-acquired worktrees", async () => {

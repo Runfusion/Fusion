@@ -93,7 +93,15 @@ describe("refinement routing from triage", () => {
     });
 
     (processor as any).running = true;
-    for (let i = 0; i < 3; i++) {
+    /*
+    FNXC:EngineTests 2026-07-23-21:30:
+    FN-8453 (commit eef5eb751) replaced priority-then-refinement triage ordering with the
+    unified oldest-createdAt-first admission coordinator. Refinements no longer jump the
+    same-priority backlog; the no-starvation invariant is now FIFO fairness — the newest
+    refinement behind an 8-task backlog at maxConcurrent=2 must be admitted within
+    ceil(9/2)=5 bounded polls.
+    */
+    for (let i = 0; i < 5; i++) {
       await (processor as any).poll();
       if (tasks.find((t) => t.id === refinement.id)?.column === "todo") break;
     }
@@ -281,11 +289,17 @@ describe("refinement routing from triage", () => {
     (processor as any).running = true;
     await (processor as any).poll();
 
+    /*
+    FNXC:EngineTests 2026-07-23-21:30:
+    FN-8453 (commit eef5eb751) removed priority ranking from triage admission: the baseline
+    ordering contract is now strictly oldest-createdAt-first (compareAdmissionCandidates),
+    so the oldest normal-priority task dispatches before newer urgent/high tasks.
+    */
     expect(specifySpy.mock.calls.map(([task]) => task.id)).toEqual([
+      "FN-100",
       "FN-101",
       "FN-103",
       "FN-102",
-      "FN-100",
     ]);
   });
 });

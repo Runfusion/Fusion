@@ -16,6 +16,17 @@ vi.mock("../agent-session-helpers.js", () => ({
     provider: "mock-provider",
     modelId: "mock-model",
   }),
+  // FN-7794 fallback-swap resolver called unconditionally on the validator hot path; mirror
+  // production's validatorFallback -> fallback -> validator -> task precedence (see executor-test-helpers.ts).
+  resolveValidatorFallbackThinkingLevel: vi.fn(
+    (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
+      (typeof settings?.validatorFallbackThinkingLevel === "string" ? settings.validatorFallbackThinkingLevel : undefined)
+      ?? (typeof settings?.fallbackThinkingLevel === "string" ? settings.fallbackThinkingLevel : undefined)
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? taskThinkingLevel
+      ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
+      ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
+  ),
 }));
 
 import { reviewStep } from "../reviewer.js";

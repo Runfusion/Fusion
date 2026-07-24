@@ -227,8 +227,11 @@ describe("KTD-3 IR pin wiring (U9b task-row persistence)", () => {
     await expect(persistence.loadPriorPin()).resolves.toBeUndefined();
 
     // Node entries through the boundary never throw with the degraded seam.
+    // FNXC:WorkflowIrPin 2026-07-23-21:20: 83209e64d (#2378) changed onNodeEntry to return a typed
+    // entry result ({ kind: "entered" } | { kind: "suspended", ... }); with the degraded pin seam a
+    // no-column-change entry still resolves "entered" rather than undefined.
     const { boundary } = boundaryFor({ ir, store: bare });
-    await expect(boundary.onNodeEntry(nodeOf(ir, "execute"))).resolves.toBeUndefined();
+    await expect(boundary.onNodeEntry(nodeOf(ir, "execute"))).resolves.toEqual({ kind: "entered" });
 
     // A row that predates the U9b fields (getTask works, fields absent) also
     // yields no prior pin — the drift guard stays inert.

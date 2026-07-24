@@ -247,16 +247,32 @@ describe("executor tool step numbering is 0-based", () => {
     store.getTaskDocument.mockImplementation(async (_taskId: string, key: string) =>
       key === "PROMPT.md" ? { content: task.prompt } : undefined,
     );
-    mockedCreateFnAgent.mockResolvedValue({
+    /*
+    FNXC:EngineTests 2026-07-23-21:40:
+    The graph's `parse` node writes every re-derived step back as `pending`, so the fixture's
+    seeded `in-progress` step no longer survives to `detectPendingReviewBlock`. The
+    pending-review shape can only arise from the implementation session itself: the agent
+    starts Step 0, requests review, and exits without fn_task_done. Simulate that by having
+    the session mark Step 0 `in-progress` (the 0-based review-request log line stays the
+    discriminator this test exists for).
+    */
+    mockedCreateFnAgent.mockImplementation(async () => ({
       session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
+        prompt: vi.fn(async () => {
+          store._setRow("FN-6607-P", {
+            steps: [
+              { name: "Preflight", status: "in-progress" },
+              { name: "First", status: "pending" },
+            ],
+          });
+        }),
         dispose: vi.fn(),
         subscribe: vi.fn(),
         on: vi.fn(),
         sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
         state: {},
       },
-    } as any);
+    }) as any);
 
     const executor = new TaskExecutor(store as any, "/tmp/test");
     await executor.execute(task);

@@ -519,6 +519,18 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
       // cpu-features: native .node binding from ssh2 (transitive via dockerode); ssh2 falls back to pure JS when unavailable
       "--external",
       "cpu-features",
+      /*
+      FNXC:StandaloneExeBuild 2026-07-23-21:30:
+      playwright-core (feature-video review artifacts) optionally requires chromium-bidi
+      inside its coreBundle for BiDi transport. chromium-bidi is not a dependency of this
+      workspace, so Bun's compile-time resolution fails on those requires. Mark the whole
+      package external — playwright-core only reaches that require when a BiDi browser
+      channel is requested, which the feature-video pipeline never does (it uses CDP).
+      */
+      "--external",
+      "chromium-bidi",
+      "--external",
+      "chromium-bidi/*",
     ],
     cwd: workspaceRoot,
     stdout: "inherit",

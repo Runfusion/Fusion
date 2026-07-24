@@ -86,7 +86,26 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).listWorkflowSteps = vi.fn().mockResolvedValue([]);
   (emitter as any).getWorkflowStep = vi.fn().mockResolvedValue(undefined);
   (emitter as any).setPluginWorkflowStepTemplates = vi.fn().mockResolvedValue(undefined);
-  (emitter as any).updateStep = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).updateStep = vi.fn().mockImplementation(async (_taskId: string, stepIndex: number, status: string) => {
+    const steps = task.steps ?? [];
+    if (steps[stepIndex]) steps[stepIndex] = { ...steps[stepIndex], status } as any;
+    return task;
+  });
+  /*
+  FNXC:EngineTests 2026-07-23-21:40 (#2403):
+  Step starts now go through the atomic, dependency-gated `store.startStep` before any
+  step-session work (`runTaskStep`, step-runner.ts). A store without it throws at the
+  projection seam and the graph fails `steps#0:step-execute` before the session under
+  test ever runs. Mirror the production accept shape so these fixtures reach the
+  post-done continuation behavior they pin.
+  */
+  (emitter as any).startStep = vi.fn().mockImplementation(async (_taskId: string, stepIndex: number) => {
+    const steps = task.steps ?? [];
+    if (steps[stepIndex] && steps[stepIndex].status === "pending") {
+      steps[stepIndex] = { ...steps[stepIndex], status: "in-progress" } as any;
+    }
+    return { task, accepted: true, disposition: "started" as const };
+  });
   (emitter as any).parseStepsFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);

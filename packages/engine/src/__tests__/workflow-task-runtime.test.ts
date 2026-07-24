@@ -135,7 +135,7 @@ describe("WorkflowTaskRuntime", () => {
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
-        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key } : null,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
       },
       runCustomNode: async () => ({ outcome: "success" }),
     };
@@ -304,7 +304,7 @@ describe("WorkflowTaskRuntime", () => {
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
-        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key } : null,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
       },
       primitives: recordingPrimitives(calls, undefined, observed),
       runCustomNode: async (node) => {
@@ -330,7 +330,7 @@ describe("WorkflowTaskRuntime", () => {
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
-        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key } : null,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
       },
       primitives: recordingPrimitives([], undefined, observed),
       runCustomNode: async () => ({ outcome: "success" }),
@@ -374,7 +374,7 @@ describe("WorkflowTaskRuntime", () => {
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
-        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key } : null,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
       },
       primitives: recordingPrimitives(calls),
       runCustomNode: async (node) => {
@@ -408,7 +408,7 @@ describe("WorkflowTaskRuntime", () => {
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
-        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key } : null,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
       },
       primitives: recordingPrimitives(calls),
       runCustomNode: async (node) => {

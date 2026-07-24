@@ -42,6 +42,7 @@ function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id">): Agent {
 }
 
 function createStore(task: Task, settings: Record<string, unknown>, tasksForList?: Task[]): TaskStore {
+  const moveTask = vi.fn().mockResolvedValue(undefined);
   return {
     listTasks: vi.fn().mockImplementation(async () => tasksForList ?? [task]),
     getSettings: vi.fn().mockResolvedValue(settings),
@@ -52,7 +53,19 @@ function createStore(task: Task, settings: Record<string, unknown>, tasksForList
     updateSettings: vi.fn().mockResolvedValue(settings),
     getTask: vi.fn().mockResolvedValue(task),
     updateTask: vi.fn().mockResolvedValue(undefined),
-    moveTask: vi.fn().mockResolvedValue(undefined),
+    moveTask,
+    /*
+    FNXC:EngineTests 2026-07-23-21:20:
+    Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da).
+    The fake delegates to the mock `moveTask` after the predicate passes so existing dispatch assertions on `store.moveTask` stay meaningful.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
+      const cur = (tasksForList ?? [task]).find((t) => t.id === id) ?? task;
+      if (!(await predicate(cur)) || cur.column === column) return { task: cur, moved: false };
+      await moveTask(id, column, opts);
+      cur.column = column;
+      return { task: cur, moved: true };
+    }),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/tmp/project"),

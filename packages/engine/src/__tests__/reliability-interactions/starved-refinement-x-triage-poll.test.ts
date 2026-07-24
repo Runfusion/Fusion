@@ -65,8 +65,17 @@ describe("reliability interaction: starved refinement x triage poll", () => {
       });
 
       (triage as any).running = true;
-      for (let i = 0; i < 2; i++) {
+      /*
+      FNXC:EngineTests 2026-07-23-21:30:
+      FN-8453 (commit eef5eb751) replaced priority-based triage ordering with the unified
+      oldest-createdAt-first admission coordinator, so the self-healing priority bump no
+      longer reorders admission. The surviving reliability invariant is FIFO fairness:
+      with maxConcurrent=1 and 6 older backlog tasks, the starved refinement must be
+      admitted within 7 bounded polls (one admission per poll).
+      */
+      for (let i = 0; i < 7; i++) {
         await (triage as any).poll();
+        if (tasks.find((t) => t.id === "FN-R1")?.column === "todo") break;
       }
 
       expect(specifySpy.mock.calls.some(([t]) => t.id === "FN-R1")).toBe(true);

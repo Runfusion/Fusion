@@ -598,8 +598,11 @@ describe("aiMergeTask — usage limit detection", () => {
       "rate_limit_error: Rate limit exceeded",
       undefined,
     );
+    // FNXC:EngineTests 2026-07-23-21:40 (#2339): rate-limit pauses are provider-lane
+    // scoped ("provider-rate-limit:<providerId>") so one saturated provider does not
+    // park other lanes; no runtime provider is resolvable here, hence ":unknown".
     expect(store.pauseTask).toHaveBeenCalledWith("FN-050", true, undefined, {
-      pausedReason: "provider-rate-limit",
+      pausedReason: "provider-rate-limit:unknown",
     });
     expect(store.updateSettings).not.toHaveBeenCalled();
   });

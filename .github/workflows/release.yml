@@ -197,7 +197,10 @@ jobs:
         # FNXC:UpdateChannels 2026-07-19-13:30: beta tags (v*-beta.N) build with
         # publish.channel=beta so electron-builder emits beta*.yml update manifests;
         # beta-channel desktop installs read those, stable installs keep latest*.yml.
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
+        # FNXC:UpdateChannels 2026-07-23-21:35: the flag must be quoted on Windows —
+        # pwsh tokenizes bare `-c.publish.channel=beta` into `-c` + `.publish.channel=beta`,
+        # which electron-builder then reads as a config FILE path (ENOENT, v0.73.0-beta.5).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --publish never ${{ contains(github.ref_name, '-beta') && '"-c.publish.channel=beta"' || '' }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -433,15 +433,26 @@ describe("Workflow Steps Execution", () => {
       };
       store.getTask.mockResolvedValue(baseTask as any);
 
-      mockedCreateFnAgent.mockResolvedValue({
+      /*
+      FNXC:EngineTests 2026-07-23-21:40:
+      The graph's `parse` node re-derives the step list from PROMPT.md and writes every step
+      back as `pending`, so an `in-progress` step on the fixture literal no longer survives to
+      `detectPendingReviewBlock`. The pending-review shape can only arise from the
+      implementation session itself: the agent starts the step, requests review, and exits
+      without fn_task_done. Simulate that by having the session mark the parsed step
+      `in-progress` (the review-request log line is already on the row).
+      */
+      mockedCreateFnAgent.mockImplementation(async () => ({
         session: {
-          prompt: vi.fn().mockResolvedValue(undefined),
+          prompt: vi.fn(async () => {
+            store._setRow("FN-5436-B", { steps: [{ name: "Implement", status: "in-progress" }] });
+          }),
           dispose: vi.fn(),
           on: vi.fn(),
           sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
           state: {},
         },
-      } as any);
+      }) as any);
 
       const executor = new TaskExecutor(store, "/tmp/test", {});
       await executor.execute(baseTask as any);
@@ -774,13 +785,16 @@ describe("Workflow Steps Execution", () => {
     // (3) PROMPT.md injection was invoked with the failure context. The
     // actual file write is covered by other tests; here we just need to
     // confirm sendTaskBackForFix forwards the right step name and feedback.
-    // Last arg is MAX_WORKFLOW_STEP_RETRIES (private const, currently 3) so
-    // the injected PROMPT.md note shows "3/3 (0 remaining)".
+    // FNXC:EngineTests 2026-07-23-21:40 (FN-8503): the retry arg is now a
+    // structured `{ attempt, max? }` presentation (max omitted = unbounded
+    // Code Review budget). A hard-failure exhaustion passes the bounded
+    // MAX_WORKFLOW_STEP_RETRIES budget (currently 3), so the injected
+    // PROMPT.md note shows "3/3 (0 remaining)".
     expect(injectSpy).toHaveBeenCalledWith(
       mutableTask,
       feedback,
       stepName,
-      expect.any(Number),
+      { attempt: 3, max: 3 },
     );
 
     // The scheduleWorkflowRerun stub above never registers the 15 s

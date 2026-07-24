@@ -94,6 +94,14 @@ function makeSchedulerStore(rootDir: string, task: Task, settingsOverrides: Part
     ...settingsOverrides,
   } as unknown as Settings;
 
+  const moveTask = vi.fn(async (_id: string, column: Task["column"], opts?: Record<string, unknown>) => {
+    const from = task.column;
+    task.column = column;
+    task.columnMovedAt = new Date(Date.now()).toISOString();
+    emitter.emit("task:moved", { task, from, to: column, source: (opts?.moveSource as "user" | "engine" | "scheduler" | undefined) ?? "engine" });
+    return task;
+  });
+
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => settings),
     /*
@@ -107,12 +115,17 @@ function makeSchedulerStore(rootDir: string, task: Task, settingsOverrides: Part
       return task.column === column ? [task] : [];
     }),
     updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => Object.assign(task, updates)),
-    moveTask: vi.fn(async (_id: string, column: Task["column"], opts?: Record<string, unknown>) => {
-      const from = task.column;
-      task.column = column;
-      task.columnMovedAt = new Date(Date.now()).toISOString();
-      emitter.emit("task:moved", { task, from, to: column, source: (opts?.moveSource as "user" | "engine" | "scheduler" | undefined) ?? "engine" });
-      return task;
+    moveTask,
+    /*
+    FNXC:EngineTests 2026-07-23-21:20:
+    Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da).
+    The fake delegates to the mock `moveTask` after the predicate passes so existing dispatch/settle-window assertions on `store.moveTask` stay meaningful.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
+      if (id !== task.id) return { task, moved: false };
+      if (!(await predicate(task)) || task.column === column) return { task, moved: false };
+      const movedTask = await moveTask(id, column, opts);
+      return { task: movedTask ?? task, moved: true };
     }),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),

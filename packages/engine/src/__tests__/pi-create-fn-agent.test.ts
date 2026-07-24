@@ -158,7 +158,15 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   this until FN-8142's SDK bump (this PR); mock ModelRuntime so createFnAgent's registry path resolves.
   */
   ModelRuntime: {
-    create: async () => ({ getAuth: modelRuntimeGetAuthMock }),
+    /*
+    FNXC:ModelRegistry 2026-07-23-21:20:
+    396090fc0 bounded post-registration registry refreshes via refreshFusionModelRegistry, which
+    PREFERS `modelRegistry.modelRuntime.refresh({ allowNetwork, signal })` over the legacy
+    `registry.refresh()` whenever a runtime is attached. The mocked runtime must expose `refresh`
+    (delegating to the same refreshMock) or the preferred path throws "runtime.refresh is not a
+    function" and the registration-order test can no longer observe the refresh.
+    */
+    create: async () => ({ getAuth: modelRuntimeGetAuthMock, refresh: async () => refreshMock() }),
   },
   ModelRegistry: class {
     static create(...args: unknown[]) {
