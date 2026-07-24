@@ -987,4 +987,56 @@ describe("PlanningModeModal sequential flow", () => {
     expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Proceed with plan" })).toBeNull();
   });
+
+  it("routes generation retry away from already-validated sessions into create-retry", async () => {
+    /*
+    FNXC:PlanningMode 2026-07-24-05:45:
+    Auto/manual generation retry on a finished plan used to echo "already been validated".
+    Reject retry, re-fetch the complete row, and land on create-retry.
+    */
+    mockRetryPlanningSession.mockRejectedValue(new Error("Planning session has already been validated"));
+    mockFetchAiSession
+      .mockResolvedValueOnce({
+        ...base,
+        status: "error",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        error: "stream failed",
+        inputPayload: JSON.stringify({ validated: true }),
+      })
+      .mockResolvedValue({
+        ...base,
+        status: "complete",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        inputPayload: JSON.stringify({ validated: true }),
+      });
+    renderSession();
+    expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
+    expect(screen.queryByText("Planning session has already been validated")).toBeNull();
+    expect(mockRetryPlanningSession).toHaveBeenCalled();
+  });
+
+  it("restores plan review when awaiting_input has a plan but no current question after retry refresh", async () => {
+    mockRetryPlanningSession.mockRejectedValue(new Error("Planning session session-1 is not in an error state"));
+    mockFetchAiSession
+      .mockResolvedValueOnce({
+        ...base,
+        status: "error",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        error: "stream failed",
+        inputPayload: "{}",
+      })
+      .mockResolvedValue({
+        ...base,
+        status: "awaiting_input",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        inputPayload: "{}",
+      });
+    renderSession();
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+  });
 });

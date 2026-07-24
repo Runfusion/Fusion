@@ -182,22 +182,64 @@ type PlanningGenerationActivity = "initial_plan" | "plan_update" | "question";
 /**
  * FNXC:PlanningMode 2026-07-20-00:00:
  * A persisted planning `result` is an evolving running plan, not proof that the interview ended.
- * Only the explicit Validate action writes this durable marker, so reload and poll paths must use
- * it before exposing terminal summary/create-task UI.
+ * Only the explicit Validate action writes the durable terminal markers, so reload and poll paths
+ * must use them before exposing create-task UI.
+ *
+ * FNXC:PlanningMode 2026-07-24-05:45:
+ * `status === "complete"` is written only by validateSession, so it is authoritative terminal
+ * evidence even when a stale/malformed inputPayload omits `validated: true` (that mismatch was
+ * stranding reopen on "still being prepared", then Retry hit "already been validated"). Prefer
+ * status, then the payload marker, and always recover complete rows to task-created / create-retry
+ * / plan-review rather than a generation-retry dead end.
  */
-function isValidatedPlanningSession(session: { inputPayload?: string | null }): boolean {
+function parsePlanningInputPayload(session: { inputPayload?: string | null }): {
+  validated: boolean;
+  createdTaskId?: string;
+} {
   try {
-    const payload: unknown = JSON.parse(session.inputPayload ?? "");
-    /*
-    FNXC:PlanningMode 2026-07-20-01:15:
-    Terminal Planning UI is an explicit user-validation privilege, not a legacy-session inference.
-    Missing or malformed persistence may contain a running plan, so only a durable `validated: true`
-    marker can reveal SummaryView and task-creation actions after reload, polling, or SSE updates.
-    */
-    return typeof payload === "object" && payload !== null && (payload as { validated?: unknown }).validated === true;
+    const payload = JSON.parse(session.inputPayload ?? "{}") as {
+      validated?: unknown;
+      createdTaskId?: unknown;
+    };
+    if (typeof payload !== "object" || payload === null) {
+      return { validated: false };
+    }
+    return {
+      validated: payload.validated === true,
+      createdTaskId: typeof payload.createdTaskId === "string" ? payload.createdTaskId : undefined,
+    };
   } catch {
-    return false;
+    return { validated: false };
   }
+}
+
+type CompletePlanningResume =
+  | { kind: "task_created"; taskId: string; summary: PlanningSummary }
+  | { kind: "create_retry"; summary: PlanningSummary }
+  | { kind: "plan_review"; summary: PlanningSummary }
+  | { kind: "unrecoverable" };
+
+function resolveCompletePlanningResume(
+  session: { status?: string; result?: string | null; inputPayload?: string | null },
+  summaryFallback?: PlanningSummary | null,
+): CompletePlanningResume {
+  let summary: PlanningSummary | null = summaryFallback ?? null;
+  if (!summary && session.result) {
+    try {
+      summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
+    } catch {
+      summary = null;
+    }
+  }
+  if (!summary) return { kind: "unrecoverable" };
+
+  const { validated, createdTaskId } = parsePlanningInputPayload(session);
+  const terminal = session.status === "complete" || validated;
+  if (terminal) {
+    if (createdTaskId) return { kind: "task_created", taskId: createdTaskId, summary };
+    return { kind: "create_retry", summary };
+  }
+  return { kind: "plan_review", summary };
 }
 
 function getExamplePlans(t: TFunction<"app">): string[] {
@@ -993,22 +1035,32 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
-          const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
-          setRunningSummary(summary);
-          if (isValidatedPlanningSession(session)) {
-            resetPlanningAutoRetryBudget();
-            const inputPayload = JSON.parse(session.inputPayload ?? "{}") as { createdTaskId?: unknown };
-            if (typeof inputPayload.createdTaskId === "string") {
-              setView({ type: "task_created", taskId: inputPayload.createdTaskId });
-            } else {
-              setView({ type: "create_retry", session: { sessionId, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
-            }
-          } else {
+          const resume = resolveCompletePlanningResume(session);
+          if (resume.kind === "unrecoverable") {
             setView({
               type: "error",
-              session: { sessionId, currentQuestion: null, summary },
-              errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+              session: { sessionId, currentQuestion: null, summary: null },
+              errorMessage: t("planning.sessionUnrecoverableState", "This session could not be restored. Retry to continue the interview."),
             });
+          } else {
+            setRunningSummary(resume.summary);
+            resetPlanningAutoRetryBudget();
+            if (resume.kind === "task_created") {
+              setView({ type: "task_created", taskId: resume.taskId });
+            } else if (resume.kind === "create_retry") {
+              setView({
+                type: "create_retry",
+                session: { sessionId, currentQuestion: null, summary: resume.summary },
+                summary: resume.summary,
+                errorMessage: t("planning.retryCreate", "Retry create"),
+              });
+            } else {
+              setView({
+                type: "plan_review",
+                session: { sessionId, currentQuestion: null, summary: resume.summary },
+                summary: resume.summary,
+              });
+            }
           }
           setStreamingOutput("");
         } else if (session.status === "error") {
@@ -1359,10 +1411,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         let retryError: unknown = err;
         const retryErrorMessage = getErrorMessage(err) || "";
 
-        // FNXC:PlanningTurnAdmission 2026-07-22-21:00: a retry rejected because another turn
-        // already holds the session's turn slot means work is in progress — rejoin it via the
-        // same session-refresh path instead of surfacing a terminal error.
-        if (retryErrorMessage.includes("not in an error state") || retryErrorMessage.includes("already in progress")) {
+        /*
+        FNXC:PlanningTurnAdmission 2026-07-22-21:00:
+        A retry rejected because another turn already holds the session's turn slot means work is
+        in progress — rejoin it via the same session-refresh path instead of a terminal error.
+
+        FNXC:PlanningMode 2026-07-24-05:45:
+        "already been validated" is the same class of mismatch: generation retry is the wrong tool
+        for a finished plan. Refresh the durable row and route to create-retry / task-created /
+        plan-review instead of echoing the server exception.
+        */
+        if (
+          retryErrorMessage.includes("not in an error state")
+          || retryErrorMessage.includes("already in progress")
+          || retryErrorMessage.includes("already been validated")
+        ) {
           try {
             const session = await fetchAiSession(retryTarget.sessionId);
             if (!session) {
@@ -1379,49 +1442,69 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               connectToPlanningStream(session.id);
               setView({ type: "loading" });
             } else if (session.status === "awaiting_input") {
-              if (!session.currentQuestion) {
-                throw new Error("Planning session is awaiting input but has no current question.");
-              }
               resetPlanningAutoRetryBudget();
-              const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion) as PlanningQuestion);
               clearPlanningDescription(projectId);
-              setView({
-                type: "question",
-                session: { sessionId: session.id, currentQuestion: question, summary: null },
-              });
-              if (session.thinkingOutput) {
-                const trimmed = session.thinkingOutput.trim();
-                if (trimmed) {
-                  setConversationHistory((prev) => {
-                    const lastEntry = prev[prev.length - 1];
-                    if (lastEntry?.thinkingOutput === trimmed) return prev;
-                    return [...prev, { thinkingOutput: trimmed }];
-                  });
+              const summary = session.result
+                ? normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary)
+                : retryTarget.summary;
+              if (summary) setRunningSummary(summary);
+              if (session.currentQuestion) {
+                const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion) as PlanningQuestion);
+                setWorkspaceQuestion(question);
+                setView({
+                  type: "question",
+                  session: { sessionId: session.id, currentQuestion: question, summary },
+                });
+                if (session.thinkingOutput) {
+                  const trimmed = session.thinkingOutput.trim();
+                  if (trimmed) {
+                    setConversationHistory((prev) => {
+                      const lastEntry = prev[prev.length - 1];
+                      if (lastEntry?.thinkingOutput === trimmed) return prev;
+                      return [...prev, { thinkingOutput: trimmed }];
+                    });
+                  }
                 }
-              }
-              if (!streamConnectionRef.current?.isConnected()) {
-                connectToPlanningStream(session.id);
+                if (!streamConnectionRef.current?.isConnected()) {
+                  connectToPlanningStream(session.id);
+                }
+              } else if (summary) {
+                /*
+                FNXC:PlanningMode 2026-07-24-05:45:
+                Plan-review rows are awaiting_input with a running plan and no current question.
+                Treating that as fatal forced Retry into an unrecoverable error after stop/proceed.
+                */
+                setWorkspaceQuestion(null);
+                setView({
+                  type: "plan_review",
+                  session: { sessionId: session.id, currentQuestion: null, summary },
+                  summary,
+                });
+              } else {
+                throw new Error("Planning session is awaiting input but has no current question or plan.");
               }
             } else if (session.status === "complete") {
-              if (!session.result) {
+              const resume = resolveCompletePlanningResume(session, retryTarget.summary);
+              if (resume.kind === "unrecoverable") {
                 throw new Error("Planning session is complete but has no result.");
               }
-              const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
-              setRunningSummary(summary);
-              if (isValidatedPlanningSession(session)) {
-                resetPlanningAutoRetryBudget();
-                clearPlanningDescription(projectId);
-                const inputPayload = JSON.parse(session.inputPayload ?? "{}") as { createdTaskId?: unknown };
-                if (typeof inputPayload.createdTaskId === "string") {
-                  setView({ type: "task_created", taskId: inputPayload.createdTaskId });
-                } else {
-                  setView({ type: "create_retry", session: { sessionId: session.id, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
-                }
+              resetPlanningAutoRetryBudget();
+              clearPlanningDescription(projectId);
+              setRunningSummary(resume.summary);
+              if (resume.kind === "task_created") {
+                setView({ type: "task_created", taskId: resume.taskId });
+              } else if (resume.kind === "create_retry") {
+                setView({
+                  type: "create_retry",
+                  session: { sessionId: session.id, currentQuestion: null, summary: resume.summary },
+                  summary: resume.summary,
+                  errorMessage: t("planning.retryCreate", "Retry create"),
+                });
               } else {
                 setView({
-                  type: "error",
-                  session: { sessionId: session.id, currentQuestion: null, summary },
-                  errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+                  type: "plan_review",
+                  session: { sessionId: session.id, currentQuestion: null, summary: resume.summary },
+                  summary: resume.summary,
                 });
               }
             } else if (session.status === "error") {
@@ -1841,23 +1924,33 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             }
           }
         } else if (session.status === "complete" && session.result) {
-          const summary = persistedRunningSummary ?? normalizePlanningSummary(JSON.parse(session.result));
-          setRunningSummary(summary);
-          if (isValidatedPlanningSession(session)) {
-            const createdTaskId = inputPayload && typeof inputPayload.createdTaskId === "string" ? inputPayload.createdTaskId : undefined;
-            resetPlanningAutoRetryBudget();
-            clearPlanningDescription(projectId);
-            if (createdTaskId) {
-              setView({ type: "task_created", taskId: createdTaskId });
-            } else {
-              setView({ type: "create_retry", session: { sessionId, currentQuestion: null, summary }, summary, errorMessage: t("planning.retryCreate", "Retry create") });
-            }
-          } else {
+          const resume = resolveCompletePlanningResume(session, persistedRunningSummary);
+          if (resume.kind === "unrecoverable") {
             setView({
               type: "error",
-              session: { sessionId, currentQuestion: null, summary },
-              errorMessage: t("planning.awaitingValidationState", "This plan is still being prepared. Retry to continue the interview."),
+              session: { sessionId, currentQuestion: null, summary: persistedRunningSummary },
+              errorMessage: t("planning.sessionUnrecoverableState", "This session could not be restored. Retry to continue the interview."),
             });
+          } else {
+            setRunningSummary(resume.summary);
+            resetPlanningAutoRetryBudget();
+            clearPlanningDescription(projectId);
+            if (resume.kind === "task_created") {
+              setView({ type: "task_created", taskId: resume.taskId });
+            } else if (resume.kind === "create_retry") {
+              setView({
+                type: "create_retry",
+                session: { sessionId, currentQuestion: null, summary: resume.summary },
+                summary: resume.summary,
+                errorMessage: t("planning.retryCreate", "Retry create"),
+              });
+            } else {
+              setView({
+                type: "plan_review",
+                session: { sessionId, currentQuestion: null, summary: resume.summary },
+                summary: resume.summary,
+              });
+            }
           }
         } else if (session.status === "generating") {
           setView({ type: "loading" });
