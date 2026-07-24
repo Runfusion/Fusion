@@ -558,9 +558,15 @@ describe("MissionAutopilot", () => {
 
       await ap.checkAndStartMission("M-TEST1");
 
+      // FNXC:MissionAutonomyAudit 2026-07-24-00:20: FN-8544 attributes autopilot
+      // status transitions with a system actor passed as updateMission's third
+      // options argument. Assert the actor/source travels with the mutation.
       expect(store.updateMission).toHaveBeenCalledWith(
         "M-TEST1",
         expect.objectContaining({ status: "active" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkAndStartMission" }),
+        }),
       );
       expect(store.logMissionEvent).toHaveBeenCalledWith(
         "M-TEST1",
@@ -606,6 +612,9 @@ describe("MissionAutopilot", () => {
       expect(missionStore.updateMission).toHaveBeenCalledWith(
         "M-TEST1",
         expect.objectContaining({ status: "complete" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkMissionCompletion" }),
+        }),
       );
       expect(missionStore.logMissionEvent).toHaveBeenCalledWith(
         "M-TEST1",
@@ -642,6 +651,9 @@ describe("MissionAutopilot", () => {
       const result = await ap.checkMissionCompletion(mission.id);
 
       expect(result).toBe(true);
+      // FNXC:MissionAutonomyAudit 2026-07-24-00:20: FN-8544 records the
+      // autopilot_disabled transition atomically inside updateMission (attributed
+      // by the system actor) rather than via a separate logMissionEvent mirror.
       expect(store.updateMission).toHaveBeenCalledWith(
         mission.id,
         expect.objectContaining({
@@ -649,12 +661,9 @@ describe("MissionAutopilot", () => {
           autopilotEnabled: false,
           autopilotState: "inactive",
         }),
-      );
-      expect(store.logMissionEvent).toHaveBeenCalledWith(
-        mission.id,
-        "autopilot_disabled",
-        expect.stringContaining("Autopilot disabled for already-complete mission"),
-        expect.objectContaining({ source: "checkMissionCompletion" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkMissionCompletion" }),
+        }),
       );
       expect(ap.isWatching(mission.id)).toBe(false);
     });
@@ -730,6 +739,9 @@ describe("MissionAutopilot", () => {
       expect(missionStore.updateMission).toHaveBeenCalledWith(
         "M-TEST1",
         expect.objectContaining({ status: "complete" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkMissionCompletion" }),
+        }),
       );
     });
 
@@ -752,12 +764,24 @@ describe("MissionAutopilot", () => {
       const result = await autopilot.checkMissionCompletion("M-TEST1");
 
       expect(result).toBe(true);
-      expect(missionStore.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({ status: "complete" }));
-      expect(missionStore.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({
-        autoAdvance: false,
-        autopilotEnabled: false,
-        autopilotState: "inactive",
-      }));
+      expect(missionStore.updateMission).toHaveBeenCalledWith(
+        "M-TEST1",
+        expect.objectContaining({ status: "complete" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkMissionCompletion" }),
+        }),
+      );
+      expect(missionStore.updateMission).toHaveBeenCalledWith(
+        "M-TEST1",
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "checkMissionCompletion" }),
+        }),
+      );
       expect(autopilot.isWatching("M-TEST1")).toBe(false);
     });
   });
@@ -1020,11 +1044,17 @@ describe("MissionAutopilot", () => {
       ap.start();
       await vi.advanceTimersByTimeAsync(60_000);
 
-      expect(store.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({
-        autoAdvance: false,
-        autopilotEnabled: false,
-        autopilotState: "inactive",
-      }));
+      expect(store.updateMission).toHaveBeenCalledWith(
+        "M-TEST1",
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "poll" }),
+        }),
+      );
       expect(ap.isWatching("M-TEST1")).toBe(false);
 
       ap.stop();
@@ -1181,12 +1211,9 @@ describe("MissionAutopilot", () => {
           autopilotEnabled: false,
           autopilotState: "inactive",
         }),
-      );
-      expect(store.logMissionEvent).toHaveBeenCalledWith(
-        "M-COMPLETE",
-        "autopilot_disabled",
-        expect.stringContaining("Autopilot disabled for already-complete mission"),
-        expect.objectContaining({ source: "recoverMissions" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "recoverMissions" }),
+        }),
       );
       expect(ap.isWatching("M-COMPLETE")).toBe(false);
     });
@@ -1213,12 +1240,9 @@ describe("MissionAutopilot", () => {
           autopilotEnabled: false,
           autopilotState: "inactive",
         }),
-      );
-      expect(store.logMissionEvent).toHaveBeenCalledWith(
-        mission.id,
-        "autopilot_disabled",
-        expect.stringContaining("Autopilot disabled for already-complete mission"),
-        expect.objectContaining({ source: "poll" }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: "mission-autopilot", source: "poll" }),
+        }),
       );
       expect(ap.isWatching(mission.id)).toBe(false);
     });
