@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Fix the Chat View "Latest" button shifting sideways out from under the cursor when clicked.
+summary: Stop the Chat/Quick Chat "Latest" button from jumping when the cursor moves near or presses it.
 category: fix
-dev: `.chat-jump-to-latest:active` now composes `translateX(-50%) scale(0.97)` so the global `.btn:active` transform no longer replaces the centering transform.
+dev: Center `.chat-jump-to-latest` with left/right + margin-inline auto instead of transform:translateX(-50%) so global `.btn` transform transitions and :active scale cannot shift the chip sideways.

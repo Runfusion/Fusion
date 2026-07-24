@@ -1035,20 +1035,21 @@ The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle
   word-break: break-word;
 }
 
-.chat-jump-to-latest {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--space-xl) * 3);
-  transform: translateX(-50%);
-  z-index: 2;
-}
-
 /*
 FNXC:ChatView 2026-07-22-00:00:
 The Latest button is centered with transform: translateX(-50%), so the global .btn:active { transform: scale(0.97) } rule must not replace that transform wholesale — doing so shifted the button half its width sideways on mousedown, out from under the cursor mid-click. Compose both transforms on :active instead (same fix as .devserver-log-viewer__new-logs-button).
+
+FNXC:ChatView 2026-07-23-18:15:
+Compose-on-:active was still fragile: same specificity as `.btn:active` can lose the cascade war (SelectionCommentPopover regressed the same way), and the shared `.btn { transition: transform }` made any transform churn feel like the chip jumps when the cursor moves near/over it in Quick Chat and full Chat. Center with left/right + margin-inline auto + width: fit-content so positioning no longer owns `transform`. Global `.btn:active` scale then applies in place around the geometric center without a sideways teleport. Covers session + room jump buttons (shared class), floating Quick Chat, main Chat view, and mobile.
 */
-.chat-jump-to-latest:active {
-  transform: translateX(-50%) scale(0.97);
+.chat-jump-to-latest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin-inline: auto;
+  bottom: calc(var(--space-xl) * 3);
+  z-index: 2;
 }
 
 .chat-message--user {
