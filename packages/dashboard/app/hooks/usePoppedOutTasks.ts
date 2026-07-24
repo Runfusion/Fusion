@@ -19,6 +19,13 @@ export interface UsePoppedOutTasksResult {
   tasks: Array<Task | TaskDetail>;
   popOut: (task: Task | TaskDetail, originTaskView?: TaskView, initialTab?: DetailTaskTab) => void;
   close: (taskId: string, originTaskView?: TaskView) => void;
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Popped-out task windows are task-detail surfaces for the active project. A project swap
+  must dismiss them all — they bypass modalManager.detailTask, so closeProjectScopedModals
+  alone left the previous project's task popups floating over the new project.
+  */
+  closeAll: () => void;
 }
 
 export function usePoppedOutTasks(): UsePoppedOutTasksResult {
@@ -44,11 +51,15 @@ export function usePoppedOutTasks(): UsePoppedOutTasksResult {
     setEntries((current) => current.filter((entry) => entry.task.id !== taskId || entry.originTaskView !== originTaskView));
   }, []);
 
+  const closeAll = useCallback(() => {
+    setEntries([]);
+  }, []);
+
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
   FN-8016 scopes popup identity to task id plus opening view. Every new pop-out has an origin; undefined origins are retained only for legacy snapshots and remain globally visible for compatibility. Closing receives the same identity so a task open on two views stays independent.
   */
   const tasks = useMemo(() => entries.map((entry) => entry.task), [entries]);
 
-  return { entries, tasks, popOut, close };
+  return { entries, tasks, popOut, close, closeAll };
 }

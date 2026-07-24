@@ -568,7 +568,7 @@ function AppInner() {
   FNXC:FloatingWindow 2026-07-15-15:20:
   FN-8016 identifies a popped-out task detail by task id plus origin view. The same task can therefore coexist in separate view-scoped FloatingWindows while re-opening it on one view refreshes only that entry.
   */
-  const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask } = usePoppedOutTasks();
+  const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask, closeAll: closeAllPoppedOutTasks } = usePoppedOutTasks();
   const popupNavCloseRef = useRef(new Map<string, () => void>());
 
   /*
@@ -959,6 +959,18 @@ function AppInner() {
     openSettings: modalManager.openSettings,
   });
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Project-scoped task-detail surfaces are not all owned by modalManager: depending on
+  settings, tasks open as popped-out FloatingWindows, in the main panel (task-detail view),
+  or in the right dock, and Quick Chat is an App-level floating window. A project swap must
+  dismiss ALL of them, so useProjectActions receives this composite via a ref — the pieces
+  it closes (main-panel detail, right dock) are constructed later in this component, and
+  the ref keeps the callback stable while always invoking the latest wiring.
+  */
+  const closeProjectScopedUiRef = useRef<() => void>(() => {});
+  const closeProjectScopedUi = useCallback(() => closeProjectScopedUiRef.current(), []);
+
   const {
     handleSelectProject,
     handleViewAllProjects,
@@ -985,7 +997,7 @@ function AppInner() {
     openSetupWizard: modalManager.openSetupWizard,
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
-    closeProjectScopedModals: modalManager.closeProjectScopedModals,
+    closeProjectScopedModals: closeProjectScopedUi,
   });
 
   const { handleDetailClose } = useDeepLink({
@@ -1521,6 +1533,24 @@ function AppInner() {
       rightDock.closeDockTask();
     }
   }, [openTasksInRightSidebar, rightDock]);
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  The composite project-switch reset. Beyond modalManager's project-scoped modals, dismiss
+  every task-detail surface the open-task routing can target (popped-out FloatingWindows,
+  main-panel task-detail view, right-dock task) and close the Quick Chat floating window —
+  all of these showed the previous project's content over the new project. Assigned each
+  render so the ref-stable callback handed to useProjectActions always sees current state.
+  */
+  closeProjectScopedUiRef.current = () => {
+    modalManager.closeProjectScopedModals();
+    closeAllPoppedOutTasks();
+    if (mainPanelDetailTask) {
+      closeTaskDetailMainPanel();
+    }
+    rightDock.closeDockTask();
+    setQuickChatOpen(false);
+  };
 
   const mainContentProps: MainContentProps = {
     showBackendConnectionErrorPage,
