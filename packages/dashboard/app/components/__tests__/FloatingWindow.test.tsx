@@ -5,6 +5,7 @@ import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, FloatingWindow } from "../FloatingWindow";
 
 const floatingWindowCss = readFileSync("app/components/FloatingWindow.css", "utf8");
+const chatViewCss = readFileSync("app/components/ChatView.css", "utf8");
 const allAppCss = loadAllAppCss();
 const stylesCss = loadStylesCss();
 
@@ -311,6 +312,25 @@ describe("FloatingWindow", () => {
     ]) {
       expect(cssRuleFor(allAppCss, selector)).toContain("touch-action: none;");
     }
+  });
+
+  it("gives only delegated Quick Chat headers a larger tablet touch target", () => {
+    const tabletRule = mediaBlockFor(
+      chatViewCss,
+      "(min-width: 769px) and (max-width: 1024px) and (min-height: 481px)",
+    );
+    const floatingHeaderRule = cssRuleFor(chatViewCss, ".chat-view--floating .view-header");
+
+    expect(tabletRule).toContain(".chat-view--floating .view-header");
+    expect(tabletRule).toContain("min-height: calc(var(--view-header-min-height) + var(--space-sm));");
+    expect(tabletRule).toContain("height: calc(var(--view-header-min-height) + var(--space-sm));");
+    expect(floatingHeaderRule).toContain("cursor: grab;");
+    expect(floatingHeaderRule).toContain("user-select: none;");
+    expect(floatingHeaderRule).toContain("touch-action: none;");
+
+    // The explicit tablet query leaves the ≤768px sheet and >1024px desktop header geometry canonical.
+    expect(chatViewCss).not.toMatch(/@media \(max-width: 768px\)\s*\{\s*\.chat-view--floating \.view-header\s*\{/);
+    expect(chatViewCss).not.toMatch(/@media \(min-width: 1025px\)[\s\S]*\.chat-view--floating \.view-header/);
   });
 
   it("keeps every tablet movable-modal drag handle on the explicit touch-action none contract", () => {

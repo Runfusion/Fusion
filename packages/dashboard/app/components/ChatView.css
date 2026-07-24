@@ -911,6 +911,19 @@ The old Quick Chat panel is replaced by the full ChatView inside a movable Float
 }
 
 /*
+FNXC:QuickChat 2026-07-24-00:00:
+Tablet Quick Chat keeps its delegated ViewHeader drag handle but needs a modestly taller touch target
+than canonical desktop chrome. Scope the token-based height to the movable tablet band so phone sheets,
+desktop geometry, and every other ViewHeader consumer remain unchanged.
+*/
+@media (min-width: 769px) and (max-width: 1024px) and (min-height: 481px) {
+  .chat-view--floating .view-header {
+    min-height: calc(var(--view-header-min-height) + var(--space-sm));
+    height: calc(var(--view-header-min-height) + var(--space-sm));
+  }
+}
+
+/*
 FNXC:ChatModal 2026-06-22-14:38:
 Floating Chat can become narrow while the browser viewport remains desktop-sized. Mirror the mobile one-pane layout with a class driven by the modal ResizeObserver so a narrow pop-out hides the sidebar and shows the mobile thread/list surfaces.
 */

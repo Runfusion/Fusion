@@ -803,6 +803,47 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("keeps floating Quick Chat header controls for empty and populated content", async () => {
+    const restoreMatchMedia = mockDesktopViewport();
+    const renderFloatingChat = async () => {
+      const onMaximize = vi.fn();
+      const onMinimize = vi.fn();
+      const onClose = vi.fn();
+      const rendered = await renderWithAct(
+        <ChatView
+          projectId="proj-123"
+          addToast={vi.fn()}
+          floating
+          onMaximize={onMaximize}
+          onMinimize={onMinimize}
+          onClose={onClose}
+        />,
+      );
+
+      expect(document.querySelector(".chat-view--floating .view-header")).toBeInTheDocument();
+      for (const testId of ["chat-modal-maximize", "chat-modal-minimize", "chat-modal-close"]) {
+        expect(screen.getByTestId(testId)).toBeInTheDocument();
+      }
+      return rendered;
+    };
+
+    try {
+      setupMockChat({ sessions: [], filteredSessions: [], activeSession: null });
+      const emptyRender = await renderFloatingChat();
+      emptyRender.unmount();
+
+      setupMockChat({
+        sessions: [activeSessionFixture],
+        filteredSessions: [activeSessionFixture],
+        activeSession: activeSessionFixture,
+        messages: [{ id: "message-001", sessionId: "session-001", role: "assistant", content: "Populated response", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+      await renderFloatingChat();
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("floating narrow mode: quick session switcher includes New Chat", async () => {
     const restoreMatchMedia = mockDesktopViewport();
     const originalResizeObserver = globalThis.ResizeObserver;
