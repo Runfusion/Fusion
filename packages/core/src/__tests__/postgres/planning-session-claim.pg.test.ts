@@ -117,4 +117,30 @@ pgTest("planning session claim lifecycle (multi-task epochs)", () => {
     expect(afterReconcile.taskCreationEpoch).toBe(2);
     expect(afterReconcile.createdTaskIds).toEqual(["FN-1", "FN-2"]);
   });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-03:40:
+  Review finding: claim and finalize need the same epoch guard as reconcile, or a stale-epoch
+  creator could finalize an old-epoch task onto a session a concurrent edit already rotated.
+  */
+  it("claim and finalize with a stale expected epoch are no-ops", async () => {
+    const db = h.layer().db;
+    const sessionId = "planning-claim-epoch-guarded-writes";
+    await upsertAiSession(db, planningRow(sessionId, { taskCreationEpoch: 2, createdTaskIds: ["FN-1"] }));
+
+    // Stale-epoch claim loses the CAS entirely.
+    expect(await claimPlanningSessionTaskCreation(db, sessionId, "stale-token", new Date().toISOString(), 1)).toBeNull();
+    expect(payloadOf(await getAiSession(db, sessionId)).createClaimStatus).toBeUndefined();
+
+    // Matching-epoch claim succeeds; a finalize whose expected epoch went stale mid-flight is a no-op.
+    const claimed = await claimPlanningSessionTaskCreation(db, sessionId, "live-token", new Date().toISOString(), 2);
+    expect(claimed).not.toBeNull();
+    expect(await finalizePlanningSessionTaskCreation(db, sessionId, "live-token", "FN-STALE", 1)).toBeNull();
+    const afterStaleFinalize = payloadOf(await getAiSession(db, sessionId));
+    expect(afterStaleFinalize.createClaimStatus).toBe("creating");
+    expect(afterStaleFinalize.createdTaskId).toBeUndefined();
+
+    const finalized = await finalizePlanningSessionTaskCreation(db, sessionId, "live-token", "FN-4", 2);
+    expect(payloadOf(finalized).createdTaskId).toBe("FN-4");
+  });
 });

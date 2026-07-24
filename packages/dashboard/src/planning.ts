@@ -692,6 +692,25 @@ export function setAiSessionStore(store: AiSessionStore): void {
   _aiSessionStore.on("ai_session:deleted", _aiSessionDeletedListener);
 }
 
+/*
+FNXC:PlanningMultiTask 2026-07-24-03:40:
+Review P1: `fn task plan --resume` / fn_task_plan resumeSessionId advertised cross-invocation
+resume, but setAiSessionStore only ever ran inside the dashboard server — CLI planning
+sessions were never persisted, getSession always missed in a fresh process, and dashboard
+sessions were unreachable from the CLI. Non-server callers wire the same durable
+AiSessionStore over their resolved board store's public asyncLayer here. Returns false when
+no async layer exists (legacy SQLite mode): planning then stays in-memory and resume is
+single-process only — callers must say so instead of failing silently.
+*/
+export async function ensureDurablePlanningSessionStore(store: TaskStore): Promise<boolean> {
+  if (_aiSessionStore) return true;
+  const layer = (store as { asyncLayer?: unknown }).asyncLayer;
+  if (!layer) return false;
+  const { AiSessionStore: DurableAiSessionStore } = await import("./ai-session-store.js");
+  setAiSessionStore(new DurableAiSessionStore(layer as ConstructorParameters<typeof DurableAiSessionStore>[0]));
+  return true;
+}
+
 function cleanupInMemorySession(sessionId: string): boolean {
   const session = sessions.get(sessionId);
   if (!session) {
@@ -3973,6 +3992,13 @@ export async function createTaskFromPlanSession(
   if (isPlanningTurnActive(sessionId) || planningStreamManager.hasPendingInitialTurn(sessionId)) {
     throw new GenerationInProgressError("Plan is still generating — wait for the current turn to finish, then create the task.");
   }
+  // FNXC:PlanningMultiTask 2026-07-24-03:40: cross-process guard (review finding) — mirror the route's durable status check so a turn generating in ANOTHER process cannot have its linkage torn by this creation.
+  if (_aiSessionStore) {
+    const liveRow = await _aiSessionStore.get(sessionId).catch(() => null);
+    if (liveRow?.type === "planning" && liveRow.status === "generating") {
+      throw new GenerationInProgressError("Plan is still generating — wait for the current turn to finish, then create the task.");
+    }
+  }
   const summary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
   if (!summary) throw new InvalidSessionStateError("Planning session has no plan to create a task from");
 
@@ -3982,12 +4008,43 @@ export async function createTaskFromPlanSession(
     (await store.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
   const markSessionComplete = async (): Promise<void> => {
     const current = await getSession(sessionId);
-    if (current && !current.validated) await validateSession(sessionId).catch(() => undefined);
+    if (current && !current.validated) {
+      await validateSession(sessionId).catch((err) => {
+        diagnostics.warn("Planning create-task session completion failed", { sessionId, message: err instanceof Error ? err.message : String(err), operation: "create-task-session" });
+      });
+    }
   };
   const returnExisting = async (task: Task): Promise<{ task: Task; alreadyCreated: true }> => {
-    await reconcilePlanningTaskCreation(sessionId, task.id, claimEpoch).catch(() => undefined);
+    await reconcilePlanningTaskCreation(sessionId, task.id, claimEpoch).catch((err) => {
+      diagnostics.warn("Planning create-task linkage reconcile failed", { sessionId, taskId: task.id, message: err instanceof Error ? err.message : String(err), operation: "create-task-session" });
+    });
     await markSessionComplete();
     return { task, alreadyCreated: true };
+  };
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-03:20:
+  Reported bug (dashboard surface, same contract here): deleting the task created from a plan
+  dead-ended the session forever. When the linked task is absent from the include-archived
+  task list (task-row authority — a successful scan proves deletion, not a flaky read), clear
+  the stale linkage so this attempt creates a fresh task; a transient read failure keeps
+  failing closed so we never fork on a hiccup.
+  */
+  const clearStaleLinkedTask = async (staleTaskId: string): Promise<boolean> => {
+    const allTasks = await store.listTasks({ includeArchived: true }).catch(() => null);
+    if (allTasks === null || allTasks.some((candidate) => candidate.id === staleTaskId)) return false;
+    diagnostics.warn("Planning session linked task no longer exists; clearing stale linkage", {
+      sessionId,
+      staleTaskId,
+      operation: "create-task-session",
+    });
+    await updatePlanningCreateClaim(sessionId, { createClaimStatus: "none", createdTaskId: undefined, claimOwnerToken: undefined, claimStartedAt: undefined }).catch(() => undefined);
+    if (session) {
+      session.createdTaskId = undefined;
+      session.createClaimStatus = "none";
+      session.claimOwnerToken = undefined;
+      session.claimStartedAt = undefined;
+    }
+    return true;
   };
 
   // The task row under this epoch's key is the crash-window authority.
@@ -3999,10 +4056,13 @@ export async function createTaskFromPlanSession(
       await markSessionComplete();
       return { task: linked, alreadyCreated: true };
     }
+    if (!(await clearStaleLinkedTask(session.createdTaskId))) {
+      throw new InvalidSessionStateError("PLANNING_CREATED_TASK_MISSING");
+    }
   }
 
   const claimOwnerToken = randomUUID();
-  let claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+  let claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString(), claimEpoch);
   if (!claimed) {
     session = (await getDurablePlanningSession(sessionId).catch(() => undefined)) ?? session;
     const recovered = await findCreatedTask();
@@ -4013,17 +4073,27 @@ export async function createTaskFromPlanSession(
         await markSessionComplete();
         return { task: linked, alreadyCreated: true };
       }
+      if (await clearStaleLinkedTask(session.createdTaskId)) {
+        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString(), claimEpoch);
+      }
+      if (!claimed) {
+        throw new GenerationInProgressError("Planning task creation is already in progress");
+      }
     }
-    const startedAt = session.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
-    const leaseExpired = session.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
-    if (!leaseExpired || !session.claimOwnerToken) {
-      throw new GenerationInProgressError("Planning task creation is already in progress");
+    if (!claimed) {
+      const startedAt = session.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
+      const leaseExpired = session.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
+      if (!leaseExpired || !session.claimOwnerToken) {
+        throw new GenerationInProgressError("Planning task creation is already in progress");
+      }
+      await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
+      claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString(), claimEpoch);
+      if (!claimed) throw new GenerationInProgressError("Planning task creation is already in progress");
     }
-    await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
-    claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
-    if (!claimed) throw new GenerationInProgressError("Planning task creation is already in progress");
   }
 
+  // FNXC:PlanningMultiTask 2026-07-24-03:40: review finding — a post-insert failure (e.g. finalize) lands in the raced-insert catch; without this marker the task WE created was mislabeled alreadyCreated:true.
+  let insertedTask: Task | undefined;
   try {
     const planMd = formatPlanningPlanMd(summary);
     const originalRequest = session.initialPlan?.trim() || summary.description.trim();
@@ -4036,22 +4106,35 @@ export async function createTaskFromPlanSession(
       ...(options?.baseBranch?.trim() ? { baseBranch: options.baseBranch.trim() } : {}),
       proposalClaimId,
     });
+    insertedTask = task;
+    // FNXC:PlanningMultiTask 2026-07-24-03:20: best-effort side effects must be LOUD on failure (review finding) — a task missing its plan document with no signal is undebuggable.
+    const sideEffect = async (label: string, work: () => Promise<unknown> | unknown): Promise<void> => {
+      try {
+        await work();
+      } catch (err) {
+        diagnostics.warn(label, { sessionId, taskId: task.id, message: err instanceof Error ? err.message : String(err), operation: "create-task-session" });
+      }
+    };
     if (summary.suggestedSize) {
-      await Promise.resolve(store.updateTask?.(task.id, { size: summary.suggestedSize })).catch(() => undefined);
+      await sideEffect("Planning create-task size update failed", () => store.updateTask?.(task.id, { size: summary.suggestedSize }));
     }
-    await Promise.resolve(store.upsertTaskDocument?.(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } })).catch(() => undefined);
+    await sideEffect("Planning create-task plan document write failed", () => store.upsertTaskDocument?.(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } }));
     if (originalRequest) {
-      await Promise.resolve(store.upsertTaskDocument?.(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } })).catch(() => undefined);
+      await sideEffect("Planning create-task original description document write failed", () => store.upsertTaskDocument?.(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }));
     }
-    await Promise.resolve(store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session.initialPlan ?? "").slice(0, 200)}`)).catch(() => undefined);
-    await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id);
+    await sideEffect("Planning create-task log entry failed", () => store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session.initialPlan ?? "").slice(0, 200)}`));
+    await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id, claimEpoch);
     await markSessionComplete();
     return { task, alreadyCreated: false };
   } catch (err) {
     // A raced insert under the same key is the idempotent success case; anything else releases the claim.
     const raced = await findCreatedTask().catch(() => undefined);
     await releasePlanningTaskCreation(sessionId, claimOwnerToken).catch(() => undefined);
-    if (raced) return returnExisting(raced);
+    if (raced) {
+      const recovered = await returnExisting(raced);
+      // A post-insert failure (e.g. finalize) lands here for the task WE just created — it is not "already created".
+      return insertedTask && raced.id === insertedTask.id ? { task: recovered.task, alreadyCreated: false } : recovered;
+    }
     throw err;
   }
 }
@@ -4063,26 +4146,28 @@ export async function getDurablePlanningSession(sessionId: string): Promise<Sess
   return row?.type === "planning" ? restoreClaimSession(row) : undefined;
 }
 
-/** Atomically claim a planning session for its one task creation. */
-export async function claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string): Promise<Session | undefined> {
+/** Atomically claim a planning session for one creation epoch's task. */
+export async function claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string, expectedTaskCreationEpoch?: number): Promise<Session | undefined> {
   if (!_aiSessionStore || typeof (_aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown }).claimPlanningTaskCreation !== "function") {
     const session = await getSession(sessionId);
     if (!session || session.createClaimStatus === "creating" || session.createClaimStatus === "created") return undefined;
+    if (expectedTaskCreationEpoch !== undefined && (session.taskCreationEpoch ?? 0) !== expectedTaskCreationEpoch) return undefined;
     Object.assign(session, { createClaimStatus: "creating", claimOwnerToken: ownerToken, claimStartedAt: startedAt });
     return session;
   }
-  const row = await _aiSessionStore.claimPlanningTaskCreation(sessionId, ownerToken, startedAt);
+  const row = await _aiSessionStore.claimPlanningTaskCreation(sessionId, ownerToken, startedAt, expectedTaskCreationEpoch);
   return row ? restoreClaimSession(row) : undefined;
 }
 
-export async function finalizePlanningTaskCreation(sessionId: string, ownerToken: string, taskId: string): Promise<Session | undefined> {
+export async function finalizePlanningTaskCreation(sessionId: string, ownerToken: string, taskId: string, expectedTaskCreationEpoch?: number): Promise<Session | undefined> {
   if (!_aiSessionStore || typeof (_aiSessionStore as unknown as { finalizePlanningTaskCreation?: unknown }).finalizePlanningTaskCreation !== "function") {
     const session = await getSession(sessionId);
     if (!session || session.claimOwnerToken !== ownerToken) return undefined;
+    if (expectedTaskCreationEpoch !== undefined && (session.taskCreationEpoch ?? 0) !== expectedTaskCreationEpoch) return undefined;
     Object.assign(session, { createClaimStatus: "created", createdTaskId: taskId, claimOwnerToken: undefined, claimStartedAt: undefined });
     return session;
   }
-  const row = await _aiSessionStore.finalizePlanningTaskCreation(sessionId, ownerToken, taskId);
+  const row = await _aiSessionStore.finalizePlanningTaskCreation(sessionId, ownerToken, taskId, expectedTaskCreationEpoch);
   return row ? restoreClaimSession(row) : undefined;
 }
 

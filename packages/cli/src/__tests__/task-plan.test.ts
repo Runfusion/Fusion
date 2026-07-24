@@ -30,6 +30,7 @@ vi.mock("@fusion/dashboard/planning", () => ({
   submitResponse: vi.fn(),
   validateSession: vi.fn(),
   getSession: vi.fn(),
+  ensureDurablePlanningSessionStore: vi.fn(async () => true),
   /*
   FNXC:PlanningMultiTask 2026-07-24-02:30:
   The CLI now creates through the claim-aware shared path (idempotency + session linkage +
@@ -510,16 +511,53 @@ describe("runTaskPlan", () => {
         data: { title: "Second task", description: "d2", suggestedSize: "S", suggestedDependencies: [], keyDeliverables: ["X"] },
       });
     mockQuestion
-      .mockResolvedValueOnce("tighten the scope")
+      .mockResolvedValueOnce("split the rollout")
       .mockResolvedValueOnce("DONE");
 
-    const taskId = await runTaskPlan(undefined, true, undefined, undefined, "resume-session-9");
+    const taskId = await runTaskPlan("tighten the scope", true, undefined, undefined, "resume-session-9");
 
     expect(createSession).not.toHaveBeenCalled();
-    // The no-question resume issues a refine turn to regenerate the interview.
-    expect(submitResponse).toHaveBeenNthCalledWith(1, "resume-session-9", { refine: true }, "/test/project", undefined, expect.anything());
+    // The no-question resume issues a refine turn carrying the provided description as focus.
+    expect(submitResponse).toHaveBeenNthCalledWith(1, "resume-session-9", { refine: true, focus: "tighten the scope" }, "/test/project", undefined, expect.anything());
     expect(createTaskFromPlanSession).toHaveBeenCalledWith("resume-session-9", expect.anything(), { baseBranch: undefined });
     expect(taskId).toBe("FN-042");
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-03:40:
+  Review findings: resume failures must THROW (fn_task_plan runs in the pi host — process.exit
+  killed the whole agent session), and a no-question resume without a refine focus must not
+  silently rotate the epoch.
+  */
+  it("throws instead of exiting when the resumed session is missing", async () => {
+    setupTaskStoreMock();
+    (getSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("Process.exit called");
+    });
+
+    await expect(runTaskPlan(undefined, true, undefined, undefined, "missing-session"))
+      .rejects.toThrow(/not found/);
+    expect(exitSpy).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
+  });
+
+  it("throws when resuming a no-question session without a refine focus", async () => {
+    setupTaskStoreMock();
+    (getSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "resume-session-10",
+      currentQuestion: null,
+      summary: { title: "Existing plan", description: "d", suggestedSize: "M", suggestedDependencies: [], keyDeliverables: [] },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("Process.exit called");
+    });
+
+    await expect(runTaskPlan(undefined, true, undefined, undefined, "resume-session-10"))
+      .rejects.toThrow(/refine/i);
+    expect(submitResponse).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
   });
 
   it("handles RateLimitError with proper message", async () => {

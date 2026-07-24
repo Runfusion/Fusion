@@ -156,14 +156,15 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   Planning creation claims must use one conditional database update, not a read then an
   upsert, so competing dashboard processes cannot both become the creator.
   */
-  async claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string): Promise<AiSessionRow | null> {
-    const row = await claimPlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, startedAt) as AiSessionRow | null;
+  // FNXC:PlanningMultiTask 2026-07-24-03:40: expectedTaskCreationEpoch guards claim/finalize against a concurrent epoch rotation — see the core CAS functions.
+  async claimPlanningTaskCreation(sessionId: string, ownerToken: string, startedAt: string, expectedTaskCreationEpoch?: number): Promise<AiSessionRow | null> {
+    const row = await claimPlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, startedAt, expectedTaskCreationEpoch) as AiSessionRow | null;
     if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     return row;
   }
 
-  async finalizePlanningTaskCreation(sessionId: string, ownerToken: string, taskId: string): Promise<AiSessionRow | null> {
-    const row = await finalizePlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, taskId) as AiSessionRow | null;
+  async finalizePlanningTaskCreation(sessionId: string, ownerToken: string, taskId: string, expectedTaskCreationEpoch?: number): Promise<AiSessionRow | null> {
+    const row = await finalizePlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken, taskId, expectedTaskCreationEpoch) as AiSessionRow | null;
     if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     return row;
   }

@@ -310,11 +310,25 @@ survive. The WHERE guards still evaluate against the CURRENT row at update time.
 const CLAIM_KEYS_PATCH = (patch: Record<string, string>, removeKeys: string[]) =>
   sql`(${schema.project.aiSessions.inputPayload} || ${JSON.stringify(patch)}::jsonb)${sql.raw(removeKeys.map((key) => ` - '${key.replace(/'/g, "''")}'`).join(""))}`;
 
+/*
+FNXC:PlanningMultiTask 2026-07-24-03:40:
+Review finding: without epoch guards a stale-epoch creator could claim/finalize an old-epoch
+task onto a session that a concurrent edit turn had already rotated, re-linking an archived
+plan's task to the NEW epoch. When the caller supplies expectedTaskCreationEpoch, the
+conditional update only fires while the row's epoch still matches — a lost race is a no-op
+and the caller recovers through the task-row proposalClaimId authority.
+*/
+const epochGuard = (expectedTaskCreationEpoch: number | undefined) =>
+  expectedTaskCreationEpoch === undefined
+    ? []
+    : [sql`coalesce((${schema.project.aiSessions.inputPayload}->>'taskCreationEpoch')::int, 0) = ${expectedTaskCreationEpoch}`];
+
 export async function claimPlanningSessionTaskCreation(
   handle: QueryHandle,
   sessionId: string,
   claimOwnerToken: string,
   claimStartedAt: string,
+  expectedTaskCreationEpoch?: number,
 ): Promise<AiSessionRow | null> {
   const rows = await handle.update(schema.project.aiSessions)
     .set({
@@ -325,6 +339,7 @@ export async function claimPlanningSessionTaskCreation(
       eq(schema.project.aiSessions.id, sessionId),
       eq(schema.project.aiSessions.type, "planning"),
       sql`coalesce(${schema.project.aiSessions.inputPayload}->>'createClaimStatus', 'none') = 'none'`,
+      ...epochGuard(expectedTaskCreationEpoch),
     ))
     .returning();
   return rows[0] ? rowToSession(rows[0]) : null;
@@ -336,13 +351,18 @@ export async function finalizePlanningSessionTaskCreation(
   sessionId: string,
   claimOwnerToken: string,
   createdTaskId: string,
+  expectedTaskCreationEpoch?: number,
 ): Promise<AiSessionRow | null> {
   const rows = await handle.update(schema.project.aiSessions)
     .set({
       inputPayload: CLAIM_KEYS_PATCH({ createClaimStatus: "created", createdTaskId }, ["claimOwnerToken", "claimStartedAt"]),
       updatedAt: new Date().toISOString(),
     })
-    .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
+    .where(and(
+      eq(schema.project.aiSessions.id, sessionId),
+      sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`,
+      ...epochGuard(expectedTaskCreationEpoch),
+    ))
     .returning();
   return rows[0] ? rowToSession(rows[0]) : null;
 }

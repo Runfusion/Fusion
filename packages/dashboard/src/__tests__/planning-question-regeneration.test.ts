@@ -238,9 +238,11 @@ describe("planning question regeneration instead of no-active-question errors", 
     const { sessionId } = await startSessionAwaitingInput("10.2.0.13");
 
     const tasks: Array<{ id: string; title: string; description: string; column: string; dependencies: string[]; proposalClaimId?: string }> = [];
+    let taskSequence = 0;
     const createTask = vi.fn(async (input: { title: string; description: string; dependencies?: string[]; proposalClaimId?: string }) => {
+      taskSequence += 1;
       const task = {
-        id: `FN-CLI-${tasks.length + 1}`,
+        id: `FN-CLI-${taskSequence}`,
         title: input.title,
         description: input.description,
         column: "triage",
@@ -280,6 +282,21 @@ describe("planning question regeneration instead of no-active-question errors", 
     expect(second.task.id).not.toBe(first.task.id);
     expect(createTask).toHaveBeenCalledTimes(2);
     expect(createTask.mock.calls[1][0].proposalClaimId).toBe(`planning-session:${sessionId}#1`);
+
+    /*
+    FNXC:PlanningMultiTask 2026-07-24-03:20:
+    Reported bug: deleting the created task dead-ended the plan forever
+    (PLANNING_CREATED_TASK_MISSING on every retry). A deleted linked task (absent from the
+    include-archived scan) must clear the stale linkage and create a fresh task.
+    */
+    const deletedIndex = tasks.findIndex((task) => task.id === second.task.id);
+    tasks.splice(deletedIndex, 1);
+    const afterDeletion = await createTaskFromPlanSession(sessionId, taskStore);
+    expect(afterDeletion.alreadyCreated).toBe(false);
+    expect(afterDeletion.task.id).not.toBe(second.task.id);
+    expect(createTask).toHaveBeenCalledTimes(3);
+    // The replacement task reuses the current epoch's claim key (its unique-index row died with the deleted task).
+    expect(createTask.mock.calls[2][0].proposalClaimId).toBe(`planning-session:${sessionId}#1`);
   });
 
   /*

@@ -2967,6 +2967,100 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).not.toHaveBeenCalled();
       });
 
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-03:20:
+      Reported bug: deleting the task created from a plan left the session permanently stuck on
+      PLANNING_CREATED_TASK_MISSING — Retry create replayed the same 409 forever. A linked task
+      that is absent from the include-archived scan clears the stale linkage and creates a
+      fresh task; a linked task still LISTED but unreadable keeps failing closed (never fork on
+      a flaky read).
+      */
+      const buildLinkedGoneRow = (sessionId: string) => ({
+        id: sessionId,
+        type: "planning",
+        status: "complete",
+        title: "Linked task deleted",
+        inputPayload: JSON.stringify({ initialPlan: "Build a thing", validated: true, createdTaskId: "FN-GONE", createClaimStatus: "created" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify({
+          title: "Replacement plan",
+          description: "Recreate after the linked task was deleted",
+          suggestedSize: "M",
+          suggestedDependencies: [],
+          keyDeliverables: ["Implementation"],
+        }),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      it("creates a fresh task when the linked task was deleted instead of dead-ending", async () => {
+        const sessionId = "planning-linked-task-deleted";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildLinkedGoneRow(sessionId) as never);
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task FN-GONE not found"));
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-REBORN",
+          description: "Recreated task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.alreadyCreated).toBe(false);
+        expect(res.body.task.id).toBe("FN-REBORN");
+        expect(store.createTask).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps failing closed when the linked task is still listed but unreadable", async () => {
+        const sessionId = "planning-linked-task-unreadable";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildLinkedGoneRow(sessionId) as never);
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+          { id: "FN-GONE", proposalClaimId: undefined },
+        ]);
+        (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("transient store failure"));
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(409);
+        expect(store.createTask).not.toHaveBeenCalled();
+      });
+
       it.each([
         {
           sessionSource: "live",

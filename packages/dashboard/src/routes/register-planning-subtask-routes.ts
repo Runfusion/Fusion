@@ -1328,10 +1328,36 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const returnLinkedTask = async (candidate = session) => {
         if (!candidate?.createdTaskId) return false;
         const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
-        if (!linkedTask) throw conflict("PLANNING_CREATED_TASK_MISSING");
-        await markSessionComplete();
-        res.status(200).json({ task: linkedTask, alreadyCreated: true });
-        return true;
+        if (linkedTask) {
+          await markSessionComplete();
+          res.status(200).json({ task: linkedTask, alreadyCreated: true });
+          return true;
+        }
+        /*
+        FNXC:PlanningMultiTask 2026-07-24-03:20:
+        Reported bug: deleting the task created from a plan left the session permanently
+        dead-ended on PLANNING_CREATED_TASK_MISSING — Retry create replayed the same 409
+        forever. Distinguish "task deleted" from "transient read failure" using the
+        include-archived task scan (the same crash-window authority findCreatedTask uses):
+        if the linked id is still LISTED but getTask failed, keep failing closed (never fork
+        on a flaky read); if it is absent from the full list, the linkage is stale — clear it
+        so this request falls through and creates a fresh task under the current epoch key.
+        */
+        const allTasks = await scopedStore.listTasks({ includeArchived: true }).catch(() => null);
+        const stillListed = allTasks === null || allTasks.some((task) => task.id === candidate.createdTaskId);
+        if (stillListed) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        await runPlanningCreateSideEffect(
+          "Planning create-task stale linkage clear failed",
+          () => updatePlanningCreateClaim(sessionId, { createClaimStatus: "none", createdTaskId: undefined, claimOwnerToken: undefined, claimStartedAt: undefined }),
+          { sessionId, staleTaskId: candidate.createdTaskId },
+        );
+        if (session) {
+          session.createdTaskId = undefined;
+          session.createClaimStatus = "none";
+          session.claimOwnerToken = undefined;
+          session.claimStartedAt = undefined;
+        }
+        return false;
       };
 
       // A task row is the crash-window authority. Reconcile it before trying to claim.
@@ -1351,7 +1377,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const claimStartedAt = new Date().toISOString();
       const hasDurableClaimStore = typeof (aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown } | undefined)?.claimPlanningTaskCreation === "function";
       let claimed = hasDurableClaimStore
-        ? await claimPlanningTaskCreation(sessionId, claimOwnerToken, claimStartedAt)
+        ? await claimPlanningTaskCreation(sessionId, claimOwnerToken, claimStartedAt, claimEpoch)
         : session
           ? session.createClaimStatus !== "creating" && session.createClaimStatus !== "created"
             ? (await updatePlanningCreateClaim(sessionId, { createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined }), session)
@@ -1374,7 +1400,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         const leaseExpired = session?.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
         if (!leaseExpired || !session?.claimOwnerToken) throw conflict("Planning task creation is already in progress");
         await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
-        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString(), claimEpoch);
         if (!claimed) throw conflict("Planning task creation is already in progress");
       }
 
@@ -1448,7 +1474,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       // Write the linkage before responding. If this write is interrupted, the next retry
       // reconciles the unique proposalClaimId task mapping above and never inserts another task.
       if (hasDurableClaimStore) {
-        await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id);
+        await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id, claimEpoch);
       } else if (session) {
         await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
       }
