@@ -126,15 +126,36 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("the Model|Agent toggle swaps controls", () => {
+  it("switches to Agent mode during the Windows pointer activation sequence and exposes selected semantics", () => {
     render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} agents={agents} />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    const modelMode = screen.getByTestId("chat-thinking-mode-model");
+    const agentMode = screen.getByTestId("chat-thinking-mode-agent");
     expect(screen.getByTestId("mock-model-dropdown")).toBeDefined();
+    expect(modelMode).toHaveAttribute("aria-pressed", "true");
+    expect(agentMode).toHaveAttribute("aria-pressed", "false");
 
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
+    // Electron on Windows visibly dispatches pointerdown before it completes click activation.
+    // Agent mode must render from that primary-pointer boundary, not wait for a click that a
+    // host surface can suppress after showing the pressed state.
+    fireEvent.pointerDown(agentMode, { button: 0, pointerType: "mouse" });
+    expect(agentMode).toHaveClass("chat-thinking-mode-btn--active");
+    expect(agentMode).toHaveAttribute("aria-pressed", "true");
+    expect(modelMode).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
     expect(screen.getByTestId("chat-thinking-agent-list")).toBeDefined();
     expect(screen.getByTestId("chat-thinking-agent-agent-001")).toBeDefined();
+
+    fireEvent.pointerUp(agentMode, { button: 0, pointerType: "mouse" });
+    fireEvent.click(agentMode, { detail: 1 });
+    expect(screen.getByTestId("chat-thinking-agent-list")).toBeDefined();
+
+    // Keyboard button activation remains a click with no pointer detail.
+    fireEvent.click(modelMode, { detail: 0 });
+    expect(modelMode).toHaveClass("chat-thinking-mode-btn--active");
+    expect(modelMode).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("chat-thinking-model-picker")).toBeDefined();
   });
 
   it("selecting a model calls onChangeModel with the provider/model pair and closes", () => {

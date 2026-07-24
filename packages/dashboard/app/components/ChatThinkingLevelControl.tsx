@@ -139,6 +139,18 @@ export function ChatThinkingLevelControl({
     void onChangeModel?.({ agentId: nextAgentId });
   };
 
+  /*
+  FNXC:Chat-ModelSwitch 2026-07-24-00:00:
+  Windows Electron can show the Agent toggle's pressed feedback after primary pointerdown while
+  its host prevents the following click. Commit the visual mode switch on primary pointerdown so
+  the available-agent list deterministically replaces the model picker; preserve click handling
+  only for keyboard/synthetic activation (`detail === 0`) so one pointer gesture does not reset
+  the local mode twice. `aria-pressed` makes the selected target observable to assistive tech.
+  */
+  const activateTargetMode = (mode: TargetMode) => {
+    setTargetMode(mode);
+  };
+
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Escape") {
       setOpen(false);
@@ -197,7 +209,13 @@ export function ChatThinkingLevelControl({
                 type="button"
                 className={`chat-thinking-mode-btn${targetMode === "model" ? " chat-thinking-mode-btn--active" : ""}`}
                 data-testid="chat-thinking-mode-model"
-                onClick={() => setTargetMode("model")}
+                aria-pressed={targetMode === "model"}
+                onPointerDown={(event) => {
+                  if (event.button === 0) activateTargetMode("model");
+                }}
+                onClick={(event) => {
+                  if (event.detail === 0) activateTargetMode("model");
+                }}
               >
                 {t("chat.newChatModeModel", "Model")}
               </button>
@@ -205,7 +223,13 @@ export function ChatThinkingLevelControl({
                 type="button"
                 className={`chat-thinking-mode-btn${targetMode === "agent" ? " chat-thinking-mode-btn--active" : ""}`}
                 data-testid="chat-thinking-mode-agent"
-                onClick={() => setTargetMode("agent")}
+                aria-pressed={targetMode === "agent"}
+                onPointerDown={(event) => {
+                  if (event.button === 0) activateTargetMode("agent");
+                }}
+                onClick={(event) => {
+                  if (event.detail === 0) activateTargetMode("agent");
+                }}
               >
                 {t("chat.newChatModeAgent", "Agent")}
               </button>

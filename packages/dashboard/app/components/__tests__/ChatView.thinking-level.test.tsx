@@ -242,7 +242,12 @@ describe("ChatView thinking-level control (FN-7898)", () => {
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
+    const agentMode = screen.getByTestId("chat-thinking-mode-agent");
+    fireEvent.pointerDown(agentMode, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(agentMode, { button: 0, pointerType: "mouse" });
+    fireEvent.click(agentMode, { detail: 1 });
+    expect(agentMode).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
     fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
 
     expect(setSessionModel).toHaveBeenCalledWith("sess-agent", { agentId: "agent-002" });
@@ -313,19 +318,40 @@ describe("ChatView thinking-level control (FN-7898)", () => {
     expect(screen.getByTestId("chat-thinking-agent-agent-001").className).toContain("chat-thinking-agent-item--selected");
   });
 
-  it("(f) renders the trigger without a layout/overflow regression at a mobile viewport", async () => {
-    mockMobileViewport();
-    const session = makeSession({ id: "sess-mobile", cliExecutorAdapterId: null, thinkingLevel: null });
-    mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session] }));
+  it.each([
+    { name: "mobile", configure: mockMobileViewport, props: {} },
+    { name: "narrow floating", configure: mockDesktopViewport, props: { floating: true, compactLayout: true } },
+  ])("(f) switches to and persists an Agent target from the $name direct-chat host", async ({ name, configure, props }) => {
+    configure();
+    const setSessionModel = vi.fn();
+    const session = makeSession({ id: `sess-${name.replaceAll(" ", "-")}`, cliExecutorAdapterId: null, agentId: useChatModule.FN_AGENT_ID });
+    const agentsMap = new Map([
+      ["agent-001", { id: "agent-001", name: "Alpha", role: "executor" }],
+      ["agent-002", { id: "agent-002", name: "Beta", role: "reviewer" }],
+    ] as const);
+    mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session], agentsMap, setSessionModel }));
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} {...props} />);
+
+    expect(document.querySelector(".chat-view--narrow")).toBeTruthy();
+    if (props.floating) expect(document.querySelector(".chat-view--floating")).toBeTruthy();
 
     const trigger = screen.getByTestId("chat-thinking-btn");
-    expect(trigger).toBeInTheDocument();
-    // Shell/structure assertion consistent with other ChatView mobile tests:
-    // the trigger sits alongside the attach button inside the same input row.
     expect(trigger.closest(".chat-input-row")).not.toBeNull();
-    expect(trigger.closest(".chat-thinking-level-root")).not.toBeNull();
+    fireEvent.click(trigger);
+
+    // Match the Windows Electron pointer activation whose click can be consumed by a host.
+    const agentMode = screen.getByTestId("chat-thinking-mode-agent");
+    fireEvent.pointerDown(agentMode, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(agentMode, { button: 0, pointerType: "mouse" });
+    fireEvent.click(agentMode, { detail: 1 });
+
+    expect(agentMode).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
+    expect(screen.getByTestId("chat-thinking-agent-list")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
+
+    expect(setSessionModel).toHaveBeenCalledWith(session.id, { agentId: "agent-002" });
   });
 
   it("(g) uses the resolved Settings default for both the in-chat and New Chat thinking-level labels", async () => {
