@@ -420,6 +420,16 @@ describe("ListView", () => {
     localStorage.clear();
     showAllColumnsByDefault();
     ensureMatchMedia();
+    /*
+    FNXC:ViewportMode 2026-07-24-02:30:
+    FN-8557 (973c978f9) made isMobileViewport treat `window.innerWidth <= 768`
+    as a mobile signal alongside matchMedia. mockMobileViewport stamps
+    innerWidth=375 via defineProperty and its spy restore only resets
+    matchMedia, so the leaked width flipped every later test into the mobile
+    card layout (no <tr> rows). Reset innerWidth to a desktop width here so the
+    per-test viewport helpers stay authoritative.
+    */
+    Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -4221,6 +4231,8 @@ describe("ListView - Bulk Selection", () => {
     for (const key of Object.keys(listViewSseHandlers)) delete listViewSseHandlers[key];
     localStorage.clear();
     ensureMatchMedia();
+    // FNXC:ViewportMode 2026-07-24-02:30: FN-8557 innerWidth leak reset (see the main ListView beforeEach comment).
+    Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
       matches: false,
       media: query,

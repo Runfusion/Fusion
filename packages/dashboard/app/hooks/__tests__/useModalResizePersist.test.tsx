@@ -181,7 +181,15 @@ describe("useModalResizePersist", () => {
   });
 
   it("clears inline size and does not inject a grip on mobile", () => {
-    setViewport(700);
+    /*
+    FNXC:ViewportMode 2026-07-24-02:25:
+    FN-8557 (973c978f9) classifies a narrow touch viewport with a tablet-class
+    physical screen (min edge > 480px) as tablet, which keeps the FN-6377 touch
+    grip. jsdom reports `"ontouchstart" in window === true`, so the old 700x800
+    fixture became a tablet. Use a phone-class screen (375px min edge) so this
+    test still exercises the true mobile contract: no grip, inline size cleared.
+    */
+    setViewport(375);
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ width: 610, height: 480 }));
 
     render(<Harness initialWidth="610px" initialHeight="480px" />);

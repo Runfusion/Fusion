@@ -20,6 +20,14 @@ class MockStore extends EventEmitter {
   addTask(task: Task): void { this.tasks.set(task.id, task); }
   getMissionStore() { return new EventEmitter(); }
   async listTasks(): Promise<Task[]> { return []; }
+  /*
+  FNXC:PluginMcpServers 2026-07-24-02:05:
+  FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+  MCP provider on every getProjectContext call; a store exposing
+  getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+  binder (which would otherwise 500 on getPluginStore()).
+  */
+  getProjectScopedPluginMcpServers = vi.fn().mockResolvedValue([]);
 }
 
 function createTask(overrides: Partial<Task> = {}): Task {

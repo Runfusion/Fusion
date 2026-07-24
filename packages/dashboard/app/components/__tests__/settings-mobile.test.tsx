@@ -163,6 +163,15 @@ function setDocumentHidden(hidden: boolean): void {
 }
 
 function mockSettingsViewport(matches: boolean): void {
+  /*
+  FNXC:ViewportMode 2026-07-24-02:20:
+  FN-8557 (973c978f9) made isMobileViewport treat `window.innerWidth <= 768` as a
+  mobile signal alongside matchMedia. Individual mobile tests here stamp
+  innerWidth=375 via defineProperty without restoring it, which leaked mobile
+  mode into later desktop assertions. The viewport mock now owns innerWidth in
+  both directions so each test's declared viewport is authoritative.
+  */
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: matches ? 375 : 1280 });
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
