@@ -66,6 +66,16 @@ export default defineConfig({
     pool: "threads",
     maxWorkers,
     minWorkers: 1,
+    /*
+    FNXC:PluginPgTestTimeout 2026-07-23-22:15:
+    The shared PG test harness (packages/core/src/__test-utils__/pg-test-harness.ts) pays its
+    golden-schema-template cold start inside the FIRST pg test of a vitest invocation, which is
+    budgeted for the 15s testTimeout its home package (@fusion/core) configures. Plugin packages
+    ran at vitest's 5s default, so the whatsapp-chat persistence.pg.test.ts timed out on loaded
+    CI runners (full-suite shard 4, 2026-07-24). Align every pg-harness-consuming plugin with
+    core's budget.
+    */
+    testTimeout: 15_000,
     projects: [
       {
         extends: true,
