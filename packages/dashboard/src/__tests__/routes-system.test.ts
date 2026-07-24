@@ -255,6 +255,21 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
       getMissionTask: vi.fn(),
       deleteMissionTask: vi.fn(),
     }),
+    /*
+    FNXC:PluginMcpServers 2026-07-24-01:25:
+    FN-8491 (3cd023fa4) binds a project-scoped plugin-MCP provider on every getProjectContext.
+    Exposing getProjectScopedPluginMcpServers marks this mock as runtime-owned so the binder
+    short-circuits instead of calling getPluginStore().
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
+    /*
+    FNXC:PluginEnablementScope 2026-07-24-01:25:
+    getProjectPluginLoader (moved into routes/context.ts 2026-07-22) calls
+    scopedStore.getPluginStore() to decide between the host loader and a scoped fallback.
+    Returning undefined matches the undefined options.pluginStore, so routes resolve the
+    pluginLoader passed to createApiRoutes — the contract these tests assert.
+    */
+    getPluginStore: vi.fn(),
     ...overrides,
   } as unknown as TaskStore;
 }

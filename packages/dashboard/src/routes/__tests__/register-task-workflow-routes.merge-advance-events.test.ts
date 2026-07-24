@@ -25,6 +25,10 @@ describe("merge advance events route", () => {
   it("returns empty events when audit store is empty", async () => {
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
+      // FNXC:PluginMcpServers 2026-07-24-01:25: FN-8491 (3cd023fa4) binds a project-scoped
+      // plugin-MCP provider on every getProjectContext; exposing this marks the mock as
+      // runtime-owned so the binder short-circuits instead of calling getPluginStore().
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
       // FNXC:PostgresCutover 2026-07-16-06:30: API routes use the async
       // run-audit accessor when backed by PostgreSQL, including test doubles.
       getRunAuditEventsAsync: vi.fn(async () => []),
@@ -77,6 +81,10 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
+      // FNXC:PluginMcpServers 2026-07-24-01:25: FN-8491 (3cd023fa4) binds a project-scoped
+      // plugin-MCP provider on every getProjectContext; exposing this marks the mock as
+      // runtime-owned so the binder short-circuits instead of calling getPluginStore().
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) => getRunAuditEvents(filters)),
     } as unknown as TaskStore;
 
@@ -156,6 +164,10 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
+      // FNXC:PluginMcpServers 2026-07-24-01:25: FN-8491 (3cd023fa4) binds a project-scoped
+      // plugin-MCP provider on every getProjectContext; exposing this marks the mock as
+      // runtime-owned so the binder short-circuits instead of calling getPluginStore().
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) => {
         if (filters?.mutationType === "merge:integration-ref-advance") return [advance];
         if (filters?.mutationType === "merge:auto-sync") return [clean, conflict, stale];
@@ -195,6 +207,10 @@ describe("merge advance events route", () => {
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
+      // FNXC:PluginMcpServers 2026-07-24-01:25: FN-8491 (3cd023fa4) binds a project-scoped
+      // plugin-MCP provider on every getProjectContext; exposing this marks the mock as
+      // runtime-owned so the binder short-circuits instead of calling getPluginStore().
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getRunAuditEventsAsync: vi.fn(async (filters?: { mutationType?: string }) =>
         filters?.mutationType === "merge:integration-ref-advance" ? [advance] : []),
     } as unknown as TaskStore;
@@ -210,6 +226,10 @@ describe("merge advance events route", () => {
   it("defaults limit to 20, clamps max to 100, rejects invalid limit", async () => {
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
+      // FNXC:PluginMcpServers 2026-07-24-01:25: FN-8491 (3cd023fa4) binds a project-scoped
+      // plugin-MCP provider on every getProjectContext; exposing this marks the mock as
+      // runtime-owned so the binder short-circuits instead of calling getPluginStore().
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getRunAuditEventsAsync: vi.fn(async () => []),
     } as unknown as TaskStore;
 

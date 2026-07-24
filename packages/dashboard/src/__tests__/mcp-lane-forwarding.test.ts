@@ -77,7 +77,21 @@ vi.mock("../planning-board-tools.js", () => ({
 }));
 
 import { __resetPlanningState, createSession, createSessionWithAgent, planningStreamManager } from "../planning.js";
-import { resolveManualAiPromptMcpServers } from "../routes.js";
+/*
+FNXC:DashboardTests 2026-07-24-01:25:
+resolveManualAiPromptMcpServers moved out of the routes.ts monolith into the
+automation-step-execution registrar module and is no longer re-exported from routes.js.
+*/
+import { resolveManualAiPromptMcpServers } from "../routes/automation-step-execution.js";
+
+/*
+FNXC:PlanningMode 2026-07-24-01:25:
+FN-8538 (3f976e3dc) gave Planning Mode a dedicated collaborative prompt:
+resolvePlanningModeSystemPrompt now reads store.getSettings() on every planning
+agent creation, so planning-session stores must expose it (bare {} throws and
+aborts agent init before the MCP forwarding under test happens).
+*/
+const makePlanningStore = () => ({ getSettings: vi.fn(async () => ({})) }) as never;
 import { createMissionInterviewAgent } from "../mission-interview.js";
 import { createTargetInterviewAgent } from "../milestone-slice-interview.js";
 
@@ -89,7 +103,7 @@ describe("dashboard MCP lane forwarding", () => {
   });
 
   it("forwards the materialized MCP set to chat/planning createFnAgent sessions", async () => {
-    const store = {} as never;
+    const store = makePlanningStore();
 
     await createSession("127.0.0.1", "Build a feature", store, "/tmp/fusion-dashboard-test");
 
@@ -105,7 +119,7 @@ describe("dashboard MCP lane forwarding", () => {
   it("defaults an undefined MCP resolver result to empty servers for non-streaming planning", async () => {
     resolveMcpServersForStoreMock.mockResolvedValueOnce(undefined as never);
 
-    await createSession("127.0.0.1", "Build without MCP", {} as never, "/tmp/fusion-dashboard-test");
+    await createSession("127.0.0.1", "Build without MCP", makePlanningStore(), "/tmp/fusion-dashboard-test");
 
     expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       tools: "readonly",
@@ -121,7 +135,7 @@ describe("dashboard MCP lane forwarding", () => {
       "127.0.0.1",
       "Stream without MCP",
       "/tmp/fusion-dashboard-test",
-      {} as never,
+      makePlanningStore(),
     );
 
     const startInitialTurn = planningStreamManager.consumeInitialTurn(sessionId);

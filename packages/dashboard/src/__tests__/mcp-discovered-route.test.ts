@@ -38,6 +38,13 @@ function createMockStore(settingsByScope = {
   return {
     getRootDir: () => "/repo",
     getSettingsByScopeFast: async () => settingsByScope,
+    /*
+    FNXC:PluginMcpServers 2026-07-24-01:25:
+    FN-8491 (3cd023fa4) binds a project-scoped plugin-MCP provider on every getProjectContext.
+    Exposing getProjectScopedPluginMcpServers marks this mock as runtime-owned so the binder
+    short-circuits instead of calling getPluginStore().
+    */
+    getProjectScopedPluginMcpServers: async () => [],
   };
 }
 

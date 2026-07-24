@@ -139,6 +139,14 @@ function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
       deleteMissionTask: vi.fn(),
     }),
     getPluginStore: vi.fn(),
+    /*
+    FNXC:PluginMcpServers 2026-07-24-01:25:
+    FN-8491 (3cd023fa4) binds a project-scoped plugin-MCP provider on every getProjectContext.
+    Exposing getProjectScopedPluginMcpServers marks these mocks (host AND projectId-scoped
+    stores) as runtime-owned so the binder short-circuits instead of building a fallback
+    loader over the mocked PluginStore, whose missing init() 500'd every scoped route.
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as TaskStore;
 }

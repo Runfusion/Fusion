@@ -35,7 +35,17 @@ function makeArtifact(overrides: Partial<Artifact> = {}): Artifact {
 
 function makeApp(store: Partial<TaskStore>) {
   const app = express();
-  app.use("/api", createApiRoutes(store as TaskStore));
+  /*
+  FNXC:PluginMcpServers 2026-07-24-01:25:
+  FN-8491 (3cd023fa4) binds a project-scoped plugin-MCP provider on every getProjectContext.
+  Exposing getProjectScopedPluginMcpServers marks these partial mocks as runtime-owned so the
+  binder short-circuits instead of calling getPluginStore().
+  */
+  const boundStore = {
+    getProjectScopedPluginMcpServers: async () => [],
+    ...store,
+  };
+  app.use("/api", createApiRoutes(boundStore as TaskStore));
   return app;
 }
 
