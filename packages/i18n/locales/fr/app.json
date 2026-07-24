@@ -8530,6 +8530,8 @@
     "resetPreferences": "",
     "shortcuts": "Raccourcis",
     "startingTerminal": "Démarrage du terminal...",
+    "manualStartHint": "Le terminal est prêt — démarrez une session pour commencer.",
+    "startTerminal": "Démarrer le terminal",
     "statusConnected": "Connecté",
     "statusConnecting": "Connexion en cours...",
     "statusDisconnected": "Déconnecté",

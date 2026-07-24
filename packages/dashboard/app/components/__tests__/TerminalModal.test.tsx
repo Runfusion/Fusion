@@ -335,6 +335,7 @@ const defaultSessionState = {
   tabs: [defaultTab],
   activeTab: defaultTab,
   isReady: true,
+  autoCreateDisabled: false,
   bootstrapError: null,
   createTab: vi.fn(),
   closeTab: vi.fn(),
@@ -1264,6 +1265,47 @@ describe("TerminalModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("terminal-loading")).toBeTruthy();
     });
+  });
+
+  /*
+  FNXC:Terminal 2026-07-23-14:30:
+  GitHub #2121/#2307: Windows browser clients never auto-create the first tab,
+  so an indefinite "Starting terminal..." spinner is a dead end. The modal must
+  render an explicit start action instead.
+  */
+  it("shows a Start terminal action instead of the endless spinner when auto-create is disabled", async () => {
+    const createTab = vi.fn().mockResolvedValue(defaultTab);
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      autoCreateDisabled: true,
+      createTab,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-manual-start")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("terminal-loading")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("terminal-manual-start-btn"));
+    expect(createTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the normal xterm surface when auto-create is disabled but a tab already exists", async () => {
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      autoCreateDisabled: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-container")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("terminal-manual-start")).toBeNull();
   });
 
   it("shows error with retry and refresh buttons when bootstrap fails instead of stuck loading", async () => {
@@ -7468,11 +7510,14 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
         expect(terminalDataHandler).not.toBeNull();
       });
 
-      const handled = terminalKeyEventHandler?.(
-        new KeyboardEvent("keydown", { key: "v", ...modifier }),
-      );
+      const pasteEvent = new KeyboardEvent("keydown", { key: "v", ...modifier, cancelable: true });
+      const handled = terminalKeyEventHandler?.(pasteEvent);
 
       expect(handled).toBe(false);
+      // Returning false only skips xterm's key handling; without preventDefault
+      // the browser's own paste fires xterm's helper-textarea paste listener
+      // and the payload reaches the PTY twice.
+      expect(pasteEvent.defaultPrevented).toBe(true);
       await waitFor(() => expect(readText).toHaveBeenCalledTimes(1));
       expect(mockSendInput).toHaveBeenCalledTimes(1);
       expect(mockSendInput).toHaveBeenCalledWith("npm test\n");
@@ -7480,7 +7525,39 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
   );
 
   it.each([
-    ["missing clipboard", undefined],
+    ["missing clipboard API", undefined],
+    ["clipboard without readText (Firefox / non-HTTPS)", { writeText: vi.fn() }],
+  ] as const)(
+    "falls back to xterm's native paste path for %s instead of swallowing the shortcut",
+    async (_label, clipboard) => {
+      Object.defineProperty(navigator, "platform", {
+        value: "Win32",
+        configurable: true,
+      });
+      Object.defineProperty(navigator, "clipboard", {
+        value: clipboard,
+        configurable: true,
+      });
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(terminalKeyEventHandler).not.toBeNull();
+      });
+
+      const pasteEvent = new KeyboardEvent("keydown", { key: "v", ctrlKey: true, cancelable: true });
+      const handled = terminalKeyEventHandler?.(pasteEvent);
+
+      // Without an async clipboard read the browser's native paste into
+      // xterm's helper textarea is the ONLY working paste path — the handler
+      // must let it run rather than returning false and killing paste dead.
+      expect(handled).toBe(true);
+      expect(pasteEvent.defaultPrevented).toBe(false);
+      expect(mockSendInput).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["rejected clipboard", { readText: vi.fn().mockRejectedValue(new DOMException("denied")) }],
     ["empty clipboard", { readText: vi.fn().mockResolvedValue("") }],
   ] as const)("fails safely for %s physical paste while preserving xterm input", async (_label, clipboard) => {

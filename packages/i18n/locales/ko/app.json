@@ -8530,6 +8530,8 @@
     "resetPreferences": "",
     "shortcuts": "단축키",
     "startingTerminal": "터미널 시작 중...",
+    "manualStartHint": "터미널이 준비되었습니다 — 세션을 시작하세요.",
+    "startTerminal": "터미널 시작",
     "statusConnected": "연결됨",
     "statusConnecting": "연결 중...",
     "statusDisconnected": "연결 끊김",

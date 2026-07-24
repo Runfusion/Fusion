@@ -327,6 +327,86 @@ describe("useTerminalSessions", () => {
     });
   });
 
+  /*
+  FNXC:Terminal 2026-07-23-14:30:
+  GitHub #2121/#2307: Windows browser clients intentionally skip first-tab
+  auto-create (embedded shells could spawn Windows Terminal Help/version
+  dialogs), but that skip must be observable via `autoCreateDisabled` so the
+  modal renders an explicit start action instead of an endless spinner.
+  */
+  describe("Windows client auto-create skip", () => {
+    const setUserAgent = (value: string) => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value,
+        configurable: true,
+      });
+    };
+    const originalUserAgent = window.navigator.userAgent;
+
+    afterEach(() => {
+      setUserAgent(originalUserAgent);
+    });
+
+    it("reports autoCreateDisabled and never auto-creates on a Windows browser", async () => {
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.autoCreateDisabled).toBe(true);
+      // Give the (skipped) auto-create effect a chance to fire wrongly.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.tabs.length).toBe(0);
+    });
+
+    it("reports autoCreateDisabled=false on non-Windows browsers", async () => {
+      setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/126.0");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.autoCreateDisabled).toBe(false);
+    });
+  });
+
+  describe("persisted tab restore normalization", () => {
+    it("activates the first tab when a persisted payload has no active tab", async () => {
+      // An all-inactive persisted list previously left activeTab null forever:
+      // auto-create is blocked by tabs.length > 0 and the modal spun on
+      // "Starting terminal...". Normalize at the storage read boundary.
+      const storedTabs = [
+        { id: "tab-a", sessionId: "session-a", title: "bash", isActive: false, createdAt: 1 },
+        { id: "tab-b", sessionId: "session-b", title: "zsh", isActive: false, createdAt: 2 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-a" },
+        { id: "session-b" },
+      ] as never);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab?.id).toBe("tab-a");
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+  });
+
   describe("bootstrap sequencing (FN-7686)", () => {
     it("does not serialize auto-create behind a never-resolving session list on a fresh open", async () => {
       // FNXC:Terminal 2026-07-08-10:00:

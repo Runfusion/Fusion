@@ -41,6 +41,12 @@ interface UseTerminalSessionsReturn {
   activeTab: TerminalTab | null;
   /** Whether sessions have been validated and restored from server */
   isReady: boolean;
+  /**
+   * True when the first tab will NOT be auto-created (Windows browser clients;
+   * see the auto-create effect). Callers must render an explicit start action
+   * instead of an indefinite loading state.
+   */
+  autoCreateDisabled: boolean;
   /** Error during bootstrap/session creation, or null if no error */
   bootstrapError: string | null;
   /** Creates a new tab with a fresh server session */
@@ -72,6 +78,21 @@ function generateTabId(): string {
   return `tab-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
+/*
+FNXC:Terminal 2026-07-23-14:30:
+GitHub #2121/#2307: the Windows auto-create skip is keyed on the BROWSER
+user-agent, so any Windows client (even one pointed at a mac/linux-hosted
+dashboard) never auto-creates a first tab. That skip is intentional (the
+embedded shell may invoke Windows Terminal and spawn native Help/version
+dialogs — see the auto-create effect), but it must be observable: expose it as
+`autoCreateDisabled` so TerminalModal can render a "Start terminal" action
+instead of an infinite "Starting terminal..." spinner that only the tab-strip
+"+" button escapes.
+*/
+function isWindowsBrowserClient(): boolean {
+  return typeof window !== "undefined" && window.navigator.userAgent.includes("Windows");
+}
+
 function terminalTabsStorageKey(storageScope?: string): string {
   const trimmed = storageScope?.trim();
   return trimmed ? `${STORAGE_KEY}:${trimmed}` : STORAGE_KEY;
@@ -83,7 +104,21 @@ function readTabsFromStorage(projectId?: string, storageScope?: string): Termina
   try {
     const stored = getScopedItem(terminalTabsStorageKey(storageScope), projectId);
     if (stored) {
-      return JSON.parse(stored) as TerminalTab[];
+      const parsed = JSON.parse(stored) as TerminalTab[];
+      if (!Array.isArray(parsed)) return [];
+      /*
+      FNXC:Terminal 2026-07-23-14:30:
+      A persisted payload where no tab is active must never survive the restore:
+      TerminalModal derives its whole UI from `activeTab`, and an all-inactive
+      tab list leaves the "Starting terminal..." spinner up forever while the
+      auto-create effect is blocked by tabs.length > 0. The success path of
+      server validation normalizes this, but the validation-failure path keeps
+      tabs as-read, so normalize at the storage boundary instead.
+      */
+      if (parsed.length > 0 && !parsed.some((tab) => tab.isActive)) {
+        return parsed.map((tab, i) => ({ ...tab, isActive: i === 0 }));
+      }
+      return parsed;
     }
   } catch {
     // Ignore localStorage errors
@@ -294,7 +329,7 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
   // (wt.exe) and produce native "Help" version dialogs. Users can still create a terminal
   // explicitly from the UI.
   useEffect(() => {
-    if (typeof window !== "undefined" && window.navigator.userAgent.includes("Windows")) {
+    if (isWindowsBrowserClient()) {
       setIsReady(true);
       return;
     }
@@ -586,6 +621,7 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
     tabs,
     activeTab,
     isReady,
+    autoCreateDisabled: isWindowsBrowserClient(),
     bootstrapError,
     createTab,
     closeTab,

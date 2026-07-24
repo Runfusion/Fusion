@@ -1076,10 +1076,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   }, [fitAndResizeForSession, isOpen]);
 
   // Use the session management hook
-  const { 
-    tabs, 
-    activeTab, 
+  const {
+    tabs,
+    activeTab,
     isReady,
+    autoCreateDisabled,
     bootstrapError,
     createTab, 
     closeTab, 
@@ -1766,12 +1767,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           if (key === "v") {
             /*
             FNXC:Terminal 2026-07-04-10:24:
-            GitHub #1902 showed that relying only on xterm's helper-textarea paste can swallow physical Ctrl/Cmd+V before clipboard text reaches the PTY. Own platform paste here, then return false so the browser/xterm native paste path cannot also emit duplicate input.
+            GitHub #1902 showed that relying only on xterm's helper-textarea paste can swallow physical Ctrl/Cmd+V before clipboard text reaches the PTY. Own platform paste here, then return false so xterm's own key handling cannot also emit input.
+
+            FNXC:Terminal 2026-07-23-14:30:
+            Returning false only skips xterm's key handling — it does NOT cancel the browser's default paste, which fires xterm's helper-textarea `paste` listener and delivered every Ctrl/Cmd+V payload to the PTY twice. Call event.preventDefault() so the custom clipboard read is the single delivery path.
+            When the async clipboard API is unavailable (non-HTTPS remote access, older Firefox), return true instead of swallowing the shortcut: the browser's native paste into xterm's helper textarea is then the only working paste path.
             */
             const readText = navigator.clipboard?.readText;
             if (!readText) {
-              return false;
+              return true;
             }
+            event.preventDefault();
             readText.call(navigator.clipboard)
               .then((text) => {
                 if (!text || xtermInitializedRef.current !== currentSessionId) {
@@ -2443,6 +2449,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // Once a tab exists we keep the xterm container visible while UI init runs,
   // avoiding a retry-loop spinner flash after bootstrap recovery.
   const isLoading = !isReady || (!activeTab && !bootstrapError);
+  /*
+  FNXC:Terminal 2026-07-23-14:30:
+  GitHub #2121/#2307: when the sessions hook will never auto-create the first
+  tab (Windows browser clients), the bootstrap spinner has nothing to wait for.
+  Render an explicit "Start terminal" action instead of an indefinite
+  "Starting terminal..." state whose only escape was discovering the tab-strip
+  "+" button.
+  */
+  const showManualStart = isReady && autoCreateDisabled && !activeTab && !bootstrapError;
   // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
   const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
   const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
@@ -2887,10 +2902,27 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
         {/* Terminal container */}
         <div className="terminal-container" data-testid="terminal-container">
-          {isLoading && !bootstrapError && (
+          {isLoading && !bootstrapError && !showManualStart && (
             <div className="terminal-loading" data-testid="terminal-loading">
               <div className="terminal-spinner" />
               <span>{t("terminal.startingTerminal", "Starting terminal...")}</span>
+            </div>
+          )}
+          {showManualStart && (
+            <div className="terminal-loading" data-testid="terminal-manual-start">
+              <div className="terminal-error-content">
+                <span>{t("terminal.manualStartHint", "The terminal is ready — start a session to begin.")}</span>
+                <div className="terminal-error-actions">
+                  <button
+                    className="terminal-retry-btn"
+                    onClick={() => void createTab()}
+                    data-testid="terminal-manual-start-btn"
+                  >
+                    <Plus size={14} />
+                    {t("terminal.startTerminal", "Start terminal")}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {bootstrapError && !activeTab && (
