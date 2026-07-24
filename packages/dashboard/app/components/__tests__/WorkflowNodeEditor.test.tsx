@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import { parseWorkflowIr, type WorkflowDefinition, type Settings } from "@fusion/core";
 
 // FNXC:WorkflowStepTemplate 2026-06-25-00:00: U6 deleted the built-in
@@ -4297,6 +4297,16 @@ describe("WorkflowNodeEditor simplified view modes", () => {
     vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
     await screen.findByTestId("wf-simple-canvas");
+    /*
+    FNXC:WorkflowSimpleView 2026-07-24-01:25:
+    Flush pending hydration/layout commits before opening the add-step modal.
+    Full-suite run 30077108784 (CI lane load) hit an additive insert — the
+    optional group landed while merge→end survived — because the toolbar pick
+    ran before the canvas settled its edge-target state; locally this never
+    reproduces (5/5 green). Same settle-before-interact class as 5a5796bca.
+    If this recurs despite the settle, quarantine per the deletion ratchet.
+    */
+    await act(async () => {});
 
     fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
     const dialog = await screen.findByTestId("wf-add-step-modal");
