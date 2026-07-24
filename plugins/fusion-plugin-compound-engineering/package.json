@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/compound-engineering",
-  "version": "0.1.31-beta.5",
+  "version": "0.1.31-beta.6",
   "type": "module",
   "description": "Compound Engineering plugin for Fusion",
   "private": true,

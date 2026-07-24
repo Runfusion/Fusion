@@ -2,6 +2,23 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.73.0-beta.6
+
+### Highlights
+- Beta binaries fixed — bun executables and the Windows desktop EXE package again
+- Switching projects now fully resets Planning, Chat, Missions, subtask breakdown, GitHub import, and open modals
+- Planning no longer spawns duplicate sessions when you navigate away and back
+- Chat's /new and /clear no longer wipe a task-bound planner chat's history
+- Terminal auto-starts from Windows browsers when the dashboard host isn't Windows
+
+### Fixed
+- Beta binary builds are working again: bun-compiled executables and the Windows desktop EXE package correctly
+- Navigating away from and back to Planning no longer creates a duplicate planning session
+- Switching projects fully resets Planning, Chat, Missions, subtask breakdown, and GitHub import state so nothing leaks or mis-files across projects
+- Task chat now narrates step numbers starting at 1, matching the task card's step count
+- /new and /clear in Chat no longer wipe a task-bound planner chat's history
+- Terminal now auto-starts a session from Windows browsers when the dashboard host itself isn't Windows
+
 ## 0.73.0-beta.5
 
 ### Highlights

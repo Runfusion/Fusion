@@ -1,5 +1,28 @@
 # @runfusion/fusion
 
+## 0.73.0-beta.6
+
+### Patch Changes
+
+- b007de5: summary: Fix broken beta binary builds — bun executables and the Windows desktop EXE package again.
+  category: fix
+  dev: bun compile marks `chromium-bidi` external (optional playwright-core BiDi require); release.yml quotes `-c.publish.channel=beta` so PowerShell stops splitting it into a config-file path.
+- 345dccb: summary: Fix duplicate planning sessions created when navigating away from and back to Planning.
+  category: fix
+  dev: The seeded `planningInitialPlan` handoff is now one-shot — `PlanningModeModal` consumes it via `onInitialPlanConsumed` when auto-start fires, so remounts restore the persisted active session instead of auto-starting again.
+- 07541f7: summary: Switching projects now fully resets Planning, Chat, Missions, subtask breakdown, GitHub import, and open modals.
+  category: fix
+  dev: New `closeProjectScopedModals()` on the modal manager, invoked by project select/view-all/setup-complete; PlanningModeModal, ChatView, MissionManager, SubtaskBreakdownModal, and GitHubImportModal are keyed by project id so running streams, session lists, and per-project persisted drafts/active sessions no longer leak or mis-file across projects (subtask/mission drafts save on unmount under their own project key).
+- 049c36c: summary: Task chat step narration now shows 1-based step numbers matching the task card's step count.
+  category: fix
+  dev: Display-only change in proactive-status.ts builders and merge-queue-ops proactiveStepStatusMessage; the 0-based step-index contract (tools, PROMPT.md headings, run-audit) is unchanged.
+- 0dd34cd: summary: /new and /clear in Chat no longer wipe a task-bound planner chat's history.
+  category: fix
+  dev: ChatView's exact `/new`//`/clear` intercept now recognizes `task-planner:<taskId>` sessions (surfaced in the common feed via `showTaskChatsInCommonFeed`) and consumes the command with a warning toast instead of calling createSession.
+- 86f56b5: summary: Terminal now auto-starts a session from Windows browsers when the dashboard host is not Windows.
+  category: fix
+  dev: Windows-UA clients probe `GET /api/system/info` (memoized, 5s timeout) and only keep the manual "Start terminal" gate when the server platform is `win32` or the probe fails.
+
 ## 0.73.0-beta.5
 
 ### Minor Changes

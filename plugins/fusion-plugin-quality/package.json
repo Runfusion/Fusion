@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/quality",
-  "version": "0.1.6-beta.5",
+  "version": "0.1.6-beta.6",
   "type": "module",
   "description": "Quality hub and Task QA surfaces for Fusion",
   "private": true,
