@@ -1112,6 +1112,13 @@ That gutter read as dead space around the framed cards; panes now sit flush edge
   padding: var(--space-xl);
   color: var(--text);
   text-align: center;
+  /*
+  FNXC:PlanningThinkingVisibility 2026-07-23-23:10:
+  The loader now hosts the streamed-thinking pane on follow-up turns. On short viewports
+  (landscape phones fall in the mobile breakpoint) the centered column can exceed the overlay,
+  so the overlay itself must scroll instead of clipping the Stop button and thinking output.
+  */
+  overflow-y: auto;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   backdrop-filter: blur(var(--space-xs));
 }
