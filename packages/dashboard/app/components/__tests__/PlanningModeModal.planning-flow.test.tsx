@@ -842,6 +842,30 @@ describe("PlanningModeModal sequential flow", () => {
     expect(await screen.findByText("Thinking… (7s)")).toBeInTheDocument();
     dateNow.mockRestore();
   });
+  /*
+  FNXC:PlanningThinkingVisibility 2026-07-23-22:45:
+  Every generation step must stream thinking/output to the operator. Follow-up turns render
+  the workspace loader (summary present), which previously showed only a spinner + elapsed
+  time; this pins the streamed thinking pane there too.
+  */
+  it("streams thinking in the workspace loader during follow-up generations", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "generating",
+      currentQuestion: null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: JSON.stringify({ generationPurpose: "plan_update", generationStartedAt: new Date().toISOString() }),
+    });
+    renderSession();
+
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
+    const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => handlers?.onThinking?.("Weighing the tradeoffs between approaches…"));
+
+    expect(await screen.findByText("Weighing the tradeoffs between approaches…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide thinking" }));
+    expect(screen.queryByText("Weighing the tradeoffs between approaches…")).toBeNull();
+  });
   it("returns to the prior question without an error when generation is stopped", async () => {
     const priorQuestion = { id: "q-prior", type: "text", question: "What should change?" };
     mockFetchAiSession.mockResolvedValue({

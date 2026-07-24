@@ -3975,12 +3975,38 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               {view.type === "loading" && (
                 <div className="planning-workspace-loader" role="status" aria-live="polite">
                   <Loader2 size={40} className="spin" />
-                  <strong>{t("planning.generatingPlan", "Generating plan…")}</strong>
+                  <strong>
+                    {generationActivity === "question"
+                      ? t("planning.generatingQuestion", "Generating next question…")
+                      : t("planning.generatingPlan", "Generating plan…")}
+                  </strong>
                   {generationStartTime && <span>{t("planning.thinkingElapsed", "Thinking… ({{seconds}}s)", { seconds: elapsedSeconds })}</span>}
                   <button className="btn planning-stop-btn" type="button" onClick={() => void handleStopGeneration()}>
                     <StopCircle size={14} />
                     <span className="icon-ml-6">{t("planning.stop", "Stop")}</span>
                   </button>
+                  {/*
+                  FNXC:PlanningThinkingVisibility 2026-07-23-22:45:
+                  Every Planning Mode generation step must stream the model's thinking/output to
+                  the operator, not only the first (pre-summary) turn. This workspace loader
+                  covers all follow-up turns — next question, refine, contextual comments, and
+                  question regeneration — and previously showed only a spinner with elapsed
+                  time. Reuse the same thinking container + toggle as the initial loading view.
+                  */}
+                  <div className="planning-thinking-container">
+                    <button
+                      className="planning-thinking-toggle"
+                      onClick={() => setShowThinking(!showThinking)}
+                      type="button"
+                    >
+                      {showThinking ? t("planning.hideThinking", "Hide thinking") : t("planning.showThinking", "Show thinking")}
+                    </button>
+                    {showThinking && streamingOutput && (
+                      <div className="planning-thinking-output" ref={thinkingOutputRef}>
+                        <pre>{streamingOutput}</pre>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
