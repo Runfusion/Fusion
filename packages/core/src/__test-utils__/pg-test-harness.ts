@@ -1004,6 +1004,19 @@ export function createSharedPgTaskStoreTestHarness(options?: {
            ON CONFLICT (project_id) DO UPDATE SET next_id = 1, next_workflow_step_id = 1, settings = EXCLUDED.settings, workflow_steps = '[]'::jsonb, updated_at = now()`,
         ),
       );
+      /*
+      FNXC:PgTestHarnessIsolation 2026-07-22-17:40:
+      TRUNCATE ... RESTART IDENTITY resets next_id so the next created task reuses
+      the same ID (KB-001) as prior tests in this describe. The DB reset is not
+      enough on its own: task creation also materializes an on-disk
+      `<rootDir>/.fusion/tasks/<ID>/` directory (task.json + PROMPT.md), which the
+      truncate leaves behind. A later test that reuses that ID then sees a stale
+      canonical directory it never created, so rollback/atomicity assertions like
+      store-reservation-atomicity's `existsSync(.fusion/tasks/<ID>)` toBe(false)
+      fail on leftover files. Wipe the task-directory tree so filesystem isolation
+      matches the identity reset.
+      */
+      await rm(join(harness.rootDir, ".fusion", "tasks"), { recursive: true, force: true });
       // Drop any in-memory caches so the store doesn't serve stale rows.
       resetStorePrivateState(store);
       // Force allocator reconciliation to re-seed the distributed state row.

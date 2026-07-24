@@ -134,7 +134,8 @@ export class ProviderHealthMonitor {
 
     await Promise.all(stores.map(async (store) => {
       try {
-        const tasks = await store.listTasks();
+        // FNXC:ArchitectureHotPath 2026-07-22-17:20: listTasks() must declare payload shape (architecture-hot-paths contract). Health scan reads only paused/userPaused/pausedReason scalars, so request slim rows.
+        const tasks = await store.listTasks({ slim: true });
         for (const task of tasks) {
           if (task.paused !== true || task.userPaused === true) continue;
           const providerId = providerIdFromRateLimitReason(task.pausedReason);

@@ -93,7 +93,8 @@ export class UsageLimitPauser {
     if (!providerId) return 0;
 
     const pausedReason = `provider-rate-limit:${providerId}`;
-    const tasks = await this.store.listTasks();
+    // FNXC:ArchitectureHotPath 2026-07-22-17:20: listTasks() must be explicit about payload shape (architecture-hot-paths contract). Recovery only reads scalar pause fields, so request slim rows to avoid loading heavy log/steps/comments for every task.
+    const tasks = await this.store.listTasks({ slim: true });
     const recoverableTasks = tasks.filter((task) =>
       task.paused === true
       && task.userPaused !== true
@@ -166,7 +167,8 @@ export class UsageLimitPauser {
 
     const [settings, tasks] = await Promise.all([
       this.store.getSettings(),
-      this.store.listTasks(),
+      // FNXC:ArchitectureHotPath 2026-07-22-17:20: slim payload — this scan only reads column/pause/model-provider scalars, never heavy detail fields.
+      this.store.listTasks({ slim: true }),
     ]);
     const affectedTasks = tasks.filter((task) =>
       task.column !== "done"
