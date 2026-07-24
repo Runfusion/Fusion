@@ -889,4 +889,37 @@ describe("agent-onboarding", () => {
     expect(getAgentOnboardingSession(sessionId)).toBeUndefined();
     await expect(respondToAgentOnboarding(sessionId, { q1: "x" })).rejects.toBeInstanceOf(SessionNotFoundError);
   });
+
+  /*
+  FNXC:PlanningQuestionRegeneration 2026-07-23-22:20:
+  A live onboarding session with no active question must regenerate the next question instead
+  of dead-ending with "No active question in session"; a completed session still rejects.
+  */
+  it("regenerates a question when responding with no active question on a live session", async () => {
+    mockCreateFnAgent.mockResolvedValueOnce(
+      createMockAgent([
+        JSON.stringify({ type: "question", data: { id: "goal", type: "text", question: "What is the primary goal?" } }),
+        JSON.stringify({ type: "question", data: { id: "regenerated", type: "text", question: "What should this agent own?" } }),
+      ]),
+    );
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "hygiene agent", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    await waitFor(() => Boolean(getAgentOnboardingSession(sessionId)?.currentQuestion));
+
+    const session = getAgentOnboardingSession(sessionId)!;
+    const historyLengthBefore = session.history.length;
+    // A failed generation leaves the session live with no active question.
+    session.currentQuestion = undefined;
+
+    const result = await respondToAgentOnboarding(sessionId, { goal: "Keep CI green" });
+
+    expect(result.type).toBe("question");
+    expect((result as { data: { id: string } }).data.id).toBe("regenerated");
+    expect(session.history.length).toBe(historyLengthBefore);
+    expect(session.error).toBeUndefined();
+  });
 });

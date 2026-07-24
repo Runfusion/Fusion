@@ -746,6 +746,25 @@ export function parseMissionAgentResponse(text: string): MissionInterviewRespons
 /**
  * Format user response as a message for the AI agent.
  */
+/*
+FNXC:PlanningQuestionRegeneration 2026-07-23-22:20:
+Reprompt used when a submission arrives while the interview has no active question — the
+agent continues the interview and asks a fresh question instead of the operator seeing
+"No active question in session". Submitted input is preserved as context, never dropped.
+*/
+function formatNoActiveQuestionReprompt(responses: Record<string, unknown>): string {
+  const operatorInput = Object.entries(responses)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return [
+    "The interview currently has no active question; continue instead of treating this as an error.",
+    "Use the accumulated interview context and ask exactly one focused next question, following the established response contract.",
+    ...(operatorInput.length
+      ? ["The operator submitted this input while no question was active; honor it as context:", operatorInput.join("\n")]
+      : []),
+  ].join("\n\n");
+}
+
 export function formatResponseForAgent(
   question: PlanningQuestion,
   responses: Record<string, unknown>
@@ -1376,25 +1395,41 @@ export async function submitMissionInterviewResponse(
   }
 
   if (!session.currentQuestion) {
-    throw new InvalidSessionStateError("No active question in session");
+    /*
+    FNXC:PlanningQuestionRegeneration 2026-07-23-22:20:
+    A completed interview (summary present) still rejects late submissions, but a live session
+    with no active question (e.g. cleared by a failed generation) must not dead-end with
+    "No active question in session". Mirror Planning Mode: reprompt the agent to continue the
+    interview and generate a fresh question, carrying the submitted input along as context.
+    No history entry is recorded because there is no question to pair the response with.
+    */
+    if (session.summary) {
+      throw new InvalidSessionStateError("No active question in session");
+    }
+    session.error = undefined;
+    persistMissionSession(session, "generating");
+    if (!session.agent) {
+      await ensureMissionInterviewAgent(session, rootDir, store, session.history, promptOverrides);
+    }
+    await continueAgentConversation(session, formatNoActiveQuestionReprompt(responses));
+  } else {
+    // Record the response
+    session.history.push({
+      question: session.currentQuestion,
+      response: responses,
+      thinkingOutput: session.lastGeneratedThinking || "",
+    });
+    session.error = undefined;
+    persistMissionSession(session, "generating");
+
+    if (!session.agent) {
+      const replayHistory = session.history.slice(0, -1);
+      await ensureMissionInterviewAgent(session, rootDir, store, replayHistory, promptOverrides);
+    }
+
+    const message = formatResponseForAgent(session.currentQuestion, responses);
+    await continueAgentConversation(session, message);
   }
-
-  // Record the response
-  session.history.push({
-    question: session.currentQuestion,
-    response: responses,
-    thinkingOutput: session.lastGeneratedThinking || "",
-  });
-  session.error = undefined;
-  persistMissionSession(session, "generating");
-
-  if (!session.agent) {
-    const replayHistory = session.history.slice(0, -1);
-    await ensureMissionInterviewAgent(session, rootDir, store, replayHistory, promptOverrides);
-  }
-
-  const message = formatResponseForAgent(session.currentQuestion, responses);
-  await continueAgentConversation(session, message);
 
   if (session.summary) {
     return { type: "complete", data: session.summary };

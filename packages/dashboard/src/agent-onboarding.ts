@@ -537,7 +537,30 @@ export async function respondToAgentOnboarding(
 ): Promise<AgentOnboardingRespondResult> {
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Agent onboarding session ${sessionId} not found or expired`);
-  if (!session.currentQuestion) throw new InvalidSessionStateError("No active question in session");
+  if (!session.currentQuestion) {
+    /*
+    FNXC:PlanningQuestionRegeneration 2026-07-23-22:20:
+    A completed onboarding (summary present) still rejects late submissions, but a live session
+    with no active question (e.g. cleared by a failed generation) must not dead-end with
+    "No active question in session". Mirror Planning Mode: reprompt the agent to continue and
+    ask the next onboarding question, carrying the submitted input along as context. No history
+    entry is recorded because there is no question to pair the response with.
+    */
+    if (session.summary) throw new InvalidSessionStateError("No active question in session");
+    const operatorInput = Object.entries(responses)
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+    await continueConversation(session, [
+      "The onboarding interview currently has no active question; continue instead of treating this as an error.",
+      "Ask the next best onboarding question, following the established response contract.",
+      ...(operatorInput.length
+        ? ["The operator submitted this input while no question was active; honor it as context:", operatorInput.join("\n")]
+        : []),
+    ].join("\n\n"));
+    if (session.summary) return { type: "complete", data: session.summary };
+    if (session.currentQuestion) return { type: "question", data: session.currentQuestion };
+    throw new InvalidSessionStateError("AI agent did not return a question or summary");
+  }
   const answeredQuestion = session.currentQuestion;
   session.history.push({ question: answeredQuestion, response: responses });
   /*
