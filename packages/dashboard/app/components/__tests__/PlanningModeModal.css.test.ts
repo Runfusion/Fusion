@@ -162,8 +162,11 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(sharedButtonRule).toMatch(/flex\s*:\s*1 1 0\s*;/);
     expect(sharedButtonRule).toMatch(/min-width\s*:\s*0\s*;/);
     expect(sharedButtonRule).toMatch(/min-height\s*:\s*calc\(var\(--space-2xl\) \+ var\(--space-md\)\)\s*;/);
-    expectSomeRule(tabletCss, ".planning-plan-actions", /display\s*:\s*flex\s*;/);
-    expectSomeRule(tabletCss, ".planning-plan-actions", /flex-wrap\s*:\s*nowrap\s*;/);
+    // FNXC:PlanningComments 2026-07-24-05:55: tablet keeps the 2-col grid so Add comment can span above Refine/Proceed.
+    expectSomeRule(tabletCss, ".planning-plan-actions", /display\s*:\s*grid\s*;/);
+    expectSomeRule(tabletCss, ".planning-plan-actions", /grid-template-columns\s*:\s*repeat\(2, minmax\(0, 1fr\)\)\s*;/);
+    expect(findRule(tabletCss, ".planning-plan-actions .btn.planning-add-comment--mobile")).toMatch(/grid-column\s*:\s*1\s*\/\s*-1\s*;/);
+    expect(findRule(tabletCss, ".planning-plan-actions .btn.planning-add-comment--mobile svg")).toMatch(/width\s*:\s*var\(--space-lg\)\s*;/);
   });
 
   it("shows exactly one contextual comment trigger in the tablet/phone plan action rail", () => {
@@ -178,6 +181,7 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(railTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
     expect(railTriggerRule).toMatch(/grid-column\s*:\s*1\s*\/\s*-1\s*;/);
     expect(railTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
+    expect(findRule(compactCss, ".planning-plan-actions .btn.planning-add-comment--mobile svg")).toMatch(/width\s*:\s*var\(--space-lg\)\s*;/);
     // FNXC:PlanningComments 2026-07-24-05:50: phone no longer overrides the rail trigger to fixed.
     expect(findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile")).toBeUndefined();
     expect(mobileEditorRule).toMatch(/position\s*:\s*fixed\s*;/);

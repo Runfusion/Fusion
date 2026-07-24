@@ -3129,7 +3129,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => setCommentEditorOpen(true)}
             >
-              <MessageSquarePlus />
+              {/* FNXC:PlanningComments 2026-07-24-05:55: Match New-session / mobile rail glyph scale. */}
+              <MessageSquarePlus size={16} aria-hidden="true" />
               {t("planning.addComment", "Add comment to selection")}
             </button>
           )}
@@ -3160,6 +3161,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         action baseline. Document-level selectionchange still dismisses it when the selection
         collapses. CSS shows exactly one of the two variants; only established 768px/1024px
         breakpoint literals are allowed here, while all other dimensions remain design-token based.
+
+        FNXC:PlanningComments 2026-07-24-05:55:
+        Tablet must keep the two-column grid (not flex nowrap) so Add comment stays a full-width
+        first row with the same MessageSquarePlus 16px glyph as phone.
         */}
         {selectedPlanQuote && !isCommentEditorOpen && (
           <button
@@ -3169,7 +3174,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => setCommentEditorOpen(true)}
           >
-            <MessageSquarePlus />
+            <MessageSquarePlus size={16} aria-hidden="true" />
             {t("planning.addComment", "Add comment to selection")}
           </button>
         )}

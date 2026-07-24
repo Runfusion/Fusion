@@ -1894,6 +1894,19 @@ reach past Proceed — match the tablet in-flow stack on phone too.
     grid-column: 1 / -1;
     margin-top: 0;
     justify-content: center;
+    gap: var(--space-sm);
+  }
+
+  /*
+  FNXC:PlanningComments 2026-07-24-05:55:
+  Pin the MessageSquarePlus glyph to the same token size used by other compact rail CTAs so
+  tablet and phone share the mobile icon scale (default lucide size can dwarf the label in the
+  full-width rail row).
+  */
+  .planning-plan-actions .btn.planning-add-comment--mobile svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+    flex-shrink: 0;
   }
 
   .planning-refine-menu {
@@ -2008,10 +2021,38 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
     min-height: calc(var(--space-2xl) + var(--space-md));
   }
 
+  /*
+  FNXC:PlanningModeTablet 2026-07-20-21:50:
+  Refine/Proceed share one compact baseline on tablet.
+
+  FNXC:PlanningComments 2026-07-24-05:55:
+  Do not force flex nowrap on the plan action rail: that pulled Add comment into the same row
+  as Refine/Proceed. Keep the ≤1024 two-column grid so the selection control stays a full-width
+  first row (grid-column 1 / -1) with Refine | Proceed on the second row — same stack as phone.
+  */
   .planning-plan-actions {
-    display: flex;
-    flex-wrap: nowrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-md);
+  }
+
+  .planning-plan-actions .btn.planning-add-comment--mobile {
+    display: flex;
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 0;
+    justify-content: center;
+    gap: var(--space-sm);
+  }
+
+  .planning-plan-actions .btn.planning-add-comment--mobile svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+    flex-shrink: 0;
+  }
+
+  .planning-comment-tray {
+    grid-column: 1 / -1;
   }
 }
 
