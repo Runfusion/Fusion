@@ -166,19 +166,22 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expectSomeRule(tabletCss, ".planning-plan-actions", /flex-wrap\s*:\s*nowrap\s*;/);
   });
 
-  it("shows exactly one contextual comment trigger fixed to the mobile selection viewport", () => {
+  it("shows exactly one contextual comment trigger in the tablet/phone plan action rail", () => {
     const css = loadPlanningCss();
+    const compactCss = getMediaBlocks(css, "@media (max-width: 1024px)").join("\n");
     const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
+    const tabletRailTriggerRule = findRule(compactCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
     const mobileTriggerRule = findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
     const mobileEditorRule = findRule(mobileCss, ".planning-comment-editor");
 
     expect(findRule(css, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*none\s*;/);
-    expect(findRule(mobileCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
-    expect(mobileTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(findRule(compactCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
+    expect(tabletRailTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(tabletRailTriggerRule).toMatch(/grid-column\s*:\s*1\s*\/\s*-1\s*;/);
+    expect(tabletRailTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
     expect(mobileTriggerRule).toMatch(/position\s*:\s*fixed\s*;/);
     expect(mobileTriggerRule).toMatch(/width\s*:\s*auto\s*;/);
     expect(mobileTriggerRule).toMatch(/var\(--mobile-nav-height/);
-    expect(mobileTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
     expect(mobileEditorRule).toMatch(/position\s*:\s*fixed\s*;/);
     expect(mobileEditorRule).toMatch(/var\(--mobile-nav-height/);
   });

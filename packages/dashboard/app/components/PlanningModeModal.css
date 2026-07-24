@@ -1796,9 +1796,12 @@ its established Refine and Proceed action hierarchy.
 
 /*
 FNXC:PlanningComments 2026-07-23-17:05:
-Desktop (≥769px) keeps the in-document trigger under the plan markdown. Mobile (≤768px) lifts
-the counterpart into a fixed bottom bar in the visual viewport so it never requires scrolling
-the plan document or action rail after a touch selection.
+Desktop (≥1025px) keeps the in-document trigger under the plan markdown. Tablet and phone
+(≤1024px) use the action-rail counterpart so selection comments are not lost under the plan fold.
+
+FNXC:PlanningComments 2026-07-24-05:35:
+Tablet (769–1024) places that rail control as a full-width row above Refine/Proceed. Phone
+(≤768) still lifts it into a fixed bottom bar above the mobile nav.
 */
 
 .planning-comment-quote,
@@ -1874,6 +1877,24 @@ the plan document or action rail after a touch selection.
     grid-column: 1 / -1;
   }
 
+  /*
+  FNXC:PlanningComments 2026-07-24-05:35:
+  Tablet and phone hide the document-adjacent trigger (it sits at the end of a long plan and
+  requires scrolling). The action-rail variant becomes the sole control and spans the full
+  footer width above Refine/Proceed so a selection always exposes Add comment without leaving
+  the plan action baseline.
+  */
+  .planning-add-comment--document {
+    display: none;
+  }
+
+  .planning-plan-actions .btn.planning-add-comment--mobile {
+    display: flex;
+    grid-column: 1 / -1;
+    margin-top: 0;
+    justify-content: center;
+  }
+
   .planning-refine-menu {
     right: var(--space-lg);
     left: var(--space-lg);
@@ -1892,34 +1913,17 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 */
 @media (max-width: 768px) {
   /*
-  FNXC:PlanningComments 2026-07-31-00:00:
-  A selected quote needs a reachable mobile action, not a control lost in the scrollable
-  document. At 769px and above the selection-adjacent document trigger stays canonical.
-
   FNXC:PlanningComments 2026-07-23-17:05:
-  The mobile trigger is position:fixed to the selection midpoint and clamped into the visual
-  viewport (including safe-area + mobile-nav clearance) so it always appears after a selection
-  and can be dismissed by selectionchange when the selection collapses — without scrolling the
-  screen. These established 768px/1024px media boundaries are permitted; new dimensions use only
-  existing design tokens.
-  */
-  .planning-add-comment--document {
-    display: none;
-  }
+  On phone, pin the rail Add-comment control to the visual viewport above the mobile nav so a
+  touch selection never requires scrolling the plan document or footer. Tablet (769–1024) keeps
+  the in-flow full-width rail row from the 1024px block instead.
 
-  /*
-  FNXC:PlanningComments 2026-07-23-17:05:
-  Pin the mobile Add-comment control to the visual viewport above the mobile nav/safe-area.
-  A fixed bar appears immediately after selectionchange and dismisses when the selection
-  collapses — no document or action-rail scroll required.
-
-  The mobile plan-actions button rule forces width 100 percent. With position fixed that 100
-  percent is the viewport width, and combined with left/right insets the control overflowed past
-  the right edge (measured 780px wide in a 768px viewport). Use a higher-specificity selector and
-  width auto so left+right define the used width and the bar stays fully on-screen.
+  The plan-actions button rule forces width 100 percent. With position fixed that 100 percent is
+  the viewport width, and combined with left/right insets the control overflowed past the right
+  edge (measured 780px wide in a 768px viewport). Higher specificity + width auto lets left/right
+  define the used width so the bar stays fully on-screen.
   */
   .planning-plan-actions .btn.planning-add-comment--mobile {
-    display: flex;
     position: fixed;
     left: var(--space-md);
     right: var(--space-md);
@@ -1931,8 +1935,6 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
     z-index: var(--z-popover);
     width: auto;
     max-width: none;
-    margin-top: 0;
-    justify-content: center;
     box-shadow: var(--shadow-md);
   }
 

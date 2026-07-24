@@ -692,8 +692,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, []);
 
   const focusAddCommentTrigger = useCallback(() => {
-    const isMobileViewport = window.matchMedia?.("(max-width: 768px)").matches ?? false;
-    (isMobileViewport ? mobileAddCommentTriggerRef : addCommentTriggerRef).current?.focus();
+    /*
+    FNXC:PlanningComments 2026-07-24-05:35:
+    Tablet and phone both expose the action-rail trigger; only wide desktop uses the document
+    variant. Match the 1024px CSS gate so focus restore lands on the visible control.
+    */
+    const usesRailTrigger = window.matchMedia?.("(max-width: 1024px)").matches ?? false;
+    (usesRailTrigger ? mobileAddCommentTriggerRef : addCommentTriggerRef).current?.focus();
   }, []);
 
   /*
@@ -3053,15 +3058,19 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       <div className="planning-actions planning-summary-actions planning-plan-actions" data-testid="planning-plan-actions">
         {/*
         FNXC:PlanningComments 2026-07-31-00:00:
-        FN-8533 keeps the selection-adjacent control at 769px and wider, but mobile needs a
+        FN-8533 keeps the selection-adjacent control on wide desktop, but compact shells need a
         counterpart that cannot be lost under the document fold.
 
         FNXC:PlanningComments 2026-07-23-17:05:
-        On ≤768px the mobile trigger is position:fixed to the visual viewport above the mobile
-        nav so it appears immediately after a selection without scrolling, and document-level
-        selectionchange dismisses it when the selection collapses. CSS still shows exactly one
-        of the two variants; only established 768px/1024px breakpoint literals are allowed here,
-        while all other dimensions remain design-token based.
+        On ≤768px the rail trigger is position:fixed above the mobile nav so a selection never
+        requires scrolling.
+
+        FNXC:PlanningComments 2026-07-24-05:35:
+        On tablet (769–1024) the same rail control stays in the plan action footer as a full-width
+        row above Refine/Proceed. Document-level selectionchange still dismisses it when the
+        selection collapses. CSS shows exactly one of the two variants; only established
+        768px/1024px breakpoint literals are allowed here, while all other dimensions remain
+        design-token based.
         */}
         {selectedPlanQuote && !isCommentEditorOpen && (
           <button

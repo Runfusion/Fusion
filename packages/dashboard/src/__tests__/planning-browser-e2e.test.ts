@@ -209,9 +209,10 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
 
   async function verifyContextualCommentPlacement(
     viewport: { width: number; height: number },
-    inFooter: boolean,
+    options: { inFooter: boolean; positionFixed: boolean },
     presentation: "embedded" | "modal",
   ): Promise<void> {
+    const { inFooter, positionFixed } = options;
     const page = await browser.newPage({ viewport });
     await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review&presentation=${presentation}&reset=1`);
     if (viewport.width <= 768) await page.getByRole("tab", { name: "Plan preview" }).click();
@@ -235,9 +236,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       Start at the preceding tab stop, then send actual Tab keys. Programmatic focus alone would
       incorrectly accept a tabIndex=-1 contextual-comment trigger as keyboard reachable.
 
-      FNXC:PlanningComments 2026-07-23-17:05:
-      Mobile keeps the trigger in the actions DOM for focus order, but CSS fixes it to the
-      selection so it is inside the visual viewport without scrolling the plan document.
+      FNXC:PlanningComments 2026-07-24-05:35:
+      Phone keeps the trigger position:fixed above the nav; tablet keeps it in the action rail as
+      a full-width row above Refine/Proceed. Both stay in the actions DOM for focus order.
       */
       focusable[triggerIndex - 1]?.focus();
       return {
@@ -266,20 +267,21 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       totalButtons: 2,
       visibleButtons: 1,
       visibleInActions: inFooter,
-      positionFixed: inFooter,
-      // Mobile fixed-to-selection control must be in the visual viewport without scrolling.
+      positionFixed,
+      // Compact shells keep the control in the visual viewport without scrolling the plan.
       triggerInsideViewport: inFooter ? true : expect.any(Boolean),
       triggerHasPreviousTabStop: true,
       hiddenButtonsTabbable: 0,
     });
-    /*
-    FNXC:PlanningComments 2026-07-23-17:05:
-    The mobile trigger is position:fixed out of the action-grid flow, so it no longer appears in
-    the action-rail label list — only Refine/Proceed remain there while the floating control is
-    separately asserted as the sole visible Add-comment button.
-    */
-    if (inFooter) expect(placement.actionLabels).toEqual(expect.arrayContaining(["Refine", "Proceed with plan"]));
-    else expect(placement.actionLabels).not.toContain("Add comment to selection");
+    if (inFooter) {
+      expect(placement.actionLabels).toEqual(expect.arrayContaining(["Refine", "Proceed with plan"]));
+      if (!positionFixed) {
+        // Tablet in-flow rail row: Add comment sits above Refine/Proceed in the same footer.
+        expect(placement.actionLabels).toEqual(expect.arrayContaining(["Add comment to selection"]));
+      }
+    } else {
+      expect(placement.actionLabels).not.toContain("Add comment to selection");
+    }
 
     let reachedTriggerByTab = false;
     for (let tabCount = 0; tabCount < 8; tabCount += 1) {
@@ -312,9 +314,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     expect(afterOpen).toMatchObject({
       addCommentButtons: 0,
       actionChildren: 0,
-      editorPosition: inFooter ? "fixed" : "static",
-      // Mobile pins the composer into the viewport; desktop keeps the in-document editor.
-      editorInsideViewport: inFooter ? true : expect.any(Boolean),
+      // Phone pins the composer; tablet/desktop keep the in-document editor.
+      editorPosition: positionFixed ? "fixed" : "static",
+      editorInsideViewport: positionFixed ? true : expect.any(Boolean),
     });
 
     await page.evaluate(() => {
@@ -332,9 +334,13 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
 
   it("places the sole contextual comment trigger by viewport in embedded and modal Planning", async () => {
     for (const presentation of ["embedded", "modal"] as const) {
-      await verifyContextualCommentPlacement({ width: 768, height: 900 }, true, presentation);
-      await verifyContextualCommentPlacement({ width: 769, height: 900 }, false, presentation);
-      await verifyContextualCommentPlacement({ width: 1280, height: 900 }, false, presentation);
+      // Phone: fixed bar above nav.
+      await verifyContextualCommentPlacement({ width: 768, height: 900 }, { inFooter: true, positionFixed: true }, presentation);
+      // Tablet: full-width action-rail row above Refine/Proceed.
+      await verifyContextualCommentPlacement({ width: 769, height: 900 }, { inFooter: true, positionFixed: false }, presentation);
+      await verifyContextualCommentPlacement({ width: 1024, height: 900 }, { inFooter: true, positionFixed: false }, presentation);
+      // Desktop: document-adjacent trigger only.
+      await verifyContextualCommentPlacement({ width: 1280, height: 900 }, { inFooter: false, positionFixed: false }, presentation);
     }
   }, 30_000);
 });
