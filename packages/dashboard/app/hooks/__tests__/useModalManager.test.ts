@@ -77,6 +77,58 @@ describe("useModalManager", () => {
     expect(result.current.anyModalOpen).toBe(false);
   });
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Switching the active project must dismiss project-scoped modals and drop pending
+  planning payloads (so Planning does not reopen the previous project's session),
+  while cross-project modals like Settings stay open.
+  */
+  it("closeProjectScopedModals dismisses project-scoped modals and clears planning payloads, keeping settings open", () => {
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [{ id: "plan-1" }] }),
+    );
+
+    act(() => {
+      result.current.openDetailTask(createTaskDetail("FN-1"));
+      result.current.openGroupModal("group-1");
+      result.current.openNewTaskWithDescription("draft");
+      result.current.openSubtaskBreakdown("subtask work");
+      result.current.openPlanningWithSession("plan-1");
+      result.current.openGitHubImport();
+      result.current.openFiles("project", "/README.md");
+      result.current.openActivityLog();
+      result.current.openGitManager();
+      result.current.openWorkflowEditor();
+      result.current.openScripts();
+      result.current.toggleTerminal();
+      result.current.openSettings("general");
+    });
+
+    act(() => {
+      result.current.closeProjectScopedModals();
+    });
+
+    expect(result.current.detailTask).toBeNull();
+    expect(result.current.groupModalGroupId).toBeNull();
+    expect(result.current.newTaskModalOpen).toBe(false);
+    expect(result.current.newTaskInitialDescription).toBeNull();
+    expect(result.current.isSubtaskOpen).toBe(false);
+    expect(result.current.subtaskInitialDescription).toBeNull();
+    expect(result.current.isPlanningOpen).toBe(false);
+    expect(result.current.planningResumeSessionId).toBeUndefined();
+    expect(result.current.planningInitialPlan).toBeNull();
+    expect(result.current.githubImportOpen).toBe(false);
+    expect(result.current.filesOpen).toBe(false);
+    expect(result.current.fileBrowserInitialFile).toBeNull();
+    expect(result.current.activityLogOpen).toBe(false);
+    expect(result.current.gitManagerOpen).toBe(false);
+    expect(result.current.workflowEditorOpen).toBe(false);
+    expect(result.current.scriptsOpen).toBe(false);
+    expect(result.current.terminalOpen).toBe(false);
+    // Cross-project surfaces survive the swap.
+    expect(result.current.settingsOpen).toBe(true);
+  });
+
   it("opens the new task modal with a seeded description and resets it on close", () => {
     const { result } = renderHook(() =>
       useModalManager({ projectId: "proj_1", planningSessions: [] }),

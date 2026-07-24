@@ -20,6 +20,13 @@ interface UseProjectActionsOptions {
   openSetupWizard: () => void;
   closeSetupWizard: () => void;
   closeModelOnboarding: () => void;
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Every project-switch entry point (select, view-all, setup-complete) must dismiss
+  modals scoped to the previous project so its task detail / planning payloads do not
+  render over the newly selected project.
+  */
+  closeProjectScopedModals: () => void;
 }
 
 export interface UseProjectActionsResult {
@@ -52,20 +59,31 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     openSetupWizard,
     closeSetupWizard,
     closeModelOnboarding,
+    closeProjectScopedModals,
   } = options;
 
   const handleSelectProject = useCallback((project: ProjectInfo) => {
+    /*
+    FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+    Swapping projects must not leave the previous project's modals (task detail, group,
+    subtask, git manager, …) rendering over the new project. Re-selecting the already
+    current project is a no-op navigation and must NOT dismiss whatever the user has open.
+    */
+    if (project.id !== currentProject?.id) {
+      closeProjectScopedModals();
+    }
     replaceProjectIdInUrl(project.id);
     setCurrentProject(project);
     setViewMode("project");
-  }, [setCurrentProject, setViewMode]);
+  }, [closeProjectScopedModals, currentProject?.id, setCurrentProject, setViewMode]);
 
   const handleViewAllProjects = useCallback(() => {
+    closeProjectScopedModals();
     replaceProjectIdInUrl(null);
     clearCurrentProject();
     setViewMode("overview");
     setTaskView("command-center");
-  }, [clearCurrentProject, setViewMode, setTaskView]);
+  }, [clearCurrentProject, closeProjectScopedModals, setViewMode, setTaskView]);
 
   const handleOpenSettings = useCallback(() => {
     openSettings();
@@ -77,12 +95,15 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
 
   const handleSetupComplete = useCallback((project: ProjectInfo) => {
     closeSetupWizard();
+    if (project.id !== currentProject?.id) {
+      closeProjectScopedModals();
+    }
     replaceProjectIdInUrl(project.id);
     setCurrentProject(project);
     setViewMode("project");
     addToast(t("projects.setup.success", "Project {{name}} registered successfully", { name: project.name }), "success");
     void refreshProjects();
-  }, [closeSetupWizard, setCurrentProject, setViewMode, addToast, refreshProjects, t]);
+  }, [closeSetupWizard, closeProjectScopedModals, currentProject?.id, setCurrentProject, setViewMode, addToast, refreshProjects, t]);
 
   const handleModelOnboardingComplete = useCallback(() => {
     closeModelOnboarding();

@@ -161,6 +161,16 @@ export interface ModalManager {
   openModelOnboarding: () => void;
   closeModelOnboarding: () => void;
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Switching the active project must dismiss modals that show the previous project's data
+  (task detail, group, new task, subtask breakdown, GitHub import, files, git manager,
+  activity log, workflow editor, scripts, terminal) and drop pending planning payloads so
+  Planning does not reopen the old project's plan. Cross-project modals (settings,
+  schedules, usage, agents, setup wizard, model onboarding) stay open.
+  */
+  closeProjectScopedModals: () => void;
+
   onPlanningTaskCreated: (task: Task, addToast: (message: string, type?: ToastType) => void) => void;
   onPlanningTasksCreated: (tasks: Task[], addToast: (message: string, type?: ToastType) => void) => void;
   onSubtaskTasksCreated: (tasks: Task[], addToast: (message: string, type?: ToastType) => void) => void;
@@ -462,6 +472,46 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openModelOnboarding = useCallback(() => setModelOnboardingOpen(true), []);
   const closeModelOnboarding = useCallback(() => setModelOnboardingOpen(false), []);
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Project swap left the previous project's modals open (a task-detail modal for project A
+  kept rendering over project B's board) and kept planning resume/initial-plan payloads,
+  so the docked Planning view re-entered project A's session. Close every project-scoped
+  modal and clear their payloads in one transition; deliberately leave settings,
+  schedules, usage, agents, setup wizard, and model onboarding alone — they are not
+  project-scoped surfaces.
+  */
+  const closeProjectScopedModals = useCallback(() => {
+    setDetailTask(null);
+    setDetailTaskInitialTab(undefined);
+    setDetailTaskInitialAction(null);
+    setDetailTaskOrigin(null);
+    setGroupModalGroupId(null);
+    setNewTaskModalOpen(false);
+    setNewTaskInitialDescription(null);
+    setNewTaskInitialWorkflowId(undefined);
+    setIsSubtaskOpen(false);
+    setSubtaskInitialDescription(null);
+    setSubtaskResumeSessionId(undefined);
+    setSubtaskWorkflowId(undefined);
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+    setPlanningResumeSessionId(undefined);
+    setPlanningWorkflowId(undefined);
+    setGitHubImportOpen(false);
+    setFilesOpen(false);
+    setFileBrowserInitialFile(null);
+    setActivityLogOpen(false);
+    setGitManagerOpen(false);
+    setWorkflowEditorOpen(false);
+    setWorkflowEditorInitialPanel(undefined);
+    setWorkflowEditorInitialAction(undefined);
+    setWorkflowEditorInitialWorkflowId(undefined);
+    setScriptsOpen(false);
+    setTerminalOpen(false);
+    setTerminalInitialCommand(undefined);
+  }, []);
+
   const clearQuickAddPlanningDrafts = useCallback(() => {
     /*
     FNXC:QuickAddPlanningPreserve 2026-06-22-00:00:
@@ -579,6 +629,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeSetupWizard,
     openModelOnboarding,
     closeModelOnboarding,
+    closeProjectScopedModals,
     onPlanningTaskCreated,
     onPlanningTasksCreated,
     onSubtaskTasksCreated,

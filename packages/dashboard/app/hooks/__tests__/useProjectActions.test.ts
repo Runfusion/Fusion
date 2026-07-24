@@ -45,6 +45,7 @@ function createOptions(overrides: Partial<Parameters<typeof useProjectActions>[0
     openSetupWizard: vi.fn(),
     closeSetupWizard: vi.fn(),
     closeModelOnboarding: vi.fn(),
+    closeProjectScopedModals: vi.fn(),
     ...overrides,
   };
 }
@@ -100,6 +101,58 @@ describe("useProjectActions", () => {
 
     expect(new URLSearchParams(window.location.search).get("project")).toBe("proj_unique_b");
     expect(window.location.search).not.toContain("Duplicate");
+  });
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Project swap must dismiss the previous project's modals (task detail, planning payloads,
+  git manager, …) via closeProjectScopedModals, but re-selecting the current project is a
+  no-op navigation and must not close anything the user has open.
+  */
+  it("handleSelectProject dismisses project-scoped modals when switching to a different project", () => {
+    const otherProject: ProjectInfo = { ...PROJECT, id: "proj_other", name: "Other" };
+    const options = createOptions();
+    const { result } = renderHook(() => useProjectActions(options));
+
+    act(() => {
+      result.current.handleSelectProject(otherProject);
+    });
+
+    expect(options.closeProjectScopedModals).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleSelectProject leaves modals alone when re-selecting the current project", () => {
+    const options = createOptions();
+    const { result } = renderHook(() => useProjectActions(options));
+
+    act(() => {
+      result.current.handleSelectProject(PROJECT);
+    });
+
+    expect(options.closeProjectScopedModals).not.toHaveBeenCalled();
+  });
+
+  it("handleViewAllProjects dismisses project-scoped modals", () => {
+    const options = createOptions();
+    const { result } = renderHook(() => useProjectActions(options));
+
+    act(() => {
+      result.current.handleViewAllProjects();
+    });
+
+    expect(options.closeProjectScopedModals).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleSetupComplete dismisses project-scoped modals when landing on a different project", () => {
+    const newProject: ProjectInfo = { ...PROJECT, id: "proj_new", name: "New" };
+    const options = createOptions();
+    const { result } = renderHook(() => useProjectActions(options));
+
+    act(() => {
+      result.current.handleSetupComplete(newProject);
+    });
+
+    expect(options.closeProjectScopedModals).toHaveBeenCalledTimes(1);
   });
 
   it("handleViewAllProjects clears current project, sets overview, and removes only URL project state", () => {

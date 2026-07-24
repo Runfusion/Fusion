@@ -985,6 +985,7 @@ function AppInner() {
     openSetupWizard: modalManager.openSetupWizard,
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
+    closeProjectScopedModals: modalManager.closeProjectScopedModals,
   });
 
   const { handleDetailClose } = useDeepLink({

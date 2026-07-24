@@ -716,7 +716,18 @@ export function MainContent({
           onOpenWorkflowEditor={openWorkflowEditorWithNav}
           onWorkflowSelectionChange={(selection) => setPlanningHeaderWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
         />
+        {/*
+        FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+        Key embedded Planning by project so a project swap remounts it. Without the remount a
+        running plan kept its stream, selected session, and sidebar list from the previous
+        project, and the "durable active session" effect re-fired with the new projectId while
+        the old session was still selected — persisting project A's session as project B's
+        active planning session, so project B kept restoring project A's plan. Unmount cleanup
+        already closes the stream; the new mount fetches the new project's session list and
+        restores that project's own persisted draft/active session.
+        */}
         <PlanningModeModal
+          key={currentProject?.id ?? "all-projects"}
           isOpen={true}
           onClose={closePlanningView}
           onTaskCreated={handlePlanningTaskCreated}
