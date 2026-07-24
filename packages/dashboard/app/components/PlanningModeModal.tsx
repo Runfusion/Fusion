@@ -163,7 +163,7 @@ type ViewState =
   | { type: "plan_review"; session: PlanningSession; summary: PlanningSummary }
   | { type: "creating_task"; session: PlanningSession; summary: PlanningSummary }
   | { type: "create_retry"; session: PlanningSession; summary: PlanningSummary; errorMessage: string }
-  | { type: "task_created"; taskId: string; task?: Task }
+  | { type: "task_created"; taskId: string; task?: Task; sessionId?: string }
   | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
   | { type: "loading" }
@@ -200,13 +200,25 @@ function parsePlanningInputPayload(session: { inputPayload?: string | null }): {
     const payload = JSON.parse(session.inputPayload ?? "{}") as {
       validated?: unknown;
       createdTaskId?: unknown;
+      createdTaskIds?: unknown;
     };
     if (typeof payload !== "object" || payload === null) {
       return { validated: false };
     }
+    /*
+    FNXC:PlanningMultiTask 2026-07-24-01:40:
+    Epoch rotation clears createdTaskId (it archives into createdTaskIds), so a resumed
+    mid-epoch session would lose its banner without this fallback to the newest archived
+    task id (review finding).
+    */
+    const archivedIds = Array.isArray(payload.createdTaskIds)
+      ? payload.createdTaskIds.filter((id): id is string => typeof id === "string")
+      : [];
     return {
       validated: payload.validated === true,
-      createdTaskId: typeof payload.createdTaskId === "string" ? payload.createdTaskId : undefined,
+      createdTaskId: typeof payload.createdTaskId === "string"
+        ? payload.createdTaskId
+        : archivedIds.length > 0 ? archivedIds[archivedIds.length - 1] : undefined,
     };
   } catch {
     return { validated: false };
@@ -214,8 +226,7 @@ function parsePlanningInputPayload(session: { inputPayload?: string | null }): {
 }
 
 type CompletePlanningResume =
-  | { kind: "task_created"; taskId: string; summary: PlanningSummary }
-  | { kind: "plan_review"; summary: PlanningSummary }
+  | { kind: "plan_review"; summary: PlanningSummary; linkedTaskId?: string }
   | { kind: "unrecoverable" };
 
 function resolveCompletePlanningResume(
@@ -232,18 +243,20 @@ function resolveCompletePlanningResume(
   }
   if (!summary) return { kind: "unrecoverable" };
 
-  const { validated, createdTaskId } = parsePlanningInputPayload(session);
-  const terminal = session.status === "complete" || validated;
+  const { createdTaskId } = parsePlanningInputPayload(session);
   /*
   FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
-  A finished plan must never resume into a do-nothing screen. A validated session with no
-  created task lands on the full plan review workspace — read the plan, keep refining or
-  commenting (the server reopens a validated session on any new turn), and Proceed to create
-  the task at any time. Only a session whose task already exists resumes to the task handoff.
-  The create_retry view remains solely the transient failure screen of a live Proceed attempt.
+  A finished plan must never resume into a do-nothing screen: every recoverable complete
+  session lands on the full plan review workspace — read the plan, keep refining or
+  commenting (the server reopens a validated session on any new turn), and Proceed at any
+  time. The create_retry view remains solely the transient failure screen of a live Proceed.
+
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  Sessions whose task already exists resume to plan review too, carrying the linked task for
+  the banner. Proceed without editing idempotently returns that task; editing rotates the
+  server-side creation epoch so the next Proceed creates a fresh task from the evolved plan.
   */
-  if (terminal && createdTaskId) return { kind: "task_created", taskId: createdTaskId, summary };
-  return { kind: "plan_review", summary };
+  return { kind: "plan_review", summary, ...(createdTaskId ? { linkedTaskId: createdTaskId } : {}) };
 }
 
 function getExamplePlans(t: TFunction<"app">): string[] {
@@ -457,6 +470,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [_activePlanPrompt, setActivePlanPrompt] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
+  // FNXC:PlanningMultiTask 2026-07-24-00:20: latest task created from this plan, shown as a plan-review banner; editing the plan rotates the server-side creation epoch so Proceed can create another.
+  const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null);
+  // FNXC:PlanningMultiTask 2026-07-24-01:40: the just-created Task object, so the banner's View task works immediately after creation without waiting for the tasks prop to refresh (review finding).
+  const [linkedTask, setLinkedTask] = useState<Task | null>(null);
   const [, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
   const conversationHistoryRef = useRef<ConversationHistoryEntry[]>([]);
@@ -1120,6 +1137,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     return () => clearInterval(timer);
   }, [generationStartTime, view.type]);
 
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Single application point for a complete-session resume (review finding: this exact
+  setRunningSummary + setLinkedTaskId + setView block was duplicated verbatim at the poll,
+  retry-refresh, and loadSession call sites, and grew a new line in all three copies).
+  */
+  const applyCompletePlanningResume = useCallback(
+    (sessionId: string, resume: { summary: PlanningSummary; linkedTaskId?: string }) => {
+      setRunningSummary(resume.summary);
+      setLinkedTaskId(resume.linkedTaskId ?? null);
+      setLinkedTask(null);
+      setView({
+        type: "plan_review",
+        session: { sessionId, currentQuestion: null, summary: resume.summary },
+        summary: resume.summary,
+      });
+    },
+    [],
+  );
+
   // Fallback for missed SSE 'question'/'summary' events: when the loading
   // state lingers, periodically refetch the session and transition the view
   // if the server has already moved past generating. Without this, a dropped
@@ -1196,17 +1233,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               errorMessage: t("planning.sessionUnrecoverableState", "This session could not be restored. Retry to continue the interview."),
             });
           } else {
-            setRunningSummary(resume.summary);
             resetPlanningAutoRetryBudget();
-            if (resume.kind === "task_created") {
-              setView({ type: "task_created", taskId: resume.taskId });
-            } else {
-              setView({
-                type: "plan_review",
-                session: { sessionId, currentQuestion: null, summary: resume.summary },
-                summary: resume.summary,
-              });
-            }
+            applyCompletePlanningResume(sessionId, resume);
           }
           setStreamingOutput("");
         } else if (session.status === "error") {
@@ -1259,6 +1287,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setActivePlanPrompt("");
     setView({ type: "initial" });
     setError(null);
+    setLinkedTaskId(null);
+    setLinkedTask(null);
     setResponseHistory([]);
     setConversationHistory([]);
     setEditedSummary(null);
@@ -1636,16 +1666,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               }
               resetPlanningAutoRetryBudget();
               clearPlanningDescription(projectId);
-              setRunningSummary(resume.summary);
-              if (resume.kind === "task_created") {
-                setView({ type: "task_created", taskId: resume.taskId });
-              } else {
-                setView({
-                  type: "plan_review",
-                  session: { sessionId: session.id, currentQuestion: null, summary: resume.summary },
-                  summary: resume.summary,
-                });
-              }
+              applyCompletePlanningResume(session.id, resume);
             } else if (session.status === "error") {
               const terminalView: ViewState = {
                 type: "error",
@@ -1878,6 +1899,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       currentSessionIdRef.current = sessionId;
 
       setError(null);
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-01:40:
+      Review finding (confidence 100): the linked-task banner leaked across session switches —
+      only the complete branch below set linkedTaskId, so opening session B after a
+      task-linked session A showed "Task <A's task> was created from this plan" on B's plan
+      review with a working View task button. Clear it at load start; the complete branch
+      restores it for the session actually being loaded.
+      */
+      setLinkedTaskId(null);
+      setLinkedTask(null);
       setStreamingOutput("");
       setResponseHistory([]);
       setConversationHistory([]);
@@ -2071,18 +2102,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               errorMessage: t("planning.sessionUnrecoverableState", "This session could not be restored. Retry to continue the interview."),
             });
           } else {
-            setRunningSummary(resume.summary);
             resetPlanningAutoRetryBudget();
             clearPlanningDescription(projectId);
-            if (resume.kind === "task_created") {
-              setView({ type: "task_created", taskId: resume.taskId });
-            } else {
-              setView({
-                type: "plan_review",
-                session: { sessionId, currentQuestion: null, summary: resume.summary },
-                summary: resume.summary,
-              });
-            }
+            applyCompletePlanningResume(sessionId, resume);
           }
         } else if (session.status === "generating") {
           setView({ type: "loading" });
@@ -3051,7 +3073,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         ...(workflowId !== undefined ? { workflowId } : {}),
       }));
       clearPlanningActiveSession(projectId);
-      setView({ type: "task_created", taskId: task.id, task });
+      setLinkedTaskId(task.id);
+      setLinkedTask(task);
+      setView({ type: "task_created", taskId: task.id, task, sessionId });
     } catch (err) {
       const errorMessage = getErrorMessage(err) || t("planning.failedCreateTask", "Failed to create task");
       setView({ type: "create_retry", session, summary, errorMessage });
@@ -3094,7 +3118,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     try {
       const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(view.session.sessionId, view.summary, projectId, { ...(workflowId !== undefined ? { workflowId } : {}) }));
       clearPlanningActiveSession(projectId);
-      setView({ type: "task_created", taskId: task.id, task });
+      setLinkedTaskId(task.id);
+      setLinkedTask(task);
+      setView({ type: "task_created", taskId: task.id, task, sessionId: view.session.sessionId });
     } catch (err) {
       setView({ ...view, errorMessage: getErrorMessage(err) || t("planning.failedCreateTask", "Failed to create task") });
     } finally {
@@ -3997,6 +4023,33 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           {view.type === "plan_review" && (
             <div className="planning-summary planning-plan-review" data-testid="planning-plan-review">
+              {/*
+              FNXC:PlanningMultiTask 2026-07-24-00:20:
+              A plan that already produced a task stays a live work surface. The banner links the
+              latest created task; continuing to edit rotates the server-side creation epoch, so
+              Proceed creates a fresh task from the evolved plan (unedited Proceed replays return
+              the same task).
+              */}
+              {linkedTaskId && (
+                <div className="planning-linked-task-note" data-testid="planning-linked-task-note" role="status">
+                  <CheckCircle size={16} />
+                  <span>
+                    {t("planning.linkedTaskNote", "Task {{taskId}} was created from this plan. Keep refining to create another.", { taskId: linkedTaskId })}
+                  </span>
+                  {/* FNXC:PlanningMultiTask 2026-07-24-01:40: resolve the just-created Task object first so View task is enabled immediately after creation, before the tasks prop refreshes (mirrors the task_created view's view.task ?? tasks.find pattern). */}
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!onViewTask || !((linkedTask?.id === linkedTaskId ? linkedTask : null) ?? tasks.find((candidate) => candidate.id === linkedTaskId))}
+                    onClick={() => {
+                      const task = (linkedTask?.id === linkedTaskId ? linkedTask : null) ?? tasks.find((candidate) => candidate.id === linkedTaskId);
+                      if (task) onViewTask?.(task);
+                    }}
+                  >
+                    {t("planning.viewTask", "View task")}
+                  </button>
+                </div>
+              )}
               {renderPlanPane(view.summary)}
             </div>
           )}
@@ -4023,6 +4076,37 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   {t("planning.viewTask", "View task")}
                   <ArrowRight size={16} />
                 </button>
+                {/*
+                FNXC:PlanningMultiTask 2026-07-24-00:20:
+                Task creation is not the end of the plan. Continue planning returns to the plan
+                review workspace where the plan stays readable and editable; edits rotate the
+                creation epoch so Proceed can create another task from the evolved plan.
+                */}
+                {view.sessionId && runningSummary && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      const sessionId = view.sessionId!;
+                      /*
+                      FNXC:PlanningMultiTask 2026-07-24-01:40:
+                      Re-register the session as selected AND as the durable active session
+                      (task creation cleared it) so post-continue edits survive a reload and
+                      the sidebar selection matches the visible plan (review finding).
+                      */
+                      currentSessionIdRef.current = sessionId;
+                      setSelectedSessionId(sessionId);
+                      savePlanningActiveSession(sessionId, projectId);
+                      setView({
+                        type: "plan_review",
+                        session: { sessionId, currentQuestion: null, summary: runningSummary },
+                        summary: runningSummary,
+                      });
+                    }}
+                  >
+                    {t("planning.continuePlanning", "Continue planning")}
+                  </button>
+                )}
                 <button type="button" className="btn" onClick={handleBackToList}>
                   {t("planning.returnToSessions", "Return to sessions")}
                 </button>

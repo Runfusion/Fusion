@@ -297,18 +297,30 @@ FN-8442 requires a database compare-and-set before Planning Mode creates a task.
 never-rotated proposalClaimId prevents duplicate task rows, while this conditional
 ai_sessions transition assigns exactly one live creator across dashboard processes.
 */
+/*
+FNXC:PlanningMultiTask 2026-07-24-01:40:
+Claim-lifecycle writes are SURGICAL jsonb merges (`input_payload || patch - removedKeys`),
+never read-modify-write of the whole payload. Review finding: the previous stale-spread
+(`{...input, ...}`) could silently revert a concurrent epoch rotation (taskCreationEpoch /
+createdTaskIds written by an edit turn between this function's read and its UPDATE), which
+either re-linked an archived task to the new epoch or dropped the rotation entirely. The
+merge form only touches the four claim keys, so concurrent non-claim payload fields always
+survive. The WHERE guards still evaluate against the CURRENT row at update time.
+*/
+const CLAIM_KEYS_PATCH = (patch: Record<string, string>, removeKeys: string[]) =>
+  sql`(${schema.project.aiSessions.inputPayload} || ${JSON.stringify(patch)}::jsonb)${sql.raw(removeKeys.map((key) => ` - '${key.replace(/'/g, "''")}'`).join(""))}`;
+
 export async function claimPlanningSessionTaskCreation(
   handle: QueryHandle,
   sessionId: string,
   claimOwnerToken: string,
   claimStartedAt: string,
 ): Promise<AiSessionRow | null> {
-  const existing = await getAiSession(handle, sessionId);
-  if (!existing || existing.type !== "planning") return null;
-  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
-  const inputPayload = { ...input, createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined };
   const rows = await handle.update(schema.project.aiSessions)
-    .set({ inputPayload, updatedAt: claimStartedAt })
+    .set({
+      inputPayload: CLAIM_KEYS_PATCH({ createClaimStatus: "creating", claimOwnerToken, claimStartedAt }, ["createdTaskId"]),
+      updatedAt: claimStartedAt,
+    })
     .where(and(
       eq(schema.project.aiSessions.id, sessionId),
       eq(schema.project.aiSessions.type, "planning"),
@@ -325,30 +337,47 @@ export async function finalizePlanningSessionTaskCreation(
   claimOwnerToken: string,
   createdTaskId: string,
 ): Promise<AiSessionRow | null> {
-  const existing = await getAiSession(handle, sessionId);
-  if (!existing || existing.type !== "planning") return null;
-  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
-  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
   const rows = await handle.update(schema.project.aiSessions)
-    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .set({
+      inputPayload: CLAIM_KEYS_PATCH({ createClaimStatus: "created", createdTaskId }, ["claimOwnerToken", "claimStartedAt"]),
+      updatedAt: new Date().toISOString(),
+    })
     .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
     .returning();
   return rows[0] ? rowToSession(rows[0]) : null;
 }
 
-/** Reconcile a task created before a process could finalize its session linkage. */
+/*
+Reconcile a task created before a process could finalize its session linkage.
+
+FNXC:PlanningMultiTask 2026-07-24-01:40:
+`expectedTaskCreationEpoch` guards reconcile against racing an edit-turn rotation: the caller
+derived the task's claim key under a specific epoch, and stamping that task's id onto a row
+whose epoch has since advanced would link an archived task to the NEW epoch. When provided,
+the conditional update only fires while the row's epoch still matches; a lost race is a
+harmless no-op (the task itself was already returned to the caller).
+*/
 export async function reconcilePlanningSessionTaskCreation(
   handle: QueryHandle,
   sessionId: string,
   createdTaskId: string,
+  expectedTaskCreationEpoch?: number,
 ): Promise<AiSessionRow | null> {
-  const existing = await getAiSession(handle, sessionId);
-  if (!existing || existing.type !== "planning") return null;
-  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
-  const inputPayload = { ...input, createClaimStatus: "created", createdTaskId, claimOwnerToken: undefined, claimStartedAt: undefined };
+  const conditions = [
+    eq(schema.project.aiSessions.id, sessionId),
+    eq(schema.project.aiSessions.type, "planning"),
+  ];
+  if (expectedTaskCreationEpoch !== undefined) {
+    conditions.push(
+      sql`coalesce((${schema.project.aiSessions.inputPayload}->>'taskCreationEpoch')::int, 0) = ${expectedTaskCreationEpoch}`,
+    );
+  }
   const rows = await handle.update(schema.project.aiSessions)
-    .set({ inputPayload, updatedAt: new Date().toISOString() })
-    .where(and(eq(schema.project.aiSessions.id, sessionId), eq(schema.project.aiSessions.type, "planning")))
+    .set({
+      inputPayload: CLAIM_KEYS_PATCH({ createClaimStatus: "created", createdTaskId }, ["claimOwnerToken", "claimStartedAt"]),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(and(...conditions))
     .returning();
   return rows[0] ? rowToSession(rows[0]) : null;
 }
@@ -359,12 +388,11 @@ export async function releasePlanningSessionTaskCreation(
   sessionId: string,
   claimOwnerToken: string,
 ): Promise<AiSessionRow | null> {
-  const existing = await getAiSession(handle, sessionId);
-  if (!existing || existing.type !== "planning") return null;
-  const input = safeJsonParse(existing.inputPayload, {}) as Record<string, unknown>;
-  const inputPayload = { ...input, createClaimStatus: "none", claimOwnerToken: undefined, claimStartedAt: undefined };
   const rows = await handle.update(schema.project.aiSessions)
-    .set({ inputPayload, updatedAt: new Date().toISOString() })
+    .set({
+      inputPayload: CLAIM_KEYS_PATCH({ createClaimStatus: "none" }, ["claimOwnerToken", "claimStartedAt"]),
+      updatedAt: new Date().toISOString(),
+    })
     .where(and(eq(schema.project.aiSessions.id, sessionId), sql`${schema.project.aiSessions.inputPayload}->>'claimOwnerToken' = ${claimOwnerToken}`))
     .returning();
   return rows[0] ? rowToSession(rows[0]) : null;

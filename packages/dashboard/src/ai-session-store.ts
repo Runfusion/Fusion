@@ -168,8 +168,9 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     return row;
   }
 
-  async reconcilePlanningTaskCreation(sessionId: string, taskId: string): Promise<AiSessionRow | null> {
-    const row = await reconcilePlanningSessionTaskCreation(this.dbAsync, sessionId, taskId) as AiSessionRow | null;
+  // FNXC:PlanningMultiTask 2026-07-24-01:40: expectedTaskCreationEpoch guards reconcile against a concurrent epoch rotation — see core reconcilePlanningSessionTaskCreation.
+  async reconcilePlanningTaskCreation(sessionId: string, taskId: string, expectedTaskCreationEpoch?: number): Promise<AiSessionRow | null> {
+    const row = await reconcilePlanningSessionTaskCreation(this.dbAsync, sessionId, taskId, expectedTaskCreationEpoch) as AiSessionRow | null;
     if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     return row;
   }

@@ -40,7 +40,10 @@ import {
   __setCreateFnAgent,
   createSessionWithAgent,
   getSession,
+  InvalidSessionStateError,
+  planningProposalClaimId,
   planningStreamManager,
+  rewindSession,
   setAiSessionStore,
   submitResponse,
 } from "../planning.js";
@@ -145,6 +148,129 @@ describe("planning question regeneration instead of no-active-question errors", 
     expect(session.validated).toBe(false);
     expect(session.error).toBeUndefined();
     expect(session.currentQuestion).toBeDefined();
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  One plan can produce multiple tasks. Editing a plan whose current epoch already created a
+  task rotates the creation epoch (new proposalClaimId key, claim state reset, task recorded
+  in createdTaskIds) so the next Proceed creates a fresh task; a session without a created
+  task keeps its epoch so unedited Proceed replays stay idempotent.
+  */
+  it("rotates the task-creation epoch when a task-linked plan is edited", async () => {
+    const { sessionId } = await startSessionAwaitingInput("10.2.0.10");
+    const session = (await getSession(sessionId))!;
+    session.validated = true;
+    session.createdTaskId = "FN-100";
+    session.createClaimStatus = "created";
+    session.currentQuestion = undefined;
+
+    expect(planningProposalClaimId(sessionId, session.taskCreationEpoch)).toBe(`planning-session:${sessionId}`);
+
+    const result = await submitResponse(sessionId, { refine: true }, "/tmp/project", undefined, MOCK_TASK_STORE);
+
+    expect(result.type).toBe("question");
+    expect(session.taskCreationEpoch).toBe(1);
+    expect(session.createdTaskId).toBeUndefined();
+    expect(session.createClaimStatus).toBe("none");
+    expect(session.createdTaskIds).toEqual(["FN-100"]);
+    expect(planningProposalClaimId(sessionId, session.taskCreationEpoch)).toBe(`planning-session:${sessionId}#1`);
+
+    // A second edit without a new created task must NOT rotate again.
+    const secondResult = await submitResponse(sessionId, { refine: true, focus: "smaller scope" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    expect(secondResult.type).toBe("question");
+    expect(session.taskCreationEpoch).toBe(1);
+    expect(session.createdTaskIds).toEqual(["FN-100"]);
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Review findings: (a) rewindSession shares the rotation invariant with submitResponse and
+  needs its own regression coverage; (b) a REJECTED request must never burn a phantom
+  rotation — reopen/rotation only run after admission and preconditions pass.
+  */
+  it("rotates the epoch when rewinding an answered question on a task-linked plan", async () => {
+    const { sessionId } = await startSessionAwaitingInput("10.2.0.11");
+    const session = (await getSession(sessionId))!;
+    const question = session.currentQuestion!;
+    await submitResponse(sessionId, { [question.id]: "first answer" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    expect(session.history.length).toBeGreaterThan(0);
+
+    session.validated = true;
+    session.createdTaskId = "FN-200";
+    session.createClaimStatus = "created";
+
+    await rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE);
+
+    expect(session.taskCreationEpoch).toBe(1);
+    expect(session.createdTaskIds).toEqual(["FN-200"]);
+    expect(session.createdTaskId).toBeUndefined();
+    expect(session.createClaimStatus).toBe("none");
+    expect(session.validated).toBe(false);
+  });
+
+  it("does not rotate the epoch when a rewind is rejected before admission", async () => {
+    const { sessionId } = await startSessionAwaitingInput("10.2.0.12");
+    const session = (await getSession(sessionId))!;
+    // Live task-linked session with NO history: rewind must reject without touching claim state.
+    session.validated = true;
+    session.createdTaskId = "FN-300";
+    session.createClaimStatus = "created";
+    session.history = [];
+
+    await expect(rewindSession(sessionId, undefined, "/tmp/project", undefined, MOCK_TASK_STORE))
+      .rejects.toBeInstanceOf(InvalidSessionStateError);
+
+    expect(session.taskCreationEpoch).toBeUndefined();
+    expect(session.createdTaskId).toBe("FN-300");
+    expect(session.createClaimStatus).toBe("created");
+    expect(session.validated).toBe(true);
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Durable round-trip of the new epoch fields through buildSessionFromRow's normalization
+  (review finding: the positive-integer guard and string-array filter were untested).
+  */
+  it("restores and normalizes taskCreationEpoch/createdTaskIds from a persisted row", async () => {
+    const baseRow = {
+      type: "planning",
+      status: "awaiting_input",
+      title: "Restored plan",
+      conversationHistory: "[]",
+      currentQuestion: null,
+      result: null,
+      thinkingOutput: "",
+      error: null,
+      projectId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const rows: Record<string, unknown> = {
+      "row-valid": {
+        ...baseRow,
+        id: "row-valid",
+        inputPayload: JSON.stringify({ initialPlan: "Restore me", taskCreationEpoch: 2, createdTaskIds: ["FN-1", 42, "FN-2"] }),
+      },
+      "row-malformed": {
+        ...baseRow,
+        id: "row-malformed",
+        inputPayload: JSON.stringify({ initialPlan: "Restore me", taskCreationEpoch: -3, createdTaskIds: "not-an-array" }),
+      },
+    };
+    setAiSessionStore(Object.assign(new EventEmitter(), {
+      upsert: vi.fn(async () => {}),
+      get: vi.fn(async (id: string) => rows[id] ?? null),
+      updateThinking: vi.fn(),
+    }) as never);
+
+    const valid = (await getSession("row-valid"))!;
+    expect(valid.taskCreationEpoch).toBe(2);
+    expect(valid.createdTaskIds).toEqual(["FN-1", "FN-2"]);
+
+    const malformed = (await getSession("row-malformed"))!;
+    expect(malformed.taskCreationEpoch).toBeUndefined();
+    expect(malformed.createdTaskIds).toBeUndefined();
   });
 
   it("contextual comments with no summary still apply via the rebuilt running summary", async () => {

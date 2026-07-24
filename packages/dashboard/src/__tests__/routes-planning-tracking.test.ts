@@ -43,6 +43,9 @@ vi.mock("../planning.js", () => ({
   releasePlanningTaskCreation: vi.fn(async () => undefined),
   // FNXC:PlanningMode 2026-07-23-12:10: create-task terminalizes the session after creation.
   validateSession: vi.fn(async () => undefined),
+  // FNXC:PlanningMultiTask 2026-07-24-00:20: create-task derives an epoch-scoped proposalClaimId.
+  planningProposalClaimId: (sessionId: string, epoch?: number) =>
+    epoch && epoch > 0 ? `planning-session:${sessionId}#${epoch}` : `planning-session:${sessionId}`,
 }));
 
 function deferred<T>() {

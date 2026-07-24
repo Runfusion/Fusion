@@ -2915,6 +2915,58 @@ describe("Planning Mode Routes", () => {
         });
       });
 
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-01:40:
+      Review finding: creating a task while a planning turn is still generating raced the
+      turn-completion persist against finalize and could tear the created-task linkage. The
+      route now rejects with 409 while the durable session status is "generating".
+      */
+      it("rejects create-task with 409 while the session is still generating", async () => {
+        const sessionId = "planning-generating-409";
+        const generatingRow = {
+          id: sessionId,
+          type: "planning",
+          status: "generating",
+          title: "Still generating",
+          inputPayload: JSON.stringify({ initialPlan: "Build a thing" }),
+          conversationHistory: "[]",
+          currentQuestion: null,
+          result: JSON.stringify({
+            title: "Draft plan",
+            description: "Mid-turn running plan",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation"],
+          }),
+          thinkingOutput: "",
+          error: null,
+          projectId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        const mockAiSessionStore = {
+          on: vi.fn(),
+          upsert: vi.fn(),
+          get: vi.fn(async () => generatingRow),
+          listAll: vi.fn(() => []),
+          listActive: vi.fn(() => []),
+        };
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(409);
+        expect(store.createTask).not.toHaveBeenCalled();
+      });
+
       it.each([
         {
           sessionSource: "live",

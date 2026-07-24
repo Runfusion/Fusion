@@ -267,7 +267,12 @@ describe("PlanningModeModal autosize", () => {
     expect(screen.queryByText("This plan is still being prepared")).toBeNull();
   });
 
-  it("opens the linked task when a complete session already has a createdTaskId", async () => {
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  A session whose task exists resumes to the editable plan review workspace with a banner
+  linking that task — not a terminal handoff — so the plan can evolve into further tasks.
+  */
+  it("resumes a task-linked complete session to plan review with the linked-task banner", async () => {
     mockFetchAiSession.mockResolvedValueOnce({
       id: "session-complete-linked",
       type: "planning",
@@ -305,7 +310,10 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
-    expect(await screen.findByText("FN-9001")).toBeInTheDocument();
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByTestId("planning-linked-task-note")).toBeInTheDocument();
+    expect(screen.getByTestId("planning-linked-task-note").textContent).toContain("FN-9001");
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
     expect(screen.queryByTestId("planning-create-retry")).toBeNull();
   });
 });

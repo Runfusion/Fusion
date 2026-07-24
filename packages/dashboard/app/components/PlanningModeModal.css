@@ -1132,6 +1132,30 @@ That gutter read as dead space around the framed cards; panes now sit flush edge
   font-size: var(--font-size-sm);
 }
 
+/*
+FNXC:PlanningMultiTask 2026-07-24-00:20:
+Plan-review banner linking the latest task created from this plan; the plan remains a live,
+editable work surface after creation.
+*/
+.planning-linked-task-note {
+  display: flex;
+  align-items: center;
+  /* FNXC:PlanningMultiTask 2026-07-24-01:40: wrap on narrow/mobile viewports so the View task action never clips (review finding). */
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--success, var(--accent)) 8%, var(--card));
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.planning-linked-task-note span {
+  flex: 1;
+  min-width: 0;
+}
+
 .planning-question {
   display: flex;
   flex-direction: column;

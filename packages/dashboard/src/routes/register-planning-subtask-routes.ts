@@ -1188,6 +1188,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         reconcilePlanningTaskCreation,
         releasePlanningTaskCreation,
         validateSession,
+        planningProposalClaimId,
       } = await import("../planning.js");
 
       let session = await getSession(sessionId);
@@ -1245,27 +1246,75 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       releaseCreateLock = await acquirePlanningCreateLock(sessionId);
-      // Re-read after the local single-flight queue: an earlier caller may have finalized while we waited.
-      session = await getSession(sessionId);
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-01:40:
+      Creating a task while a planning turn is still generating raced the turn's full-row
+      persistSession against finalize: the turn-completion write could clobber the fresh
+      createdTaskId linkage, which then disabled the next epoch rotation (review finding).
+      The durable status is the cross-process signal, so a generating session gets a clean
+      409 instead of a torn linkage; the client retries after the turn settles.
+      */
+      if (aiSessionStore) {
+        // `await` tolerates sync-returning adapter stores; a failed read must not block creation.
+        let liveRow: { type?: string; status?: string } | null = null;
+        try {
+          liveRow = (await aiSessionStore.get(sessionId)) as { type?: string; status?: string } | null;
+        } catch {
+          liveRow = null;
+        }
+        if (liveRow?.type === "planning" && liveRow.status === "generating") {
+          throw conflict("Plan is still generating — wait for the current turn to finish, then create the task.");
+        }
+      }
+      // Re-read after the local single-flight queue: an earlier caller may have finalized while
+      // we waited. Durable-first so another process's epoch rotation (plan edited after a task
+      // was created) is honored when deriving this attempt's claim key; fall back to the
+      // in-memory read for adapters/rows the strict durable restore rejects.
+      try {
+        session = (await getDurablePlanningSession(sessionId)) ?? await getSession(sessionId);
+      } catch (durableReadError) {
+        /*
+        FNXC:PlanningMultiTask 2026-07-24-01:40:
+        The fallback must be loud: deriving the claim key from a stale in-memory epoch after a
+        silent durable-read failure can replay a prior epoch's task as alreadyCreated (bounded
+        degradation — never a fork, since rotation implies that epoch's task row exists).
+        */
+        logPlanningCreateWarning(
+          "Planning create-task durable session read failed; falling back to in-memory session for claim-key derivation",
+          durableReadError,
+          { sessionId },
+        );
+        session = await getSession(sessionId);
+      }
 
       /*
       FNXC:PlanningMode 2026-07-20-15:45:
-      FN-8442 derives the never-rotated key `planning-session:${sessionId}` at task creation.
-      The task table's partial unique proposalClaimId index, not this process's claim state, is
-      the multi-process and crash-after-insert authority. A session linkage is a durable cache
-      reconciled from that key; a missing linked task fails closed rather than silently forking.
+      FN-8442: the task table's partial unique proposalClaimId index, not this process's claim
+      state, is the multi-process and crash-after-insert authority. A session linkage is a
+      durable cache reconciled from that key; a missing linked task fails closed rather than
+      silently forking.
+
+      FNXC:PlanningMultiTask 2026-07-24-00:20:
+      The key is now per creation EPOCH (`planning-session:{id}` for epoch 0, `…#N` after the
+      plan is edited past a created task), so one plan can produce multiple tasks while
+      Proceed replays inside an epoch still dedupe to that epoch's task.
       */
-      const proposalClaimId = `planning-session:${sessionId}`;
+      const claimEpoch = session?.taskCreationEpoch ?? 0;
+      const proposalClaimId = planningProposalClaimId(sessionId, claimEpoch);
       const findCreatedTask = async () =>
         (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
       /*
-      FNXC:PlanningMode 2026-07-23-12:10:
-      A planning session whose task exists is done: the claim model allows exactly one task per
-      session, so after creation the session must stop advertising awaiting_input in the session
-      list/banner. The Proceed-with-plan flow calls this route without the legacy /validate step,
-      so terminalize here through validateSession (the sole terminal transition) on every path
-      that ends with a created task, including alreadyCreated reconciliation. Best-effort: a
-      failure to terminalize must not fail the task creation itself.
+      FNXC:PlanningMode 2026-07-23-12:10 (updated FNXC:PlanningMultiTask 2026-07-24-01:40):
+      The claim model allows exactly one task per creation EPOCH — a session can produce
+      multiple tasks across epochs (rotation happens when the plan is edited past a created
+      task). After each creation the session must stop advertising awaiting_input in the
+      session list/banner, so terminalize here through validateSession (the sole terminal
+      transition) on every path that ends with a created task, including alreadyCreated
+      reconciliation; a later edit reopens it. Best-effort: a failure to terminalize must not
+      fail the task creation itself. Deploy assumption: the dashboard serves a single code
+      version per DB at a time — a pre-epoch binary handling a rotated session would derive
+      the un-suffixed key and replay epoch 0's task instead of creating a new one (bounded
+      degradation, no duplicate).
       */
       const markSessionComplete = () =>
         runPlanningCreateSideEffect(
@@ -1288,7 +1337,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       // A task row is the crash-window authority. Reconcile it before trying to claim.
       const existingTask = await findCreatedTask();
       if (existingTask) {
-        await reconcilePlanningTaskCreation(sessionId, existingTask.id);
+        await reconcilePlanningTaskCreation(sessionId, existingTask.id, claimEpoch);
         await markSessionComplete();
         res.status(200).json({ task: existingTask, alreadyCreated: true });
         return;
@@ -1315,7 +1364,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         session = await getDurablePlanningSession(sessionId) ?? session;
         const recoveredTask = await findCreatedTask();
         if (recoveredTask) {
-          await reconcilePlanningTaskCreation(sessionId, recoveredTask.id);
+          await reconcilePlanningTaskCreation(sessionId, recoveredTask.id, claimEpoch);
           await markSessionComplete();
           res.status(200).json({ task: recoveredTask, alreadyCreated: true });
           return;

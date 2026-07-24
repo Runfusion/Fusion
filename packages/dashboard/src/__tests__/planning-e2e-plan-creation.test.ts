@@ -111,10 +111,23 @@ function installContextAwareAgent() {
 }
 
 function createStore() {
-  let createdTask: { id: string; title: string; description: string } | undefined;
-  const createTask = vi.fn(async (input: { title: string; description: string }) => {
-    createdTask = { id: "FN-E2E-001", title: input.title, description: input.description };
-    return createdTask;
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Tasks record their proposalClaimId and stay listed so findCreatedTask's epoch-keyed
+  crash-window reconciliation is exercised for real (review finding: only epoch 0 was
+  covered). `tasks` is exposed so tests can inject an orphaned row simulating a crash
+  between task insert and session finalize.
+  */
+  const tasks: Array<{ id: string; title: string; description: string; proposalClaimId?: string }> = [];
+  const createTask = vi.fn(async (input: { title: string; description: string; proposalClaimId?: string }) => {
+    const created = {
+      id: `FN-E2E-00${tasks.length + 1}`,
+      title: input.title,
+      description: input.description,
+      proposalClaimId: input.proposalClaimId,
+    };
+    tasks.push(created);
+    return created;
   });
   return {
     getSettings: vi.fn().mockResolvedValue({
@@ -123,15 +136,17 @@ function createStore() {
       ntfyEnabled: false,
     }),
     getRootDir: vi.fn().mockReturnValue("/tmp/planning-e2e"),
-    listTasks: vi.fn(async () => createdTask ? [createdTask] : []),
+    listTasks: vi.fn(async () => [...tasks]),
     getTask: vi.fn(async (id: string) => {
-      if (createdTask?.id === id) return createdTask;
+      const found = tasks.find((task) => task.id === id);
+      if (found) return found;
       throw new Error("not found");
     }),
     createTask,
     updateTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
-  } as unknown as TaskStore & { createTask: typeof createTask };
+    tasks,
+  } as unknown as TaskStore & { createTask: typeof createTask; tasks: typeof tasks };
 }
 
 function buildApp(store: TaskStore): express.Express {
@@ -224,6 +239,83 @@ describe("Planning Mode plan creation E2E", () => {
 
     const retry = await post(app, "/api/planning/create-task", { sessionId });
     expect(retry).toMatchObject({ status: 200, body: { task: { id: "FN-E2E-001" }, alreadyCreated: true } });
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  One plan can produce multiple tasks. Editing the plan after a task exists rotates the
+  creation epoch: the next Proceed creates a FRESH task under a new epoch-suffixed
+  proposalClaimId instead of replaying the first task, while unedited replays (above) stay
+  idempotent within their epoch.
+  */
+  it("creates a second task after the plan is edited past the first one", async () => {
+    const start = await post(app, "/api/planning/start", { initialPlan: "Build secure account recovery" });
+    expect(start.status).toBe(201);
+    const sessionId = start.body.sessionId as string;
+
+    const created = await post(app, "/api/planning/create-task", { sessionId });
+    expect(created.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+    expect(store.createTask.mock.calls[0][0]).toMatchObject({ proposalClaimId: `planning-session:${sessionId}` });
+
+    // Editing the validated plan reopens it and rotates the creation epoch.
+    const refined = await post(app, "/api/planning/respond", { sessionId, responses: { refine: true, focus: "split rollout" } });
+    expect(refined.status).toBe(200);
+    const session = await getSession(sessionId);
+    expect(session?.taskCreationEpoch).toBe(1);
+    expect(session?.createdTaskIds).toEqual(["FN-E2E-001"]);
+
+    const second = await post(app, "/api/planning/create-task", { sessionId });
+    expect(second.status).toBe(201);
+    expect(second.body.alreadyCreated).toBe(false);
+    expect(store.createTask).toHaveBeenCalledTimes(2);
+    expect(store.createTask.mock.calls[1][0]).toMatchObject({ proposalClaimId: `planning-session:${sessionId}#1` });
+
+    /*
+    FNXC:PlanningMultiTask 2026-07-24-01:40:
+    Replay idempotency must hold INSIDE a rotated epoch too (review finding: only epoch 0's
+    replay was pinned): an unedited Proceed after the second create returns that same task.
+    */
+    const replayAfterRotation = await post(app, "/api/planning/create-task", { sessionId });
+    expect(replayAfterRotation.status).toBe(200);
+    expect(replayAfterRotation.body.alreadyCreated).toBe(true);
+    expect(replayAfterRotation.body.task.id).toBe("FN-E2E-002");
+    expect(store.createTask).toHaveBeenCalledTimes(2);
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Crash-after-insert recovery inside a ROTATED epoch: a task row exists under the epoch-1
+  claim key but the session linkage was never finalized. Proceed must reconcile that row via
+  findCreatedTask on the current epoch key instead of inserting a duplicate (review finding:
+  the crash-window regression test only covered the un-suffixed epoch-0 key).
+  */
+  it("reconciles a crash-orphaned task row under an epoch-suffixed claim key instead of duplicating it", async () => {
+    const start = await post(app, "/api/planning/start", { initialPlan: "Build secure account recovery" });
+    expect(start.status).toBe(201);
+    const sessionId = start.body.sessionId as string;
+
+    const created = await post(app, "/api/planning/create-task", { sessionId });
+    expect(created.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+
+    const refined = await post(app, "/api/planning/respond", { sessionId, responses: { refine: true, focus: "split rollout" } });
+    expect(refined.status).toBe(200);
+    expect((await getSession(sessionId))?.taskCreationEpoch).toBe(1);
+
+    // Simulate the crash window: the epoch-1 task row landed, but finalize never ran.
+    store.tasks.push({
+      id: "FN-E2E-CRASH",
+      title: "Crash-orphaned second task",
+      description: "inserted before finalize",
+      proposalClaimId: `planning-session:${sessionId}#1`,
+    });
+
+    const retry = await post(app, "/api/planning/create-task", { sessionId });
+    expect(retry.status).toBe(200);
+    expect(retry.body.alreadyCreated).toBe(true);
+    expect(retry.body.task.id).toBe("FN-E2E-CRASH");
     expect(store.createTask).toHaveBeenCalledTimes(1);
   });
 

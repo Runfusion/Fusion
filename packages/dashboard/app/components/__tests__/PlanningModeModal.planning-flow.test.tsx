@@ -661,7 +661,13 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.getByRole("button", { name: "Return to sessions" })).toBeEnabled();
   });
 
-  it("restores a linked task into the created-task handoff", async () => {
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  A session whose task exists resumes to the EDITABLE plan review workspace with a banner
+  linking that task — not a terminal created-task handoff — so the plan can keep evolving
+  into further tasks. Reopen never re-fires onTaskCreated for a previously created task.
+  */
+  it("restores a linked task as a plan-review banner with a live View task action", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
       status: "complete",
@@ -673,12 +679,17 @@ describe("PlanningModeModal sequential flow", () => {
     const onViewTask = vi.fn();
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={onTaskCreated} onTasksCreated={vi.fn()} onViewTask={onViewTask} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />);
 
-    expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-001");
-    await waitFor(() => expect(onTaskCreated).toHaveBeenCalledWith(mockTasks[0]));
-    expect(screen.getByRole("button", { name: "View task" })).toBeEnabled();
+    expect(await screen.findByTestId("planning-linked-task-note")).toHaveTextContent("FN-001");
+    expect(screen.getByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+    expect(onTaskCreated).not.toHaveBeenCalled();
+    const viewTask = screen.getByRole("button", { name: "View task" });
+    expect(viewTask).toBeEnabled();
+    fireEvent.click(viewTask);
+    expect(onViewTask).toHaveBeenCalledWith(mockTasks[0]);
   });
 
-  it("waits for a restored linked task before enabling its task handoff", async () => {
+  it("disables the linked-task banner action until the restored task is loaded", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
       status: "complete",
@@ -689,9 +700,65 @@ describe("PlanningModeModal sequential flow", () => {
     const onTaskCreated = vi.fn();
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={onTaskCreated} onTasksCreated={vi.fn()} onViewTask={vi.fn()} tasks={[]} projectId="project-1" resumeSessionId="session-1" />);
 
-    expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-LATER");
+    expect(await screen.findByTestId("planning-linked-task-note")).toHaveTextContent("FN-LATER");
     expect(screen.getByRole("button", { name: "View task" })).toBeDisabled();
     expect(onTaskCreated).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Review findings: Continue planning must return to the editable plan review with a working
+  linked-task banner (resolving the just-created Task object, before the tasks prop refreshes),
+  and the banner must never leak across session switches.
+  */
+  it("Continue planning returns from the task handoff to an editable plan review with a live banner", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "complete",
+      currentQuestion: null,
+      result: JSON.stringify(mockSummary),
+      inputPayload: JSON.stringify({ validated: true }),
+    });
+    mockCreateTaskFromPlanning.mockResolvedValue(mockTasks[0]);
+    // tasks={[]} proves the banner resolves the just-created Task object, not the tasks prop.
+    render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} onViewTask={vi.fn()} tasks={[]} projectId="project-1" resumeSessionId="session-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    expect(await screen.findByTestId("planning-task-created")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue planning" }));
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByTestId("planning-linked-task-note")).toHaveTextContent(mockTasks[0].id);
+    expect(screen.getByRole("button", { name: "View task" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+  });
+
+  it("clears the linked-task banner when switching to a session without a created task", async () => {
+    mockFetchAiSession.mockImplementation(async (sessionId: string) => sessionId === "session-1"
+      ? {
+          ...base,
+          id: "session-1",
+          status: "complete",
+          currentQuestion: null,
+          result: JSON.stringify(mockSummary),
+          inputPayload: JSON.stringify({ validated: true, createdTaskId: "FN-001" }),
+        }
+      : {
+          ...base,
+          id: "session-2",
+          status: "awaiting_input",
+          currentQuestion: null,
+          result: JSON.stringify(mockSummary),
+          inputPayload: "{}",
+        });
+    const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
+    const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-1" />);
+
+    expect(await screen.findByTestId("planning-linked-task-note")).toBeInTheDocument();
+
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-2" />);
+    await waitFor(() => expect(screen.queryByTestId("planning-linked-task-note")).toBeNull());
+    expect(screen.getByTestId("planning-plan-review")).toBeInTheDocument();
   });
 
   it("uses full-view Questions and Plan preview tabs on mobile", async () => {

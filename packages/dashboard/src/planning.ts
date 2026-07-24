@@ -307,6 +307,8 @@ export interface DraftInputPayload {
   createClaimStatus?: "none" | "creating" | "created";
   claimOwnerToken?: string;
   claimStartedAt?: string;
+  taskCreationEpoch?: number;
+  createdTaskIds?: string[];
 }
 
 /** Session TTL in milliseconds (7 days) */
@@ -395,6 +397,16 @@ interface Session {
   createClaimStatus?: "none" | "creating" | "created";
   claimOwnerToken?: string;
   claimStartedAt?: string;
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-00:20:
+  One plan may produce multiple tasks. Each creation attempt belongs to an epoch: epoch 0 uses
+  the legacy `planning-session:{id}` proposalClaimId, epoch N uses `planning-session:{id}#N`.
+  Replaying Proceed without editing stays idempotent within the current epoch (same task,
+  alreadyCreated); editing the plan after a task exists ROTATES the epoch so the next Proceed
+  creates a fresh task. createdTaskIds records every task created from this plan.
+  */
+  taskCreationEpoch?: number;
+  createdTaskIds?: string[];
   /** Whether the current generation must end at plan review rather than a question. */
   generationPurpose?: "initial_plan" | "plan_update" | "question";
   /** Durable start time for the active turn so each concurrent session owns its elapsed clock. */
@@ -734,6 +746,8 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.createClaimStatus ? { createClaimStatus: session.createClaimStatus } : {}),
       ...(session.claimOwnerToken ? { claimOwnerToken: session.claimOwnerToken } : {}),
       ...(session.claimStartedAt ? { claimStartedAt: session.claimStartedAt } : {}),
+      ...(session.taskCreationEpoch ? { taskCreationEpoch: session.taskCreationEpoch } : {}),
+      ...(session.createdTaskIds?.length ? { createdTaskIds: session.createdTaskIds } : {}),
       ...(typeof session.clarificationEnabled === "boolean"
         ? { clarificationEnabled: session.clarificationEnabled }
         : {}),
@@ -909,6 +923,12 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     validated: payload.validated === true,
     createdTaskId: typeof payload.createdTaskId === "string" ? payload.createdTaskId : undefined,
     createClaimStatus: payload.createClaimStatus,
+    taskCreationEpoch: typeof payload.taskCreationEpoch === "number" && Number.isInteger(payload.taskCreationEpoch) && payload.taskCreationEpoch > 0
+      ? payload.taskCreationEpoch
+      : undefined,
+    createdTaskIds: Array.isArray(payload.createdTaskIds)
+      ? payload.createdTaskIds.filter((id): id is string => typeof id === "string")
+      : undefined,
     claimOwnerToken: typeof payload.claimOwnerToken === "string" ? payload.claimOwnerToken : undefined,
     claimStartedAt: typeof payload.claimStartedAt === "string" ? payload.claimStartedAt : undefined,
     thinkingOutput: row.thinkingOutput,
@@ -3152,20 +3172,6 @@ export async function submitResponse(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
-  /*
-  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
-  A validated plan must never be a read-only dead end: the operator can keep refining,
-  commenting, or answering, and create the task whenever they choose. A new turn on a
-  validated session REOPENS it (clears the terminal marker; the turn's own
-  persistSession("generating") durably writes validated:false and moves the row out of
-  "complete"), rather than rejecting with "already been validated". validateSession remains
-  the only terminalizer, and a session whose task already exists keeps its one-task claim
-  (proposalClaimId is never rotated), so Proceed after re-editing returns the linked task.
-  */
-  if (session.validated) {
-    session.validated = false;
-  }
-
   // Stash store/rootDir on the session so subsequent ensureSessionAgent calls
   // (after the agent is disposed for retry/rewind) can rebuild without the
   // caller having to thread context through every API.
@@ -3180,6 +3186,28 @@ export async function submitResponse(
     throw new GenerationInProgressError("Generation already in progress");
   }
   const releaseTurn = reservePlanningTurn(session.id);
+
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+  A validated plan must never be a read-only dead end: the operator can keep refining,
+  commenting, or answering, and create the task whenever they choose. A new turn on a
+  validated session REOPENS it (clears the terminal marker; the turn's own
+  persistSession("generating") durably writes validated:false and moves the row out of
+  "complete"), rather than rejecting with "already been validated". validateSession remains
+  the only terminalizer.
+
+  FNXC:PlanningMultiTask 2026-07-24-01:40:
+  Reopen (validated flip) and epoch rotation run only AFTER turn admission succeeds. Review
+  finding (3 reviewers): mutating the shared in-memory session before the admission guards
+  meant a rejected request (GenerationInProgressError, duplicate submit) burned a phantom
+  rotation that was never persisted — in-memory epoch N+1 vs durable N — and a later Proceed
+  could derive the wrong claim key. Past admission, every branch reaches
+  persistSession("generating"), so the rotation always lands durably with its turn.
+  */
+  if (session.validated) {
+    session.validated = false;
+  }
+  rotateTaskCreationEpochOnReopen(session);
 
   /*
   FNXC:PlanningRetry 2026-07-14-00:00:
@@ -3458,11 +3486,6 @@ export async function rewindSession(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
-  // FNXC:PlanningReopenAfterValidate 2026-07-23-23:30: editing an earlier answer reopens a validated plan — see submitResponse.
-  if (session.validated) {
-    session.validated = false;
-  }
-
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
@@ -3496,6 +3519,15 @@ export async function rewindSession(
     throw new GenerationInProgressError("Generation already in progress");
   }
   const releaseTurn = reservePlanningTurn(session.id);
+
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30: editing an earlier answer reopens a validated plan — see submitResponse.
+  FNXC:PlanningMultiTask 2026-07-24-01:40: reopen + rotation only after admission and the empty-history precondition, so a rejected rewind never mutates claim state (see submitResponse).
+  */
+  if (session.validated) {
+    session.validated = false;
+  }
+  rotateTaskCreationEpochOnReopen(session);
 
   try {
     /*
@@ -3876,6 +3908,48 @@ function restoreClaimSession(row: import("./ai-session-store.js").AiSessionRow):
   return restored;
 }
 
+/*
+FNXC:PlanningMultiTask 2026-07-24-00:20:
+One plan may produce multiple tasks, one per creation epoch. The task table's partial unique
+proposalClaimId index stays the multi-process crash authority WITHIN an epoch: replaying
+Proceed without editing dedupes to the same task (alreadyCreated), while editing the plan
+after a task exists rotates to a new epoch/key so the next Proceed creates a fresh task.
+Epoch 0 keeps the legacy un-suffixed key so pre-existing linked sessions stay reconciled.
+*/
+export function planningProposalClaimId(sessionId: string, taskCreationEpoch?: number): string {
+  const epoch = taskCreationEpoch ?? 0;
+  return epoch > 0 ? `planning-session:${sessionId}#${epoch}` : `planning-session:${sessionId}`;
+}
+
+/*
+Reopen-time rotation: a plan edited after its current epoch created a task starts a new epoch.
+
+FNXC:PlanningMultiTask 2026-07-24-01:40:
+Rotation is rotate-on-intent: it commits with the edit turn's persistSession("generating"),
+so an edit turn that later FAILS still leaves the epoch advanced — a subsequent Proceed on
+the unchanged plan then creates a second task with identical content. Accepted trade-off
+(review finding): the alternative (rotate only on turn success) would let a failed edit
+silently re-link the edited plan to the pre-edit task, which is worse. The guard below also
+deliberately requires finalize's "created" status or a set createdTaskId, so a crash between
+claim ("creating") and finalize can never rotate away from the epoch whose task row needs
+reconciliation.
+*/
+function rotateTaskCreationEpochOnReopen(session: Session): void {
+  const currentEpochHasTask = Boolean(session.createdTaskId) || session.createClaimStatus === "created";
+  if (!currentEpochHasTask) return;
+  if (session.createdTaskId) {
+    const history = session.createdTaskIds ?? [];
+    if (!history.includes(session.createdTaskId)) {
+      session.createdTaskIds = [...history, session.createdTaskId];
+    }
+  }
+  session.taskCreationEpoch = (session.taskCreationEpoch ?? 0) + 1;
+  session.createdTaskId = undefined;
+  session.createClaimStatus = "none";
+  session.claimOwnerToken = undefined;
+  session.claimStartedAt = undefined;
+}
+
 /** Read durable claim state rather than trusting a process-local session cache. */
 export async function getDurablePlanningSession(sessionId: string): Promise<Session | undefined> {
   if (!_aiSessionStore) return getSession(sessionId);
@@ -3906,13 +3980,16 @@ export async function finalizePlanningTaskCreation(sessionId: string, ownerToken
   return row ? restoreClaimSession(row) : undefined;
 }
 
-export async function reconcilePlanningTaskCreation(sessionId: string, taskId: string): Promise<Session | undefined> {
+// FNXC:PlanningMultiTask 2026-07-24-01:40: expectedTaskCreationEpoch makes reconcile a no-op when the plan was edited (epoch rotated) since the task's claim key was derived — never re-link an archived task to the new epoch.
+export async function reconcilePlanningTaskCreation(sessionId: string, taskId: string, expectedTaskCreationEpoch?: number): Promise<Session | undefined> {
   if (!_aiSessionStore || typeof (_aiSessionStore as unknown as { reconcilePlanningTaskCreation?: unknown }).reconcilePlanningTaskCreation !== "function") {
     const session = await getSession(sessionId);
-    if (session) Object.assign(session, { createClaimStatus: "created", createdTaskId: taskId, claimOwnerToken: undefined, claimStartedAt: undefined });
+    if (session && (expectedTaskCreationEpoch === undefined || (session.taskCreationEpoch ?? 0) === expectedTaskCreationEpoch)) {
+      Object.assign(session, { createClaimStatus: "created", createdTaskId: taskId, claimOwnerToken: undefined, claimStartedAt: undefined });
+    }
     return session;
   }
-  const row = await _aiSessionStore.reconcilePlanningTaskCreation(sessionId, taskId);
+  const row = await _aiSessionStore.reconcilePlanningTaskCreation(sessionId, taskId, expectedTaskCreationEpoch);
   return row ? restoreClaimSession(row) : undefined;
 }
 
