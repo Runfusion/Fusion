@@ -332,6 +332,7 @@ export const GENERATION_LOOP_REPEAT_LIMIT = 8;
 
 const PLANNING_STUCK_ERROR_MESSAGE = "AI generation appears stuck with no new output. You can retry or start a new session.";
 const PLANNING_LOOP_ERROR_MESSAGE = "AI generation appears stuck repeating the same output. You can retry or start a new session.";
+export const PLANNING_INTERRUPTED_ERROR_MESSAGE = "Planning generation was interrupted before it finished. Retry to continue this session.";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1245,6 +1246,33 @@ export async function createSession(
   beginPlanningGeneration(session, "initial_plan");
   persistSession(session, "generating");
 
+  /*
+  FNXC:PlanningProviderErrors 2026-07-23-20:10:
+  Once the session row is persisted "generating", every failure on the way to the first
+  question (system-prompt resolution, agent construction, the provider prompt itself) must
+  land the session in a retryable persisted "error" state before rethrowing to the route.
+  Previously a provider error thrown here left the row "generating" forever with no error
+  and no watchdog, so the session appeared stuck on "Generating plan" until a server restart.
+  */
+  try {
+    return await runCreateSessionFirstTurn(session, rootDir, store, promptOverrides, pluginRunner);
+  } catch (err) {
+    if (!(err instanceof Error && err.name === "AbortError") && !session.error) {
+      setSessionError(session, err instanceof Error ? err.message : "Failed to initialize AI agent");
+    }
+    throw err;
+  }
+}
+
+/** First turn of the legacy synchronous planning start; see the provider-error guard in createSession. */
+async function runCreateSessionFirstTurn(
+  session: Session,
+  rootDir: string,
+  store: TaskStore,
+  promptOverrides?: PromptOverrideMap,
+  pluginRunner?: SkillPluginRunner,
+): Promise<{ sessionId: string; firstQuestion: PlanningQuestion; summary: PlanningSummary; validated: boolean }> {
+  const sessionId = session.id;
   const systemPrompt = await resolvePlanningModeSystemPrompt(store, promptOverrides, session.workflowId);
 
   // Create AI agent and get the first question
@@ -1293,7 +1321,7 @@ export async function createSession(
   session.agent = agentResult;
   session.updatedAt = new Date();
 
-  const firstResponse = await getFirstQuestionFromAgent(session, formatInitialPlanRequestForAgent(initialPlan));
+  const firstResponse = await getFirstQuestionFromAgent(session, formatInitialPlanRequestForAgent(session.initialPlan));
 
   const firstQuestion = firstResponse.data;
   session.currentQuestion = firstQuestion;
@@ -1413,7 +1441,9 @@ async function getFirstQuestionFromAgent(
               }
             }
           }
-        } catch {
+        } catch (retryPromptErr) {
+          // FNXC:PlanningProviderErrors 2026-07-23-20:10: a provider failure on the reformat prompt must surface as itself, not as a misleading "no valid JSON" parse error.
+          lastError = retryPromptErr instanceof Error ? retryPromptErr : new Error(String(retryPromptErr));
           break;
         }
       }
@@ -2198,6 +2228,40 @@ function createAbortError(): Error {
 }
 
 /*
+FNXC:PlanningProviderErrors 2026-07-23-20:10:
+Terminal-state reconciliation for SSE stream connects. Two hang shapes ended with the Planning
+modal pinned on "Thinking/Generating plan" with a stream that will never emit again:
+1. The session already holds a terminal error, but the buffered error event is gone (the
+   client's reconnect loop treats a persisted "generating" row as healthy and the 8s poll only
+   reacts to persisted status changes).
+2. The session is persisted "generating" with generation metadata set, but no turn is active
+   or pending and the generation started longer ago than the inactivity watchdog window — a
+   stranded run (e.g. a pre-fix provider-error escape or a crashed generation promise) that no
+   watchdog owns anymore.
+Returns the terminal error message the stream route must emit before closing, or undefined
+when the session is healthy. Only the stale case writes state: it persists the same retryable
+error contract as every other planning failure so Retry and the bounded auto-retry recover it.
+*/
+export function reconcileStalePlanningGeneration(sessionId: string): string | undefined {
+  const session = sessions.get(sessionId);
+  if (!session || session.validated) return undefined;
+  if (isPlanningTurnActive(sessionId) || planningStreamManager.hasPendingInitialTurn(sessionId)) return undefined;
+  if (session.error) return session.error;
+  if (session.generationPurpose === undefined) return undefined;
+  const startedAtMs = session.generationStartedAt ? Date.parse(session.generationStartedAt) : Number.NaN;
+  const ageMs = Number.isNaN(startedAtMs) ? Number.POSITIVE_INFINITY : Date.now() - startedAtMs;
+  if (ageMs < GENERATION_TIMEOUT_MS) return undefined;
+  diagnostics.warn("Reconciling stranded planning generation to a retryable error", {
+    sessionId,
+    generationPurpose: session.generationPurpose,
+    generationStartedAt: session.generationStartedAt,
+    operation: "reconcile-stale-generation",
+  });
+  setSessionError(session, PLANNING_INTERRUPTED_ERROR_MESSAGE);
+  return PLANNING_INTERRUPTED_ERROR_MESSAGE;
+}
+
+/*
 FNXC:PlanningContextCompaction 2026-07-22-22:40:
 Long planning interviews accumulate the whole Q/A history in one agent session and can hit the
 model's context window mid-interview. Planning previously called session.prompt() raw, so a
@@ -2681,6 +2745,8 @@ async function continueAgentConversation(session: Session, message: string): Pro
               retryErr,
               { sessionId: session.id, operation: "retry-prompt" }
             );
+            // FNXC:PlanningProviderErrors 2026-07-23-20:10: report the provider failure itself instead of a misleading "no valid JSON" parse error.
+            lastError = retryErr instanceof Error ? retryErr : new Error(String(retryErr));
             break;
           }
         }
@@ -3090,6 +3156,17 @@ export async function submitResponse(
   generation-error case so the modal's submit path keeps its existing SSE-driven recovery.
   */
   let answeredQuestion: PlanningQuestion | undefined;
+  /*
+  FNXC:PlanningProviderErrors 2026-07-23-20:10:
+  ensureSessionAgent (agent construction + history-replay prompt) throws provider errors AFTER
+  the session row was persisted "generating". continueAgentConversation converts its own
+  failures to a persisted session error, but a throw between persist("generating") and that
+  call previously escaped to the route with the row left "generating" forever — no error
+  event, no watchdog — so the Planning modal hung on "Thinking/Generating plan" (its SSE
+  reconnect + 8s poll both treat "generating" as healthy). Track the generating transition and
+  convert any non-abort escape into the same retryable persisted error state.
+  */
+  let enteredGenerating = false;
 
   try {
     const contextualComments = getContextualComments(responses);
@@ -3104,6 +3181,7 @@ export async function submitResponse(
       session.error = undefined;
       session.pendingContextualComments = contextualComments;
       await persistSession(session, "generating");
+      enteredGenerating = true;
       await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
       await continueAgentConversation(session, formatContextualCommentsForAgent(session.summary, contextualComments));
     } else if (isRefineRequest(responses) && session.summary) {
@@ -3113,6 +3191,7 @@ export async function submitResponse(
       session.currentQuestion = undefined;
       session.error = undefined;
       await persistSession(session, "generating");
+      enteredGenerating = true;
 
       await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
       const focus = typeof responses.focus === "string" ? responses.focus.trim() : undefined;
@@ -3154,6 +3233,7 @@ export async function submitResponse(
       beginPlanningGeneration(session, "plan_update");
       session.currentQuestion = undefined;
       await persistSession(session, "generating");
+      enteredGenerating = true;
       if (!session.agent) {
         // An edited older answer must be replayed in its original position with every
         // later answer retained; only a newly appended answer is sent after replay.
@@ -3170,6 +3250,11 @@ export async function submitResponse(
         : formatResponseForAgent(currentQuestion, responses);
       await continueAgentConversation(session, message);
     }
+  } catch (err) {
+    if (enteredGenerating && !session.error && !(err instanceof Error && err.name === "AbortError")) {
+      setSessionError(session, err instanceof Error ? err.message : "AI processing failed");
+    }
+    throw err;
   } finally {
     releaseTurn();
   }
@@ -3234,6 +3319,8 @@ export async function retrySession(
   JSON" failure. Admission is reserved synchronously before any turn state is touched.
   */
   const releaseTurn = reservePlanningTurn(session.id);
+  // FNXC:PlanningProviderErrors 2026-07-23-20:10: same generating-strand guard as submitResponse — see the comment there.
+  let enteredGenerating = false;
   try {
     disposeSessionAgentForRetry(session);
 
@@ -3253,6 +3340,7 @@ export async function retrySession(
     session.updatedAt = new Date();
     beginPlanningGeneration(session, session.history.length === 0 ? "initial_plan" : "plan_update");
     await persistSession(session, "generating");
+    enteredGenerating = true;
 
     if (pendingContextualComments) {
       await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
@@ -3281,6 +3369,11 @@ export async function retrySession(
       coerceResponseRecord(lastEntry.question, lastEntry.response),
     );
     await continueAgentConversation(session, replayMessage);
+  } catch (err) {
+    if (enteredGenerating && !session.error && !(err instanceof Error && err.name === "AbortError")) {
+      setSessionError(session, err instanceof Error ? err.message : "AI processing failed");
+    }
+    throw err;
   } finally {
     releaseTurn();
   }

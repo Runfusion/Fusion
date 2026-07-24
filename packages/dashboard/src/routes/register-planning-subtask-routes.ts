@@ -1743,7 +1743,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     res.write(": connected\n\n");
 
     try {
-      const { planningStreamManager, getSession } = await import("../planning.js");
+      const { planningStreamManager, getSession, reconcileStalePlanningGeneration } = await import("../planning.js");
 
       // Verify session exists
       const session = await getSession(sessionId);
@@ -1760,6 +1760,27 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           res.end();
           return;
         }
+      }
+
+      /*
+      FNXC:PlanningProviderErrors 2026-07-23-20:10:
+      A session settled in a terminal error — or stranded in "generating" past the watchdog
+      window with no live turn — must end this stream with an error event instead of holding
+      the client on "Thinking/Generating plan" waiting for events that can never arrive
+      (the client's SSE reconnect loop and 8s poll both treat a persisted "generating" row as
+      healthy, so without this the hang is permanent).
+      */
+      const terminalError = reconcileStalePlanningGeneration(sessionId);
+      if (terminalError) {
+        const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
+        const lastErrorEvent = [...existing].reverse().find((event) => event.event === "error");
+        const errorEventId = lastErrorEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, { type: "error", data: terminalError });
+        if (lastEventId === undefined || errorEventId > lastEventId) {
+          writeSSEEvent(res, "error", JSON.stringify(terminalError), errorEventId);
+        }
+        res.end();
+        return;
       }
 
       /*
