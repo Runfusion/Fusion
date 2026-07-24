@@ -90,7 +90,13 @@ instead of an infinite "Starting terminal..." spinner that only the tab-strip
 "+" button escapes.
 */
 function isWindowsBrowserClient(): boolean {
-  return typeof window !== "undefined" && window.navigator.userAgent.includes("Windows");
+  if (typeof window === "undefined") return false;
+  const ua = window.navigator.userAgent;
+  // FNXC:Terminal 2026-07-23-21:00: match desktop Windows only. Every real
+  // desktop Windows browser (including Chromium's frozen/reduced UA) carries
+  // "Windows NT"; a bare "Windows" substring also matched Windows Phone UAs,
+  // which have no wt.exe to guard against and were needlessly denied auto-create.
+  return ua.includes("Windows NT") && !ua.includes("Windows Phone");
 }
 
 function terminalTabsStorageKey(storageScope?: string): string {
@@ -108,10 +114,20 @@ tie-break (activate the first tab) for BOTH the storage-read boundary and the
 server-validation success branch so the two paths cannot drift.
 */
 function normalizeActiveTab(tabs: TerminalTab[]): TerminalTab[] {
-  if (tabs.length === 0 || tabs.some((tab) => tab.isActive)) {
-    return tabs;
-  }
-  return tabs.map((tab, i) => ({ ...tab, isActive: i === 0 }));
+  if (tabs.length === 0) return tabs;
+  const activeCount = tabs.reduce((count, tab) => (tab.isActive ? count + 1 : count), 0);
+  if (activeCount === 1) return tabs;
+  /*
+  FNXC:Terminal 2026-07-23-21:00:
+  Zero active tabs wedges the "Starting terminal..." spinner (activeTab drives
+  the whole modal); MULTIPLE active tabs render several active-styled tabs while
+  only the first receives input, and the inconsistency persists back to storage.
+  Collapse both cases to exactly one active tab: the first currently-active one,
+  or the first tab when none is active.
+  */
+  const firstActiveIndex = tabs.findIndex((tab) => tab.isActive);
+  const activeIndex = firstActiveIndex === -1 ? 0 : firstActiveIndex;
+  return tabs.map((tab, i) => ({ ...tab, isActive: i === activeIndex }));
 }
 
 function readTabsFromStorage(projectId?: string, storageScope?: string): TerminalTab[] {
@@ -120,11 +136,20 @@ function readTabsFromStorage(projectId?: string, storageScope?: string): Termina
   try {
     const stored = getScopedItem(terminalTabsStorageKey(storageScope), projectId);
     if (stored) {
-      const parsed = JSON.parse(stored) as TerminalTab[];
+      const parsed = JSON.parse(stored) as unknown;
       if (!Array.isArray(parsed)) return [];
+      // Drop malformed entries individually instead of letting one null/shape-less
+      // element throw and discard the payload's valid sibling tabs via the outer catch.
+      const validTabs = parsed.filter(
+        (tab): tab is TerminalTab =>
+          !!tab &&
+          typeof tab === "object" &&
+          typeof (tab as TerminalTab).id === "string" &&
+          typeof (tab as TerminalTab).sessionId === "string",
+      );
       // Normalize here (not only in server validation) because the
       // validation-FAILURE path keeps tabs exactly as read from storage.
-      return normalizeActiveTab(parsed);
+      return normalizeActiveTab(validTabs);
     }
   } catch {
     // Ignore localStorage errors
@@ -326,8 +351,15 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
   // (wt.exe) and produce native "Help" version dialogs. Users can still create a terminal
   // explicitly from the UI.
   useEffect(() => {
+    /*
+    FNXC:Terminal 2026-07-23-21:00:
+    The Windows skip must NOT force isReady(true) here: the validation effect
+    above already sets isReady on every path (zero-tabs skip, success, failure),
+    and forcing it on mount let Windows clients connect xterm to persisted tabs
+    BEFORE server validation had pruned dead sessions. Skipping auto-create is
+    the only Windows-specific behavior this effect owns.
+    */
     if (isWindowsBrowserClient()) {
-      setIsReady(true);
       return;
     }
     if (tabs.length === 0 && isReady && serverAvailable && !bootstrapError) {
