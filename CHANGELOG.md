@@ -2,6 +2,51 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.73.0-beta.5
+
+### Highlights
+- One plan can now create multiple tasks — from the dashboard, the CLI, or agent tools
+- A finished plan is never a dead end anymore: resume it, keep refining, or create a task at any time
+- Planning Mode gains contextual comments and codebase-grounded direction choices for sharper plan refinement
+- Windows terminals no longer hang on "Starting terminal..." and Ctrl/Cmd+V paste is delivered exactly once
+- Per-agent and project-wide heartbeat scheduling controls, plus guided setup for local OpenAI-compatible model providers
+
+### New
+- One plan can now create multiple tasks, consistently across the dashboard, CLI, and agent tools
+- Add contextual comments to Planning Mode plan reviews by selecting quotes and suggestions
+- Planning Mode now refines plans through codebase-grounded direction choices instead of generic prompts
+- Add per-agent and project-wide heartbeat enable/disable controls
+- Agent-card heartbeat controls can now disable and re-enable scheduling directly
+- Add guided setup for local OpenAI-compatible model providers, with optional Qwen thinking compatibility
+
+### Fixed
+- A finished plan is never a dead end: reopen, keep refining, or create a task at any time
+- Deleting a task created from a plan no longer strands the plan — Proceed creates a fresh task
+- Planning Mode no longer hangs on "Generating plan" after a provider error; it now surfaces a retryable error
+- Planning, mission, milestone, and onboarding interviews regenerate a question instead of erroring out
+- Planning sessions now correctly show Complete instead of Needs input after their task is created
+- Planning Mode shows a neutral loader while restoring a saved session instead of a misleading "Generating…" state
+- Stopping a plan now cancels generations that haven't started streaming yet
+- Every Planning Mode generation step streams AI thinking and output, not just the first turn
+- Honor selected workflow planning models in Planning Mode
+- Keep Planning Mode recovery retries safely bounded after failed attempts
+- Give Planning Mode a dedicated collaborative prompt instead of reused task-triage instructions
+- Keep Planning plan-review Add-comment controls, selected-text comments, and Refine/Proceed actions visible and reachable on mobile
+- Fix Compound Engineering sessions dying with "AI returned no valid JSON" when turns race; add retry and diagnostics
+- Fix embedded PostgreSQL crash-recovery boot on Windows, removing a self-shutdown race and a 30s log stall
+- Push-after-merge no longer silently strands approved merges when the remote diverged
+- Terminal no longer sticks on "Starting terminal..." on Windows; paste is delivered exactly once
+- Show complete mission hierarchies in agent mission lookup results
+- Show failed mission assertions and safe validator evidence in remediation work
+- Scope feature validation to linked assertions instead of unfinished milestone work
+- Bound generated mission fixes to one root feature retry budget
+- Keep supervised mission validation report-only until autonomy is explicitly enabled
+- Fix supervised task creation and defined-feature mission bootstrap admission
+- Make ideation candidate IDs discoverable for direct convergence
+- Keep GitHub issue import actions on one usable mobile row
+- Keep secondary locale catalogs in sync with heartbeat controls and settings provenance labels
+- Beta release notes now list only that beta's changes; stable notes roll up the whole beta cycle
+
 ## 0.73.0-beta.4
 
 ### Highlights

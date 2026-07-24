@@ -1,5 +1,7 @@
 # @fusion/mobile
 
+## 0.73.0-beta.5
+
 ## 0.73.0-beta.4
 
 ## 0.73.0-beta.3

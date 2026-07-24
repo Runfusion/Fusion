@@ -1,5 +1,11 @@
 # @fusion-plugin-examples/whatsapp-chat
 
+## 0.1.50-beta.5
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.73.0-beta.5
+
 ## 0.1.50-beta.4
 
 ### Patch Changes

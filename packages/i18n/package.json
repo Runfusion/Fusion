@@ -1,6 +1,6 @@
 {
   "name": "@fusion/i18n",
-  "version": "0.39.31-beta.4",
+  "version": "0.39.31-beta.5",
   "license": "MIT",
   "description": "Fusion i18n: authored translation catalogs and shared i18next configuration for the Fusion dashboard and terminal UI.",
   "type": "module",

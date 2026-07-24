@@ -1,5 +1,118 @@
 # @runfusion/fusion
 
+## 0.73.0-beta.5
+
+### Minor Changes
+
+- ebbb594: summary: Add contextual comments to Planning Mode plan reviews.
+  category: feature
+  dev: Batches selected plan quotes and suggestions into the existing plan-update generation.
+- 0d355f3: summary: Add guided setup for local OpenAI-compatible model providers.
+  category: feature
+  dev: Writes non-destructive pi models.json entries with optional Qwen thinking compatibility.
+- 2978ec4: summary: Add per-agent and project-wide heartbeat enable controls.
+  category: feature
+  dev: Preserves complete runtimeConfig replacements through the existing project-scoped agent PATCH route.
+- ca4639b: summary: One plan can now create multiple tasks — in the dashboard, the CLI, and agent tools alike.
+  category: feature
+  dev: Task-creation claims are epoch-scoped (`planning-session:{id}` → `…#N` via `planningProposalClaimId`); editing a plan past a created task rotates the epoch after turn admission. Complete sessions resume to an editable plan review with a linked-task banner; claim-lifecycle writes are surgical jsonb merges with an epoch-guarded reconcile; create-task 409s while a turn is generating. `fn task plan` / `fn_task_plan` now create through the shared claim-aware `createTaskFromPlanSession` (idempotent, session-linked, epoch-aware) and gain `--resume <sessionId>` / `resumeSessionId` plus an interactive keep-refining loop.
+
+### Patch Changes
+
+- ff165ec: summary: Beta release notes now list only that beta's changes; stable notes roll up the whole beta cycle.
+  category: fix
+  dev: `scripts/release.mjs` scopes distillation input via `selectChannelChangesets` against pre.json's consumed-changesets ledger; stable keeps the full preserved set.
+- 2499803: summary: Fix Compound Engineering sessions dying with "AI returned no valid JSON" when turns race; add retry and diagnostics.
+  category: fix
+  dev: CE orchestrator now enforces synchronous single-turn admission per session (concurrent answer/resume gets `CeTurnInProgressError`, HTTP 409) so a re-entered mobile view cannot displace the in-flight turn's live agent. The interactive AI session seam gains a second reformat retry and logs bounded raw-response snippets with provider/model via `interactiveSessionLog` on every parse failure.
+- dc13207: summary: Fix embedded PostgreSQL crash-recovery boot on Windows — no self-shutdown race, no 30s .pgrunner log stall.
+  category: fix
+  dev: Issue #2411 (beta.4 follow-up). pgctl runner logs moved to a sibling `.pgrunner-<dataDirName>` dir so crash recovery's data-dir fsync walk never hits them (legacy in-dataDir `.pgrunner` is swept); the elevated readiness scan ignores 57P03 recovery rejections; owned starts wait for the cluster to accept connections before ensureDatabase (bounded by the start timeout); the join verify retries 57P03 for up to 15s; startup-factory's joined-instance-unreachable retry backs off across ~15s instead of one 500ms attempt. Also closes the stale-pid gap: a `postmaster.pid` whose recorded pid is provably dead (signal-0 ESRCH; EPERM still counts as alive) no longer joins the dead port forever — the boot takes an owned start and PostgreSQL reclaims the stale lock itself.
+- 73a57d9: summary: Fix Planning reopen after a finished session so Retry no longer dead-ends.
+  category: fix
+  dev: Treat status=complete as terminal; recover create-retry/task-created/plan-review on load and when generation retry reports already-validated.
+- 62c5297: summary: Keep Planning plan-review Add-comment controls on-screen on mobile after text selection.
+  category: fix
+  dev: Selectioncapture uses document-level selectionchange; mobile trigger and composer are position:fixed above the nav with width auto so they stay in the visual viewport and dismiss when the selection collapses.
+- 42fe154: summary: Keep Planning Mode selected-text comments reachable in the mobile action rail.
+  category: fix
+  dev: Mobile uses the plan footer at up to 768px; wider layouts retain the selection-adjacent trigger.
+- d2e41e4: summary: Honor selected workflow planning models in Planning Mode.
+  category: fix
+  dev: Planning Mode now composes selected-workflow model lanes before canonical model resolution.
+- 492d375: summary: Keep Planning Mode recovery retries safely bounded after failed attempts.
+  category: fix
+  dev: Releases the settled automatic retry owner before scheduling its token-guarded successor.
+- d6d8a5e: summary: Keep Planning Refine and Proceed actions visible on mobile.
+  category: fix
+  dev: Pin the plan action rail while its Markdown document scrolls in short and narrow viewports.
+- 3f976e3: summary: Give Planning Mode a dedicated collaborative prompt instead of task-triage instructions.
+  category: fix
+  dev: The planning-system override remains a full system-prompt replacement.
+- c4292b2: summary: Make Planning Mode refine plans through codebase-grounded direction choices.
+  category: feature
+  dev: Selected directions and Other responses now rebuild the running-plan backbone before the next narrowing question.
+- 2021d56: summary: Show complete mission hierarchies in agent mission lookup results.
+  category: fix
+  dev: `fn_mission_show` now renders mission metadata, child IDs/statuses, task links, and empty states.
+- e734ed8: summary: Show failed mission assertions and safe validator evidence in remediation work.
+  category: fix
+  dev: Validation diagnostics are normalized consistently across SQLite and PostgreSQL mission stores.
+- e7c9b2a: summary: Scope feature validation to linked assertions instead of unfinished milestone work.
+  category: fix
+  dev: Adds provenance-safe milestone assertion persistence and derived-origin uniqueness.
+- dfb9ca6: summary: Bound generated mission fixes to one root feature retry budget.
+  category: fix
+  dev: Fix lineages retain durable stops through removal and never resume exhausted budgets.
+- e5caea5: summary: Keep supervised mission validation report-only until autonomy is explicitly enabled.
+  category: fix
+  dev: Atomic mission status and autopilot transition events now include actor and before/after metadata.
+- 3d0ce2e: summary: Fix supervised task creation and defined-feature mission bootstrap admission.
+  category: fix
+  dev: No-task heartbeat creates still require approved lineage; first defined-feature tasks link and triage safely.
+- 84d7306: summary: Make ideation candidate IDs discoverable for direct convergence.
+  category: fix
+  dev: Show and diverge tool text now includes candidate identity, provenance, and content.
+- 15b5441: summary: Keep GitHub issue import actions on one usable mobile row.
+  category: fix
+  dev: Adds Blink geometry coverage for 320px, 390px, and 412px action bars.
+- 47d2d17: summary: Let agent-card heartbeat controls disable and re-enable scheduling.
+  category: feature
+  dev: The interval dropdown now preserves runtime configuration while updating runtimeConfig.enabled.
+- 0c085bf: summary: Push-after-merge no longer silently strands approved merges when the remote diverged.
+  category: fix
+  dev: Preserves a remote recovery branch during clean-room rebases and surfaces aborted target pushes.
+- 0412113: summary: Deleting a task created from a plan no longer dead-ends the plan — Proceed creates a fresh task.
+  category: fix
+  dev: `PLANNING_CREATED_TASK_MISSING` now only fires when the linked task is still listed but unreadable (transient read); a task absent from the include-archived scan clears the stale linkage in both the create-task route and `createTaskFromPlanSession`. CLI/agent create side-effect failures are now logged; keep-refining readline closes on thrown prompts.
+- 716e698: summary: Planning Mode no longer hangs on "Generating plan" after a provider error; it surfaces a retryable error.
+  category: fix
+  dev: Provider errors thrown after a planning session persists "generating" (agent rebuild, history replay, legacy sync start) now land the session in a persisted retryable error with an SSE error event; the stream route reconciles stranded generating sessions past the watchdog window via `reconcileStalePlanningGeneration`.
+- 64b20c8: summary: Planning, mission, milestone, and onboarding interviews regenerate a question instead of "No active question" errors.
+  category: fix
+  dev: submitResponse no longer throws "No active question in session" — refine/comments fall back to a rebuilt running summary and a question-regeneration reprompt continues the interview. Mission/milestone/onboarding interviews mirror the same recovery for live sessions (completed sessions still reject); the Planning modal forwards no-question submissions instead of dead-ending locally.
+- 94644ef: summary: Planning sessions now show Complete instead of Needs input after their task is created.
+  category: fix
+  dev: POST /api/planning/create-task terminalizes the session via validateSession on every created/alreadyCreated path.
+- 5a5796b: summary: Planning mode now shows a neutral session loader while restoring a saved session instead of "Generating…".
+  category: fix
+  dev: New `session_loading` view state in PlanningModeModal; generating copy, Stop button, elapsed timer, and the missed-SSE watchdog are reserved for sessions the server reports as generating. Unrecognized persisted session shapes land in the retryable error view instead of spinning forever.
+- 0e6108a: summary: Stopping a plan now also cancels generations that haven't started streaming yet.
+  category: fix
+  dev: `stopGeneration` discards a still-pending initial turn (registered by start-streaming but not yet consumed by a stream connect) instead of returning false and letting the "stopped" generation restart on the next connect; stops remain strictly per-session when multiple plans generate concurrently.
+- e2ee8ba: summary: Every Planning Mode generation step now streams AI thinking/output, not just the first turn.
+  category: fix
+  dev: The planning workspace loader (follow-up turns — next question, refine, contextual comments, question regeneration) reuses the initial loading view's thinking container/toggle and mirrors the generation-activity label.
+- 370a7a6: summary: A finished plan is never a dead end — read it, keep refining, and create the task at any time.
+  category: fix
+  dev: Validated planning sessions reopen on any new turn (submitResponse/rewind clear `validated`; validateSession stays the only terminalizer). Complete-without-task sessions resume into the full plan review workspace instead of the create-retry card, and the create-failure screen gains a Back to plan action. The one-task-per-session claim (`proposalClaimId`) is unchanged.
+- 9f79b22: summary: Keep secondary locale catalogs in sync with heartbeat controls and settings provenance labels.
+  category: fix
+  dev: Synchronize all five secondary app catalogs with the authored English key structure so untranslated values fall back cleanly to English.
+- 907e8d0: summary: Terminal no longer sticks on "Starting terminal..." on Windows and Ctrl/Cmd+V paste is delivered exactly once.
+  category: fix
+  dev: TerminalModal Cmd/Ctrl+V now calls preventDefault so the browser's native paste cannot double-deliver, and returns true (native xterm paste) when the async clipboard API is unavailable (non-HTTPS remote, older Firefox). useTerminalSessions exposes `autoCreateDisabled` (Windows browser clients) so the modal renders a "Start terminal" action instead of an endless spinner, and normalizes all-inactive persisted tab payloads on restore.
+
 ## 0.73.0-beta.4
 
 ### Minor Changes
