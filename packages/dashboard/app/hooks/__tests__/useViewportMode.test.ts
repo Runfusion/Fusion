@@ -150,6 +150,20 @@ describe("useViewportMode", () => {
     expect(renderHook(() => useViewportMode()).result.current).toBe("tablet");
   });
 
+  it("keeps a touch tablet at the 768px boundary out of the phone presentation", () => {
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    stubScreen(768, 1024);
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    installViewportMedia({ width: true, height: false, tablet: false });
+
+    try {
+      expect(isMobileViewport()).toBe(false);
+      expect(getViewportMode()).toBe("tablet");
+    } finally {
+      if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
+    }
+  });
+
   it("keeps desktop mode when only the short-height clause matches on a desktop-class screen", () => {
     stubScreen(1920, 1080);
     installViewportMedia({ width: false, height: true, tablet: false });

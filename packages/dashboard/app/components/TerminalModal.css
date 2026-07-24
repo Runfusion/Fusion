@@ -241,11 +241,17 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
   touch-action: none;
 }
 
+/*
+FNXC:TerminalModalControls 2026-07-24-12:35:
+Tablet operators resize the global floating terminal with the same edge and corner targets as other
+floating windows. Use tokenized, larger hit regions so touch gestures are discoverable without
+adding a second header or exposing controls in the fixed phone and embedded presentations.
+*/
 .terminal-floating-resize-handle--n,
 .terminal-floating-resize-handle--s {
-  left: var(--space-sm);
-  right: var(--space-sm);
-  height: var(--space-sm);
+  left: var(--space-md);
+  right: var(--space-md);
+  height: var(--space-md);
   cursor: ns-resize;
 }
 
@@ -254,9 +260,9 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
 
 .terminal-floating-resize-handle--e,
 .terminal-floating-resize-handle--w {
-  top: var(--space-sm);
-  bottom: var(--space-sm);
-  width: var(--space-sm);
+  top: var(--space-md);
+  bottom: var(--space-md);
+  width: var(--space-md);
   cursor: ew-resize;
 }
 
@@ -267,8 +273,8 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
 .terminal-floating-resize-handle--nw,
 .terminal-floating-resize-handle--se,
 .terminal-floating-resize-handle--sw {
-  width: var(--space-lg);
-  height: var(--space-lg);
+  width: var(--space-xl);
+  height: var(--space-xl);
 }
 
 .terminal-floating-resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
@@ -1885,7 +1891,61 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     min-width: 36px;
     min-height: 36px;
   }
+
+  /*
+  FNXC:TerminalModalControls 2026-07-24-01:10:
+  A known touch tablet can share this CSS-width breakpoint with a phone. The React
+  classifier marks it explicitly, so restore the stored floating/docked geometry
+  after the phone fallback rules (which use !important to defeat stale phone sizes).
+  This keeps the shared header move grip and all eight resize targets reachable at
+  exactly 768px without exposing any geometry controls on true-phone sheets.
+  */
+  .modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating {
+    min-width: calc(var(--space-xl) * 20) !important;
+    min-height: calc(var(--space-xl) * 13.333) !important;
+    width: var(--terminal-float-width) !important;
+    height: var(--terminal-float-height) !important;
+    max-width: calc(100vw - (var(--space-lg) * 2)) !important;
+    max-height: calc(100dvh - (var(--space-lg) * 2)) !important;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+  }
+
+  .modal.terminal-modal.terminal-modal--tablet.terminal-modal--docked {
+    min-width: 0 !important;
+    min-height: calc(var(--space-xl) * 10) !important;
+    width: 100vw !important;
+    height: var(--terminal-docked-height) !important;
+    max-width: none !important;
+    max-height: calc(100dvh - (var(--space-xl) * 4)) !important;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border: 1px solid var(--border);
+  }
+
+  .modal.terminal-modal.terminal-modal--tablet .terminal-header {
+    flex-wrap: nowrap;
+    row-gap: 0;
+    padding-top: 0;
+    overflow: visible;
+  }
+
+  .modal.terminal-modal.terminal-modal--tablet .terminal-tabs {
+    display: flex;
+  }
+
+  .modal.terminal-modal.terminal-modal--tablet .terminal-mobile-tabs {
+    display: none;
+  }
+
+  .modal.terminal-modal.terminal-modal--tablet .terminal-title {
+    display: flex;
+  }
+
+  .terminal-below-host:has(.terminal-modal.terminal-modal--tablet) {
+    display: flex;
+  }
 }
+
 
 @media (max-width: 768px) {
   .terminal-below-host {

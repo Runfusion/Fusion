@@ -764,7 +764,7 @@ Mailbox view shows inbox/outbox communication threads and unread state. When an 
 
 ## Interactive Terminal
 
-Fusion embeds a terminal using xterm.js. Desktop and tablet use the footer status bar as the terminal launcher; mobile keeps the full-screen terminal path.
+Fusion embeds a terminal using xterm.js. Desktop and tablet use the footer status bar as the terminal launcher; mobile keeps the full-screen terminal path. Known touch tablets, including at the 768px responsive boundary, retain docked/floating presentation rather than falling back to the phone sheet. Their saved floating size and position and touch drag/edge-or-corner resize controls stay available when a software keyboard shortens the visual viewport. True narrow phones, including folded panes and short phone landscapes, intentionally remain full-screen.
 
 <!-- FNXC:Terminal 2026-07-11-18:20: FN-7824 first-launch terminal sockets auto-retry with capped backoff until the first successful open, so the manual Reconnect affordance is reserved for terminal sessions that already connected and then exhaust their mid-session reconnect budget. -->
 On first launch or first open, the terminal keeps reconnecting automatically until its initial WebSocket opens; it should show **Reconnecting...** during that cold-start recovery rather than requiring a manual **Reconnect** click. If an already-connected terminal drops and exhausts its bounded reconnect budget, Fusion then parks it as **Disconnected** and surfaces the manual **Reconnect** control.

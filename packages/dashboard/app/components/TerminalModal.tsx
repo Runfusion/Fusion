@@ -34,6 +34,7 @@ import {
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useWorkspaces } from "../hooks/useWorkspaces";
+import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { nextFloatingZ, currentFloatingZ } from "./floatingWindowStack";
 import { getPathBasename } from "../utils/pathDisplay";
 import {
@@ -336,16 +337,6 @@ function getTerminalViewportWidth(hasTouchScreen = false): number {
   return layoutWidth;
 }
 
-function getTerminalViewportHeight(hasTouchScreen = false): number {
-  if (typeof window === "undefined") return Number.POSITIVE_INFINITY;
-  const layoutHeight = window.innerHeight;
-  const visualHeight = window.visualViewport?.height;
-  if (hasTouchScreen && typeof visualHeight === "number" && visualHeight > 0) {
-    return Math.min(layoutHeight, visualHeight);
-  }
-  return layoutHeight;
-}
-
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
 function isMobileDevice(): boolean {
   if (typeof window === "undefined") return false;
@@ -356,13 +347,15 @@ function isMobileDevice(): boolean {
 }
 
 function isTerminalMobileViewport(): boolean {
-  if (typeof window === "undefined") return false;
-  const hasTouchScreen = "ontouchstart" in window || navigator.maxTouchPoints > 0;
   /*
-  FNXC:Terminal 2026-07-01-11:46:
-  Android foldables can expose a tablet-sized layout viewport while the current visualViewport is the folded phone pane. Treat touch-primary visualViewport width as the terminal mobile breakpoint so the first xterm fit uses the fullscreen/mobile shell and keyboard vars before any unfold/orientation event can repair stale desktop geometry.
+  FNXC:TerminalModalControls 2026-07-24-12:30:
+  The global terminal must use the canonical viewport contract rather than a terminal-local
+  visual-height shortcut. A software keyboard can shrink a tablet below the phone landscape
+  height without changing its physical screen, so it must retain docked/floating move and resize
+  controls. Canonical detection still makes true narrow phones, short phone landscapes, and folded
+  touch panes full-screen while preserving stored tablet/desktop geometry through transitions.
   */
-  return window.innerWidth <= 768 || (hasTouchScreen && (getTerminalViewportWidth(true) <= 768 || getTerminalViewportHeight(true) <= 480));
+  return isMobileViewport();
 }
 
 interface TabsOverflowMeasurement {
@@ -586,6 +579,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [floatingSize, setFloatingSize] = useState<TerminalFloatSize>(() => readTerminalFloatSize(projectId));
   const [floatingPosition, setFloatingPosition] = useState<TerminalFloatPosition>(() => readTerminalFloatPosition(readTerminalFloatSize(projectId), projectId));
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
+  const [isTabletTerminal, setIsTabletTerminal] = useState(() => getViewportMode() === "tablet");
   const [tabsOverflow, setTabsOverflow] = useState(false);
   /*
   FNXC:Terminal 2026-07-10-00:00:
@@ -667,6 +661,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     */
     const updateViewportMode = () => {
       setIsMobileTerminal(isTerminalMobileViewport());
+      setIsTabletTerminal(getViewportMode() === "tablet");
     };
     updateViewportMode();
     window.addEventListener("resize", updateViewportMode);
@@ -2484,7 +2479,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const showManualStart = isReady && autoCreateDisabled && !activeTab && !bootstrapError;
   // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
   const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
-  const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
+  /*
+  FNXC:TerminalModalControls 2026-07-24-01:10:
+  CSS still has a width-based phone media query for true-phone fallback. Mark a known tablet
+  explicitly so its floating/docked geometry wins at the 768px boundary rather than inheriting
+  the phone full-screen shell. Embedded terminals remain parent-owned and never receive this chrome.
+  */
+  const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isTabletTerminal && !isMobileTerminal && !embedded ? " terminal-modal--tablet" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
   /*
   FNXC:TerminalWorkspaces 2026-07-13-00:00:
   The workspace picker menu is portaled to `document.body`, so floating terminal mode must compare it in the same root stacking context as the panel. Keep the menu one layer above the panel's shared `floatingZ`; otherwise the fixed CSS fallback band sits below the 10100+ floating stack and the menu appears invisible behind the modal.

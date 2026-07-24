@@ -1219,6 +1219,156 @@ describe("TerminalModal", () => {
     });
   });
 
+  it("keeps a keyboard-shrunken touch tablet floating, movable, and resizable", async () => {
+    const projectId = "touch-tablet-terminal-geometry";
+    const previousInnerWidth = window.innerWidth;
+    const previousInnerHeight = window.innerHeight;
+    const previousScreen = Object.getOwnPropertyDescriptor(window, "screen");
+    const previousMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    const previousVisualViewport = window.visualViewport;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    Object.defineProperty(window, "screen", { configurable: true, value: { width: 1024, height: 768 } });
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { width: 900, height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+    });
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query === "(max-height: 480px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, "floating");
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+      const modal = await screen.findByTestId("terminal-modal");
+      await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+      expect(modal).toHaveClass("terminal-modal--floating");
+      expect(screen.getByTestId("terminal-floating-resize-se")).toHaveAttribute("aria-label", "Resize terminal window");
+
+      const fitCallBaseline = mockFitAddonFit.mock.calls.length;
+      const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      resizeHandle.setPointerCapture = vi.fn();
+      resizeHandle.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(resizeHandle, { pointerId: 41, pointerType: "touch", clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(resizeHandle, { pointerId: 99, pointerType: "touch", clientX: 300, clientY: 300 });
+      fireEvent.pointerMove(resizeHandle, { pointerId: 41, pointerType: "touch", clientX: 180, clientY: 170 });
+      fireEvent.pointerUp(resizeHandle, { pointerId: 41, pointerType: "touch" });
+
+      await waitFor(() => {
+        expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 1040, height: 630 }));
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
+      });
+
+      const header = modal.querySelector(".terminal-header") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      header.setPointerCapture = vi.fn();
+      header.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(header, { pointerId: 42, pointerType: "touch", clientX: 300, clientY: 100 });
+      fireEvent.pointerMove(header, { pointerId: 42, pointerType: "touch", clientX: 200, clientY: 140 });
+      fireEvent.pointerUp(header, { pointerId: 42, pointerType: "touch" });
+
+      await waitFor(() => {
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`) ?? "{}")).toEqual({ x: 44, y: 56 });
+      });
+
+      fireEvent.pointerDown(header, { pointerId: 43, pointerType: "touch", clientX: 200, clientY: 140 });
+      fireEvent.pointerMove(header, { pointerId: 43, pointerType: "touch", clientX: 100, clientY: 140 });
+      fireEvent.pointerCancel(header, { pointerId: 43, pointerType: "touch" });
+      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`) ?? "{}")).toEqual({ x: 16, y: 56 });
+      expect(header.releasePointerCapture).toHaveBeenCalledWith(43);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: previousInnerHeight });
+      if (previousScreen) Object.defineProperty(window, "screen", previousScreen);
+      if (previousMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", previousMaxTouchPoints);
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: previousVisualViewport });
+    }
+  });
+
+  it("keeps a touch tablet at the 768px boundary floating, movable, and resizable", async () => {
+    const projectId = "tablet-boundary-terminal-geometry";
+    const previousInnerWidth = window.innerWidth;
+    const previousInnerHeight = window.innerHeight;
+    const previousScreen = Object.getOwnPropertyDescriptor(window, "screen");
+    const previousMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 768 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "screen", { configurable: true, value: { width: 768, height: 1024 } });
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, "floating");
+    const styleEl = document.createElement("style");
+    styleEl.textContent = loadAllAppCss();
+    document.head.appendChild(styleEl);
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+      const modal = await screen.findByTestId("terminal-modal");
+      await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+      expect(modal).toHaveClass("terminal-modal--tablet", "terminal-modal--floating");
+      // The 768px CSS fallback is full-screen only for true phones. A known
+      // tablet must win that cascade with its stored floating geometry.
+      const modalStyle = getComputedStyle(modal);
+      expect(modalStyle.width).toBe("var(--terminal-float-width)");
+      expect(modalStyle.height).toBe("var(--terminal-float-height)");
+      expect(modalStyle.maxWidth).toBe("calc(100vw - (var(--space-lg) * 2))");
+
+      const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      resizeHandle.setPointerCapture = vi.fn();
+      resizeHandle.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(resizeHandle, { pointerId: 51, pointerType: "touch", clientX: 200, clientY: 200 });
+      fireEvent.pointerMove(resizeHandle, { pointerId: 51, pointerType: "touch", clientX: 120, clientY: 180 });
+      fireEvent.pointerUp(resizeHandle, { pointerId: 51, pointerType: "touch" });
+      await waitFor(() => {
+        expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 656, height: 540 }));
+      });
+
+      const header = modal.querySelector(".terminal-header") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      header.setPointerCapture = vi.fn();
+      header.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(header, { pointerId: 52, pointerType: "touch", clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(header, { pointerId: 52, pointerType: "touch", clientX: 180, clientY: 140 });
+      fireEvent.pointerUp(header, { pointerId: 52, pointerType: "touch" });
+      await waitFor(() => {
+        expect(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`)).toBe(JSON.stringify({ x: 96, y: 56 }));
+      });
+    } finally {
+      styleEl.remove();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: previousInnerHeight });
+      if (previousScreen) Object.defineProperty(window, "screen", previousScreen);
+      if (previousMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", previousMaxTouchPoints);
+    }
+  });
+
   it("keeps the floating terminal touch-draggable with theme-controlled shadow", () => {
     const panelRule = terminalModalCss.match(/\.modal\.terminal-modal\.terminal-modal--floating\s*\{([^}]*)\}/)?.[1] ?? "";
     const headerRule = terminalModalCss.match(/\.terminal-header--draggable\s*\{([^}]*)\}/)?.[1] ?? "";

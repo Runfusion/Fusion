@@ -49,11 +49,19 @@ function getTouchVisualViewportHeight(): number | null {
 // `(max-height: 480px)`) but never the device's physical screen. Only treat a
 // short viewport as a landscape phone when the smaller physical screen edge is
 // phone-class. Fail safe (return false) when screen data is unavailable.
-function isPhoneClassScreen(): boolean {
+function hasKnownPhysicalScreenSize(): boolean {
   if (typeof window === "undefined" || !window.screen) return false;
   const { width, height } = window.screen;
-  if (!width || !height) return false;
-  return Math.min(width, height) <= 480;
+  return Boolean(width && height);
+}
+
+function isPhoneClassScreen(): boolean {
+  if (!hasKnownPhysicalScreenSize()) return false;
+  return Math.min(window.screen.width, window.screen.height) <= 480;
+}
+
+function isTabletClassTouchScreen(): boolean {
+  return hasTouchScreen() && hasKnownPhysicalScreenSize() && !isPhoneClassScreen();
 }
 
 export function isMobileViewport(): boolean {
@@ -64,15 +72,28 @@ export function isMobileViewport(): boolean {
   FNXC:ViewportMode 2026-07-01-11:56:
   Android foldables can expose a wide layout viewport while visualViewport is the folded phone pane. Treat touch-primary visualViewport width as the mobile breakpoint so terminal surfaces render mobile controls and fit xterm from the initial folded geometry, not a stale desktop/tablet shell.
   */
-  return window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches ||
-    (visualWidth !== null && visualWidth <= 768) ||
+  /*
+  FNXC:TerminalModalControls 2026-07-24-14:15:
+  A touch viewport exactly at the 768px CSS boundary can be a portrait tablet, not a phone.
+  Keep the physical layout/visual-width fallback for delayed media-query and orientation updates,
+  but route a known tablet-class physical screen through tablet geometry controls. Unknown screen
+  dimensions retain the conservative CSS-only phone path, while narrow foldable panes remain phones.
+  */
+  const hasNarrowWidth = window.innerWidth <= 768 ||
+    window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches ||
+    (visualWidth !== null && visualWidth <= 768);
+  return (hasNarrowWidth && !isTabletClassTouchScreen()) ||
     ((window.matchMedia(MOBILE_HEIGHT_MEDIA_QUERY).matches || (visualHeight !== null && visualHeight <= 480)) && isPhoneClassScreen());
 }
 
 export function getViewportMode(): ViewportMode {
   if (typeof window === "undefined") return "desktop";
   if (isMobileViewport()) return "mobile";
-  if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches) return "tablet";
+  const isTabletBoundary = window.innerWidth <= 768 ||
+    window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches ||
+    (getTouchVisualViewportWidth() ?? Number.POSITIVE_INFINITY) <= 768;
+  if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches ||
+    (isTabletBoundary && isTabletClassTouchScreen())) return "tablet";
   return "desktop";
 }
 
