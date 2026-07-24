@@ -39,9 +39,9 @@ test("deriveBudgetMs: no fresh timing falls back to the per-class ceiling", () =
 
 test("deriveBudgetMs: fresh timing tightens within the band", () => {
   // expected×multiplier between floor and ceiling → use the tightened value.
-  // 300s × 3.5 = 1050s, which sits between the shard floor (15min) and
+  // 480s × 3.5 = 1680s, which sits between the shard floor (25min) and
   // ceiling (30min) so the tightened value is used un-clamped.
-  const expected = 300_000; // 300s
+  const expected = 480_000; // 480s
   const derived = deriveBudgetMs({ klass: "shard", expectedDurationMs: expected, timingsFresh: true });
   assert.equal(derived, Math.round(expected * DEFAULT_BUDGET_MULTIPLIER));
   assert.ok(derived >= CLASS_BUDGET_BANDS.shard.floor);
@@ -65,11 +65,15 @@ test("deriveBudgetMs: shard floor pins heavy slices above the false-kill window"
   // FNXC:TestInfrastructure 2026-06-20-21:52:
   // Regression guard for the 5min -> 15min shard-floor raise. A value whose
   // expected×multiplier lands in the *old* un-clamped window (300s..900s) must
-  // now clamp UP to the 15min floor. 150s × 3.5 = 525s, which was returned
+  // now clamp UP to the floor. 150s × 3.5 = 525s, which was returned
   // verbatim under the old 5min floor but is below the new one. Pinning the
-  // concrete floor value here means an accidental revert to 5min fails loudly
+  // concrete floor value here means an accidental revert fails loudly
   // instead of silently re-tightening the engine/core slices into SIGKILLs.
-  assert.equal(CLASS_BUDGET_BANDS.shard.floor, 15 * 60_000);
+  // FNXC:TestInfrastructure 2026-07-24-01:05:
+  // Floor re-pinned 15min -> 25min after the July PG-cutover growth pushed the
+  // @fusion/core slice past 900s on contended CI runners (run 30075604930
+  // killed a healthy core run at exactly the floor). See CLASS_BUDGET_BANDS.
+  assert.equal(CLASS_BUDGET_BANDS.shard.floor, 25 * 60_000);
   assert.equal(
     deriveBudgetMs({ klass: "shard", expectedDurationMs: 150_000, timingsFresh: true }),
     CLASS_BUDGET_BANDS.shard.floor,

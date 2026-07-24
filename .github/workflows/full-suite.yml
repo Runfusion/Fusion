@@ -137,6 +137,12 @@ jobs:
             plugins/*/.timings/timings-*.json
             plugins/examples/*/.timings/timings-*.json
           if-no-files-found: ignore
+          # FNXC:TestInfrastructure 2026-07-24-01:05:
+          # .timings/ is a dot-directory and upload-artifact@v4 excludes hidden
+          # files by default, so this step silently uploaded NOTHING since it was
+          # added ("No files were found") and the timing snapshot could never be
+          # refreshed from CI. Hidden files must be included for the glob to match.
+          include-hidden-files: true
           retention-days: 14
 
   # The dashboard quality gate used to enumerate its test files by hand, so any

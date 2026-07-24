@@ -51,7 +51,20 @@ export const CLASS_BUDGET_BANDS = {
   The dashboard-lane floor is also 15min but for separate historical reasons;
   the two values are not coupled and may diverge.
   */
-  shard: { floor: 15 * MINUTE, ceiling: 30 * MINUTE },
+  /*
+  FNXC:TestInfrastructure 2026-07-24-01:05:
+  Floor raised 15min -> 25min: the July PG-cutover test additions grew the
+  @fusion/core slice past the 15min floor on contended CI runners (run
+  30075604930 killed core at exactly 900s while healthy; the suite passes
+  locally in ~140s wall). The committed timings snapshot was 27 days old —
+  "fresh" under the 30-day budget but badly undercounting — which tightened the
+  budget to the floor: the same false-kill class the 5->15min raise fixed.
+  The snapshot also could not be refreshed from CI because the timing-artifact
+  upload silently matched nothing (hidden .timings/ dirs; fixed in
+  full-suite.yml with include-hidden-files). 25min stays under the 30min
+  ceiling and far under the 60min job ceiling while clearing the observed need.
+  */
+  shard: { floor: 25 * MINUTE, ceiling: 30 * MINUTE },
   /*
   FNXC:TestInfrastructure 2026-06-26-14:10:
   The `changed` ceiling stays 20min (general bound). The narrower requirement —
