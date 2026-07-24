@@ -1306,6 +1306,7 @@
     "newChatModeAgent": "Agent",
     "newChatModeModel": "Model",
     "newChatTitle": "New Chat",
+    "newNotAllowedForTaskChat": "This chat is tied to a task — /new and /clear can't clear it",
     "noAgentsAvailable": "No agents available",
     "noConversationsYet": "No conversations yet",
     "noMessage": "No message",

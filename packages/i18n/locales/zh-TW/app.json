@@ -1387,7 +1387,8 @@
     "noModelsAvailable": "No models available",
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
-    "currentDefaultTarget": "Using the default chat target"
+    "currentDefaultTarget": "Using the default chat target",
+    "newNotAllowedForTaskChat": ""
   },
   "chatRooms": {
     "error": {

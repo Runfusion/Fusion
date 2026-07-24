@@ -25,7 +25,15 @@ const ACTIVE_SESSION_STORAGE_KEY = "kb-chat-active-session";
  * Model-loop direct sessions store this sentinel agent id so the UI and hook share one target-mode check instead of duplicating the literal in each composer surface.
  */
 export const FN_AGENT_ID = "__fn_agent__";
-const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
+/**
+ * FNXC:ChatSlashCommands 2026-07-23-12:00:
+ * Exported (as a primitive, which survives the test harness's useChat automock) so composer
+ * surfaces can recognize a task-bound planner session (`task-planner:<taskId>`). Task chats
+ * surfaced in the common Direct feed via `showTaskChatsInCommonFeed` must never be cleared or
+ * replaced by `/new`//`/clear` — the transcript IS the task's planner history, not a disposable
+ * direct conversation.
+ */
+export const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 
 /** FNXC:ChatPinned 2026-07-16-12:00: one comparator keeps refresh, cache,
  * optimistic mutations, SSE updates, and search results pinned-first. */

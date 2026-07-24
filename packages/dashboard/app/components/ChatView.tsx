@@ -22,7 +22,7 @@ import {
   PinOff,
   MoreHorizontal,
 } from "lucide-react";
-import { FN_AGENT_ID, useChat, type ChatMessageInfo } from "../hooks/useChat";
+import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
@@ -1854,6 +1854,18 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     if (trimmed === "/clear" || trimmed === "/new") {
+      /*
+      FNXC:ChatSlashCommands 2026-07-23-12:00:
+      `/new`//`/clear` must never wipe a task-bound planner chat. With `showTaskChatsInCommonFeed`
+      enabled, task-planner sessions appear in the common Direct feed, so a user can run `/new`
+      against one directly — but that transcript is the task's planner history, and createSession
+      would orphan it behind a fresh session. Consume the command with feedback instead of clearing.
+      */
+      if (activeSession.agentId.startsWith(TASK_PLANNER_CHAT_AGENT_ID_PREFIX)) {
+        clearComposerState();
+        addToast(t("chat.newNotAllowedForTaskChat", "This chat is tied to a task — /new and /clear can't clear it"), "warning");
+        return;
+      }
       clearComposerState();
       clearPendingMessage();
       stopStreaming();
