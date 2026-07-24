@@ -3086,6 +3086,35 @@ function formatRefineRequestForAgent(summary: PlanningSummary, focus?: string): 
 }
 
 /*
+FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
+A submission that arrives while the session has no active question (the previous question was
+already answered, cleared by a retry, or lost with a cleared summary) must not surface
+"No active question in session" to the operator. Instead the turn reprompts the agent to
+continue the interview and generate a fresh option-driven question from the accumulated
+context, honoring any submitted operator input as context rather than dropping it.
+*/
+export function formatQuestionRegenerationForAgent(
+  summary: PlanningSummary,
+  responses: Record<string, unknown>,
+): string {
+  const operatorInput = Object.entries(responses)
+    .filter(([key, value]) =>
+      key !== "refine" && key !== "focus" && key !== "contextualComments"
+      && value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return [
+    "The planning session currently has no active interview question; continue the interview instead of treating this as an error.",
+    "Rebuild affected plan fields around every accumulated selection and Other answer, then ask exactly one new high-impact, option-driven question that narrows the current direction, with at least two useful alternatives (pros and cons) plus one write-your-own option.",
+    'Return only type:"question" JSON with the complete runningPlan. Do not return a completion response: only the user can validate a plan.',
+    ...(operatorInput.length
+      ? ["The operator submitted this input while no question was active; honor it as context for the plan and the next question:", operatorInput.join("\n")]
+      : []),
+    "Current summary:",
+    JSON.stringify(summary),
+  ].join("\n\n");
+}
+
+/*
 FNXC:PlanningRetry 2026-07-14-00:00:
 currentQuestion is cleared once an answer is accepted, so a duplicate re-submit during the
 in-flight generation is detected against the last history entry (the turn being generated)
@@ -3170,7 +3199,16 @@ export async function submitResponse(
 
   try {
     const contextualComments = getContextualComments(responses);
-    if (contextualComments && session.summary) {
+    /*
+    FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
+    Refine, contextual comments, and the no-active-question fallback must never depend on
+    session.summary being set: a retry that failed mid-regeneration clears it, and the old
+    `&& session.summary` guards dropped those submissions into the terminal
+    "No active question in session" error. Rebuild the running summary from persisted
+    history instead so the interview always continues.
+    */
+    const effectiveSummary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
+    if (contextualComments) {
       /*
       FNXC:PlanningComments 2026-07-23-12:00:
       Comment batches deliberately reuse the existing session, active-turn reservation, SSE, and
@@ -3183,8 +3221,8 @@ export async function submitResponse(
       await persistSession(session, "generating");
       enteredGenerating = true;
       await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
-      await continueAgentConversation(session, formatContextualCommentsForAgent(session.summary, contextualComments));
-    } else if (isRefineRequest(responses) && session.summary) {
+      await continueAgentConversation(session, formatContextualCommentsForAgent(effectiveSummary, contextualComments));
+    } else if (isRefineRequest(responses)) {
       // Refinement steers which question comes next; it is never an answer to the
       // currently displayed question and therefore must not create a history entry.
       beginPlanningGeneration(session, "question");
@@ -3195,10 +3233,24 @@ export async function submitResponse(
 
       await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
       const focus = typeof responses.focus === "string" ? responses.focus.trim() : undefined;
-      const refineMessage = formatRefineRequestForAgent(session.summary, focus);
+      const refineMessage = formatRefineRequestForAgent(effectiveSummary, focus);
       await continueAgentConversation(session, refineMessage);
     } else if (!session.currentQuestion) {
-      throw new InvalidSessionStateError("No active question in session");
+      /*
+      FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
+      A submission with no active question used to throw InvalidSessionStateError
+      ("No active question in session") to the operator. Requirement: regenerate instead —
+      reprompt the agent to continue the interview and produce a fresh question, carrying any
+      submitted operator input along as context. No history entry is recorded because there is
+      no question to pair the response with.
+      */
+      beginPlanningGeneration(session, "question");
+      session.error = undefined;
+      await persistSession(session, "generating");
+      enteredGenerating = true;
+
+      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await continueAgentConversation(session, formatQuestionRegenerationForAgent(effectiveSummary, responses));
     } else {
       const currentQuestion = captureOtherCustomText(session.currentQuestion, responses);
       const historyEntry = {

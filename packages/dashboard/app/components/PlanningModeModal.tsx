@@ -2664,7 +2664,36 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const sessionId = session.sessionId;
       const activeQuestion = session.currentQuestion;
       if (!activeQuestion) {
-        setError(t("planning.noActiveQuestion", "No active question in session"));
+        /*
+        FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
+        Submitting with no active question is no longer a dead-end "No active question in
+        session" error. The server regenerates a fresh interview question from the accumulated
+        context, so forward the input and enter the loading state; the SSE question event (or
+        the HTTP payload for restored sessions without a live stream) restores the view. No
+        optimistic history entry is recorded because there is no question to pair it with.
+        */
+        setError(null);
+        resetPlanningAutoRetryBudget();
+        setGenerationActivity("question");
+        setGenerationStartTime(Date.now());
+        setView({ type: "loading" });
+        setStreamingOutput("");
+        currentSessionIdRef.current = sessionId;
+        if (!streamConnectionRef.current?.isConnected()) {
+          connectToPlanningStream(sessionId);
+        }
+        try {
+          const response = await respondToPlanning(sessionId, responses, projectId);
+          const responseQuestion = "type" in response ? response.data : response.currentQuestion;
+          if (responseQuestion) {
+            const nextQuestion = normalizeQuestionOptions(responseQuestion);
+            setWorkspaceQuestion(nextQuestion);
+            setView({ type: "question", session: { sessionId, currentQuestion: nextQuestion, summary: runningSummaryRef.current } });
+          }
+        } catch (err) {
+          setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response"));
+          setView({ type: "question", session: { sessionId, currentQuestion: null, summary: runningSummaryRef.current } });
+        }
         return;
       }
 
@@ -2790,7 +2819,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setView({ type: "question", session: { ...session, summary: runningSummaryRef.current } });
       }
     },
-    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, view]
+    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, t, view]
   );
 
   const handleStopGeneration = useCallback(async () => {
