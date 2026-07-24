@@ -2,7 +2,7 @@ import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatc
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import { createSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
+import { createSession, createTaskFromPlanSession, getSession as getPlanningSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import * as dashboard from "@fusion/dashboard";
@@ -2174,11 +2174,12 @@ export async function runTaskPlan(
   yesFlag = false,
   projectName?: string,
   baseBranch?: string,
+  resumeSessionId?: string,
 ): Promise<string | undefined> {
   let initialPlan = initialPlanArg;
 
   // If no initial plan, prompt interactively
-  if (!initialPlan) {
+  if (!initialPlan && !resumeSessionId) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     console.log("\n  Let's plan your task. What would you like to accomplish?\n");
     initialPlan = await rl.question("  Describe your idea: ");
@@ -2202,17 +2203,49 @@ export async function runTaskPlan(
   const context = await resolveBoardContext(projectName, "plan", "resolve project");
   const store = context.store;
 
-  // Create planning session
+  // Create (or resume) the planning session
   let sessionId: string;
   let firstQuestion: PlanningQuestion;
 
   try {
     showThinking();
     const projectPath = context.projectPath;
-    const result = await createSession("127.0.0.1", initialPlan.trim(), store, projectPath);
-    clearThinking();
-    sessionId = result.sessionId;
-    firstQuestion = result.firstQuestion;
+    if (resumeSessionId) {
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-02:30:
+      Agent/CLI parity with the dashboard's reopen loop: resuming an existing session (even a
+      validated one that already created a task) continues the interview. When no question is
+      awaiting input, a refine turn regenerates one — the server reopens the session and
+      rotates the creation epoch when its current epoch already produced a task, so a later
+      /validate creates a NEW task instead of replaying the old one.
+      */
+      const existing = await getPlanningSession(resumeSessionId);
+      if (!existing) {
+        clearThinking();
+        console.error(`\n  Planning session ${resumeSessionId} not found or expired.\n`);
+        await closeBoardContextAndExit(context, 1);
+        return undefined;
+      }
+      sessionId = resumeSessionId;
+      if (existing.currentQuestion) {
+        firstQuestion = existing.currentQuestion;
+      } else {
+        const regenerated = await submitResponse(sessionId, { refine: true }, projectPath, undefined, store);
+        if (regenerated.type !== "question") {
+          clearThinking();
+          console.error("\n  Could not resume the interview for this session.\n");
+          await closeBoardContextAndExit(context, 1);
+          return undefined;
+        }
+        firstQuestion = regenerated.data;
+      }
+      clearThinking();
+    } else {
+      const result = await createSession("127.0.0.1", initialPlan!.trim(), store, projectPath);
+      clearThinking();
+      sessionId = result.sessionId;
+      firstQuestion = result.firstQuestion;
+    }
   } catch (err) {
     clearThinking();
 
@@ -2226,6 +2259,9 @@ export async function runTaskPlan(
     await closeBoardContextAndExit(context, 1);
     return undefined;
   }
+
+  // FNXC:PlanningMultiTask 2026-07-24-02:30: surface the session id so agents/operators can resume this plan later (`fn task plan --resume <id>` / fn_task_plan resumeSessionId) to create further tasks.
+  console.log(`\n  Planning session: ${sessionId}`);
 
   // Interactive Q&A loop
   let currentQuestion = firstQuestion;
@@ -2334,26 +2370,53 @@ export async function runTaskPlan(
         }
 
         if (confirmed) {
-          // Create the task — the ONE discrete board write in this flow,
-          // retried independently (FN-7734).
-          // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-          const task = await retryBoardCall(context, "plan", "create task", () => store.createTask({
-            title: result.data.title,
-            description: result.data.description,
-            column: "triage",
-            dependencies: result.data.suggestedDependencies,
-            baseBranch: baseBranch?.trim() || undefined,
-            source: { sourceType: "cli" },
-          }));
+          /*
+          FNXC:PlanningMultiTask 2026-07-24-02:30:
+          Review finding (P1 agent-native parity): the CLI/agent surface used to call
+          store.createTask directly with no proposalClaimId — no idempotency, no session
+          linkage, tasks outside the epoch sequence. It now creates through the same
+          claim-aware path as the dashboard (epoch-derived key, claim CAS lifecycle,
+          validate-on-create), which also makes the retryBoardCall wrapper safe: a retried
+          call reconciles the already-inserted task instead of duplicating it (FN-7734).
+          */
+          const { task, alreadyCreated } = await retryBoardCall(context, "plan", "create task", () =>
+            createTaskFromPlanSession(sessionId, store, { baseBranch: baseBranch?.trim() || undefined }));
 
           console.log();
-          console.log(`  ✓ Created ${task.id}: ${task.title || task.description.slice(0, 60)}${task.description.length > 60 ? "…" : ""}`);
-          console.log(`    Column: triage`);
+          console.log(`  ${alreadyCreated ? "✓ Task already created from this plan:" : "✓ Created"} ${task.id}: ${task.title || task.description.slice(0, 60)}${task.description.length > 60 ? "…" : ""}`);
+          console.log(`    Column: ${task.column ?? "triage"}`);
           if (task.dependencies.length > 0) {
             console.log(`    Dependencies: ${task.dependencies.join(", ")}`);
           }
           console.log(`    Path:   .fusion/tasks/${task.id}/`);
           console.log();
+
+          /*
+          FNXC:PlanningMultiTask 2026-07-24-02:30:
+          Task creation is not the end of the plan (dashboard parity): the operator can keep
+          refining and create another task — the refine turn reopens the session and rotates
+          the creation epoch server-side. Non-interactive callers (--yes / fn_task_plan) stop
+          after one task and can continue later via `fn task plan --resume <sessionId>`.
+          */
+          if (!yesFlag) {
+            const rlContinue = createInterface({ input: process.stdin, output: process.stdout });
+            const continueAnswer = await rlContinue.question("  Keep refining this plan to create another task? [y/N]: ");
+            const wantsMore = ["y", "yes"].includes(continueAnswer.trim().toLowerCase());
+            if (!wantsMore) {
+              rlContinue.close();
+              return task.id;
+            }
+            const focus = (await rlContinue.question("  What should the next refinement focus on? ")).trim();
+            rlContinue.close();
+            showThinking();
+            const refined = await submitResponse(sessionId, { refine: true, ...(focus ? { focus } : {}) }, context.projectPath, undefined, store);
+            clearThinking();
+            if (refined.type === "question") {
+              currentQuestion = refined.data;
+              continue;
+            }
+            console.log("\n  Could not continue the interview; the created task is ready.\n");
+          }
 
           return task.id;
         }

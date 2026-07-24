@@ -322,7 +322,7 @@ Usage:
                                        Update Fusion on the selected release channel
   fn upgrade                           Alias for fn update
   fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>, --no-dedup)
-  fn task plan [description] [opts]    Create task via AI-guided planning
+  fn task plan [description] [opts]    Create task via AI-guided planning (--resume <sessionId> continues a plan to create another task)
   fn task list                        List all tasks
   fn task show <id>                   Show task details, steps, log
   fn task logs <id> [--follow] [--limit <n>] [--type <type>]
@@ -1280,6 +1280,8 @@ async function main() {
             const planArgs = args.slice(2);
             const yesFlag = planArgs.includes("--yes");
             let baseBranch: string | undefined;
+            // FNXC:PlanningMultiTask 2026-07-24-02:30: --resume reopens an existing planning session (even a validated one whose task exists) to keep refining and create another task.
+            let resumeSessionId: string | undefined;
             const descParts: string[] = [];
             for (let i = 0; i < planArgs.length; i++) {
               if (planArgs[i] === "--yes") {
@@ -1287,12 +1289,15 @@ async function main() {
               } else if (planArgs[i] === "--base-branch" && i + 1 < planArgs.length) {
                 baseBranch = planArgs[i + 1];
                 i++;
+              } else if (planArgs[i] === "--resume" && i + 1 < planArgs.length) {
+                resumeSessionId = planArgs[i + 1];
+                i++;
               } else {
                 descParts.push(planArgs[i]);
               }
             }
             const initialPlan = descParts.join(" ");
-            await runTaskPlan(initialPlan || undefined, yesFlag, projectName, baseBranch);
+            await runTaskPlan(initialPlan || undefined, yesFlag, projectName, baseBranch, resumeSessionId);
             break;
           }
           case "list":

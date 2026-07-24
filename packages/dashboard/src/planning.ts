@@ -27,9 +27,11 @@ import {
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,
   THINKING_LEVELS,
+  formatPlanningPlanMd,
   summarizeTitle,
   type PromptOverrideMap,
 } from "@fusion/core";
+import type { Task } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -3948,6 +3950,110 @@ function rotateTaskCreationEpochOnReopen(session: Session): void {
   session.createClaimStatus = "none";
   session.claimOwnerToken = undefined;
   session.claimStartedAt = undefined;
+}
+
+/*
+FNXC:PlanningMultiTask 2026-07-24-02:30:
+Agent-surface twin of POST /planning/create-task (review finding: fn task plan / fn_task_plan
+created tasks via a raw store.createTask with no proposalClaimId, so agent-created tasks had
+no idempotency, no session linkage, and lived outside the epoch sequence — a later dashboard
+Proceed would create a duplicate). This function shares every invariant primitive with the
+route (planningProposalClaimId, claim/finalize/reconcile/release CAS lifecycle including the
+30s stale-lease takeover, formatPlanningPlanMd task shape, validate-on-create); only the HTTP
+concerns (branch selection, workflow lane, GitHub tracking dispatch) stay route-only. The
+route remains the dashboard authority — keep the two orchestrations semantically aligned.
+*/
+export async function createTaskFromPlanSession(
+  sessionId: string,
+  store: TaskStore,
+  options?: { baseBranch?: string; sourceType?: "cli" | "api" },
+): Promise<{ task: Task; alreadyCreated: boolean }> {
+  let session = (await getDurablePlanningSession(sessionId).catch(() => undefined)) ?? await getSession(sessionId);
+  if (!session) throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  if (isPlanningTurnActive(sessionId) || planningStreamManager.hasPendingInitialTurn(sessionId)) {
+    throw new GenerationInProgressError("Plan is still generating — wait for the current turn to finish, then create the task.");
+  }
+  const summary = session.summary ?? buildRunningSummary(session.initialPlan, session.history);
+  if (!summary) throw new InvalidSessionStateError("Planning session has no plan to create a task from");
+
+  const claimEpoch = session.taskCreationEpoch ?? 0;
+  const proposalClaimId = planningProposalClaimId(sessionId, claimEpoch);
+  const findCreatedTask = async (): Promise<Task | undefined> =>
+    (await store.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+  const markSessionComplete = async (): Promise<void> => {
+    const current = await getSession(sessionId);
+    if (current && !current.validated) await validateSession(sessionId).catch(() => undefined);
+  };
+  const returnExisting = async (task: Task): Promise<{ task: Task; alreadyCreated: true }> => {
+    await reconcilePlanningTaskCreation(sessionId, task.id, claimEpoch).catch(() => undefined);
+    await markSessionComplete();
+    return { task, alreadyCreated: true };
+  };
+
+  // The task row under this epoch's key is the crash-window authority.
+  const existingTask = await findCreatedTask();
+  if (existingTask) return returnExisting(existingTask);
+  if (session.createdTaskId) {
+    const linked = await store.getTask(session.createdTaskId).catch(() => null);
+    if (linked) {
+      await markSessionComplete();
+      return { task: linked, alreadyCreated: true };
+    }
+  }
+
+  const claimOwnerToken = randomUUID();
+  let claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+  if (!claimed) {
+    session = (await getDurablePlanningSession(sessionId).catch(() => undefined)) ?? session;
+    const recovered = await findCreatedTask();
+    if (recovered) return returnExisting(recovered);
+    if (session.createdTaskId) {
+      const linked = await store.getTask(session.createdTaskId).catch(() => null);
+      if (linked) {
+        await markSessionComplete();
+        return { task: linked, alreadyCreated: true };
+      }
+    }
+    const startedAt = session.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
+    const leaseExpired = session.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
+    if (!leaseExpired || !session.claimOwnerToken) {
+      throw new GenerationInProgressError("Planning task creation is already in progress");
+    }
+    await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
+    claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString());
+    if (!claimed) throw new GenerationInProgressError("Planning task creation is already in progress");
+  }
+
+  try {
+    const planMd = formatPlanningPlanMd(summary);
+    const originalRequest = session.initialPlan?.trim() || summary.description.trim();
+    const task = await store.createTask({
+      title: summary.title,
+      description: planMd,
+      dependencies: summary.suggestedDependencies?.length ? summary.suggestedDependencies : undefined,
+      priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
+      source: { sourceType: options?.sourceType ?? "cli" },
+      ...(options?.baseBranch?.trim() ? { baseBranch: options.baseBranch.trim() } : {}),
+      proposalClaimId,
+    });
+    if (summary.suggestedSize) {
+      await Promise.resolve(store.updateTask?.(task.id, { size: summary.suggestedSize })).catch(() => undefined);
+    }
+    await Promise.resolve(store.upsertTaskDocument?.(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } })).catch(() => undefined);
+    if (originalRequest) {
+      await Promise.resolve(store.upsertTaskDocument?.(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } })).catch(() => undefined);
+    }
+    await Promise.resolve(store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session.initialPlan ?? "").slice(0, 200)}`)).catch(() => undefined);
+    await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id);
+    await markSessionComplete();
+    return { task, alreadyCreated: false };
+  } catch (err) {
+    // A raced insert under the same key is the idempotent success case; anything else releases the claim.
+    const raced = await findCreatedTask().catch(() => undefined);
+    await releasePlanningTaskCreation(sessionId, claimOwnerToken).catch(() => undefined);
+    if (raced) return returnExisting(raced);
+    throw err;
+  }
 }
 
 /** Read durable claim state rather than trusting a process-local session cache. */

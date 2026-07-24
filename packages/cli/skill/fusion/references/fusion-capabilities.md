@@ -45,7 +45,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_import_gitlab_group_issues` | Import GitLab group issues as Fusion tasks using each issue's originating project identity. |
 | `fn_task_browse_gitlab_merge_requests` | List GitLab project merge requests from the configured GitLab instance. |
 | `fn_task_import_gitlab_merge_requests` | Import GitLab project merge requests as Fusion review tasks using configured GitLab HTTP API auth. |
-| `fn_task_plan` | Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. |
+| `fn_task_plan` | Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. Pass resumeSessionId to reopen an existing planning session (even one whose task was already created) and create another task from the evolved plan. |
 | `fn_web_fetch` | Lightweight URL fetch (no JS rendering). Use agent-browser skill for JS-heavy pages. URL to fetch (http/https) Optional extraction hint for downstream summarization Timeout in milliseconds (default: 30000) Max bytes to return (default: 512000) |
 | `fn_secret_get` | Read a secret by key using per-secret access policy. |
 | `fn_experiment_finalize` | Group kept experiment runs into reviewable branches and finalize the session. Use dryRun=true to preview the plan without touching git. |

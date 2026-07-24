@@ -211,7 +211,7 @@ Import GitLab project merge requests as Fusion review tasks using configured Git
 
 ### fn_task_plan
 
-Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task.
+Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. Pass resumeSessionId to reopen an existing planning session (even one whose task was already created) and create another task from the evolved plan.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -28,6 +28,23 @@ vi.mock("../project-context.js", () => ({
 vi.mock("@fusion/dashboard/planning", () => ({
   createSession: vi.fn(),
   submitResponse: vi.fn(),
+  validateSession: vi.fn(),
+  getSession: vi.fn(),
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-02:30:
+  The CLI now creates through the claim-aware shared path (idempotency + session linkage +
+  epoch awareness) instead of a raw store.createTask.
+  */
+  createTaskFromPlanSession: vi.fn(async () => ({
+    task: {
+      id: "FN-042",
+      title: "Planned Task",
+      description: "A well-planned task",
+      column: "triage",
+      dependencies: ["FN-001"],
+    },
+    alreadyCreated: false,
+  })),
   RateLimitError: class RateLimitError extends Error {
     constructor(message: string) {
       super(message);
@@ -50,7 +67,7 @@ vi.mock("@fusion/dashboard/planning", () => ({
 
 // Import after mocking
 import { createInterface } from "node:readline/promises";
-import { createSession, submitResponse, RateLimitError, SessionNotFoundError } from "@fusion/dashboard/planning";
+import { createSession, createTaskFromPlanSession, getSession, submitResponse, RateLimitError, SessionNotFoundError } from "@fusion/dashboard/planning";
 import { runTaskPlan } from "../commands/task.js";
 
 describe("runTaskPlan", () => {
@@ -415,13 +432,13 @@ describe("runTaskPlan", () => {
     const taskId = await runTaskPlan("Build something", true);
 
     expect(taskId).toBe("FN-042");
-    expect(mockCreateTask).toHaveBeenCalledWith({
-      title: "Planned Task",
-      description: "A well-planned task",
-      column: "triage",
-      dependencies: ["FN-001"],
-      source: { sourceType: "cli" },
-    });
+    // FNXC:PlanningMultiTask 2026-07-24-02:30: creation must flow through the claim-aware shared path, never a raw store.createTask (no idempotency/linkage).
+    expect(createTaskFromPlanSession).toHaveBeenCalledWith(
+      "test-session-123",
+      expect.anything(),
+      { baseBranch: undefined },
+    );
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
   it("prompts for confirmation without --yes flag", async () => {
@@ -450,7 +467,8 @@ describe("runTaskPlan", () => {
 
     mockQuestion
       .mockResolvedValueOnce("y")
-      .mockResolvedValueOnce("y");
+      .mockResolvedValueOnce("y")
+      .mockResolvedValueOnce("n");
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("Process.exit called");
@@ -462,9 +480,46 @@ describe("runTaskPlan", () => {
       // expected
     }
 
-    expect(mockQuestion).toHaveBeenLastCalledWith("  Create this task? [Y/n]: ");
+    expect(mockQuestion).toHaveBeenCalledWith("  Create this task? [Y/n]: ");
+    // FNXC:PlanningMultiTask 2026-07-24-02:30: after creation the interactive flow offers to keep refining for another task.
+    expect(mockQuestion).toHaveBeenLastCalledWith("  Keep refining this plan to create another task? [y/N]: ");
 
     exitSpy.mockRestore();
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-02:30:
+  Agent/CLI resume parity: --resume reopens an existing session without creating a new one,
+  regenerating a question when none is awaiting input, and creates through the claim-aware path.
+  */
+  it("resumes an existing session with --resume and creates through the claim-aware path", async () => {
+    setupTaskStoreMock();
+
+    (getSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "resume-session-9",
+      currentQuestion: null,
+      summary: { title: "Existing plan", description: "d", suggestedSize: "M", suggestedDependencies: [], keyDeliverables: [] },
+    });
+    (submitResponse as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "question",
+        data: { id: "q-resumed", type: "text", question: "What changed?", description: "" },
+      })
+      .mockResolvedValueOnce({
+        type: "complete",
+        data: { title: "Second task", description: "d2", suggestedSize: "S", suggestedDependencies: [], keyDeliverables: ["X"] },
+      });
+    mockQuestion
+      .mockResolvedValueOnce("tighten the scope")
+      .mockResolvedValueOnce("DONE");
+
+    const taskId = await runTaskPlan(undefined, true, undefined, undefined, "resume-session-9");
+
+    expect(createSession).not.toHaveBeenCalled();
+    // The no-question resume issues a refine turn to regenerate the interview.
+    expect(submitResponse).toHaveBeenNthCalledWith(1, "resume-session-9", { refine: true }, "/test/project", undefined, expect.anything());
+    expect(createTaskFromPlanSession).toHaveBeenCalledWith("resume-session-9", expect.anything(), { baseBranch: undefined });
+    expect(taskId).toBe("FN-042");
   });
 
   it("handles RateLimitError with proper message", async () => {
@@ -575,6 +630,7 @@ describe("runTaskPlan", () => {
 
     expect(taskId).toBeUndefined();
     expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(createTaskFromPlanSession).not.toHaveBeenCalled();
     expect(mockConsoleLog).toHaveBeenCalledWith(
       expect.stringContaining("Task creation cancelled")
     );

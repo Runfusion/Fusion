@@ -2567,11 +2567,12 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_task_plan",
     label: "fn: Plan Task",
     description:
-      "Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task.",
+      "Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. Pass resumeSessionId to reopen an existing planning session (even one whose task was already created) and create another task from the evolved plan.",
     promptSnippet: "Create a task via AI-guided planning mode",
     promptGuidelines: [
       "Use for breaking down vague ideas into actionable tasks",
       "The AI will ask clarifying questions before creating the task",
+      "One plan can produce multiple tasks: resume the session with resumeSessionId to refine further and create another",
     ],
     parameters: Type.Object({
       description: Type.Optional(
@@ -2580,6 +2581,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         })
       ),
       baseBranch: Type.Optional(Type.String({ description: "Optional base branch for the task created from this planning session" })),
+      // FNXC:PlanningMultiTask 2026-07-24-02:30: agent parity with the dashboard's reopen loop — resuming rotates the creation epoch when the plan already produced a task.
+      resumeSessionId: Type.Optional(Type.String({ description: "Existing planning session id to resume instead of starting a new session" })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -2604,7 +2607,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       let taskId: string | undefined;
       try {
-        taskId = await runTaskPlan(params.description, true, undefined, params.baseBranch); // Use --yes flag for non-interactive
+        taskId = await runTaskPlan(params.description, true, undefined, params.baseBranch, params.resumeSessionId); // Use --yes flag for non-interactive
       } catch (err) {
         console.error = originalError;
         console.log = originalLog;

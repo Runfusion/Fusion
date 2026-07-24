@@ -39,6 +39,7 @@ import {
   __resetPlanningState,
   __setCreateFnAgent,
   createSessionWithAgent,
+  createTaskFromPlanSession,
   getSession,
   InvalidSessionStateError,
   planningProposalClaimId,
@@ -225,6 +226,60 @@ describe("planning question regeneration instead of no-active-question errors", 
     expect(session.createdTaskId).toBe("FN-300");
     expect(session.createClaimStatus).toBe("created");
     expect(session.validated).toBe(true);
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-07-24-02:30:
+  Agent-surface twin of the create-task route: createTaskFromPlanSession must be claim-aware
+  (proposalClaimId recorded on the task), idempotent on replay, and epoch-aware after the plan
+  is edited past a created task (review finding: the CLI previously bypassed all of this).
+  */
+  it("createTaskFromPlanSession is claim-aware, idempotent on replay, and epoch-aware after edits", async () => {
+    const { sessionId } = await startSessionAwaitingInput("10.2.0.13");
+
+    const tasks: Array<{ id: string; title: string; description: string; column: string; dependencies: string[]; proposalClaimId?: string }> = [];
+    const createTask = vi.fn(async (input: { title: string; description: string; dependencies?: string[]; proposalClaimId?: string }) => {
+      const task = {
+        id: `FN-CLI-${tasks.length + 1}`,
+        title: input.title,
+        description: input.description,
+        column: "triage",
+        dependencies: input.dependencies ?? [],
+        proposalClaimId: input.proposalClaimId,
+      };
+      tasks.push(task);
+      return task;
+    });
+    const taskStore = {
+      listTasks: vi.fn(async () => [...tasks]),
+      getTask: vi.fn(async (id: string) => {
+        const found = tasks.find((task) => task.id === id);
+        if (found) return found;
+        throw new Error("not found");
+      }),
+      createTask,
+    } as unknown as TaskStore;
+
+    const first = await createTaskFromPlanSession(sessionId, taskStore);
+    expect(first.alreadyCreated).toBe(false);
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask.mock.calls[0][0].proposalClaimId).toBe(`planning-session:${sessionId}`);
+    expect((await getSession(sessionId))?.validated).toBe(true);
+
+    const replay = await createTaskFromPlanSession(sessionId, taskStore);
+    expect(replay.alreadyCreated).toBe(true);
+    expect(replay.task.id).toBe(first.task.id);
+    expect(createTask).toHaveBeenCalledTimes(1);
+
+    // Editing the plan reopens the session and rotates the creation epoch.
+    const refined = await submitResponse(sessionId, { refine: true, focus: "split rollout" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+    expect(refined.type).toBe("question");
+
+    const second = await createTaskFromPlanSession(sessionId, taskStore);
+    expect(second.alreadyCreated).toBe(false);
+    expect(second.task.id).not.toBe(first.task.id);
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(createTask.mock.calls[1][0].proposalClaimId).toBe(`planning-session:${sessionId}#1`);
   });
 
   /*
