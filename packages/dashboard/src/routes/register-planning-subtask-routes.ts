@@ -1754,13 +1754,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       const lastEventId = parseLastEventId(req);
-      if (lastEventId !== undefined) {
-        const buffered = planningStreamManager.getBufferedEvents(sessionId, lastEventId);
-        if (!replayBufferedSSE(res, buffered)) {
-          res.end();
-          return;
-        }
-      }
 
       /*
       FNXC:PlanningProviderErrors 2026-07-23-20:10:
@@ -1769,6 +1762,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       the client on "Thinking/Generating plan" waiting for events that can never arrive
       (the client's SSE reconnect loop and 8s poll both treat a persisted "generating" row as
       healthy, so without this the hang is permanent).
+
+      FNXC:PlanningProviderErrors 2026-07-23-21:05:
+      This terminal check must run BEFORE the Last-Event-ID replay and skip it entirely. The
+      replay delivers every buffered event newer than lastEventId — including a buffered error
+      event — so emitting the terminal error after the replay double-delivered it to
+      reconnecting clients (double onError → duplicate auto-retry triggers). The terminal
+      error is written exactly once: the newest buffered error event id (or a fresh broadcast
+      when the bounded buffer evicted it) is compared against lastEventId alone. Skipping the
+      general replay is safe because the stream is terminal — the client's error handler
+      refetches session state instead of consuming intermediate events.
       */
       const terminalError = reconcileStalePlanningGeneration(sessionId);
       if (terminalError) {
@@ -1781,6 +1784,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
         res.end();
         return;
+      }
+
+      if (lastEventId !== undefined) {
+        const buffered = planningStreamManager.getBufferedEvents(sessionId, lastEventId);
+        if (!replayBufferedSSE(res, buffered)) {
+          res.end();
+          return;
+        }
       }
 
       /*
