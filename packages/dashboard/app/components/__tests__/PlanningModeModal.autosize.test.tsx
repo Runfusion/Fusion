@@ -216,11 +216,16 @@ describe("PlanningModeModal autosize", () => {
     });
   });
 
-  it("resumes a complete session without a durable validated payload marker as create-retry", async () => {
+  it("resumes a complete session without a created task into the full plan review workspace", async () => {
     /*
     FNXC:PlanningMode 2026-07-24-05:45:
     status=complete is only written by validateSession. A missing inputPayload.validated flag
-    must not strand reopen on "still being prepared" — route to create-retry so Proceed can finish.
+    must not strand reopen on "still being prepared".
+
+    FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+    A finished plan with no created task must resume into plan review — readable, still
+    editable (the server reopens validated sessions on any new turn), with Proceed available —
+    never a create-retry error card or any other do-nothing screen.
     */
     mockFetchAiSession.mockResolvedValueOnce({
       id: "session-complete-1",
@@ -255,10 +260,11 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
-    expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry create" })).toBeInTheDocument();
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refine" })).toBeInTheDocument();
+    expect(screen.queryByTestId("planning-create-retry")).toBeNull();
     expect(screen.queryByText("This plan is still being prepared")).toBeNull();
-    expect(screen.queryByTestId("planning-description-markdown-toggle")).toBeNull();
   });
 
   it("opens the linked task when a complete session already has a createdTaskId", async () => {

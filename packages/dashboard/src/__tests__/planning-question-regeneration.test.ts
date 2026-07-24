@@ -128,6 +128,25 @@ describe("planning question regeneration instead of no-active-question errors", 
     expect(lastPrompt).toContain("my answer");
   });
 
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+  Validation must not freeze the plan: a new turn (refine/comments/answers) on a validated
+  session reopens it and continues the interview instead of throwing "already been validated".
+  */
+  it("reopens a validated session when a refine turn arrives", async () => {
+    const { sessionId } = await startSessionAwaitingInput("10.2.0.9");
+    const session = (await getSession(sessionId))!;
+    session.validated = true;
+    session.currentQuestion = undefined;
+
+    const result = await submitResponse(sessionId, { refine: true, focus: "add rollout plan" }, "/tmp/project", undefined, MOCK_TASK_STORE);
+
+    expect(result.type).toBe("question");
+    expect(session.validated).toBe(false);
+    expect(session.error).toBeUndefined();
+    expect(session.currentQuestion).toBeDefined();
+  });
+
   it("contextual comments with no summary still apply via the rebuilt running summary", async () => {
     const { sessionId } = await startSessionAwaitingInput("10.2.0.3");
     const session = (await getSession(sessionId))!;

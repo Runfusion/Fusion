@@ -3152,8 +3152,18 @@ export async function submitResponse(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+  A validated plan must never be a read-only dead end: the operator can keep refining,
+  commenting, or answering, and create the task whenever they choose. A new turn on a
+  validated session REOPENS it (clears the terminal marker; the turn's own
+  persistSession("generating") durably writes validated:false and moves the row out of
+  "complete"), rather than rejecting with "already been validated". validateSession remains
+  the only terminalizer, and a session whose task already exists keeps its one-task claim
+  (proposalClaimId is never rotated), so Proceed after re-editing returns the linked task.
+  */
   if (session.validated) {
-    throw new InvalidSessionStateError("Planning session has already been validated");
+    session.validated = false;
   }
 
   // Stash store/rootDir on the session so subsequent ensureSessionAgent calls
@@ -3448,8 +3458,9 @@ export async function rewindSession(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
+  // FNXC:PlanningReopenAfterValidate 2026-07-23-23:30: editing an earlier answer reopens a validated plan — see submitResponse.
   if (session.validated) {
-    throw new InvalidSessionStateError("Planning session has already been validated");
+    session.validated = false;
   }
 
   if (store && !session.store) session.store = store;
@@ -3544,17 +3555,33 @@ export async function rewindSession(
 
 export function stopGeneration(sessionId: string): boolean {
   const session = sessions.get(sessionId);
-  const activeGeneration = activeGenerations.get(sessionId);
-
-  if (!session || !activeGeneration) {
+  if (!session) {
     return false;
   }
 
-  activeGeneration.abortReason = "user-stop";
-  clearTimeout(activeGeneration.timer);
-  activeGeneration.abortTeardown();
-  activeGeneration.abortController.abort();
-  activeGenerations.delete(sessionId);
+  /*
+  FNXC:PlanningStopMultiSession 2026-07-23-23:50:
+  Stop must work for every generation shape, keyed strictly to this session id so stopping one
+  plan never touches other concurrently generating sessions. A just-started session whose
+  initial turn is still PENDING (registered by start-streaming but not yet consumed by a
+  stream connect) has no activeGenerations record; without discarding that pending turn here,
+  Stop returned false and the "stopped" generation sprang back to life on the next stream
+  connect. Consuming (and dropping) the callback cancels the future turn.
+  */
+  const discardedInitialTurn = planningStreamManager.consumeInitialTurn(sessionId) !== undefined;
+  const activeGeneration = activeGenerations.get(sessionId);
+
+  if (!activeGeneration && !discardedInitialTurn) {
+    return false;
+  }
+
+  if (activeGeneration) {
+    activeGeneration.abortReason = "user-stop";
+    clearTimeout(activeGeneration.timer);
+    activeGeneration.abortTeardown();
+    activeGeneration.abortController.abort();
+    activeGenerations.delete(sessionId);
+  }
 
   const returnQuestion = session.generationReturnQuestion;
   const stoppedPurpose = session.generationPurpose;

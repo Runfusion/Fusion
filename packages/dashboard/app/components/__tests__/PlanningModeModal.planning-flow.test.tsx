@@ -1017,18 +1017,29 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.queryByRole("dialog", { name: "Refine plan and questions" })).toBeNull();
     expect(screen.getByTestId("planning-plan-review")).toBeInTheDocument();
   });
-  it("restores a validated unlinked session to create-only retry", async () => {
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+  A validated session with no created task must resume into the full plan review workspace
+  (read, keep editing, Proceed at any time), never a create-only retry card.
+  */
+  it("restores a validated unlinked session to the full plan review workspace", async () => {
     mockFetchAiSession.mockResolvedValue({ ...base, status: "complete", currentQuestion: null, result: JSON.stringify(mockSummary), inputPayload: JSON.stringify({ validated: true }) });
     renderSession();
-    expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Proceed with plan" })).toBeNull();
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refine" })).toBeInTheDocument();
+    expect(screen.queryByTestId("planning-create-retry")).toBeNull();
   });
 
-  it("routes generation retry away from already-validated sessions into create-retry", async () => {
+  it("routes generation retry away from already-validated sessions into plan review", async () => {
     /*
     FNXC:PlanningMode 2026-07-24-05:45:
     Auto/manual generation retry on a finished plan used to echo "already been validated".
-    Reject retry, re-fetch the complete row, and land on create-retry.
+    Reject retry and re-fetch the complete row.
+
+    FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+    The refreshed complete row now lands on plan review so the plan stays editable and
+    creatable instead of a create-only retry card.
     */
     mockRetryPlanningSession.mockRejectedValue(new Error("Planning session has already been validated"));
     mockFetchAiSession
@@ -1048,7 +1059,7 @@ describe("PlanningModeModal sequential flow", () => {
         inputPayload: JSON.stringify({ validated: true }),
       });
     renderSession();
-    expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
+    expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
     expect(screen.queryByText("Planning session has already been validated")).toBeNull();
     expect(mockRetryPlanningSession).toHaveBeenCalled();
   });

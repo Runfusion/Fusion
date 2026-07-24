@@ -215,7 +215,6 @@ function parsePlanningInputPayload(session: { inputPayload?: string | null }): {
 
 type CompletePlanningResume =
   | { kind: "task_created"; taskId: string; summary: PlanningSummary }
-  | { kind: "create_retry"; summary: PlanningSummary }
   | { kind: "plan_review"; summary: PlanningSummary }
   | { kind: "unrecoverable" };
 
@@ -235,10 +234,15 @@ function resolveCompletePlanningResume(
 
   const { validated, createdTaskId } = parsePlanningInputPayload(session);
   const terminal = session.status === "complete" || validated;
-  if (terminal) {
-    if (createdTaskId) return { kind: "task_created", taskId: createdTaskId, summary };
-    return { kind: "create_retry", summary };
-  }
+  /*
+  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+  A finished plan must never resume into a do-nothing screen. A validated session with no
+  created task lands on the full plan review workspace — read the plan, keep refining or
+  commenting (the server reopens a validated session on any new turn), and Proceed to create
+  the task at any time. Only a session whose task already exists resumes to the task handoff.
+  The create_retry view remains solely the transient failure screen of a live Proceed attempt.
+  */
+  if (terminal && createdTaskId) return { kind: "task_created", taskId: createdTaskId, summary };
   return { kind: "plan_review", summary };
 }
 
@@ -1196,13 +1200,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             resetPlanningAutoRetryBudget();
             if (resume.kind === "task_created") {
               setView({ type: "task_created", taskId: resume.taskId });
-            } else if (resume.kind === "create_retry") {
-              setView({
-                type: "create_retry",
-                session: { sessionId, currentQuestion: null, summary: resume.summary },
-                summary: resume.summary,
-                errorMessage: t("planning.retryCreate", "Retry create"),
-              });
             } else {
               setView({
                 type: "plan_review",
@@ -1642,13 +1639,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               setRunningSummary(resume.summary);
               if (resume.kind === "task_created") {
                 setView({ type: "task_created", taskId: resume.taskId });
-              } else if (resume.kind === "create_retry") {
-                setView({
-                  type: "create_retry",
-                  session: { sessionId: session.id, currentQuestion: null, summary: resume.summary },
-                  summary: resume.summary,
-                  errorMessage: t("planning.retryCreate", "Retry create"),
-                });
               } else {
                 setView({
                   type: "plan_review",
@@ -2086,13 +2076,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             clearPlanningDescription(projectId);
             if (resume.kind === "task_created") {
               setView({ type: "task_created", taskId: resume.taskId });
-            } else if (resume.kind === "create_retry") {
-              setView({
-                type: "create_retry",
-                session: { sessionId, currentQuestion: null, summary: resume.summary },
-                summary: resume.summary,
-                errorMessage: t("planning.retryCreate", "Retry create"),
-              });
             } else {
               setView({
                 type: "plan_review",
@@ -4054,6 +4037,19 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <div className="ai-error-panel" role="alert">
                   <div className="ai-error-message">{view.errorMessage}</div>
                   <button type="button" className="btn btn-primary" onClick={() => void handleRetryCreateTask()}>{t("planning.retryCreate", "Retry create")}</button>
+                  {/*
+                  FNXC:PlanningReopenAfterValidate 2026-07-23-23:30:
+                  A failed create attempt must not trap the operator on an error card. Back to
+                  plan returns to the full plan review workspace where the plan stays readable,
+                  editable, and creatable.
+                  */}
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setView({ type: "plan_review", session: view.session, summary: view.summary })}
+                  >
+                    {t("planning.backToPlan", "Back to plan")}
+                  </button>
                 </div>
               </div>
             </div>
