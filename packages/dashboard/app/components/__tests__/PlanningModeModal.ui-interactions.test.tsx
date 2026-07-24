@@ -24,9 +24,10 @@ describe("PlanningModeModal sequential layout", () => {
     expect(component).toContain("mobileAddCommentTriggerRef");
     expect(component).toContain("contextualComments");
     expect(component).toContain("setContextualComments([])");
-    // FNXC:PlanningComments 2026-07-24-06:15: touch commit on pointerdown before keyboard blur.
-    expect(component).toContain("handleAddContextualCommentPointerDown");
-    expect(component).toContain("handleSubmitContextualCommentsPointerDown");
+    // FNXC:PlanningComments 2026-07-24-06:20: prevent blur on pointerdown; commit on click.
+    expect(component).toContain("handleMobileKeyboardActionPointerDown");
+    expect(component).toContain("onPointerDown={handleMobileKeyboardActionPointerDown}");
+    expect(component).toContain("onClick={handleAddContextualComment}");
   });
 
   it("keeps plan actions in a non-scrolling sibling footer with equal mobile columns", () => {

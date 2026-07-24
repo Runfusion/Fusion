@@ -2876,20 +2876,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     window.getSelection()?.removeAllRanges();
   }, [commentDraft, selectedPlanQuote, setCommentEditorOpen]);
 
-  const handleAddContextualCommentPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    /*
-    FNXC:PlanningComments 2026-07-24-06:15:
-    Same keyboard-dismiss race as Refine Apply: on phone/tablet the first tap blurs the
-    suggestion field, the soft keyboard closes, the fixed composer shifts, and the trailing
-    click never lands — operators had to tap Add/Submit a second time. Commit on pointerdown
-    before blur; the empty-draft guard makes a compatibility click a no-op.
-    */
-    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
-    if (!selectedPlanQuote || !commentDraft.trim()) return;
-    event.preventDefault();
-    handleAddContextualComment();
-  }, [commentDraft, handleAddContextualComment, selectedPlanQuote, viewportMode]);
-
   const handleSubmitContextualComments = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
     const summary = runningSummaryRef.current;
@@ -2945,6 +2931,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [projectId, t, workflowId, workspaceQuestion]);
 
   const handleMobileKeyboardActionPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    /*
+    FNXC:PlanningComments 2026-07-24-06:20:
+    Phone/tablet only: preventDefault on pointerdown so the focused composer does not blur and
+    the fixed panel does not jump before click. Do NOT run the action here — committing Add on
+    pointerdown closed the comment box immediately and raced keyboard metrics; Start Planning
+    uses this same prevent-blur / click-to-commit split.
+    */
     if (viewportMode === "desktop" || event.pointerType === "mouse") return;
     event.preventDefault();
   }, [viewportMode]);
@@ -2963,13 +2956,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     event.preventDefault();
     void handleRefineFromPlan();
   }, [handleRefineFromPlan, viewportMode]);
-
-  const handleSubmitContextualCommentsPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
-    if (contextualComments.length === 0 || contextualCommentInFlightRef.current) return;
-    event.preventDefault();
-    void handleSubmitContextualComments();
-  }, [contextualComments.length, handleSubmitContextualComments, viewportMode]);
 
   const handleRetryCreateTask = useCallback(async () => {
     if (view.type !== "create_retry" || validateCreateInFlightRef.current) return;
@@ -3220,7 +3206,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   type="button"
                   className="btn btn-primary"
                   disabled={!commentDraft.trim()}
-                  onPointerDown={handleAddContextualCommentPointerDown}
+                  onPointerDown={handleMobileKeyboardActionPointerDown}
                   onClick={handleAddContextualComment}
                 >
                   {t("planning.addComment", "Add comment")}
@@ -3274,7 +3260,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               type="button"
               className="btn btn-primary"
               disabled={contextualCommentInFlightRef.current}
-              onPointerDown={handleSubmitContextualCommentsPointerDown}
+              onPointerDown={handleMobileKeyboardActionPointerDown}
               onClick={() => void handleSubmitContextualComments()}
             >
               {t("planning.submitComments", "Submit comments")}
