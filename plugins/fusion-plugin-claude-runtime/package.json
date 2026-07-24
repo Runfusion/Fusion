@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/claude-runtime",
-  "version": "0.1.6-beta.6",
+  "version": "0.1.6",
   "type": "module",
   "description": "Claude Code runtime plugin for Fusion (ACP bridge)",
   "keywords": [
