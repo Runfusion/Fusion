@@ -83,7 +83,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
       flagEnabled: true,
       defaultWorkflowId: "WF-8263-mobile-project-default",
-      workflows: [{ id: "WF-8263-mobile-project-default", name: "Mobile project default workflow" } as any],
+      workflows: [{ id: "WF-8263-mobile-project-default", name: "Mobile project default workflow", columns: [] } as any],
       taskWorkflowIds: { "FN-8263-mobile-project-default": "WF-8263-mobile-project-default" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
@@ -129,7 +129,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
       flagEnabled: true,
       defaultWorkflowId: "WF-advisor-mobile",
-      workflows: [{ id: "WF-advisor-mobile", name: "Advisor workflow" } as any],
+      workflows: [{ id: "WF-advisor-mobile", name: "Advisor workflow", columns: [] } as any],
       taskWorkflowIds: { [currentTask.id]: "WF-advisor-mobile" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
@@ -235,7 +235,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({
       flagEnabled: true,
       defaultWorkflowId: "WF-mobile-test",
-      workflows: [{ id: "WF-mobile-test", name: "Mobile Test Workflow" } as any],
+      workflows: [{ id: "WF-mobile-test", name: "Mobile Test Workflow", columns: [] } as any],
       taskWorkflowIds: { "FN-212": "WF-mobile-test" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockImplementation(() => new Promise(() => {}));

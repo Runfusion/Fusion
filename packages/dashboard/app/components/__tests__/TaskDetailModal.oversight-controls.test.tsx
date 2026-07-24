@@ -92,7 +92,7 @@ describe("TaskDetailModal oversight controls", () => {
     vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
       flagEnabled: true,
       defaultWorkflowId: "WF-advisor",
-      workflows: [{ id: "WF-advisor", name: "Advisor workflow" } as any],
+      workflows: [{ id: "WF-advisor", name: "Advisor workflow", columns: [] } as any],
       taskWorkflowIds: { "FN-8247-workflow": "WF-advisor" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
@@ -134,7 +134,7 @@ describe("TaskDetailModal oversight controls", () => {
     vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
       flagEnabled: true,
       defaultWorkflowId: "WF-8263-project-default",
-      workflows: [{ id: "WF-8263-project-default", name: "Project default workflow" } as any],
+      workflows: [{ id: "WF-8263-project-default", name: "Project default workflow", columns: [] } as any],
       taskWorkflowIds: { "FN-8263-project-default": "WF-8263-project-default" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({
@@ -177,10 +177,18 @@ describe("TaskDetailModal oversight controls", () => {
       defaultPresetBySize: {},
       sessionAdvisorEnabledByDefault: true,
     } as any);
-    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+    /*
+    FNXC:PlannerOversight 2026-07-23-22:20:
+    FN-8476 made the board-workflows lookup re-run whenever the task prop identity
+    changes (it derives move metadata from the payload), so the onTaskUpdated
+    rerender below refetches. A once-mock would leave the refetch on the
+    flagEnabled:false default and silently drop the workflow tier mid-test —
+    keep the payload persistent for every call in this test.
+    */
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({
       flagEnabled: true,
       defaultWorkflowId: "WF-8263-pending-advisor",
-      workflows: [{ id: "WF-8263-pending-advisor", name: "Pending advisor workflow" } as any],
+      workflows: [{ id: "WF-8263-pending-advisor", name: "Pending advisor workflow", columns: [] } as any],
       taskWorkflowIds: { [currentTask.id]: "WF-8263-pending-advisor" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockImplementationOnce(() => new Promise(() => {}));
@@ -238,10 +246,12 @@ describe("TaskDetailModal oversight controls", () => {
       defaultPresetBySize: {},
       sessionAdvisorEnabledByDefault: false,
     } as any);
-    vi.mocked(api.fetchBoardWorkflows).mockResolvedValueOnce({
+    // FNXC:PlannerOversight 2026-07-23-22:20: persistent mock — FN-8476 refetches
+    // board workflows on each task-prop identity change (see pending-advisor test).
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({
       flagEnabled: true,
       defaultWorkflowId: "WF-advisor-explicit-off",
-      workflows: [{ id: "WF-advisor-explicit-off", name: "Advisor workflow" } as any],
+      workflows: [{ id: "WF-advisor-explicit-off", name: "Advisor workflow", columns: [] } as any],
       taskWorkflowIds: { [currentTask.id]: "WF-advisor-explicit-off" },
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValueOnce({

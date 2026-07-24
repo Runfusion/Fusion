@@ -9,6 +9,21 @@ import type { SettingsSearchEntry } from "../search/types";
 
 export const generalSearchEntries: SettingsSearchEntry[] = [
   {
+    /*
+    FNXC:SettingsSearch 2026-07-23-22:20:
+    FN-8348 added the Report row (bug/feedback/idea/help entry point) to General
+    without indexing it, so settings search could not find it; the search-index
+    drift guard caught the gap. Labels/help mirror the section's t() copy verbatim.
+    */
+    sectionId: "general",
+    key: "report-action-menu",
+    labelKey: "settings.general.report",
+    labelFallback: "Report",
+    helpKey: "settings.general.reportHelp",
+    helpFallback: "Report a bug, send feedback, share an idea, or get help from Fusion.",
+    keywords: ["bug", "feedback", "idea", "help", "support"],
+  },
+  {
     sectionId: "general",
     key: "taskPrefix",
     labelKey: "settings.general.taskPrefix",

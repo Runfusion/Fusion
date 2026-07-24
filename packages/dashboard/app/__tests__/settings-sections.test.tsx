@@ -143,7 +143,13 @@ describe("GeneralSection", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Coding")).toBeInTheDocument());
     expect(screen.queryByLabelText("Brainstorming")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Coding (Ideas)")).not.toBeInTheDocument();
+    /*
+    FNXC:SettingsWorkflowToggles 2026-07-23-22:05:
+    PR #2378 restored builtin:coding-ideas (removed from DEPRECATED_BUILTIN_WORKFLOW_IDS),
+    so Coding (Ideas) is a live selectable built-in again and must render a toggle.
+    Brainstorming remains the deprecated built-in that must stay hidden.
+    */
+    expect(screen.getByLabelText("Coding (Ideas)")).toBeInTheDocument();
   });
 
   it("emits the absolute file-browser path toggle via setForm", () => {

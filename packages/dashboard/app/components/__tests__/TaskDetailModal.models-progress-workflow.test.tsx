@@ -1065,7 +1065,8 @@ describe("TaskDetailModal", () => {
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
         flagEnabled: true,
         defaultWorkflowId: "wf-edit",
-        workflows: [{ id: "wf-edit", name: "Edit Workflow" }],
+        // FNXC:TaskDetailWorkflow 2026-07-23-22:10: FN-8476 (restore Ideas detail move action) made resolveTaskWorkflowMetadata derive move targets from workflow.columns, so mocked workflows must carry a columns array or metadata resolution throws and the edit-mode optional-steps picker never mounts.
+        workflows: [{ id: "wf-edit", name: "Edit Workflow", columns: [] }],
         taskWorkflowIds: { "FN-099": "wf-edit" },
       } as any);
       vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValueOnce([
@@ -1108,7 +1109,8 @@ describe("TaskDetailModal", () => {
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
         flagEnabled: true,
         defaultWorkflowId: "wf-edit",
-        workflows: [{ id: "wf-edit", name: "Edit Workflow" }],
+        // FNXC:TaskDetailWorkflow 2026-07-23-22:10: FN-8476 (restore Ideas detail move action) made resolveTaskWorkflowMetadata derive move targets from workflow.columns, so mocked workflows must carry a columns array or metadata resolution throws and the edit-mode optional-steps picker never mounts.
+        workflows: [{ id: "wf-edit", name: "Edit Workflow", columns: [] }],
         taskWorkflowIds: { "FN-099": "wf-edit" },
       } as any);
       vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValueOnce([

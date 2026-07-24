@@ -2072,10 +2072,18 @@ Fusion tokens so light/dark themes never show browser-default white controls.
 }
 
 .wf-column-description-field {
+  /*
+  FNXC:DashboardTextTokens 2026-07-23-22:30:
+  FN-8526 shipped this label with the undefined deprecated --text-secondary alias; per the FN-8043
+  migration guarded by deprecated-text-secondary-token-migration.test.ts, secondary text uses the
+  canonical --text-muted token, which resolves in both base and light themes.
+  (Comment lives inside the block so WorkflowColumnPanel.test.tsx's brace-scanning selector parser
+  still sees the bare selector.)
+  */
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.75rem;
 }
 

@@ -164,7 +164,17 @@ describe("ChatView slash-command dispatch (/steer)", () => {
     fireEvent.change(textarea, { target: { value: "hello there" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
-    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith("hello there", []));
+    /*
+    FNXC:ChatAttachments 2026-07-23-22:35:
+    FN-8502 made ChatView pass attachment delivery callbacks as a third
+    sendMessage argument ({ onDelivered, onFailed }); assert them structurally
+    so the /steer dispatch contract (text + empty attachments, no steering
+    comment) stays the protected invariant.
+    */
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith("hello there", [], expect.objectContaining({
+      onDelivered: expect.any(Function),
+      onFailed: expect.any(Function),
+    })));
     expect(mockAddSteeringComment).not.toHaveBeenCalled();
   });
 
@@ -181,7 +191,11 @@ describe("ChatView slash-command dispatch (/steer)", () => {
     fireEvent.change(textarea, { target: { value: "please /steer this" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
-    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith("please /steer this", []));
+    // FNXC:ChatAttachments 2026-07-23-22:35: FN-8502 delivery-callback third arg (see above).
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith("please /steer this", [], expect.objectContaining({
+      onDelivered: expect.any(Function),
+      onFailed: expect.any(Function),
+    })));
     expect(mockAddSteeringComment).not.toHaveBeenCalled();
   });
 
