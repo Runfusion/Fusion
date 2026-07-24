@@ -1799,9 +1799,10 @@ FNXC:PlanningComments 2026-07-23-17:05:
 Desktop (≥1025px) keeps the in-document trigger under the plan markdown. Tablet and phone
 (≤1024px) use the action-rail counterpart so selection comments are not lost under the plan fold.
 
-FNXC:PlanningComments 2026-07-24-05:35:
-Tablet (769–1024) places that rail control as a full-width row above Refine/Proceed. Phone
-(≤768) still lifts it into a fixed bottom bar above the mobile nav.
+FNXC:PlanningComments 2026-07-24-05:50:
+Phone and tablet both place that rail control as a full-width row above Refine/Proceed. A
+viewport-fixed bar above the mobile nav sat under the action buttons and required an awkward
+reach past Proceed — match the tablet in-flow stack on phone too.
 */
 
 .planning-comment-quote,
@@ -1913,42 +1914,15 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 */
 @media (max-width: 768px) {
   /*
-  FNXC:PlanningComments 2026-07-23-17:05:
-  On phone, pin the rail Add-comment control to the visual viewport above the mobile nav so a
-  touch selection never requires scrolling the plan document or footer. Tablet (769–1024) keeps
-  the in-flow full-width rail row from the 1024px block instead.
-
-  The plan-actions button rule forces width 100 percent. With position fixed that 100 percent is
-  the viewport width, and combined with left/right insets the control overflowed past the right
-  edge (measured 780px wide in a 768px viewport). Higher specificity + width auto lets left/right
-  define the used width so the bar stays fully on-screen.
+  FNXC:PlanningComments 2026-07-24-05:50:
+  Phone keeps the ≤1024 in-flow full-width Add-comment row above Refine/Proceed (no fixed bar
+  under the action rail). The composer still pins above the mobile nav so opening it after a mid-
+  document selection does not require scrolling to the plan foot.
   */
-  .planning-plan-actions .btn.planning-add-comment--mobile {
-    position: fixed;
-    left: var(--space-md);
-    right: var(--space-md);
-    bottom: calc(
-      var(--mobile-nav-height, 44px)
-      + max(env(safe-area-inset-bottom, 0px), 12px)
-      + var(--space-md)
-    );
-    z-index: var(--z-popover);
-    width: auto;
-    max-width: none;
-    box-shadow: var(--shadow-md);
-  }
-
   .planning-comment-tray li {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  /*
-  FNXC:PlanningComments 2026-07-23-17:05:
-  The comment composer used to flow at the end of the plan markdown, so opening it after a mid-
-  document selection required scrolling to the document foot. Pin it to the visual viewport above
-  the mobile nav/safe-area (and above the selection trigger slot) so Cancel / Add comment stay
-  reachable without scrolling.
-  */
   .planning-comment-editor {
     position: fixed;
     left: var(--space-md);

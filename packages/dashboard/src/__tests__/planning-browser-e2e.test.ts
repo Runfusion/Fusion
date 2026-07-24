@@ -236,9 +236,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       Start at the preceding tab stop, then send actual Tab keys. Programmatic focus alone would
       incorrectly accept a tabIndex=-1 contextual-comment trigger as keyboard reachable.
 
-      FNXC:PlanningComments 2026-07-24-05:35:
-      Phone keeps the trigger position:fixed above the nav; tablet keeps it in the action rail as
-      a full-width row above Refine/Proceed. Both stay in the actions DOM for focus order.
+      FNXC:PlanningComments 2026-07-24-05:50:
+      Phone and tablet keep the trigger in the action rail as a full-width row above
+      Refine/Proceed (not a fixed bar under the actions).
       */
       focusable[triggerIndex - 1]?.focus();
       return {
@@ -274,11 +274,12 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       hiddenButtonsTabbable: 0,
     });
     if (inFooter) {
-      expect(placement.actionLabels).toEqual(expect.arrayContaining(["Refine", "Proceed with plan"]));
-      if (!positionFixed) {
-        // Tablet in-flow rail row: Add comment sits above Refine/Proceed in the same footer.
-        expect(placement.actionLabels).toEqual(expect.arrayContaining(["Add comment to selection"]));
-      }
+      // In-flow rail row: Add comment sits above Refine/Proceed in the same footer.
+      expect(placement.actionLabels).toEqual(expect.arrayContaining([
+        "Add comment to selection",
+        "Refine",
+        "Proceed with plan",
+      ]));
     } else {
       expect(placement.actionLabels).not.toContain("Add comment to selection");
     }
@@ -314,9 +315,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     expect(afterOpen).toMatchObject({
       addCommentButtons: 0,
       actionChildren: 0,
-      // Phone pins the composer; tablet/desktop keep the in-document editor.
-      editorPosition: positionFixed ? "fixed" : "static",
-      editorInsideViewport: positionFixed ? true : expect.any(Boolean),
+      // Phone pins the composer when open; tablet/desktop keep the in-document editor.
+      editorPosition: viewport.width <= 768 && inFooter ? "fixed" : "static",
+      editorInsideViewport: viewport.width <= 768 && inFooter ? true : expect.any(Boolean),
     });
 
     await page.evaluate(() => {
@@ -334,9 +335,8 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
 
   it("places the sole contextual comment trigger by viewport in embedded and modal Planning", async () => {
     for (const presentation of ["embedded", "modal"] as const) {
-      // Phone: fixed bar above nav.
-      await verifyContextualCommentPlacement({ width: 768, height: 900 }, { inFooter: true, positionFixed: true }, presentation);
-      // Tablet: full-width action-rail row above Refine/Proceed.
+      // Phone + tablet: full-width action-rail row above Refine/Proceed.
+      await verifyContextualCommentPlacement({ width: 768, height: 900 }, { inFooter: true, positionFixed: false }, presentation);
       await verifyContextualCommentPlacement({ width: 769, height: 900 }, { inFooter: true, positionFixed: false }, presentation);
       await verifyContextualCommentPlacement({ width: 1024, height: 900 }, { inFooter: true, positionFixed: false }, presentation);
       // Desktop: document-adjacent trigger only.

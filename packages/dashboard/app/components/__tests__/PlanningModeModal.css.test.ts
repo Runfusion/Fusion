@@ -170,18 +170,16 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const css = loadPlanningCss();
     const compactCss = getMediaBlocks(css, "@media (max-width: 1024px)").join("\n");
     const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
-    const tabletRailTriggerRule = findRule(compactCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
-    const mobileTriggerRule = findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
+    const railTriggerRule = findRule(compactCss, ".planning-plan-actions .btn.planning-add-comment--mobile");
     const mobileEditorRule = findRule(mobileCss, ".planning-comment-editor");
 
     expect(findRule(css, ".planning-add-comment--mobile")).toMatch(/display\s*:\s*none\s*;/);
     expect(findRule(compactCss, ".planning-add-comment--document")).toMatch(/display\s*:\s*none\s*;/);
-    expect(tabletRailTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
-    expect(tabletRailTriggerRule).toMatch(/grid-column\s*:\s*1\s*\/\s*-1\s*;/);
-    expect(tabletRailTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
-    expect(mobileTriggerRule).toMatch(/position\s*:\s*fixed\s*;/);
-    expect(mobileTriggerRule).toMatch(/width\s*:\s*auto\s*;/);
-    expect(mobileTriggerRule).toMatch(/var\(--mobile-nav-height/);
+    expect(railTriggerRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(railTriggerRule).toMatch(/grid-column\s*:\s*1\s*\/\s*-1\s*;/);
+    expect(railTriggerRule).toMatch(/margin-top\s*:\s*0\s*;/);
+    // FNXC:PlanningComments 2026-07-24-05:50: phone no longer overrides the rail trigger to fixed.
+    expect(findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile")).toBeUndefined();
     expect(mobileEditorRule).toMatch(/position\s*:\s*fixed\s*;/);
     expect(mobileEditorRule).toMatch(/var\(--mobile-nav-height/);
   });

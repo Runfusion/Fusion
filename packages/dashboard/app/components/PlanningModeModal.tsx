@@ -3154,16 +3154,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         FN-8533 keeps the selection-adjacent control on wide desktop, but compact shells need a
         counterpart that cannot be lost under the document fold.
 
-        FNXC:PlanningComments 2026-07-23-17:05:
-        On ≤768px the rail trigger is position:fixed above the mobile nav so a selection never
-        requires scrolling.
-
-        FNXC:PlanningComments 2026-07-24-05:35:
-        On tablet (769–1024) the same rail control stays in the plan action footer as a full-width
-        row above Refine/Proceed. Document-level selectionchange still dismisses it when the
-        selection collapses. CSS shows exactly one of the two variants; only established
-        768px/1024px breakpoint literals are allowed here, while all other dimensions remain
-        design-token based.
+        FNXC:PlanningComments 2026-07-24-05:50:
+        On tablet and phone (≤1024) the rail control stays in the plan action footer as a
+        full-width row above Refine/Proceed so a selection never requires scrolling past the
+        action baseline. Document-level selectionchange still dismisses it when the selection
+        collapses. CSS shows exactly one of the two variants; only established 768px/1024px
+        breakpoint literals are allowed here, while all other dimensions remain design-token based.
         */}
         {selectedPlanQuote && !isCommentEditorOpen && (
           <button
