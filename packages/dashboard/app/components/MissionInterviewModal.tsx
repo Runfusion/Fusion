@@ -565,12 +565,28 @@ export function MissionInterviewModal({
     };
   }, [connectToMissionInterviewStream, isOpen, resumeSessionId, view.type, projectId]);
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Missions is keyed by project, so a project switch unmounts this modal mid-composition.
+  Mirror handleClose's draft rule on unmount: persist an un-started goal under THIS
+  instance's projectId (constant for its lifetime thanks to the key), so the old project's
+  draft is neither dropped nor written under the new project's kb-mission-last-goal key.
+  */
+  const missionGoalRef = useRef(missionGoal);
+  missionGoalRef.current = missionGoal;
+  const viewTypeRef = useRef(view.type);
+  viewTypeRef.current = view.type;
+
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
+      if (missionGoalRef.current && viewTypeRef.current === "initial") {
+        saveMissionGoal(missionGoalRef.current, projectId);
+      }
     };
+    // projectId is intentionally omitted: it is constant per keyed instance.
   }, []);
 
   // Unload protection

@@ -6,15 +6,18 @@ import type { MainContentProps } from "../types";
 
 /*
 FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
-Regression coverage: embedded Planning must remount when the active project changes.
-Without the project-keyed remount, a running plan kept its stream, selected session, and
-sidebar session list from the previous project, and the durable-active-session effect
-persisted the old project's session under the new project's storage key — so the new
-project kept restoring the previous project's plan.
+Regression coverage: embedded project-scoped views must remount when the active project
+changes. Without the project-keyed remount, Planning kept a running plan's stream/selected
+session/sidebar list from the previous project (and persisted its session under the new
+project's storage key), Chat kept the previous project's active conversation and live
+stream rendering under the new project, and Missions kept its nested interview modals
+connected to the previous project's sessions.
 */
 
-const { planningMounts } = vi.hoisted(() => ({
+const { planningMounts, chatMounts, missionMounts } = vi.hoisted(() => ({
   planningMounts: [] as Array<string | undefined>,
+  chatMounts: [] as Array<string | undefined>,
+  missionMounts: [] as Array<string | undefined>,
 }));
 
 vi.mock("../../PlanningModeModal", () => ({
@@ -29,6 +32,28 @@ vi.mock("../../PlanningModeModal", () => ({
 vi.mock("../PlanningWorkflowSwitcherSlot", () => ({
   PlanningWorkflowSwitcherSlot: () => null,
 }));
+
+vi.mock("../../MissionManager", () => ({
+  MissionManager: ({ projectId }: { projectId?: string }) => {
+    useEffect(() => {
+      missionMounts.push(projectId);
+    }, []);
+    return <output aria-label="Missions project">{projectId ?? "none"}</output>;
+  },
+}));
+
+vi.mock("../../HeaderWorkflowSwitcherSlot", () => ({
+  HeaderWorkflowSwitcherSlot: () => null,
+}));
+
+// ChatView is a lazy chunk threaded in via props (see MainContent header comment),
+// so the mock is passed through mainContentProps instead of vi.mock.
+function MockChatView({ projectId }: { projectId?: string }) {
+  useEffect(() => {
+    chatMounts.push(projectId);
+  }, []);
+  return <output aria-label="Chat project">{projectId ?? "none"}</output>;
+}
 
 function mainContentProps(overrides: Partial<MainContentProps> = {}): MainContentProps {
   return {
@@ -49,6 +74,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     refreshAppSettings: vi.fn(async () => undefined),
     addToast: vi.fn(),
     currentProject: { id: "project-1", name: "Project 1" } as MainContentProps["currentProject"],
+    ChatView: MockChatView,
     viewMode: "project",
     tasks: [],
     workflowSteps: [],
@@ -89,5 +115,39 @@ describe("MainContent planning project remount", () => {
     // A fresh mount for the new project — not a prop update on the old instance.
     expect(screen.getByLabelText("Planning project")).toHaveTextContent("project-2");
     expect(planningMounts).toEqual(["project-1", "project-2"]);
+  });
+
+  it("remounts embedded Chat when the active project changes", () => {
+    const { rerender } = render(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+    expect(chatMounts).toEqual(["project-1"]);
+
+    rerender(
+      <MainContent
+        {...mainContentProps({
+          taskView: "chat",
+          currentProject: { id: "project-2", name: "Project 2" } as MainContentProps["currentProject"],
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Chat project")).toHaveTextContent("project-2");
+    expect(chatMounts).toEqual(["project-1", "project-2"]);
+  });
+
+  it("remounts Missions when the active project changes", () => {
+    const { rerender } = render(<MainContent {...mainContentProps({ taskView: "missions" })} />);
+    expect(missionMounts).toEqual(["project-1"]);
+
+    rerender(
+      <MainContent
+        {...mainContentProps({
+          taskView: "missions",
+          currentProject: { id: "project-2", name: "Project 2" } as MainContentProps["currentProject"],
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Missions project")).toHaveTextContent("project-2");
+    expect(missionMounts).toEqual(["project-1", "project-2"]);
   });
 });

@@ -28,8 +28,20 @@ vi.mock("../SettingsModal", () => ({
   },
 }));
 
+/*
+FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+GitHub Import is always-mounted and its persist effect depends on projectId, so a project
+swap used to re-fire it with the old project's selections under the new project's storage
+key. The mock records mounts so the project-keyed remount contract is testable.
+*/
+const githubImportMounts = vi.hoisted(() => [] as Array<string | undefined>);
 vi.mock("../GitHubImportModal", () => ({
-  GitHubImportModal: () => null,
+  GitHubImportModal: ({ projectId }: { projectId?: string }) => {
+    reactUseEffect(() => {
+      githubImportMounts.push(projectId);
+    }, []);
+    return null;
+  },
 }));
 
 vi.mock("../PlanningModeModal", () => ({
@@ -282,7 +294,7 @@ describe("AppModals", () => {
   embedded Planning view: a prop update on the surviving instance ran resetState with the
   NEW projectId and persisted the old project's draft under the new project's storage key.
   */
-  it("remounts the subtask breakdown when the active project changes", () => {
+  it("remounts the project-keyed modals (subtask breakdown, GitHub import) when the active project changes", () => {
     const buildProps = (projectId: string) => ({
       projectId,
       tasks: [],
@@ -300,13 +312,16 @@ describe("AppModals", () => {
     });
 
     subtaskMounts.length = 0;
+    githubImportMounts.length = 0;
     const { rerender } = render(<AppModals {...buildProps("proj_a")} />);
     expect(subtaskMounts).toEqual(["proj_a"]);
+    expect(githubImportMounts).toEqual(["proj_a"]);
 
     rerender(<AppModals {...buildProps("proj_b")} />);
 
     // A fresh mount for the new project — not a prop update on the old instance.
     expect(subtaskMounts).toEqual(["proj_a", "proj_b"]);
+    expect(githubImportMounts).toEqual(["proj_a", "proj_b"]);
   });
 
   it("passes the live board task snapshot into the open detail modal while preserving prompt data", async () => {

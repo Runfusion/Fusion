@@ -391,7 +391,17 @@ export function AppModals({
         </ModalErrorBoundary>
       )}
 
+      {/*
+      FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+      Key the always-mounted GitHub Import modal by project. Its persist effect depends on
+      projectId, so a project swap (close + new projectId in one render) re-fired it with the
+      OLD project's provider/labels/repo selections and wrote them under the NEW project's
+      kb-dashboard-github-import-state key. Keying remounts instead; unmount writes nothing,
+      so each project's last persisted import state stays under its own key. The embedded
+      Import Tasks view already unmounts on navigation and was never affected.
+      */}
       <GitHubImportModal
+        key={projectId ?? "no-project"}
         isOpen={modalManager.githubImportOpen}
         onClose={closeGitHubImportWithNav}
         onImport={taskHandlers.handleGitHubImport}

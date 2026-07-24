@@ -999,4 +999,22 @@ describe("MissionInterviewModal", () => {
     });
     expect(textarea).toHaveValue("New mission idea");
   });
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Missions is keyed by project, so a project switch unmounts this modal mid-composition.
+  The unmount must persist an un-started goal under the instance's OWN project id — before
+  the keyed remount, the surviving instance saved it under the NEW project's
+  kb-mission-last-goal key on close.
+  */
+  it("saves an un-started goal draft under its own project id on unmount", () => {
+    const { unmount } = renderModal({ projectId: "proj_a" });
+
+    const textarea = screen.getByLabelText("What do you want to build?");
+    fireEvent.change(textarea, { target: { value: "Goal from project A" } });
+
+    unmount();
+
+    expect(mockSaveMissionGoal).toHaveBeenCalledWith("Goal from project A", "proj_a");
+  });
 });
