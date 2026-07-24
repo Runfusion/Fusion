@@ -936,24 +936,91 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     });
   useMobileScrollLock(viewportMode === "mobile" && isOpen && scrollLockEnabled);
 
+  /*
+  FNXC:PlanningComments 2026-07-24-06:40:
+  Phone only: live visualViewport frame while the composer is open. `position:fixed; bottom`
+  is layout-viewport-relative, so when the soft keyboard opens the panel sits under the
+  keyboard (or outside the visible visual viewport) and looks "dismissed". Re-measure on
+  vv resize/scroll so we can pin with `top` inside the visual viewport instead.
+  */
+  const [mobileVvFrame, setMobileVvFrame] = useState<{ offsetTop: number; height: number; layoutHeight: number } | null>(null);
+  useEffect(() => {
+    if (!isCommentEditorOpen || viewportMode !== "mobile") {
+      setMobileVvFrame(null);
+      return;
+    }
+    const vv = window.visualViewport;
+    if (!vv) {
+      setMobileVvFrame(null);
+      return;
+    }
+    const update = () => {
+      setMobileVvFrame({
+        offsetTop: vv.offsetTop,
+        height: vv.height,
+        layoutHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+      });
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [isCommentEditorOpen, viewportMode]);
+
   const commentEditorStyle = useMemo((): CSSProperties | undefined => {
     if (!commentComposerNeedsKeyboardLift) return undefined;
+
     /*
-    FNXC:PlanningComments 2026-07-24-06:05:
-    When the keyboard is open, pin the composer to the visual viewport above the keyboard.
-    First open used to keep the phone fixed bottom (nav-only) so the panel sat under the
-    keyboard until a second focus; drive bottom/max-height from live metrics instead.
+    FNXC:PlanningComments 2026-07-24-06:40:
+    Tablet: simple bottom lift (resizes-content / wider shell) — leave as keyboardOverlap.
+    Phone: anchor with `top` from visualViewport so the panel stays in the visible area above
+    the keyboard. Using only `bottom: keyboardOverlap` left the box under the keyboard on first
+    open (layout vs visual viewport mismatch).
     */
-    if (!keyboardOpen) return undefined;
-    const bottomPx = Math.max(keyboardOverlap, 0);
-    const style: CSSProperties = {
-      bottom: `calc(${bottomPx}px + var(--space-md))`,
-    };
-    if (viewportHeight != null && viewportHeight > 0) {
-      style.maxHeight = `min(${Math.round(viewportHeight * 0.55)}px, calc(var(--space-2xl) * 12))`;
+    if (viewportMode === "tablet") {
+      if (!keyboardOpen) return undefined;
+      const style: CSSProperties = {
+        bottom: `calc(${Math.max(keyboardOverlap, 0)}px + var(--space-md))`,
+      };
+      if (viewportHeight != null && viewportHeight > 0) {
+        style.maxHeight = `min(${Math.round(viewportHeight * 0.55)}px, calc(var(--space-2xl) * 12))`;
+      }
+      return style;
     }
-    return style;
-  }, [commentComposerNeedsKeyboardLift, keyboardOpen, keyboardOverlap, viewportHeight]);
+
+    if (viewportMode !== "mobile") return undefined;
+
+    const vvHeight = mobileVvFrame?.height ?? viewportHeight ?? 0;
+    const vvOffsetTop = mobileVvFrame?.offsetTop ?? viewportOffsetTop ?? 0;
+    const layoutHeight = mobileVvFrame?.layoutHeight
+      ?? (typeof window !== "undefined" ? (window.innerHeight || document.documentElement.clientHeight || 0) : 0);
+
+    const keyboardLikelyOpen = keyboardOpen
+      || (vvHeight > 0 && layoutHeight > 0 && vvHeight < layoutHeight - 80);
+    if (!keyboardLikelyOpen || vvHeight <= 0) return undefined;
+
+    const gap = 12;
+    const maxHeight = Math.max(140, Math.min(Math.round(vvHeight * 0.5), 320));
+    const top = Math.round(vvOffsetTop + Math.max(gap, vvHeight - maxHeight - gap));
+    return {
+      top: `${top}px`,
+      bottom: "auto",
+      maxHeight: `${maxHeight}px`,
+    };
+  }, [
+    commentComposerNeedsKeyboardLift,
+    keyboardOpen,
+    keyboardOverlap,
+    mobileVvFrame,
+    viewportHeight,
+    viewportMode,
+    viewportOffsetTop,
+  ]);
 
   useEffect(() => {
     if (!isCommentEditorOpen) return;

@@ -1965,6 +1965,15 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
       + var(--space-md)
     );
   }
+
+  /*
+  FNXC:PlanningComments 2026-07-24-06:40:
+  Keyboard-open phone composer is positioned via inline `top`/`max-height` from visualViewport.
+  Clear CSS `bottom` so it cannot fight the JS pin and leave the panel under the keyboard.
+  */
+  .planning-comment-editor.planning-comment-editor--keyboard-open {
+    bottom: auto;
+  }
 }
 
 @media (min-width: 769px) and (max-width: 1024px) {
