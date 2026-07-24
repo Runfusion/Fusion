@@ -231,6 +231,16 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
     /*
+    FNXC:PluginMcpServers 2026-07-23-23:40:
+    FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+    MCP provider on every getProjectContext call. A store that already exposes
+    getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+    binder (which would otherwise call getPluginStore()); declare it here so the
+    route contracts under test stay isolated from plugin-loader bootstrapping.
+    Same alignment as remote-access-routes.test.ts (d7752931b).
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
+    /*
     FNXC:DashboardTests 2026-07-18-09:45:
     Backup automation path calls resolveGlobalBackupRoot(store) which requires
     getGlobalSettingsDir. Full-suite shard 4 failed FN-7537 manual backup parity

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Column, Task, TaskDetail } from "@fusion/core";
 import {
@@ -232,8 +232,16 @@ describe("TaskDetailModal tab persistence", () => {
       const view = renderDetail({ task });
 
       await waitFor(() => expect(screen.getByRole("button", { name: "Session" })).toBeInTheDocument());
+      /*
+      FNXC:TaskDetailTabs 2026-07-24-00:00:
+      Settle pending CLI-session fetch commits and click a freshly-queried node: clicking
+      right after the tab appears raced the cliSession hydration re-render on loaded CI
+      shards (full-suite run 30070825088), dispatching on a detached node so the tab never
+      activated. Same detached-node class d7752931b fixed for PlanningModeModal Proceed.
+      */
+      await act(async () => {});
       fireEvent.click(screen.getByRole("button", { name: "Session" }));
-      expect(screen.getByRole("button", { name: "Session" })).toHaveClass("detail-tab-active");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Session" })).toHaveClass("detail-tab-active"));
 
       rerenderDetail(view.rerender, { task: makeTask({ id: "FN-NO-SESSION", column: "in-progress", prompt: "# Full task" }) });
       await waitFor(() => expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active"));

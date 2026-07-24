@@ -1081,7 +1081,15 @@ describe("Planning Mode API", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
-      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, createdTask, 201));
+      /*
+      FNXC:PlanningMode 2026-07-23-23:35:
+      FN-8442 (36b318096) changed POST /planning/create-task to respond with a
+      { task, alreadyCreated } envelope (idempotent replay detection); the client
+      unwraps response.task. Mock the real server envelope, not a bare Task.
+      */
+      globalThis.fetch = vi.fn().mockReturnValue(
+        mockFetchResponse(true, { task: createdTask, alreadyCreated: false }, 201)
+      );
 
       const result = await createTaskFromPlanning("plan-123");
 

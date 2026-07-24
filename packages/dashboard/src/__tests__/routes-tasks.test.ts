@@ -236,6 +236,16 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     recordActivity: vi.fn().mockResolvedValue(undefined),
     getFusionDir: vi.fn().mockReturnValue("/fake/root/.fusion"),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    /*
+    FNXC:PluginMcpServers 2026-07-23-23:40:
+    FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+    MCP provider on every getProjectContext call. A store that already exposes
+    getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+    binder (which would otherwise call getPluginStore()); declare it here so the
+    route contracts under test stay isolated from plugin-loader bootstrapping.
+    Same alignment as remote-access-routes.test.ts (d7752931b).
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
     // FNXC:PostgresCutover 2026-07-05-16:20: routes borrow the AsyncDataLayer
     // from the scoped store (e.g. triggerCommentWakeForAssignedAgent builds a
     // backend AgentStore). null = legacy mode for this mock.
