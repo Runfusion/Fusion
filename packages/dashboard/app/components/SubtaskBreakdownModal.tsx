@@ -359,10 +359,24 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     })();
   }, [connectToSubtaskStream, isOpen, resumeSessionId, view.type, projectId]);
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  This modal only unmounts on a project switch (AppModals keys it by project) or app
+  teardown — a normal close just renders null and resetState persists the draft. Save the
+  draft on unmount too, under THIS instance's projectId (constant for its lifetime thanks
+  to the key), so switching projects mid-draft neither drops the old project's draft nor
+  writes it under the new project's storage key.
+  */
+  const localDescriptionRef = useRef(localDescription);
+  localDescriptionRef.current = localDescription;
   useEffect(() => {
     return () => {
       streamRef.current?.close();
+      if (localDescriptionRef.current) {
+        saveSubtaskDescription(localDescriptionRef.current, projectId);
+      }
     };
+    // projectId is intentionally omitted: it is constant per keyed instance.
   }, []);
 
   useEffect(() => {

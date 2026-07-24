@@ -877,4 +877,30 @@ describe("SubtaskBreakdownModal", () => {
       expect(await screen.findByText("Stream error")).toBeInTheDocument();
     });
   });
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  AppModals keys this modal by project, so a project swap unmounts the old instance.
+  Unmount must persist the in-progress draft under the OLD project's storage key — the
+  pre-fix prop-update path ran resetState with the NEW projectId and wrote project A's
+  draft into project B's persisted description.
+  */
+  describe("project switch unmount", () => {
+    it("saves the draft under its own project id on unmount", async () => {
+      const { saveSubtaskDescription } = await import("../../hooks/modalPersistence");
+      const { unmount } = render(
+        <SubtaskBreakdownModal
+          isOpen={true}
+          onClose={onClose}
+          initialDescription="Draft from project A"
+          onTasksCreated={onTasksCreated}
+          projectId="proj_a"
+        />,
+      );
+
+      unmount();
+
+      expect(saveSubtaskDescription).toHaveBeenCalledWith("Draft from project A", "proj_a");
+    });
+  });
 });

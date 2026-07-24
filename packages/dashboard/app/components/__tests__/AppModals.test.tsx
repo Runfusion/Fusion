@@ -1,3 +1,4 @@
+import { useEffect as reactUseEffect } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from "@testing-library/react";
@@ -35,8 +36,20 @@ vi.mock("../PlanningModeModal", () => ({
   PlanningModeModal: () => null,
 }));
 
+/*
+FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+The subtask breakdown mock records mounts so the project-keyed remount contract is
+testable: a project swap must create a fresh instance, not update the old one (which
+persisted the previous project's draft under the new project's storage key).
+*/
+const subtaskMounts = vi.hoisted(() => [] as Array<string | undefined>);
 vi.mock("../SubtaskBreakdownModal", () => ({
-  SubtaskBreakdownModal: () => null,
+  SubtaskBreakdownModal: ({ projectId }: { projectId?: string }) => {
+    reactUseEffect(() => {
+      subtaskMounts.push(projectId);
+    }, []);
+    return null;
+  },
 }));
 
 vi.mock("../TerminalModal", () => ({
@@ -218,6 +231,7 @@ describe("AppModals", () => {
     closeSetupWizard: vi.fn(),
     openModelOnboarding: vi.fn(),
     closeModelOnboarding: vi.fn(),
+    closeProjectScopedModals: vi.fn(),
     onPlanningTaskCreated: vi.fn(),
     onPlanningTasksCreated: vi.fn(),
     onSubtaskTasksCreated: vi.fn(),
@@ -260,6 +274,39 @@ describe("AppModals", () => {
       />
     );
     expect(document.body).toBeDefined();
+  });
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Switching projects must remount the subtask breakdown (project-keyed), mirroring the
+  embedded Planning view: a prop update on the surviving instance ran resetState with the
+  NEW projectId and persisted the old project's draft under the new project's storage key.
+  */
+  it("remounts the subtask breakdown when the active project changes", () => {
+    const buildProps = (projectId: string) => ({
+      projectId,
+      tasks: [],
+      projects: [],
+      currentProject: null,
+      addToast: vi.fn(),
+      toasts: mockToasts,
+      removeToast: vi.fn(),
+      modalManager: mockModalManager,
+      projectActions: { handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() },
+      taskHandlers: { handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() },
+      taskOperations: { moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() },
+      deepLink: { handleDetailClose: vi.fn() },
+      settings: mockSettings,
+    });
+
+    subtaskMounts.length = 0;
+    const { rerender } = render(<AppModals {...buildProps("proj_a")} />);
+    expect(subtaskMounts).toEqual(["proj_a"]);
+
+    rerender(<AppModals {...buildProps("proj_b")} />);
+
+    // A fresh mount for the new project — not a prop update on the old instance.
+    expect(subtaskMounts).toEqual(["proj_a", "proj_b"]);
   });
 
   it("passes the live board task snapshot into the open detail modal while preserving prompt data", async () => {

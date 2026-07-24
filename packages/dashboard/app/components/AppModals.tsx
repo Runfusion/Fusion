@@ -402,7 +402,18 @@ export function AppModals({
       />
 
       <ModalErrorBoundary>
+        {/*
+        FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+        Key the subtask breakdown by project so a project swap remounts it, mirroring the
+        embedded Planning view. Without the remount, the swap flipped isOpen=false and the
+        NEW projectId in the same render, so resetState persisted the old project's draft
+        description under the new project's storage key and kept it in memory — reopening
+        the breakdown in the new project showed the previous project's draft. The old
+        instance's unmount cleanup closes its stream and saves the draft under its own
+        project key.
+        */}
         <SubtaskBreakdownModal
+          key={projectId ?? "no-project"}
           isOpen={modalManager.isSubtaskOpen}
           onClose={closeSubtaskWithNav}
           initialDescription={modalManager.subtaskInitialDescription ?? ""}
