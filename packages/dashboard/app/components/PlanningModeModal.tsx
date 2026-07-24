@@ -141,6 +141,16 @@ interface PlanningModeModalProps {
   onViewTask?: (task: Task) => void;
   tasks: Task[];
   initialPlan?: string;
+  /**
+  FNXC:PlanningMode 2026-07-23-00:00:
+  Called exactly once when the auto-start effect actually consumes `initialPlan`, so the owner
+  (useModalManager) can clear the payload. The seeded plan is a one-shot handoff: embedded
+  Planning fully unmounts on main-content navigation, which resets the in-component
+  hasAutoStartedRef guard — without owner-side clearing, every navigate-back remount (and the
+  project-switch remount key) re-fired auto-start and created a duplicate planning session while
+  the original session was silently abandoned.
+  */
+  onInitialPlanConsumed?: () => void;
   projectId?: string;
   /** Active workflow lane selected when Planning Mode was opened. */
   workflowId?: string | null;
@@ -456,7 +466,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal" }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal" }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
@@ -491,6 +501,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // re-initialized on each render, ensuring the auto-start effect runs correctly.
   const hasAutoStartedRef = useRef(false);
   const hasLoadedPersistedRef = useRef(false);
+  // FNXC:PlanningMode 2026-07-23-00:00: latest-callback ref so the auto-start effect does not
+  // re-fire when the parent re-renders with a new onInitialPlanConsumed identity.
+  const onInitialPlanConsumedRef = useRef(onInitialPlanConsumed);
+  onInitialPlanConsumedRef.current = onInitialPlanConsumed;
   const [streamingOutput, setStreamingOutput] = useState<string>("");
   const [showThinking, setShowThinking] = useState(true);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -1868,6 +1882,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const timer = setTimeout(() => {
         // Only mark as auto-started when we actually start planning
         hasAutoStartedRef.current = true;
+        /*
+        FNXC:PlanningMode 2026-07-23-00:00:
+        Consuming the seeded plan is what prevents duplicate sessions: the owner clears
+        `planningInitialPlan` so a later remount (navigate away/back, project-switch key) takes
+        the stored-active-session restore path instead of auto-starting a second session.
+        Mark the stored-resume attempt as done BEFORE the parent clears the prop — the seeded
+        start owns this mount's destination, and without this the stored-resume effect would
+        re-fire on the prop clearing and load a previous session over the just-started plan
+        while startPlanningStreaming is still in flight.
+        */
+        hasAttemptedStoredResumeRef.current = true;
+        onInitialPlanConsumedRef.current?.();
         handleStartPlanning(initialPlanProp);
       }, 0);
       return () => clearTimeout(timer);

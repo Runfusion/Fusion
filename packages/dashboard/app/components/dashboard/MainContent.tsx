@@ -725,6 +725,14 @@ export function MainContent({
         active planning session, so project B kept restoring project A's plan. Unmount cleanup
         already closes the stream; the new mount fetches the new project's session list and
         restores that project's own persisted draft/active session.
+
+        FNXC:PlanningMode 2026-07-23-00:00:
+        The seeded initialPlan is a one-shot handoff consumed via onInitialPlanConsumed the moment
+        Planning's auto-start fires. Planning fully unmounts whenever taskView leaves "planning",
+        which resets its in-component auto-start guard; before consumption existed, the still-set
+        modalManager.planningInitialPlan re-auto-started a duplicate planning session on every
+        navigate-back remount (and on the project-switch remount key above) while the original
+        session was silently abandoned.
         */}
         <PlanningModeModal
           key={currentProject?.id ?? "all-projects"}
@@ -736,6 +744,7 @@ export function MainContent({
           tasks={tasks}
           initialSessions={bgPlanningSessions}
           initialPlan={modalManager.planningInitialPlan ?? undefined}
+          onInitialPlanConsumed={modalManager.clearPlanningInitialPlan}
           projectId={currentProject?.id}
           workflowId={modalManager.planningWorkflowId ?? planningHeaderWorkflowId}
           resumeSessionId={modalManager.planningResumeSessionId}

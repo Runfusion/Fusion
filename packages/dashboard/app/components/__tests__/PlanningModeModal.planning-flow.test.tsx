@@ -1153,4 +1153,51 @@ describe("PlanningModeModal sequential flow", () => {
     expect(await screen.findByTestId("planning-plan-review")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
   });
+
+  /*
+  FNXC:PlanningMode 2026-07-23-00:00:
+  The seeded initialPlan handoff must be one-shot. Embedded Planning unmounts on every
+  main-content navigation, resetting its in-component auto-start guard; before consumption
+  existed, navigating back re-fired auto-start against the still-set modalManager payload and
+  created a duplicate planning session while the first one was silently abandoned. The remount
+  must instead restore the persisted active session.
+  */
+  it("consumes the seeded initial plan on auto-start so a navigate-back remount restores the session instead of creating a duplicate", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      id: "draft-1",
+      status: "generating",
+      currentQuestion: null,
+      result: null,
+      inputPayload: "{}",
+    });
+    const onInitialPlanConsumed = vi.fn();
+    const commonProps = {
+      isOpen: true,
+      onClose: vi.fn(),
+      onTaskCreated: vi.fn(),
+      onTasksCreated: vi.fn(),
+      tasks: mockTasks,
+      projectId: "project-1",
+    };
+
+    const first = render(
+      <PlanningModeModal {...commonProps} initialPlan="Seeded plan from the board" onInitialPlanConsumed={onInitialPlanConsumed} />,
+    );
+    await waitFor(() => expect(mockStartPlanningStreaming).toHaveBeenCalledTimes(1));
+    // Consumption fires with the start itself so the owner clears the payload immediately.
+    expect(onInitialPlanConsumed).toHaveBeenCalledTimes(1);
+
+    // Navigate away: the embedded Planning view unmounts entirely.
+    first.unmount();
+
+    // Navigate back: the owner cleared the payload, so the remount takes the
+    // stored-active-session restore path.
+    render(<PlanningModeModal {...commonProps} />);
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("draft-1"));
+
+    // No second session was drafted or started by the remount.
+    expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
+    expect(mockStartPlanningStreaming).toHaveBeenCalledTimes(1);
+  });
 });

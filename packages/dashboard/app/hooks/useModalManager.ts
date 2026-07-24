@@ -97,6 +97,14 @@ export interface ModalManager {
   openPlanningWithInitialPlan: (initialPlan: string, workflowId?: string | null) => void;
   resumePlanning: () => void;
   openPlanningWithSession: (sessionId: string) => void;
+  /**
+  FNXC:PlanningModals 2026-07-23-00:00:
+  One-shot consumption of the seeded initial plan. Embedded Planning calls this the moment its
+  auto-start fires; the payload must not survive that start, because Planning unmounts on
+  main-content navigation and a still-set planningInitialPlan re-auto-started a duplicate
+  planning session on every navigate-back remount.
+  */
+  clearPlanningInitialPlan: () => void;
   closePlanning: () => void;
 
   openSubtaskBreakdown: (description: string, workflowId?: string | null) => void;
@@ -307,6 +315,9 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setPlanningWorkflowId(undefined);
     setPlanningResumeSessionId(sessionId);
     setIsPlanningOpen(true);
+  }, []);
+  const clearPlanningInitialPlan = useCallback(() => {
+    setPlanningInitialPlan(null);
   }, []);
   const closePlanning = useCallback(() => {
     setIsPlanningOpen(false);
@@ -590,6 +601,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     openPlanningWithInitialPlan,
     resumePlanning,
     openPlanningWithSession,
+    clearPlanningInitialPlan,
     closePlanning,
     openSubtaskBreakdown,
     openSubtaskWithSession,
