@@ -349,7 +349,15 @@ describe("PlanningModeModal sequential flow", () => {
     expect(mobileTrigger).toBeInstanceOf(HTMLElement);
     expect(documentTrigger?.closest(".planning-plan-document")).toContainElement(documentTrigger as HTMLElement);
     expect(actionBar).toContainElement(mobileTrigger as HTMLElement);
-    fireEvent.click(screen.getByRole("button", { name: "Add comment to selection" }));
+    const openTrigger = screen.getByRole("button", { name: "Add comment to selection" });
+    fireEvent.pointerDown(openTrigger);
+    // FNXC:PlanningComments 2026-07-24-06:30: selection collapse before click must not drop the frozen open quote.
+    act(() => {
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    fireEvent.click(openTrigger);
+    expect(screen.getByTestId("planning-comment-editor")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     /*
     FNXC:PlanningComments 2026-07-23-17:05:
@@ -358,21 +366,25 @@ describe("PlanningModeModal sequential flow", () => {
     sticky after the selection is done. Re-select to comment again.
     */
     await waitFor(() => expect(screen.queryByRole("button", { name: "Add comment to selection" })).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("planning-comment-editor")).toBeNull());
 
     selectQuote("Build authentication system");
-    fireEvent.click(await screen.findByRole("button", { name: "Add comment to selection" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add comment to selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add comment to selection" }));
     const suggestionInput = screen.getByLabelText("Suggestion");
     fireEvent.change(suggestionInput, { target: { value: "Explain the audit path." } });
-    // Editor selections are not plan selections: the captured quote must remain the Markdown text.
+    // Editor selections are not plan selections: the frozen open quote must remain the Markdown text.
     act(() => {
       suggestionInput.setSelectionRange(0, suggestionInput.value.length);
       fireEvent.mouseUp(suggestionInput);
       document.dispatchEvent(new Event("selectionchange"));
     });
     expect(screen.getByLabelText("Add plan comment")).toHaveTextContent("Build authentication system");
+    expect(screen.getByTestId("planning-comment-editor")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
     // Adding a comment clears the selection, so the trigger dismisses with it.
     await waitFor(() => expect(document.querySelector(".planning-add-comment")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("planning-comment-editor")).toBeNull());
     expect(screen.getByTestId("planning-comment-tray")).toHaveTextContent("Explain the audit path.");
     expect(screen.getByRole("button", { name: "Refine" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();

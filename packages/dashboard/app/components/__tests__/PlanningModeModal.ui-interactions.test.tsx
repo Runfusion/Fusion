@@ -28,6 +28,10 @@ describe("PlanningModeModal sequential layout", () => {
     expect(component).toContain("handleMobileKeyboardActionPointerDown");
     expect(component).toContain("onPointerDown={handleMobileKeyboardActionPointerDown}");
     expect(component).toContain("onClick={handleAddContextualComment}");
+    // FNXC:PlanningComments 2026-07-24-06:30: freeze quote on open so selection collapse cannot unmount the editor.
+    expect(component).toContain("openCommentEditor");
+    expect(component).toContain("openCommentQuote");
+    expect(component).toContain("pendingOpenCommentQuoteRef");
   });
 
   it("keeps plan actions in a non-scrolling sibling footer with equal mobile columns", () => {

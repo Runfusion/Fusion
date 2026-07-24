@@ -711,6 +711,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [refinementPrompt, setRefinementPrompt] = useState("");
   const [contextualComments, setContextualComments] = useState<PlanningContextualComment[]>([]);
   const [selectedPlanQuote, setSelectedPlanQuote] = useState<string | null>(null);
+  /*
+  FNXC:PlanningComments 2026-07-24-06:30:
+  Composer content uses a frozen quote, not the live selection. Tapping Add-comment-to-selection
+  collapses the native selection before click on many mobile browsers; selectionchange then cleared
+  selectedPlanQuote and unmounted the editor (`isCommentEditorOpen && selectedPlanQuote`) on the
+  same open — flash open then dismiss. openCommentQuote is snapshotted on open intent and only
+  cleared on cancel/add/session change.
+  */
+  const [openCommentQuote, setOpenCommentQuote] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [isCommentEditorOpen, setIsCommentEditorOpen] = useState(false);
   const contextualCommentInFlightRef = useRef(false);
@@ -722,6 +731,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const mobileAddCommentTriggerRef = useRef<HTMLButtonElement>(null);
   const restoreCommentTriggerFocusRef = useRef(false);
   const isCommentEditorOpenRef = useRef(false);
+  const pendingOpenCommentQuoteRef = useRef<string | null>(null);
 
   const setCommentEditorOpen = useCallback((open: boolean) => {
     /*
@@ -733,6 +743,40 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     isCommentEditorOpenRef.current = open;
     setIsCommentEditorOpen(open);
   }, []);
+
+  const openCommentEditor = useCallback(() => {
+    const quote = (selectedPlanQuote ?? pendingOpenCommentQuoteRef.current)?.trim() || null;
+    if (!quote) return;
+    pendingOpenCommentQuoteRef.current = quote;
+    setOpenCommentQuote(quote);
+    setSelectedPlanQuote(quote);
+    setCommentEditorOpen(true);
+  }, [selectedPlanQuote, setCommentEditorOpen]);
+
+  const handleOpenCommentEditorPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    /*
+    FNXC:PlanningComments 2026-07-24-06:30:
+    Snapshot the quote on pointerdown before the touch gesture collapses the native selection and
+    selectionchange clears selectedPlanQuote. preventDefault also reduces selection loss on the
+    open control (same role as mousedown preventDefault for desktop).
+    */
+    if (event.pointerType !== "mouse") {
+      event.preventDefault();
+    }
+    if (selectedPlanQuote) {
+      pendingOpenCommentQuoteRef.current = selectedPlanQuote;
+    }
+  }, [selectedPlanQuote]);
+
+  const closeCommentEditor = useCallback((options?: { restoreTriggerFocus?: boolean }) => {
+    if (options?.restoreTriggerFocus) {
+      restoreCommentTriggerFocusRef.current = true;
+    }
+    setCommentDraft("");
+    setOpenCommentQuote(null);
+    pendingOpenCommentQuoteRef.current = null;
+    setCommentEditorOpen(false);
+  }, [setCommentEditorOpen]);
 
   const focusAddCommentTrigger = useCallback(() => {
     /*
@@ -762,6 +806,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     // A batch belongs to one visible session; never carry comments into another plan.
     setContextualComments([]);
     setSelectedPlanQuote(null);
+    setOpenCommentQuote(null);
+    pendingOpenCommentQuoteRef.current = null;
     setCommentDraft("");
     setCommentEditorOpen(false);
   }, [selectedSessionId, setCommentEditorOpen]);
@@ -2815,7 +2861,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   native selection, and clearing here would unmount the composer mid-edit.
   */
   const capturePlanSelection = useCallback(() => {
-    if (isCommentEditorOpenRef.current) return;
+    /*
+    FNXC:PlanningComments 2026-07-24-06:30:
+    While the composer is open (or we already snapshotted an open quote on pointerdown), never
+    clear the live selection quote from selectionchange — that unmounted the fixed panel as soon
+    as the open gesture collapsed the native range.
+    */
+    if (isCommentEditorOpenRef.current || pendingOpenCommentQuoteRef.current) return;
 
     const selection = window.getSelection();
     const root = planDocumentRef.current;
@@ -2860,21 +2912,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [capturePlanSelection, isCommentEditorOpen]);
 
   const handleAddContextualComment = useCallback(() => {
-    const quote = selectedPlanQuote;
+    const quote = openCommentQuote ?? selectedPlanQuote;
     const suggestion = commentDraft.trim();
     if (!quote || !suggestion) return;
     setContextualComments((comments) => [...comments, { quote, suggestion }]);
-    setCommentDraft("");
     /*
     FNXC:PlanningComments 2026-07-23-17:05:
     Adding a comment clears the native selection, so the quote must dismiss with it. Do not restore
     focus onto a remounted trigger — that path only applies when Cancel keeps an active selection.
     */
     restoreCommentTriggerFocusRef.current = false;
-    setCommentEditorOpen(false);
     setSelectedPlanQuote(null);
+    closeCommentEditor();
     window.getSelection()?.removeAllRanges();
-  }, [commentDraft, selectedPlanQuote, setCommentEditorOpen]);
+  }, [closeCommentEditor, commentDraft, openCommentQuote, selectedPlanQuote]);
 
   const handleSubmitContextualComments = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -3173,22 +3224,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               type="button"
               className="btn planning-add-comment planning-add-comment--document"
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => setCommentEditorOpen(true)}
+              onPointerDown={handleOpenCommentEditorPointerDown}
+              onClick={openCommentEditor}
             >
               {/* FNXC:PlanningComments 2026-07-24-05:55: Match New-session / mobile rail glyph scale. */}
               <MessageSquarePlus size={16} aria-hidden="true" />
               {t("planning.addComment", "Add comment to selection")}
             </button>
           )}
-          {isCommentEditorOpen && selectedPlanQuote && (
+          {isCommentEditorOpen && openCommentQuote && (
             <div
               ref={commentEditorRef}
               className={`planning-comment-editor${keyboardOpen && commentComposerNeedsKeyboardLift ? " planning-comment-editor--keyboard-open" : ""}`}
               style={commentEditorStyle}
               role="dialog"
               aria-label={t("planning.addPlanComment", "Add plan comment")}
+              data-testid="planning-comment-editor"
             >
-              <p className="planning-comment-quote">{selectedPlanQuote}</p>
+              <p className="planning-comment-quote">{openCommentQuote}</p>
               <label className="planning-refine-menu-input">
                 <span>{t("planning.commentSuggestion", "Suggestion")}</span>
                 <textarea ref={commentInputRef} className="input" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} />
@@ -3198,7 +3251,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   type="button"
                   className="btn"
                   onPointerDown={handleMobileKeyboardActionPointerDown}
-                  onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setCommentEditorOpen(false); }}
+                  onClick={() => closeCommentEditor({ restoreTriggerFocus: true })}
                 >
                   {t("common.cancel", "Cancel")}
                 </button>
@@ -3239,7 +3292,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             type="button"
             className="btn planning-add-comment planning-add-comment--mobile"
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setCommentEditorOpen(true)}
+            onPointerDown={handleOpenCommentEditorPointerDown}
+            onClick={openCommentEditor}
           >
             <MessageSquarePlus size={16} aria-hidden="true" />
             {t("planning.addComment", "Add comment to selection")}
