@@ -39,18 +39,33 @@ export function sanitizeFailureReason(rawError: unknown): string {
   return sanitized;
 }
 
-function stepLabel(stepIndex: number, stepName?: string): string {
-  const fallback = `Step ${stepIndex}`;
-  return stepName?.trim() || fallback;
+/*
+FNXC:ProactiveChatStatus 2026-07-23-10:30:
+Step indices are 0-based everywhere in the agent-facing contract (fn_task_update, PROMPT.md
+"### Step 0:" headings, run-audit rows), but the task card counts steps 1-based ("12/13").
+Chat narration is read next to the card, so it must display stepIndex + 1 or the final step of a
+13-step task announces itself as "Step 12" while the card shows 13 steps. Only the display number
+converts; callers keep passing the 0-based index, and a fallback name of "Step <0-based index>"
+(produced by callers that default the name from the index) is treated as "unnamed".
+*/
+function stepDisplayNumber(stepIndex: number): number {
+  return stepIndex + 1;
+}
+
+function stepDisplayName(stepIndex: number, stepName?: string): string | undefined {
+  const name = stepName?.trim();
+  return name && name !== `Step ${stepIndex}` ? name : undefined;
 }
 
 export function buildStepStartMessage(stepIndex: number, stepName?: string): string {
-  return `Starting Step ${stepIndex}: ${stepLabel(stepIndex, stepName)}`;
+  const display = stepDisplayNumber(stepIndex);
+  return `Starting Step ${display}: ${stepDisplayName(stepIndex, stepName) ?? `Step ${display}`}`;
 }
 
 export function buildStepSuccessMessage(stepIndex: number, stepName?: string): string {
-  const name = stepName?.trim();
-  return name && name !== `Step ${stepIndex}` ? `Step ${stepIndex} finished — ${name}.` : `Step ${stepIndex} finished.`;
+  const name = stepDisplayName(stepIndex, stepName);
+  const display = stepDisplayNumber(stepIndex);
+  return name ? `Step ${display} finished — ${name}.` : `Step ${display} finished.`;
 }
 
 /**
@@ -59,12 +74,15 @@ export function buildStepSuccessMessage(stepIndex: number, stepName?: string): s
  * preflight and intentional no-op flows remain visible without fabricating a failure reason.
  */
 export function buildStepSkippedMessage(stepIndex: number, stepName?: string): string {
-  const name = stepName?.trim();
-  return name && name !== `Step ${stepIndex}` ? `Step ${stepIndex} was skipped — ${name}.` : `Step ${stepIndex} was skipped.`;
+  const name = stepDisplayName(stepIndex, stepName);
+  const display = stepDisplayNumber(stepIndex);
+  return name ? `Step ${display} was skipped — ${name}.` : `Step ${display} was skipped.`;
 }
 
 export function buildStepFailureMessage(stepIndex: number, stepName: string | undefined, safeReason: string): string {
-  const prefix = stepName?.trim() && stepName.trim() !== `Step ${stepIndex}` ? `Step ${stepIndex} (${stepName.trim()})` : `Step ${stepIndex}`;
+  const name = stepDisplayName(stepIndex, stepName);
+  const display = stepDisplayNumber(stepIndex);
+  const prefix = name ? `Step ${display} (${name})` : `Step ${display}`;
   return `${prefix} did not complete: ${safeReason}`;
 }
 

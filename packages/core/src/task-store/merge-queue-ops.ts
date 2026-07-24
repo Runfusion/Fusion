@@ -41,16 +41,20 @@ function proactiveStepStatusMessage(
   status: import("../types.js").StepStatus,
 ): string | null {
   if (previousStatus === status) return null;
-  const label = stepName.trim() || `Step ${stepIndex}`;
+  // FNXC:ProactiveChatStatus 2026-07-23-10:30:
+  // Chat narration must display 1-based step numbers to match the task card's "N/M steps"
+  // counting; stepIndex stays 0-based in the store/tool contract (see proactive-status.ts).
+  const display = stepIndex + 1;
+  const label = stepName.trim() || `Step ${display}`;
   switch (status) {
     case "in-progress":
-      return `Starting Step ${stepIndex}: ${label}`;
+      return `Starting Step ${display}: ${label}`;
     case "done":
-      return `Step ${stepIndex} finished — ${label}.`;
+      return `Step ${display} finished — ${label}.`;
     case "skipped":
-      return `Step ${stepIndex} was skipped — ${label}.`;
+      return `Step ${display} was skipped — ${label}.`;
     case "pending":
-      return `Step ${stepIndex} was returned to pending — ${label}.`;
+      return `Step ${display} was returned to pending — ${label}.`;
   }
 }
 

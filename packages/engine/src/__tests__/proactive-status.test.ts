@@ -33,10 +33,12 @@ describe("proactive status narration", () => {
   });
 
   it("builds complete status messages and safely reports unavailable reviews", () => {
-    expect(buildStepStartMessage(2, "Ship it")).toBe("Starting Step 2: Ship it");
-    expect(buildStepSuccessMessage(2, "Ship it")).toBe("Step 2 finished — Ship it.");
-    expect(buildStepSkippedMessage(2, "No code change needed")).toBe("Step 2 was skipped — No code change needed.");
-    expect(buildStepSkippedMessage(2, "Step 2")).toBe("Step 2 was skipped.");
+    // Narration displays 1-based step numbers (0-based index 2 → "Step 3") to match the task card.
+    expect(buildStepStartMessage(2, "Ship it")).toBe("Starting Step 3: Ship it");
+    expect(buildStepSuccessMessage(2, "Ship it")).toBe("Step 3 finished — Ship it.");
+    expect(buildStepSkippedMessage(2, "No code change needed")).toBe("Step 3 was skipped — No code change needed.");
+    // A caller-defaulted name of "Step <0-based index>" is treated as unnamed, not echoed.
+    expect(buildStepSkippedMessage(2, "Step 2")).toBe("Step 3 was skipped.");
     expect(buildStepFailureMessage(2, "Ship it", sanitizeFailureReason(undefined))).toContain("No failure reason");
     expect(buildPlanVerifiedMessage()).toBe("The plan was written and verified.");
     expect(buildReviewVerdictMessage("UNAVAILABLE", "nope")).toBeNull();

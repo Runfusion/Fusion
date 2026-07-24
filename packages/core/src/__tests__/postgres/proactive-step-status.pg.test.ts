@@ -36,8 +36,9 @@ pgTest("proactive step-status chat entries (PostgreSQL)", () => {
 
     const statuses = (await harness.store.getAgentLogs(task.id, { type: "status" })).map((entry) => entry.text);
     expect(statuses).toEqual([
-      "Step 0 finished — Implement the change.",
-      "Step 0 was returned to pending — Implement the change.",
+      // Narration displays 1-based numbers (0-based index 0 → "Step 1") to match the task card.
+      "Step 1 finished — Implement the change.",
+      "Step 1 was returned to pending — Implement the change.",
     ]);
   });
 });
