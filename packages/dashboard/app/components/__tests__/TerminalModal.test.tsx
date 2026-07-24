@@ -5119,6 +5119,7 @@ describe("TerminalModal — FN-1234 mobile tab switch with keyboard", () => {
     write: vi.fn(),
     clear: vi.fn(),
     focus: vi.fn(),
+    refresh: vi.fn(),
     options: { fontSize: 14 },
     cols,
     rows,
@@ -9363,5 +9364,51 @@ describe("TerminalModal — FN-7620 mobile blank render (zero-geometry xterm con
       expect(mockTerminalInstance.cols).toBe(Math.max(2, Math.floor(640 / CHAR_WIDTH_PX)));
       expect(mockTerminalInstance.rows).toBe(Math.max(1, Math.floor(400 / CHAR_HEIGHT_PX)));
     });
+  });
+
+  /*
+  FNXC:Terminal 2026-07-23-21:05:
+  Blank-until-keypress recurrence: on some systems the renderer stalls during init while the shell
+  prompt sits in xterm's buffer, and the container's box never CHANGES — so fit() computes the same
+  cols/rows and xterm's internal resize-driven repaint never fires. The observer-driven fit path must
+  therefore ALWAYS follow fit with an explicit full-viewport `refresh(0, rows-1)`; before this fix the
+  only paths that repainted were user input (new PTY output), a manual font-size change (refitTerminal's
+  refresh), or opening a new tab (fresh renderer).
+  */
+  it("repaints (terminal.refresh) on a container notification even when fit() leaves dimensions UNCHANGED (blank-until-keypress stall)", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+
+    const container = screen.getByTestId("terminal-xterm");
+    overrideContainerBox(container, { width: 640, height: 400 });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await Promise.resolve();
+    });
+
+    // Settle geometry once via the container observer.
+    const settledCols = Math.max(2, Math.floor(640 / CHAR_WIDTH_PX));
+    const settledRows = Math.max(1, Math.floor(400 / CHAR_HEIGHT_PX));
+    expect(fireResizeObserverFor("terminal-xterm")).toBe(true);
+    await waitFor(() => {
+      expect(mockTerminalInstance.cols).toBe(settledCols);
+      expect(mockTerminalInstance.rows).toBe(settledRows);
+    });
+
+    // The stalled-renderer scenario: buffer has content, nothing painted, and
+    // a later ResizeObserver notification arrives with the SAME box. fit()
+    // recomputes identical cols/rows — the repair must come from an explicit
+    // refresh, not from a resize side effect.
+    mockTerminalInstance.refresh.mockClear();
+    expect(fireResizeObserverFor("terminal-xterm")).toBe(true);
+
+    await waitFor(() => {
+      expect(mockTerminalInstance.refresh).toHaveBeenCalledWith(0, settledRows - 1);
+    });
+    // Dimensions genuinely unchanged — proving the refresh was not a
+    // consequence of a resize.
+    expect(mockTerminalInstance.cols).toBe(settledCols);
+    expect(mockTerminalInstance.rows).toBe(settledRows);
   });
 });

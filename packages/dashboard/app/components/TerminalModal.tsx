@@ -931,6 +931,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           try {
             (fitAddonRef.current as InstanceType<typeof import("@xterm/addon-fit").FitAddon>).fit();
             resizeRef.current?.(xtermRef.current.cols, xtermRef.current.rows);
+            xtermRef.current.refresh(0, Math.max(0, xtermRef.current.rows - 1));
           } catch {
             // Ignore fit errors during viewport transitions
           }
@@ -944,6 +945,18 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       if (currentResize) {
         currentResize(currentXterm.cols, currentXterm.rows);
       }
+      /*
+      FNXC:Terminal 2026-07-23-21:05:
+      Blank-first-terminal recurrence: on some systems the renderer stalls at init (WebGL activation on a
+      zero-sized canvas, or context-loss fallback to the DOM renderer) while the shell prompt sits unpainted
+      in xterm's buffer. Every automatic recovery path funnels through this fit — but when fit() computes an
+      UNCHANGED cols/rows, xterm skips its internal resize event and never repaints, so the stall was
+      permanent until the user typed (new output), changed font size (the only path that refreshed), or
+      opened a new tab (fresh renderer). Always follow fit with an explicit full-viewport refresh so the
+      FN-7620 container ResizeObserver's guaranteed initial notification — and every later geometry event —
+      repairs a stalled renderer even when dimensions did not change. refresh() is cheap and idempotent.
+      */
+      currentXterm.refresh(0, Math.max(0, currentXterm.rows - 1));
     } catch {
       // Ignore fit errors during viewport transitions
     }
@@ -1684,6 +1697,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         // Initial fit
         setTimeout(() => {
           fitAddon.fit();
+          // FNXC:Terminal 2026-07-23-21:05: Explicit refresh after the first fit — see fitAndResizeForSession. A renderer that stalled during open() (zero-sized canvas WebGL activation / context-loss fallback) must be repainted here even when fit() left cols/rows unchanged, or the already-buffered shell prompt stays invisible until user input.
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
           // FNXC:Terminal 2026-06-22-22:00: After the first synchronous fit, schedule one deferred re-fit so a terminal opened mid-fold (narrow foldable, where the container width has not settled to its final integer box yet) re-measures columns once layout stabilizes — preventing the collapsed-column spaced-glyph render. Guarded by container width and live session so jsdom/tab-teardown paths stay no-ops.
           if ((terminalRef.current?.clientWidth ?? 0) > 0) {
             requestAnimationFrame(() => {
@@ -1695,6 +1710,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 try {
                   fitAddon.fit();
                   resizeRef.current?.(terminal.cols, terminal.rows);
+                  terminal.refresh(0, Math.max(0, terminal.rows - 1));
                 } catch {
                   // Ignore fit errors during viewport transitions
                 }

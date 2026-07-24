@@ -841,4 +841,34 @@ describe("SessionTerminal — FN-7620 mobile blank render (container geometry re
 
     await waitFor(() => expect(mockFitAddon.fit).toHaveBeenCalled());
   });
+
+  /*
+  FNXC:Terminal 2026-07-23-21:05:
+  Blank-until-keypress recurrence (shared invariant with TerminalModal): a renderer stalled at init
+  leaves buffered output unpainted, and an observer-driven fit() whose cols/rows come out UNCHANGED
+  triggers no internal xterm repaint. The observer path must therefore always follow fit with an
+  explicit full-viewport refresh(0, rows-1).
+  */
+  it("follows every observer-driven fit with an explicit terminal.refresh so a stalled renderer repaints even when dimensions are unchanged", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    await waitFor(() => expect(mockTerm.open).toHaveBeenCalled());
+
+    const container = screen.getByTestId("cli-terminal-viewport");
+    const matches = captured.filter((entry) => entry.target === container);
+    expect(matches.length).toBeGreaterThan(0);
+
+    // Unchanged-geometry notification: fit() will recompute identical
+    // cols/rows, so the repaint must come from the explicit refresh.
+    mockTerm.refresh.mockClear();
+    act(() => {
+      for (const entry of matches) {
+        entry.callback([] as unknown as ResizeObserverEntry[], entry as unknown as ResizeObserver);
+      }
+    });
+
+    await waitFor(() =>
+      expect(mockTerm.refresh).toHaveBeenCalledWith(0, Math.max(0, mockTerm.rows - 1)),
+    );
+  });
 });

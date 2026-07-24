@@ -633,6 +633,14 @@ export function SessionTerminal({
           try {
             (fitAddon as unknown as { fit: () => void }).fit();
             sendResize(term.cols, term.rows);
+            /*
+            FNXC:Terminal 2026-07-23-21:05:
+            Blank-first-terminal recurrence (shared invariant with TerminalModal.fitAndResizeForSession):
+            a renderer stalled at init leaves buffered output unpainted, and fit() with unchanged cols/rows
+            triggers no internal repaint. Follow every observer-driven fit with an explicit full-viewport
+            refresh so the initial ResizeObserver notification repairs a stalled renderer.
+            */
+            term.refresh(0, Math.max(0, term.rows - 1));
           } catch {
             /* ignore transient measure failures */
           }
