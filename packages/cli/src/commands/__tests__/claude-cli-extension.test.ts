@@ -16,7 +16,9 @@ describe("resolveClaudeCliExtension", () => {
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       expect(result.path).toMatch(/pi-claude-cli[\/\\]index\.ts$/);
-      expect(result.packageVersion).toMatch(/^\d+\.\d+\.\d+$/);
+      // Beta release track (#2345): versions may carry a semver prerelease
+      // suffix (e.g. 0.73.0-beta.6); still require a full X.Y.Z core.
+      expect(result.packageVersion).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
     }
   });
 });

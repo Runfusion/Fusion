@@ -75,7 +75,9 @@ describe("workflow documentation current behavior", () => {
 
   it("documents current workflow settings ownership and extension task-id semantics", () => {
     const settings = doc("docs/settings-reference.md");
-    expect(settings).toContain("Settings → Project Models → Default workflow model lanes");
+    // #2400: project model lanes now apply across workflows, so the docs
+    // renamed "Default workflow model lanes" to "Project workflow model lanes".
+    expect(settings).toContain("Settings → Project Models → Project workflow model lanes");
     expect(settings).toContain("workflow editor Values tab");
     expect(settings).toContain("Built-in prompt overrides");
     expect(settings).toContain("not writable through");

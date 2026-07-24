@@ -29,6 +29,7 @@ describe("fn chat argument parsing", () => {
   it("describes fn chat as agent inbox delivery in top-level help", () => {
     const source = readFileSync(resolve(__dirname, "../bin.ts"), "utf8");
 
-    expect(source).toContain("Named mailbox conversation; delivers to agent inbox");
+    // FN-8424: chat replies now route through inbox mail with a reply deadline.
+    expect(source).toContain("Named mailbox conversation with deadline-bounded inbox replies");
   });
 });

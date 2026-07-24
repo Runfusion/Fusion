@@ -18,7 +18,9 @@ describe("plugin-scaffold", () => {
     "typescript",
     "vitest",
   ];
-  const caretRangePattern = /^\^\d+\.\d+\.\d+$/;
+  // Beta release track (v0.73.0-beta.N) means the scaffolded caret ranges may
+  // carry a semver prerelease suffix; still require a full ^X.Y.Z core.
+  const caretRangePattern = /^\^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
   function expectStandaloneIndexInvariants(indexContents: string): void {
     expect(indexContents).toContain('import { definePlugin } from "@runfusion/fusion/plugin-sdk";');

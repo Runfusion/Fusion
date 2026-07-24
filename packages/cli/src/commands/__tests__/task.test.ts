@@ -131,6 +131,21 @@ vi.mock("@fusion/dashboard", () => ({
 vi.mock("@fusion/dashboard/planning", () => ({
   createSession: vi.fn(),
   submitResponse: vi.fn(),
+  // 0412113de: fn task plan now ensures a durable planning-session store
+  // before creating the session so resume is honestly reported.
+  ensureDurablePlanningSessionStore: vi.fn(async () => true),
+  // fdd120232: fn task plan creates through the claim-aware shared path
+  // (idempotency + session linkage) instead of a raw store.createTask.
+  createTaskFromPlanSession: vi.fn(async () => ({
+    task: {
+      id: "FN-042",
+      title: "planned task",
+      description: "planned task",
+      column: "triage",
+      dependencies: [],
+    },
+    alreadyCreated: false,
+  })),
   RateLimitError: class RateLimitError extends Error {},
   SessionNotFoundError: class SessionNotFoundError extends Error {},
   InvalidSessionStateError: class InvalidSessionStateError extends Error {},

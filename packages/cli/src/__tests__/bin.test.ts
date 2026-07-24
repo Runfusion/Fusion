@@ -558,12 +558,16 @@ describe("bin command routing and fallbacks", () => {
     await runBin(["message", "read", "msg-1", "-P", "demo"]);
     await runBin(["message", "delete", "msg-1", "-P", "demo"]);
     await runBin(["message", "inbox", "-P", "demo"]);
+    await runBin(["message", "inbox", "--user", "dashboard", "-P", "demo"]);
     await runBin(["message", "outbox", "-P", "demo"]);
 
     expect(commandMocks.runMessageSend).toHaveBeenCalledWith("agent-7", "hello there", "demo");
     expect(commandMocks.runMessageRead).toHaveBeenCalledWith("msg-1", "demo");
     expect(commandMocks.runMessageDelete).toHaveBeenCalledWith("msg-1", "demo");
-    expect(commandMocks.runMessageInbox).toHaveBeenCalledWith("demo");
+    // FN-8424: `fn message inbox` gained `--user <cli|dashboard>`; without the
+    // flag routing passes undefined so runMessageInbox defaults to the CLI mailbox.
+    expect(commandMocks.runMessageInbox).toHaveBeenNthCalledWith(1, "demo", undefined);
+    expect(commandMocks.runMessageInbox).toHaveBeenNthCalledWith(2, "demo", "dashboard");
     expect(commandMocks.runMessageOutbox).toHaveBeenCalledWith("demo");
   });
 

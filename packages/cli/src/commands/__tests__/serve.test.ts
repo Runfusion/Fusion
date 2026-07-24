@@ -981,7 +981,12 @@ describe("runServe", () => {
   it("initializes stores, starts engine services, and creates a headless server", async () => {
     await runServe(4040, {});
 
-    expect(mocks.createTaskStoreForBackendMock).toHaveBeenCalledWith({ rootDir: "/repo" });
+    // FN-8399: serve now passes an onMigrationProgress callback so the holding
+    // server can expose incomplete migration status on the dashboard.
+    expect(mocks.createTaskStoreForBackendMock).toHaveBeenCalledWith({
+      rootDir: "/repo",
+      onMigrationProgress: expect.any(Function),
+    });
     expect(mocks.taskStoreCtor).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].init).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].watch).toHaveBeenCalledTimes(1);
