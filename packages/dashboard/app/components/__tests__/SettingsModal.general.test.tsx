@@ -885,7 +885,10 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
-      expect(screen.getByLabelText("Max Triage Concurrent")).toBeDisabled();
+      // FNXC:SettingsConcurrency 2026-07-24-03:10: FN-8453 (eef5eb751) removed
+      // the duplicate "Max Triage Concurrent" control when concurrency
+      // accounting was unified; it must stay gone.
+      expect(screen.queryByLabelText("Max Triage Concurrent")).not.toBeInTheDocument();
     });
 
     it("enables memory backend status hook only when Memory section is active", async () => {
@@ -1882,7 +1885,10 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
-      expect(screen.getByText(/per-phase model lanes \(execution, planning, reviewer, and their fallbacks\) now live on the workflow/i)).toBeInTheDocument();
+      // FNXC:ProjectModels 2026-07-24-03:10: #2400 (e514e134d) replaced the
+      // per-phase moved-to-workflow NOTE with a real editable "Project workflow
+      // model lanes" section; assert the editor heading instead of the old copy.
+      expect(screen.getByText("Project workflow model lanes")).toBeInTheDocument();
     });
 
     it("picks a project repo suggestion and preserves label association", async () => {

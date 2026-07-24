@@ -524,8 +524,23 @@ describe("SettingsModal", () => {
       await settingsModalUser.type(updatedInputs[2], " README.md ");
 
 
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
-      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      /*
+      FNXC:DashboardTests 2026-07-24-03:15:
+      Await the save that actually carries worktreeCopyFiles instead of assuming
+      it is calls[0]: under CI lane load an unrelated earlier updateSettings call
+      can land first (full-suite run 30083357210 saw calls[0] without the key).
+      The exact-value assertion is unchanged.
+      */
+      await waitFor(() => {
+        expect(
+          mockUpdateSettings.mock.calls.some(
+            (call) => (call[0] as Record<string, unknown>).worktreeCopyFiles !== undefined,
+          ),
+        ).toBe(true);
+      });
+      const payload = mockUpdateSettings.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .find((candidate) => candidate.worktreeCopyFiles !== undefined)!;
       expect(payload.worktreeCopyFiles).toEqual([".env", "README.md"]);
     });
 
