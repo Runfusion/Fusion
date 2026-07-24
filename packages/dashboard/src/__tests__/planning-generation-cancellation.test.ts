@@ -103,4 +103,47 @@ describe("planning generation cancellation", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(promptResolvedAfterAbort).toBe(true);
   });
+
+  /*
+  FNXC:PlanningStopMultiSession 2026-07-23-23:50:
+  Stop must cancel a session whose initial turn is still PENDING (start-streaming registered
+  it, but no stream connect consumed it yet) and must never touch other sessions' generations.
+  Previously stop returned false here and the "stopped" turn sprang back to life on the next
+  stream connect.
+  */
+  it("cancels a pending initial turn and leaves other sessions' generations untouched", async () => {
+    const prompt = vi.fn(async () => {});
+    __setCreateFnAgent(vi.fn(async () => ({
+      session: { state: { messages: [] }, prompt, dispose: vi.fn() },
+    })) as any);
+
+    const stoppedSessionId = await createSessionWithAgent(
+      "10.0.2.11",
+      "Plan that gets stopped before its stream connects",
+      "/tmp/project",
+      MOCK_TASK_STORE,
+    );
+    const survivorSessionId = await createSessionWithAgent(
+      "10.0.2.12",
+      "Plan that keeps generating",
+      "/tmp/project",
+      MOCK_TASK_STORE,
+    );
+
+    expect(planningStreamManager.hasPendingInitialTurn(stoppedSessionId)).toBe(true);
+    expect(stopGeneration(stoppedSessionId)).toBe(true);
+
+    // The discarded turn must not fire on a later stream connect.
+    expect(planningStreamManager.hasPendingInitialTurn(stoppedSessionId)).toBe(false);
+    expect(planningStreamManager.consumeInitialTurn(stoppedSessionId)).toBeUndefined();
+    expect(prompt).not.toHaveBeenCalled();
+
+    // The other session's pending turn is untouched and still runs normally.
+    expect(planningStreamManager.hasPendingInitialTurn(survivorSessionId)).toBe(true);
+    planningStreamManager.consumeInitialTurn(survivorSessionId)?.();
+    for (let i = 0; i < 20 && prompt.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(prompt).toHaveBeenCalled();
+  });
 });
