@@ -37,6 +37,6 @@ describe("PlanningModeModal sequential layout", () => {
     expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-add-comment--document\s*\{[^}]*display\s*:\s*none\s*;/);
     expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-plan-actions \.btn\.planning-add-comment--mobile\s*\{[^}]*display\s*:\s*flex\s*;[^}]*grid-column\s*:\s*1\s*\/\s*-1\s*;/);
     expect(css).not.toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-plan-actions \.btn\.planning-add-comment--mobile\s*\{[^}]*position\s*:\s*fixed\s*;/);
-    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.planning-comment-editor\s*\{[^}]*position\s*:\s*fixed\s*;/);
+    expect(css).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.planning-comment-editor\s*\{[^}]*position\s*:\s*fixed\s*;/);
   });
 });

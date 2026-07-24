@@ -184,8 +184,10 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(findRule(compactCss, ".planning-plan-actions .btn.planning-add-comment--mobile svg")).toMatch(/width\s*:\s*var\(--space-lg\)\s*;/);
     // FNXC:PlanningComments 2026-07-24-05:50: phone no longer overrides the rail trigger to fixed.
     expect(findRule(mobileCss, ".planning-plan-actions .btn.planning-add-comment--mobile")).toBeUndefined();
-    expect(mobileEditorRule).toMatch(/position\s*:\s*fixed\s*;/);
-    expect(mobileEditorRule).toMatch(/var\(--mobile-nav-height/);
+    // FNXC:PlanningComments 2026-07-24-06:05: tablet+phone pin the composer; phone clears nav when keyboard closed.
+    expect(findRule(compactCss, ".planning-comment-editor")).toMatch(/position\s*:\s*fixed\s*;/);
+    expect(findRule(mobileCss, ".planning-comment-editor:not(.planning-comment-editor--keyboard-open)")).toMatch(/var\(--mobile-nav-height/);
+    expect(mobileEditorRule).toBeUndefined();
   });
 
   it("pins only the plan-selection rail while its document scrolls in portrait and width-independent short landscape", () => {

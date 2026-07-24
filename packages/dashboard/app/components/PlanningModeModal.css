@@ -1909,6 +1909,26 @@ reach past Proceed — match the tablet in-flow stack on phone too.
     flex-shrink: 0;
   }
 
+  /*
+  FNXC:PlanningComments 2026-07-24-06:05:
+  Tablet and phone pin the selection composer as a fixed panel. Tablet previously left it in
+  the plan document foot (keyboard opened while the panel stayed off-screen). Phone previously
+  fixed above the nav only and did not lift for the first keyboard open. Base bottom clears
+  chrome; .planning-comment-editor--keyboard-open / inline style lifts above the soft keyboard.
+  */
+  .planning-comment-editor {
+    position: fixed;
+    left: var(--space-md);
+    right: var(--space-md);
+    bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    z-index: calc(var(--z-popover) + 1);
+    margin-top: 0;
+    max-height: min(50dvh, calc(var(--space-2xl) * 12));
+    overflow: auto;
+    padding: var(--space-md);
+    box-shadow: var(--shadow-lg);
+  }
+
   .planning-refine-menu {
     right: var(--space-lg);
     left: var(--space-lg);
@@ -1928,29 +1948,22 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 @media (max-width: 768px) {
   /*
   FNXC:PlanningComments 2026-07-24-05:50:
-  Phone keeps the ≤1024 in-flow full-width Add-comment row above Refine/Proceed (no fixed bar
-  under the action rail). The composer still pins above the mobile nav so opening it after a mid-
-  document selection does not require scrolling to the plan foot.
+  Phone keeps the ≤1024 in-flow full-width Add-comment row above Refine/Proceed.
+
+  FNXC:PlanningComments 2026-07-24-06:05:
+  When the keyboard is closed, clear the bottom nav; keyboard-open uses the shared lift style
+  from the TS keyboard metrics so the panel is not trapped under the first OS keyboard frame.
   */
   .planning-comment-tray li {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .planning-comment-editor {
-    position: fixed;
-    left: var(--space-md);
-    right: var(--space-md);
+  .planning-comment-editor:not(.planning-comment-editor--keyboard-open) {
     bottom: calc(
       var(--mobile-nav-height, 44px)
       + max(env(safe-area-inset-bottom, 0px), 12px)
       + var(--space-md)
     );
-    z-index: calc(var(--z-popover) + 1);
-    margin-top: 0;
-    max-height: min(50dvh, calc(var(--space-2xl) * 12));
-    overflow: auto;
-    padding: var(--space-md);
-    box-shadow: var(--shadow-lg);
   }
 }
 

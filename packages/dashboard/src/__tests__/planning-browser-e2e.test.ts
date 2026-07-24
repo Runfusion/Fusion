@@ -315,9 +315,9 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     expect(afterOpen).toMatchObject({
       addCommentButtons: 0,
       actionChildren: 0,
-      // Phone pins the composer when open; tablet/desktop keep the in-document editor.
-      editorPosition: viewport.width <= 768 && inFooter ? "fixed" : "static",
-      editorInsideViewport: viewport.width <= 768 && inFooter ? true : expect.any(Boolean),
+      // Phone + tablet pin the composer; desktop keeps the in-document editor.
+      editorPosition: inFooter ? "fixed" : "static",
+      editorInsideViewport: inFooter ? true : expect.any(Boolean),
     });
 
     await page.evaluate(() => {

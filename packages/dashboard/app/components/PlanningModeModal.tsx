@@ -1,7 +1,7 @@
 import "./PlanningModeModal.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useState, useCallback, useEffect, useRef, useMemo, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, PlanningQuestion, PlanningSummary, TaskPriority, ThinkingLevel } from "@fusion/core";
@@ -717,6 +717,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const contextualCommentSubmissionRef = useRef(false);
   const planDocumentRef = useRef<HTMLDivElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const commentEditorRef = useRef<HTMLDivElement>(null);
   const addCommentTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileAddCommentTriggerRef = useRef<HTMLButtonElement>(null);
   const restoreCommentTriggerFocusRef = useRef(false);
@@ -764,17 +765,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setCommentDraft("");
     setCommentEditorOpen(false);
   }, [selectedSessionId, setCommentEditorOpen]);
-
-  useEffect(() => {
-    if (isCommentEditorOpen) {
-      /*
-      FNXC:PlanningComments 2026-07-23-17:05:
-      The mobile composer is position:fixed; preventScroll keeps the plan markdown under the
-      selection instead of scrolling the document to the editor's former in-flow slot.
-      */
-      commentInputRef.current?.focus({ preventScroll: true });
-    }
-  }, [isCommentEditorOpen]);
 
   useEffect(() => {
     if (isMobile && workspaceQuestion) {
@@ -885,9 +875,55 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     persistSidebarWidth(nextWidth);
   }, [isMobile, persistSidebarWidth, sidebarWidth]);
 
+  /*
+  FNXC:PlanningComments 2026-07-24-06:05:
+  Track the soft keyboard on phone always, and on tablet while the selection comment composer
+  is open. Tablet is wider than isMobileDevice()'s 768 gate, so allowNonMobileViewport is
+  required or the first focus would open the OS keyboard with the composer still off-screen
+  (in-document at the plan foot) and never lift it.
+  */
+  const commentComposerNeedsKeyboardLift = isCommentEditorOpen && viewportMode !== "desktop";
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } =
-    useMobileKeyboard({ enabled: viewportMode === "mobile" });
+    useMobileKeyboard({
+      enabled: isOpen && (viewportMode === "mobile" || commentComposerNeedsKeyboardLift),
+      allowNonMobileViewport: commentComposerNeedsKeyboardLift && viewportMode === "tablet",
+    });
   useMobileScrollLock(viewportMode === "mobile" && isOpen && scrollLockEnabled);
+
+  const commentEditorStyle = useMemo((): CSSProperties | undefined => {
+    if (!commentComposerNeedsKeyboardLift) return undefined;
+    /*
+    FNXC:PlanningComments 2026-07-24-06:05:
+    When the keyboard is open, pin the composer to the visual viewport above the keyboard.
+    First open used to keep the phone fixed bottom (nav-only) so the panel sat under the
+    keyboard until a second focus; drive bottom/max-height from live metrics instead.
+    */
+    if (!keyboardOpen) return undefined;
+    const bottomPx = Math.max(keyboardOverlap, 0);
+    const style: CSSProperties = {
+      bottom: `calc(${bottomPx}px + var(--space-md))`,
+    };
+    if (viewportHeight != null && viewportHeight > 0) {
+      style.maxHeight = `min(${Math.round(viewportHeight * 0.55)}px, calc(var(--space-2xl) * 12))`;
+    }
+    return style;
+  }, [commentComposerNeedsKeyboardLift, keyboardOpen, keyboardOverlap, viewportHeight]);
+
+  useEffect(() => {
+    if (!isCommentEditorOpen) return;
+    /*
+    FNXC:PlanningComments 2026-07-23-17:05:
+    The compact composer is position:fixed; preventScroll keeps the plan markdown under the
+    selection instead of scrolling to the editor's former in-flow slot.
+
+    FNXC:PlanningComments 2026-07-24-06:05:
+    Focus after paint so the fixed tablet/phone panel is mounted before the keyboard targets it.
+    */
+    const frame = requestAnimationFrame(() => {
+      commentInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isCommentEditorOpen]);
 
   // Drive --vv-height / --keyboard-overlap / --vv-offset-top imperatively
   // rather than via React's style prop. Reason: when React removes a CSS
@@ -3135,7 +3171,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             </button>
           )}
           {isCommentEditorOpen && selectedPlanQuote && (
-            <div className="planning-comment-editor" role="dialog" aria-label={t("planning.addPlanComment", "Add plan comment")}>
+            <div
+              ref={commentEditorRef}
+              className={`planning-comment-editor${keyboardOpen && commentComposerNeedsKeyboardLift ? " planning-comment-editor--keyboard-open" : ""}`}
+              style={commentEditorStyle}
+              role="dialog"
+              aria-label={t("planning.addPlanComment", "Add plan comment")}
+            >
               <p className="planning-comment-quote">{selectedPlanQuote}</p>
               <label className="planning-refine-menu-input">
                 <span>{t("planning.commentSuggestion", "Suggestion")}</span>
