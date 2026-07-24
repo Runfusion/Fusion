@@ -2876,6 +2876,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     window.getSelection()?.removeAllRanges();
   }, [commentDraft, selectedPlanQuote, setCommentEditorOpen]);
 
+  const handleAddContextualCommentPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    /*
+    FNXC:PlanningComments 2026-07-24-06:15:
+    Same keyboard-dismiss race as Refine Apply: on phone/tablet the first tap blurs the
+    suggestion field, the soft keyboard closes, the fixed composer shifts, and the trailing
+    click never lands — operators had to tap Add/Submit a second time. Commit on pointerdown
+    before blur; the empty-draft guard makes a compatibility click a no-op.
+    */
+    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
+    if (!selectedPlanQuote || !commentDraft.trim()) return;
+    event.preventDefault();
+    handleAddContextualComment();
+  }, [commentDraft, handleAddContextualComment, selectedPlanQuote, viewportMode]);
+
   const handleSubmitContextualComments = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
     const summary = runningSummaryRef.current;
@@ -2931,21 +2945,31 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [projectId, t, workflowId, workspaceQuestion]);
 
   const handleMobileKeyboardActionPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (viewportMode !== "mobile" || event.pointerType === "mouse") return;
+    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
     event.preventDefault();
   }, [viewportMode]);
 
   const handleApplyRefinementPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (viewportMode !== "mobile" || event.pointerType === "mouse") return;
+    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
     /*
     FNXC:PlanningModeMobile 2026-07-21-00:50:
     Preventing the touch pointer default suppresses the browser's compatibility click. Apply
     before the keyboard resize can move/remove the popup button; the single-flight guard above
     makes a browser that still emits click harmless.
+
+    FNXC:PlanningComments 2026-07-24-06:15: Same race applies on tablet while the comment/refine
+    composers are keyboard-backed, so this is no longer phone-only.
     */
     event.preventDefault();
     void handleRefineFromPlan();
   }, [handleRefineFromPlan, viewportMode]);
+
+  const handleSubmitContextualCommentsPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (viewportMode === "desktop" || event.pointerType === "mouse") return;
+    if (contextualComments.length === 0 || contextualCommentInFlightRef.current) return;
+    event.preventDefault();
+    void handleSubmitContextualComments();
+  }, [contextualComments.length, handleSubmitContextualComments, viewportMode]);
 
   const handleRetryCreateTask = useCallback(async () => {
     if (view.type !== "create_retry" || validateCreateInFlightRef.current) return;
@@ -3184,8 +3208,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <textarea ref={commentInputRef} className="input" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} />
               </label>
               <div className="planning-refine-menu-actions">
-                <button type="button" className="btn" onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setCommentEditorOpen(false); }}>{t("common.cancel", "Cancel")}</button>
-                <button type="button" className="btn btn-primary" disabled={!commentDraft.trim()} onClick={handleAddContextualComment}>{t("planning.addComment", "Add comment")}</button>
+                <button
+                  type="button"
+                  className="btn"
+                  onPointerDown={handleMobileKeyboardActionPointerDown}
+                  onClick={() => { setCommentDraft(""); restoreCommentTriggerFocusRef.current = true; setCommentEditorOpen(false); }}
+                >
+                  {t("common.cancel", "Cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!commentDraft.trim()}
+                  onPointerDown={handleAddContextualCommentPointerDown}
+                  onClick={handleAddContextualComment}
+                >
+                  {t("planning.addComment", "Add comment")}
+                </button>
               </div>
             </div>
           )}
@@ -3231,7 +3270,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 </li>
               ))}
             </ul>
-            <button type="button" className="btn btn-primary" disabled={contextualCommentInFlightRef.current} onClick={() => void handleSubmitContextualComments()}>{t("planning.submitComments", "Submit comments")}</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={contextualCommentInFlightRef.current}
+              onPointerDown={handleSubmitContextualCommentsPointerDown}
+              onClick={() => void handleSubmitContextualComments()}
+            >
+              {t("planning.submitComments", "Submit comments")}
+            </button>
           </div>
         )}
         {isRefineMenuOpen && (
