@@ -87,6 +87,15 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     moveTask: vi.fn(),
     logEntry: vi.fn(),
     getAgentLogs: vi.fn().mockResolvedValue([]),
+    /*
+    FNXC:PluginMcpServers 2026-07-23-00:00:
+    FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+    MCP provider on every getProjectContext call. A store that already exposes
+    getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+    binder (which would otherwise call getPluginStore()); declare it here so the
+    remote-access route contracts stay isolated from plugin-loader bootstrapping.
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,

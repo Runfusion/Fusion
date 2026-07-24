@@ -881,7 +881,17 @@ describe("ChatView mobile behavior", () => {
       fireEvent.click(sendButton);
 
       expect(sendMessage).toHaveBeenCalledTimes(1);
-      expect(sendMessage).toHaveBeenCalledWith("Hello mobile", []);
+      /*
+      FNXC:ChatAttachments 2026-07-23-23:00:
+      FN-8502 made ChatView pass attachment delivery callbacks as a third
+      sendMessage argument ({ onDelivered, onFailed }); assert them
+      structurally so the iOS first-tap send contract (text + empty
+      attachments) stays the protected invariant.
+      */
+      expect(sendMessage).toHaveBeenCalledWith("Hello mobile", [], expect.objectContaining({
+        onDelivered: expect.any(Function),
+        onFailed: expect.any(Function),
+      }));
       expect(document.activeElement).toBe(input);
     } finally {
       isIOSSpy.mockRestore();
@@ -911,7 +921,11 @@ describe("ChatView mobile behavior", () => {
       fireEvent.click(sendButton);
 
       expect(sendMessage).toHaveBeenCalledTimes(1);
-      expect(sendMessage).toHaveBeenCalledWith("Hello mobile", []);
+      // FNXC:ChatAttachments 2026-07-23-23:00: FN-8502 delivery-callback third arg (see above).
+      expect(sendMessage).toHaveBeenCalledWith("Hello mobile", [], expect.objectContaining({
+        onDelivered: expect.any(Function),
+        onFailed: expect.any(Function),
+      }));
       expect(document.activeElement).toBe(input);
     } finally {
       restoreMatchMedia.mockRestore();

@@ -589,10 +589,19 @@ describe("PlanningModeModal sequential flow", () => {
       .mockResolvedValueOnce({ id: "FN-8442" });
 
     renderSession();
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    /*
+    FNXC:PlanningMode 2026-07-23-23:30:
+    Settle pending hydration commits and click a freshly-queried node: clicking the button
+    reference returned by findByRole raced late hydration re-renders on loaded CI shards
+    (full-suite run 30069944059), dispatching on a detached node so the create never fired and
+    the view stayed on plan review. Same detached-node class as the Stop/Refine race (5a5796bca).
+    */
+    await screen.findByRole("button", { name: "Proceed with plan" });
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Proceed with plan" }));
 
+    await waitFor(() => expect(mockCreateTaskFromPlanning).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-8442");
-    expect(mockCreateTaskFromPlanning).toHaveBeenCalledTimes(2);
     expect(screen.queryByTestId("planning-create-retry")).toBeNull();
   });
 
@@ -610,7 +619,10 @@ describe("PlanningModeModal sequential flow", () => {
       .mockResolvedValueOnce({ id: "FN-8442" });
 
     const { rerender } = renderSession();
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    // FNXC:PlanningMode 2026-07-23-23:30: settle hydration then click a fresh node (see detached-node note above).
+    await screen.findByRole("button", { name: "Proceed with plan" });
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Proceed with plan" }));
     vi.useFakeTimers();
 
     await act(async () => {
