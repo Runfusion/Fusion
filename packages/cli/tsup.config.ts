@@ -348,7 +348,15 @@ async function ensureDesktopRuntimeAssetsBuilt() {
    * The published CLI package must contain the desktop runtime it launches. Build the private desktop package during CLI packaging when dist is absent, but keep this strictly in the repository build path — the installed `fusion desktop` command itself must never run pnpm from an operator's cwd.
    */
   console.log("Desktop runtime assets missing; building @fusion/desktop before staging CLI package assets...");
-  await runWorkspaceCommand("pnpm", ["--filter", "@fusion/desktop", "build"], workspaceRoot);
+  /*
+   * FNXC:DesktopPackaging 2026-07-23-23:05:
+   * The desktop build's `pnpm deploy` production-closure staging resolves and installs ~1300+
+   * packages; on cold-store macOS release runners this alone exceeded the default 10-minute
+   * runWorkspaceCommand timeout and killed every v0.73.0-beta.* bun-darwin-arm64 release leg
+   * (exit 143). Give the desktop sub-build a 30-minute budget; release.yml's job timeout was
+   * widened to match.
+   */
+  await runWorkspaceCommand("pnpm", ["--filter", "@fusion/desktop", "build"], workspaceRoot, 1_800_000);
 
   if (!existsSync(desktopRuntimeSrc)) {
     throw new Error(`[tsup] Desktop runtime build did not create expected assets at ${desktopRuntimeSrc}`);

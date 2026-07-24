@@ -24,7 +24,10 @@ jobs:
   build-binaries:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # FNXC:Release 2026-07-23-23:05: 45 min (was 30): the desktop pnpm-deploy closure staging
+    # inside the CLI full-package build can take >10 min alone on cold-store macOS runners
+    # (killed every v0.73.0-beta.* bun-darwin-arm64 leg); tsup now allows it 30 min.
+    timeout-minutes: 45
     # Job-level env so the signing steps' `if:` can detect whether the
     # signing certificate secrets are configured (secrets can't be read in `if:` directly).
     env:
