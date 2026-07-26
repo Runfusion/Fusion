@@ -411,7 +411,6 @@ export class CeSessionStore {
    * Session orchestration uses these async siblings so backend mode persists through the project-bound AsyncDataLayer while SQLite callers retain their established synchronous API. PostgreSQL reads ignore caller-supplied cross-project filters and always enforce the layer's project ID.
    */
   async createAsync(input: CreateCeSessionInput): Promise<CeSession> {
-    if (!this.asyncLayer) return this.create(input);
     const projectId = this.requireProjectId();
     const session = this.newSession({ ...input, projectId });
     await this.insertAsync(session);
@@ -419,7 +418,6 @@ export class CeSessionStore {
   }
 
   async createWithPlanHandoffClaimAsync(input: CreateCeSessionInput, artifactPath: string): Promise<CeSession> {
-    if (!this.asyncLayer) return this.createWithPlanHandoffClaim(input, artifactPath);
     const projectId = this.requireProjectId();
     const session = this.newSession({ ...input, projectId, artifactPath });
     try {
@@ -453,20 +451,17 @@ export class CeSessionStore {
   }
 
   async getAsync(id: string): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.get(id);
     const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id} LIMIT 1`) as unknown as CeSessionRow[];
     return rows[0] ? rowToSession(rows[0]) : undefined;
   }
 
   async listAsync(filter: { status?: CeSessionStatus; stage?: string; projectId?: string } = {}): Promise<CeSession[]> {
-    if (!this.asyncLayer) return this.list(filter);
     const projectId = this.requireProjectId();
     const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${projectId} AND (${filter.status ?? null}::text IS NULL OR status=${filter.status ?? null}) AND (${filter.stage ?? null}::text IS NULL OR stage=${filter.stage ?? null}) ORDER BY updated_at DESC, id`) as unknown as CeSessionRow[];
     return rows.map(rowToSession);
   }
 
   async updateAsync(id: string, patch: Partial<Pick<CeSession, "status" | "currentQuestion" | "conversationHistory" | "artifactPath" | "error" | "lastActivityAt" | "projectId">>): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.update(id, patch);
     const projectId = this.requireProjectId();
     const updatedAt = new Date().toISOString();
     const lastActivityAt = patch.lastActivityAt ?? Date.now();
@@ -492,7 +487,6 @@ export class CeSessionStore {
 
   /** Atomically append one history turn so simultaneous progress/terminal writes cannot drop either turn. */
   async appendHistoryAsync(id: string, turn: CeConversationTurn): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.appendHistory(id, turn);
     const projectId = this.requireProjectId();
     const now = Date.now();
     const updatedAt = new Date(now).toISOString();
@@ -518,9 +512,8 @@ export class CeSessionStore {
     `) as unknown as Array<{ id: string }>;
     return rows.length > 0;
   }
-  async deleteAsync(id: string): Promise<boolean> { if (!this.asyncLayer) return this.delete(id); const existing = await this.getAsync(id); if (!existing) return false; await this.asyncLayer.db.execute(sql`DELETE FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id}`); return true; }
+  async deleteAsync(id: string): Promise<boolean> { const existing = await this.getAsync(id); if (!existing) return false; await this.asyncLayer.db.execute(sql`DELETE FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id}`); return true; }
   async recoverStaleSessionsAsync(now = Date.now(), multiple = STALE_INTERVAL_MULTIPLE): Promise<string[]> {
-    if (!this.asyncLayer) return this.recoverStaleSessions(now, multiple);
     const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND status IN ('active', 'launching') AND last_activity_at < (${now}::bigint - (${multiple}::bigint * turn_interval_ms::bigint))`) as unknown as CeSessionRow[];
     const candidates = rows.map(rowToSession);
     await Promise.all(candidates.map((session) => this.updateAsync(
