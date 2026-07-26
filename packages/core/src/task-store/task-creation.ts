@@ -36,6 +36,7 @@ import {resolveCreateDeclaredSymbols} from "../task-symbol-resolution.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async-audit.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
+import { resolveTaskPrefix } from "./task-prefix.js";
 
 type CreateTaskWithAfterInsert = TaskCreateInput & {
   /** Internal transaction hook; never persisted in task source metadata. */
@@ -292,7 +293,8 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     // failure it aborts the reservation so the sequence is not wasted.
     const allocator = store.getDistributedTaskIdAllocator();
     const settings = await store.getSettingsFast();
-    const prefix = (settings.taskPrefix || "KB").trim().toUpperCase();
+    // FNXC:MissionTaskPrefix 2026-07-26-12:00: backend task creation must honor the transient mission prefix hint before project settings and the KB fallback.
+    const prefix = resolveTaskPrefix(input.taskPrefix, settings.taskPrefix, "KB");
     const nodeId = await store.resolveLocalNodeIdForTaskAllocation();
     const reservation = await allocator.reserveDistributedTaskId({
       prefix,

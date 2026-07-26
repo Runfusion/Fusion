@@ -302,6 +302,7 @@ interface MissionFormData {
   autoMergeOverride: MissionAutoMergeOverride;
   baseBranch: string;
   branchStrategy: MissionBranchStrategy;
+  taskPrefix: string;
 }
 
 interface MilestoneFormData {
@@ -335,6 +336,7 @@ const EMPTY_MISSION_FORM: MissionFormData = {
   branchStrategy: {
     mode: "project-default",
   },
+  taskPrefix: "",
 };
 
 const EMPTY_MILESTONE_FORM: MilestoneFormData = {
@@ -1694,6 +1696,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   ]);
 
   // Mission handlers
+  const handleMissionTaskPrefixChange = useCallback((rawValue: string) => {
+    const taskPrefix = rawValue.toUpperCase();
+    /** FNXC:MissionTaskPrefix 2026-07-26-12:00: keep all mission forms aligned with server validation so invalid prefixes never enter client state. */
+    if (taskPrefix !== "" && !/^[A-Z][A-Z0-9]*$/.test(taskPrefix)) return;
+    setMissionForm((current) => ({ ...current, taskPrefix }));
+  }, []);
+
   const handleEditMission = useCallback((mission: Mission) => {
     setEditingMissionId(mission.id);
     setIsCreatingMission(false);
@@ -1705,6 +1714,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       autoMergeOverride: missionAutoMergeOverride(mission.autoMerge),
       baseBranch: mission.baseBranch ?? "",
       branchStrategy: normalizeMissionBranchStrategy(mission.branchStrategy),
+      taskPrefix: mission.taskPrefix ?? "",
     });
   }, []);
 
@@ -1745,6 +1755,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
             : {}),
           baseBranch: missionForm.baseBranch.trim() || undefined,
           branchStrategy,
+          taskPrefix: missionForm.taskPrefix.trim() || undefined,
         }, projectId);
         addToast(t("missions.created", "Mission created"), "success");
       } else if (editingMissionId) {
@@ -1759,6 +1770,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           autoMerge: resolveMissionAutoMerge(missionForm.autoMergeOverride) ?? null,
           baseBranch: missionForm.baseBranch.trim() || "",
           branchStrategy,
+          /*
+          FNXC:MissionTaskPrefix 2026-07-26-12:00:
+          Edit-save must send taskPrefix:null when the field is cleared. Empty input must not map to undefined: JSON.stringify drops undefined keys, the PATCH route treats a missing key as "no change".
+          */
+          taskPrefix: missionForm.taskPrefix.trim() || null,
         };
         if (missionForm.autopilotEnabled) {
           updates.autoAdvance = true;
@@ -2930,6 +2946,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       value={missionForm.baseBranch}
                       onChange={(e) => setMissionForm({ ...missionForm, baseBranch: e.target.value })}
                       aria-label={t("missions.missionTargetBranchAriaLabel", "Mission target branch")}
+                    />
+                  </label>
+                  <label>
+                    {t("missions.taskPrefix", "Task prefix")}
+                    <input
+                      type="text"
+                      placeholder={t("missions.taskPrefixPlaceholder", "e.g. ERR (defaults to project prefix)")}
+                      value={missionForm.taskPrefix}
+                      onChange={(e) => handleMissionTaskPrefixChange(e.target.value)}
+                      aria-label={t("missions.taskPrefixAriaLabel", "Mission task prefix")}
                     />
                   </label>
                   <label>
@@ -4700,6 +4726,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     />
                   </label>
                   <label>
+                    {t("missions.taskPrefix", "Task prefix")}
+                    <input
+                      type="text"
+                      placeholder={t("missions.taskPrefixPlaceholder", "e.g. ERR (defaults to project prefix)")}
+                      value={missionForm.taskPrefix}
+                      onChange={(e) => handleMissionTaskPrefixChange(e.target.value)}
+                      aria-label={t("missions.taskPrefixAriaLabel", "Mission task prefix")}
+                    />
+                  </label>
+                  <label>
                     {t("missions.branchStrategy", "Branch strategy")}
                     <select
                       value={missionForm.branchStrategy.mode}
@@ -4806,6 +4842,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       value={missionForm.baseBranch}
                       onChange={(e) => setMissionForm({ ...missionForm, baseBranch: e.target.value })}
                       aria-label={t("missions.missionTargetBranchAriaLabel", "Mission target branch")}
+                    />
+                  </label>
+                  <label>
+                    {t("missions.taskPrefix", "Task prefix")}
+                    <input
+                      type="text"
+                      placeholder={t("missions.taskPrefixPlaceholder", "e.g. ERR (defaults to project prefix)")}
+                      value={missionForm.taskPrefix}
+                      onChange={(e) => handleMissionTaskPrefixChange(e.target.value)}
+                      aria-label={t("missions.taskPrefixAriaLabel", "Mission task prefix")}
                     />
                   </label>
                   <label>

@@ -1258,6 +1258,11 @@ export const missions = projectSchema.table("missions", {
   branchStrategy: text("branch_strategy"),
   autoAdvance: integer("auto_advance").default(0),
   autoMerge: integer("auto_merge"),
+  /*
+  FNXC:MissionTaskPrefix 2026-07-26-12:00:
+  Optional per-mission ticket id prefix (e.g. ERR). Absent/null inherits the project-wide taskPrefix setting so one mission can mint distinct ids without flipping the board-wide prefix (PR #1930 / #2347, ported onto PG after SQLite cutover).
+  */
+  taskPrefix: text("task_prefix"),
   // FNXC:MissionStore 2026-06-24-08:00:
   // Autopilot columns were added via addColumnIfMissing in SQLite migrations
   // (db.ts SCHEMA_VERSION=128) but were missing from the initial U3 snapshot.

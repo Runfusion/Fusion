@@ -80,6 +80,7 @@ import {
   MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
   DROP_GLOBAL_CONCURRENCY_VERSION,
+  MISSION_TASK_PREFIX_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -1677,6 +1678,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
       DROP_GLOBAL_CONCURRENCY_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1740,6 +1742,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
       DROP_GLOBAL_CONCURRENCY_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -1936,6 +1939,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
       DROP_GLOBAL_CONCURRENCY_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -2013,6 +2017,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
       DROP_GLOBAL_CONCURRENCY_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 
@@ -2090,6 +2095,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_LINEAGE_STOP_VERSION,
   CHAT_SESSION_TAGS_VERSION,
       DROP_GLOBAL_CONCURRENCY_VERSION,
+      MISSION_TASK_PREFIX_VERSION,
     ]);
   });
 });

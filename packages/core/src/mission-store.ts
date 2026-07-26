@@ -234,6 +234,7 @@ interface MissionRow {
   interviewState: string;
   baseBranch: string | null;
   branchStrategy: string | null;
+  taskPrefix: string | null;
   autoMerge: number | null;
   autoAdvance: number;
   autopilotEnabled: number;
@@ -406,6 +407,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     super();
     this.setMaxListeners(100);
     this.ensureMissionContractAssertionColumns();
+    this.ensureMissionTaskPrefixColumn();
     // Initialize sequence counter from existing events to ensure uniqueness across restarts
     const lastEvent = this.db.prepare(`
       SELECT seq FROM mission_events ORDER BY seq DESC LIMIT 1
@@ -452,6 +454,24 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     `).run();
   }
 
+  /*
+  FNXC:MissionTaskPrefix 2026-07-26-12:00:
+  Sync-store test doubles and residual SQLite surfaces need the optional column
+  before create/update write taskPrefix. Additive IF-missing ALTER keeps older
+  in-memory fixtures usable without a full schema rebuild.
+  */
+  private ensureMissionTaskPrefixColumn(): void {
+    const schemaStatement = this.db.prepare("PRAGMA table_info(missions)") as unknown as {
+      all?: () => Array<{ name?: string }>;
+    };
+    const columns = schemaStatement.all?.();
+    if (!Array.isArray(columns) || columns.length === 0) return;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("taskPrefix")) {
+      this.db.prepare("ALTER TABLE missions ADD COLUMN taskPrefix TEXT").run();
+    }
+  }
+
   // ── Row-to-Object Converters ───────────────────────────────────────
 
   /**
@@ -475,6 +495,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       interviewState: row.interviewState as InterviewState,
       baseBranch: row.baseBranch || undefined,
       branchStrategy,
+      // FNXC:MissionTaskPrefix 2026-07-26-12:00: match nullable text fields (?? not ||); keep parity with async-mission-store-queries rowToMission.
+      taskPrefix: row.taskPrefix ?? undefined,
       autoMerge: row.autoMerge === null ? undefined : Boolean(row.autoMerge),
       autoAdvance: Boolean(row.autoAdvance),
       autopilotEnabled: Boolean(row.autopilotEnabled),
@@ -703,6 +725,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       interviewState: "not_started",
       baseBranch: input.baseBranch,
       branchStrategy: input.branchStrategy,
+      taskPrefix: input.taskPrefix,
       autoMerge: input.autoMerge,
       autoAdvance: false,
       autopilotEnabled: false,
@@ -712,8 +735,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO missions (id, title, description, status, interviewState, baseBranch, branchStrategy, autoMerge, autoAdvance, autopilotEnabled, autopilotState, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO missions (id, title, description, status, interviewState, baseBranch, branchStrategy, taskPrefix, autoMerge, autoAdvance, autopilotEnabled, autopilotState, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       mission.id,
       mission.title,
@@ -722,6 +745,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       mission.interviewState,
       mission.baseBranch ?? null,
       mission.branchStrategy ? JSON.stringify(mission.branchStrategy) : null,
+      mission.taskPrefix ?? null,
       mission.autoMerge === undefined ? null : (mission.autoMerge ? 1 : 0),
       mission.autoAdvance ? 1 : 0,
       mission.autopilotEnabled ? 1 : 0,
@@ -1343,11 +1367,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       this.db.prepare(`
         UPDATE missions SET
           title = ?, description = ?, status = ?, interviewState = ?, baseBranch = ?, branchStrategy = ?,
-          autoMerge = ?, autoAdvance = ?, autopilotEnabled = ?, autopilotState = ?,
+          taskPrefix = ?, autoMerge = ?, autoAdvance = ?, autopilotEnabled = ?, autopilotState = ?,
           lastAutopilotActivityAt = ?, updatedAt = ? WHERE id = ?
       `).run(
         updated.title, updated.description ?? null, updated.status, updated.interviewState,
         updated.baseBranch ?? null, updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
+        updated.taskPrefix ?? null,
         updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0), updated.autoAdvance ? 1 : 0,
         updated.autopilotEnabled ? 1 : 0, updated.autopilotState ?? "inactive",
         updated.lastAutopilotActivityAt ?? null, updated.updatedAt, updated.id,
@@ -4224,6 +4249,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           An autoMerge:false mission stamps each newly triaged task so its shared branch produces one PR instead of per-task auto-merges. Duplicate reuse intentionally bypasses this create-only override.
           */
           ...(mission?.autoMerge === false ? { autoMerge: false } : {}),
+          // FNXC:MissionTaskPrefix 2026-07-26-12:00: thread the mission's optional taskPrefix into TaskCreateInput for distributed id minting.
+          ...(mission?.taskPrefix ? { taskPrefix: mission.taskPrefix } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
         });
 

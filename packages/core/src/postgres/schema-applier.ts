@@ -49,8 +49,12 @@ FNXC:TaskWedgeNotifications 2026-07-23-00:00:
 Advance the PostgreSQL schema ceiling for the durable wedge episode column. The
 forward migration must run before TaskStore writes the new field on fresh and
 upgraded databases.
+
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+SCHEMA_BASELINE_VERSION advances to 0038 for optional per-mission task_prefix — 0037 is the
+capacity-model table drop that landed while this PR was open.
 */
-export const SCHEMA_BASELINE_VERSION = "0037";
+export const SCHEMA_BASELINE_VERSION = "0038";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -160,6 +164,15 @@ runs — which is exactly what happened on the first attempt here: the file exis
 the model was updated, and the table was still present in a fresh database.
 */
 export const DROP_GLOBAL_CONCURRENCY_VERSION = "0037";
+/*
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main — RENUMBERED 0037 -> 0038):
+Upgraded projects need the optional mission prefix before mission reads and triage task creation use
+it. This shipped as 0037 when the PR was written; main has since taken 0037 for the capacity-model
+table drop, and two migrations cannot share a number — the runner keys bookkeeping on it, so the
+second would read as already-applied and silently never run. Renumbered rather than reordered: 0037
+is landed on real databases and its identity is immutable, per the MONITOR_APPROVAL note above.
+*/
+export const MISSION_TASK_PREFIX_VERSION = "0038";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -371,6 +384,7 @@ const MILESTONE_ASSERTION_PROVENANCE_MIGRATION_PATH = join(
 const MISSION_LINEAGE_STOP_MIGRATION_PATH = join(MIGRATIONS_DIR, "0035_fn_8543_mission_lineage_stop.sql");
 const CHAT_SESSION_TAGS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0036_chat_session_tags.sql");
 const DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH = join(MIGRATIONS_DIR, "0037_drop_global_concurrency.sql");
+const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0038_mission_task_prefix.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -478,6 +492,7 @@ export async function applySchemaBaseline(
     const missionLineageStopAlreadyApplied = applied.includes(MISSION_LINEAGE_STOP_VERSION);
     const chatSessionTagsAlreadyApplied = applied.includes(CHAT_SESSION_TAGS_VERSION);
     const dropGlobalConcurrencyAlreadyApplied = applied.includes(DROP_GLOBAL_CONCURRENCY_VERSION);
+    const missionTaskPrefixAlreadyApplied = applied.includes(MISSION_TASK_PREFIX_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1010,6 +1025,20 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_GLOBAL_CONCURRENCY_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+    Apply missions.task_prefix independently so databases that already recorded an earlier version
+    gain the optional mission namespace before mission reads or task minting. Sequenced AFTER the
+    capacity-model drop rather than merged with it: the two are unrelated, and a shared guard would
+    make either one's bookkeeping row suppress the other's SQL.
+    */
+    if (!missionTaskPrefixAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_TASK_PREFIX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_TASK_PREFIX_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

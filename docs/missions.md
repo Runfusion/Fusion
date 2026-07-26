@@ -107,6 +107,12 @@ Precedence order during triage:
 2. Mission `baseBranch`
 3. Project default branch resolution
 
+### Mission task prefix override
+
+Missions support an optional `taskPrefix` field. When set, feature triage (`triageFeature` / `triageSlice`) passes it as a transient minting hint on `TaskCreateInput` so the distributed task-id allocator issues ids under that prefix. When unset or cleared, triage inherits the project-wide `settings.taskPrefix`.
+
+The Mission Manager create/edit form exposes this as **Task prefix** (empty = project default). Clearing a previously saved prefix on edit sends `taskPrefix: null` so the stored override is removed.
+
 ### Mission branch strategy defaults
 
 Missions can also persist a `branchStrategy` used whenever triage is triggered without explicit branch options (manual triage and autopilot triage).

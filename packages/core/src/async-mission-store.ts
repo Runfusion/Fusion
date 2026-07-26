@@ -261,6 +261,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       description: input.description,
       baseBranch: input.baseBranch,
       branchStrategy: input.branchStrategy,
+      taskPrefix: input.taskPrefix,
       autoMerge: input.autoMerge,
       status: "planning",
       interviewState: "not_started",
@@ -2300,6 +2301,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           An autoMerge:false mission stamps each newly triaged task so its shared branch produces one PR instead of per-task auto-merges. Duplicate reuse intentionally bypasses this create-only override.
           */
           ...(mission?.autoMerge === false ? { autoMerge: false } : {}),
+          // FNXC:MissionTaskPrefix 2026-07-26-12:00: thread the mission's optional taskPrefix into TaskCreateInput so the distributed allocator mints ERR-N (etc.) instead of the project prefix.
+          ...(mission?.taskPrefix ? { taskPrefix: mission.taskPrefix } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
         });
         if (guard.fingerprint) {
