@@ -246,6 +246,15 @@ export interface PermanentAgentGatingContext {
     approvalDedupeKey?: string;
   }) => Promise<ApprovalRequest | null>;
   findPendingApprovalRequest?: (dedupeKey: string) => Promise<ApprovalRequest | null>;
+  /**
+   * FNXC:AgentGating 2026-07-26-14:45:
+   * Audit finding: the permanent-agent gate minted an approval request but never
+   * paused, unlike the action gate — the agent kept its turn while "awaiting
+   * approval" and hunted for ungated workarounds. Optional pause hook keeps the
+   * two gate paths consistent; context builders that supply pauseForApproval get
+   * the same pause-on-pending semantics as wrapToolsWithActionGate.
+   */
+  pauseForApproval?: (info: { approvalRequestId: string; toolName: string }) => Promise<void>;
 }
 
 /** Built-in permission policy preset identifiers for agent runtime policies. */
@@ -395,6 +404,13 @@ export interface ApprovalRequestDecisionInput {
 export interface ApprovalRequestCompletionInput {
   actor: ApprovalRequestActorSnapshot;
   note?: string;
+  /*
+  FNXC:ApprovalLifecycleSecurity 2026-07-26-12:05:
+  Ownership check for grant redemption. Any runtime holding a request id could previously burn another agent's approval by calling markCompleted with it.
+  When provided, both stores compare this against the row's requester actorId inside the transaction and throw "Approval request <id> requester mismatch" on disagreement.
+  Optional so existing operator/dashboard callers keep working; the engine redemption gate passes the requesting agent's id.
+  */
+  expectedRequesterActorId?: string;
 }
 
 /** Query filters for approval request listings. */
@@ -412,14 +428,71 @@ export function isValidApprovalRequestTransition(
   from: ApprovalRequestStatus,
   to: ApprovalRequestStatus,
 ): boolean {
+  /*
+  FNXC:ApprovalLifecycleSecurity 2026-07-26-12:05:
+  from===to is INVALID for every status. A replayed decision is not idempotent: re-POSTing approve on an
+  already-approved row re-stamped decidedAt and appended a duplicate audit event, forging audit history.
+  Callers must see a conflict instead — the dashboard route maps the thrown
+  "Invalid approval request transition: <from> -> <to>" message to HTTP 409, so that exact message format
+  is load-bearing and must not change.
+  */
   if (from === to) {
-    return true;
+    return false;
   }
   if (from === "pending") {
     return to === "approved" || to === "denied";
   }
   if (from === "approved") {
     return to === "completed";
+  }
+  return false;
+}
+
+/*
+FNXC:ApprovalLifecycleSecurity 2026-07-26-12:10:
+Lazy TTL expiry for approval requests, deliberately implemented as pure functions over existing columns
+(requestedAt/decidedAt) with NO schema change: a PG forward migration on a live system is avoided.
+Incident context: the live DB held 17 approved / 0 completed grants, each redeemable forever — an approved
+grant never expired, so any later compromise could replay old approvals. These TTLs bound the window.
+Enforcement lands in both stores (decide throws on an expired pending row; markCompleted throws on an
+expired approved row); redemption-side enforcement also lands in the engine gate separately.
+*/
+
+/** Pending approval requests are decidable for 24 hours after requestedAt. */
+export const APPROVAL_REQUEST_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Approved grants are redeemable for 15 minutes after decidedAt. */
+export const APPROVAL_REQUEST_GRANT_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * True when an approval request is past its lazy TTL.
+ *
+ * FNXC:ApprovalLifecycleSecurity 2026-07-26-12:10:
+ * pending: expired once requestedAt + APPROVAL_REQUEST_PENDING_TTL_MS is exceeded.
+ * approved: expired once decidedAt + APPROVAL_REQUEST_GRANT_TTL_MS is exceeded; an approved row with a
+ * missing/invalid decidedAt is treated as expired (fail closed — an unbounded grant is the incident class).
+ * denied/completed: terminal, never expired.
+ */
+export function isApprovalRequestExpired(
+  request: Pick<ApprovalRequest, "status" | "requestedAt" | "decidedAt">,
+  nowMs: number = Date.now(),
+): boolean {
+  if (request.status === "pending") {
+    const requestedAtMs = Date.parse(request.requestedAt);
+    if (Number.isNaN(requestedAtMs)) {
+      return true;
+    }
+    return nowMs > requestedAtMs + APPROVAL_REQUEST_PENDING_TTL_MS;
+  }
+  if (request.status === "approved") {
+    if (!request.decidedAt) {
+      return true;
+    }
+    const decidedAtMs = Date.parse(request.decidedAt);
+    if (Number.isNaN(decidedAtMs)) {
+      return true;
+    }
+    return nowMs > decidedAtMs + APPROVAL_REQUEST_GRANT_TTL_MS;
   }
   return false;
 }

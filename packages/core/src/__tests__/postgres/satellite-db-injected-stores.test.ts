@@ -210,6 +210,55 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     expect(history.length).toBeGreaterThanOrEqual(3); // created + approved + completed
   });
 
+  /*
+  FNXC:ApprovalLifecycleSecurity 2026-07-26-13:50:
+  Replay/conflict/expiry/ownership hardening for the async approval store: a replayed decision must throw
+  the invalid-transition error the dashboard maps to HTTP 409 (it previously re-stamped decidedAt and
+  forged a duplicate audit event), completed grants expire 15 minutes after decidedAt, and markCompleted
+  enforces the requester-ownership check.
+  */
+  it("ApprovalRequestStore: replayed/conflicting decisions 409, grants expire, ownership enforced", async () => {
+    ctx = await setupCtx();
+    const { createApprovalRequest, decideApprovalRequest, markApprovalRequestCompleted, getApprovalAuditHistory } = await import("../../async-approval-request-store.js");
+    const { eq } = await import("drizzle-orm");
+    const schema = await import("../../postgres/schema/index.js");
+    const requester = { actorId: "agent-1", actorType: "agent" as const, actorName: "Bot" };
+    const admin = { actorId: "user-1", actorType: "user" as const, actorName: "Admin" };
+    await createApprovalRequest(ctx.layer, {
+      id: "apr-2",
+      requester,
+      targetAction: { category: "shell", action: "exec", summary: "run cmd", resourceType: "host", resourceId: "local" },
+    });
+    await decideApprovalRequest(ctx.layer, "apr-2", "approved", { actor: admin });
+
+    // Replay approve -> conflict; conflicting deny -> conflict; audit history stays unforged.
+    await expect(decideApprovalRequest(ctx.layer, "apr-2", "approved", { actor: admin })).rejects.toThrow(
+      "Invalid approval request transition: approved -> approved",
+    );
+    await expect(decideApprovalRequest(ctx.layer, "apr-2", "denied", { actor: admin })).rejects.toThrow(
+      "Invalid approval request transition: approved -> denied",
+    );
+    expect((await getApprovalAuditHistory(ctx.layer.db, "apr-2")).map((e) => e.eventType)).toEqual([
+      "created",
+      "approved",
+    ]);
+
+    // Ownership: a different runtime cannot burn agent-1's grant.
+    await expect(
+      markApprovalRequestCompleted(ctx.layer, "apr-2", { actor: admin, expectedRequesterActorId: "agent-2" }),
+    ).rejects.toThrow("Approval request apr-2 requester mismatch");
+
+    // Expiry: backdate decidedAt past the 15-minute grant TTL -> redemption fails closed.
+    const staleDecidedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    await ctx.layer.db
+      .update(schema.project.approvalRequests)
+      .set({ decidedAt: staleDecidedAt })
+      .where(eq(schema.project.approvalRequests.id, "apr-2"));
+    await expect(markApprovalRequestCompleted(ctx.layer, "apr-2", { actor: requester })).rejects.toThrow(
+      "Approval request apr-2 expired",
+    );
+  });
+
   // ── EvalStore ──
 
   it("EvalStore: create run → upsert result → list → append event", async () => {

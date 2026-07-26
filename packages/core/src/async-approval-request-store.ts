@@ -21,6 +21,10 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+// FNXC:ApprovalLifecycleSecurity 2026-07-26-12:25:
+// isApprovalRequestExpired lives in types/agents.js and is imported directly (types.ts re-exports
+// explicit names, not `export *`, and the barrel is out of this change's file scope).
+import { isApprovalRequestExpired } from "./types/agents.js";
 import {
   isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
@@ -247,6 +251,14 @@ export async function listApprovalRequests(
  * FNXC:ApprovalRequestStore 2026-06-24-07:45:
  * Decide (approve/deny) an approval request. The status update and the audit
  * event run in a single transaction. Throws on invalid transition.
+ *
+ * FNXC:ApprovalLifecycleSecurity 2026-07-26-12:25:
+ * Read-validate-update is atomic. The previous shape read `existing` OUTSIDE the transaction and never
+ * re-checked inside, so concurrent approve+deny both validated against "pending" and the last write won.
+ * Fix: re-read via the tx handle, re-validate, then a GUARDED update
+ * (`WHERE id = ? AND status = <observed status>`) with `.returning(...)` — an empty returning array means
+ * someone raced the transition, and we re-read + throw the invalid-transition error the dashboard maps to
+ * HTTP 409. Expired pending rows (lazy TTL, no schema change) are rejected inside the transaction too.
  */
 export async function decideApprovalRequest(
   layer: AsyncDataLayer,
@@ -254,45 +266,89 @@ export async function decideApprovalRequest(
   status: "approved" | "denied",
   input: ApprovalRequestDecisionInput,
 ): Promise<ApprovalRequest> {
-  const existing = await getApprovalRequest(layer.db, requestId);
-  if (!existing) throw new Error(`Approval request ${requestId} not found`);
-  if (!isValidApprovalRequestTransition(existing.status, status)) {
-    throw new Error(`Invalid approval request transition: ${existing.status} -> ${status}`);
-  }
   const now = new Date().toISOString();
-  await layer.transactionImmediate(async (tx) => {
-    await tx
+  return layer.transactionImmediate(async (tx) => {
+    const existing = await getApprovalRequest(tx, requestId);
+    if (!existing) throw new Error(`Approval request ${requestId} not found`);
+    if (!isValidApprovalRequestTransition(existing.status, status)) {
+      throw new Error(`Invalid approval request transition: ${existing.status} -> ${status}`);
+    }
+    if (existing.status === "pending" && isApprovalRequestExpired(existing)) {
+      throw new Error(`Approval request ${requestId} expired`);
+    }
+    const updatedRows = await tx
       .update(schema.project.approvalRequests)
       .set({ status, decidedAt: now, updatedAt: now })
-      .where(eq(schema.project.approvalRequests.id, requestId));
+      .where(
+        and(
+          eq(schema.project.approvalRequests.id, requestId),
+          eq(schema.project.approvalRequests.status, existing.status),
+        ),
+      )
+      .returning({ id: schema.project.approvalRequests.id });
+    if (updatedRows.length === 0) {
+      const raced = await getApprovalRequest(tx, requestId);
+      throw new Error(
+        `Invalid approval request transition: ${raced?.status ?? existing.status} -> ${status}`,
+      );
+    }
     await appendAuditEvent(tx, layer.projectId ?? "", requestId, status, input.actor, now, input.note);
+    return (await getApprovalRequest(tx, requestId))!;
   });
-  return (await getApprovalRequest(layer.db, requestId))!;
 }
 
 /**
  * Mark an approval request as completed. The status update and the audit
  * event run in a single transaction. Throws on invalid transition.
+ *
+ * FNXC:ApprovalLifecycleSecurity 2026-07-26-12:25:
+ * Same atomic read-validate-guarded-update shape as decideApprovalRequest. Additionally:
+ * - Ownership: when input.expectedRequesterActorId is provided it must match the row's requester actorId;
+ *   previously any runtime holding a request id could burn another agent's approval.
+ * - Expiry: an approved grant is redeemable only within APPROVAL_REQUEST_GRANT_TTL_MS of decidedAt
+ *   (live DB had 17 approved / 0 completed grants redeemable forever; TTL bounds the window without a
+ *   schema migration; redemption-side enforcement also lands in the engine gate separately).
  */
 export async function markApprovalRequestCompleted(
   layer: AsyncDataLayer,
   requestId: string,
   input: ApprovalRequestCompletionInput,
 ): Promise<ApprovalRequest> {
-  const existing = await getApprovalRequest(layer.db, requestId);
-  if (!existing) throw new Error(`Approval request ${requestId} not found`);
-  if (!isValidApprovalRequestTransition(existing.status, "completed")) {
-    throw new Error(`Invalid approval request transition: ${existing.status} -> completed`);
-  }
   const now = new Date().toISOString();
-  await layer.transactionImmediate(async (tx) => {
-    await tx
+  return layer.transactionImmediate(async (tx) => {
+    const existing = await getApprovalRequest(tx, requestId);
+    if (!existing) throw new Error(`Approval request ${requestId} not found`);
+    if (!isValidApprovalRequestTransition(existing.status, "completed")) {
+      throw new Error(`Invalid approval request transition: ${existing.status} -> completed`);
+    }
+    if (
+      input.expectedRequesterActorId !== undefined &&
+      input.expectedRequesterActorId !== existing.requester.actorId
+    ) {
+      throw new Error(`Approval request ${requestId} requester mismatch`);
+    }
+    if (existing.status === "approved" && isApprovalRequestExpired(existing)) {
+      throw new Error(`Approval request ${requestId} expired`);
+    }
+    const updatedRows = await tx
       .update(schema.project.approvalRequests)
       .set({ status: "completed", completedAt: now, updatedAt: now })
-      .where(eq(schema.project.approvalRequests.id, requestId));
+      .where(
+        and(
+          eq(schema.project.approvalRequests.id, requestId),
+          eq(schema.project.approvalRequests.status, existing.status),
+        ),
+      )
+      .returning({ id: schema.project.approvalRequests.id });
+    if (updatedRows.length === 0) {
+      const raced = await getApprovalRequest(tx, requestId);
+      throw new Error(
+        `Invalid approval request transition: ${raced?.status ?? existing.status} -> completed`,
+      );
+    }
     await appendAuditEvent(tx, layer.projectId ?? "", requestId, "completed", input.actor, now, input.note);
+    return (await getApprovalRequest(tx, requestId))!;
   });
-  return (await getApprovalRequest(layer.db, requestId))!;
 }
 
 /**
