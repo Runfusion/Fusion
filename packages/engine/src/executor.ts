@@ -1646,7 +1646,6 @@ export function getExecutorSystemPrompt(
   return sections.join("\n\n");
 }
 
-
 export interface TaskExecutorOptions {
   /*
    * FNXC:PlanReviewLease 2026-07-26-21:07:
