@@ -5,7 +5,7 @@
 `fn settings set integrationBranch <branch>` (and `fn settings set integrationBranch <branch> --project <name>`)
 previously failed with:
 
-```
+```text
 Error: Unknown setting "integrationBranch"
 ```
 
@@ -14,7 +14,7 @@ even though `integrationBranch` is a real, documented `ProjectSettings` field
 (`DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`), and
 consumed as the *first* entry in the engine's merge-target resolution chain:
 
-```
+```text
 resolveIntegrationBranch(): settings.integrationBranch → settings.baseBranch → origin/HEAD → "main"
 ```
 
@@ -186,7 +186,7 @@ AIWO-041 closed that gap. `fn settings set mergeIntegrationWorktree <value>
 **Accepted CLI values:** `ENUM_SETTINGS.mergeIntegrationWorktree` whitelists
 only the two canonical, non-deprecated values:
 
-```
+```text
 ["reuse-task-worktree", "cwd-integration-branch"]
 ```
 
@@ -202,7 +202,7 @@ actively encourage new usage of a value the type intentionally deprecated —
 working against the reason `normalizeMergeIntegrationWorktreeMode()` exists
 (to quietly migrate legacy config, not to keep issuing it). As a result:
 
-```
+```bash
 fn settings set mergeIntegrationWorktree cwd-main
 # Error: Invalid value for mergeIntegrationWorktree: "cwd-main".
 # Valid options: reuse-task-worktree, cwd-integration-branch

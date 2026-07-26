@@ -43,12 +43,15 @@ export const VALID_SETTINGS = [
   "language",
 ] as const;
 
-// NOTE: `requirePrApproval` (a boolean ProjectSettings field, per types.ts) was
-// evaluated for this whitelist and intentionally EXCLUDED — it was hard-MOVED
-// to workflow settings in U4 (see `MovedProjectSettingsKey` in
-// packages/core/src/settings-schema.ts) and has no default in
-// `DEFAULT_PROJECT_SETTINGS`. It must never be added back here as a project
-// setting; use fn_workflow_settings instead.
+/*
+ FNXC:SettingsCliWhitelist 2026-07-26-07:20:
+ `requirePrApproval` (a boolean ProjectSettings field, per types.ts) was
+ evaluated for this whitelist and intentionally EXCLUDED — it was hard-MOVED
+ to workflow settings in U4 (see `MovedProjectSettingsKey` in
+ packages/core/src/settings-schema.ts) and has no default in
+ `DEFAULT_PROJECT_SETTINGS`. It must never be added back here as a project
+ setting; use fn_workflow_settings instead.
+*/
 
 // One-line redirect surfaced wherever the CLI lists/validates settings keys, so
 // users who reach for a moved key learn where it lives now (U5/KTD-8).

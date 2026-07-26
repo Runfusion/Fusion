@@ -1447,13 +1447,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /*
    * FNXC:StepResume 2026-07-24-13:00:
    * Operator/privileged-only escape hatch for a card that has a workflow step
-   * permanently stuck in  status (leading real-world cause: the
+   * permanently stuck in `pending` status (leading real-world cause: the
    * Runfusion/Fusion#1946 dispatched prompt node verdict callback never received).
-   * Transitions the stuck step to  so that the existing
-   *  /  can then clear
-   * the merge blocker. Requires a mandatory  and  and is
+   * Transitions the stuck step to `failed` so that the existing
+   * `fn_task_bypass_review` / `bypassFailedPreMergeReviewStep` can then clear
+   * the merge blocker. Requires a mandatory `reason` and `stepId` and is
    * audit-logged. NOT exposed to executor/reviewer/triage agent tool surfaces —
-   * see  registration comments for the same rule.
+   * see `fn_workflow_step_resume` registration comments for the same rule.
+   *
+   * FNXC:StepResume 2026-07-26-07:20:
+   * Lookup is restricted to pre-merge results (same phase filter as
+   * `findPendingPreMergeStep`). Post-merge failures are non-blocking and must
+   * not be force-failed via this escape hatch without a matching bypass path.
    */
   async resumeWorkflowStep(
     id: string,
@@ -1480,12 +1485,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       const results = task.workflowStepResults ?? [];
+      // FNXC:StepResume 2026-07-26-07:20: match findPendingPreMergeStep phase filter
       const targetIndex = results.findIndex(
-        (r) => r.workflowStepId === stepId,
+        (r) =>
+          r.workflowStepId === stepId &&
+          (r.phase || "pre-merge") === "pre-merge",
       );
       if (targetIndex === -1) {
         throw new Error(
-          `resumeWorkflowStep: step '${stepId}' not found in workflowStepResults for ${id}`,
+          `resumeWorkflowStep: pre-merge step '${stepId}' not found in workflowStepResults for ${id}`,
         );
       }
 

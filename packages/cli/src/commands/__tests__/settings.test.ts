@@ -108,16 +108,22 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).toContain("pushAfterMerge");
     expect(VALID_SETTINGS).toContain("pushRemote");
     expect(VALID_SETTINGS).toContain("autoResolveReviewComments");
-    // baseBranch is a per-Task/Mission field, NOT a ProjectSettings key — it must
-    // never be added to VALID_SETTINGS/PROJECT_ONLY_SETTINGS/STRING_SETTINGS.
+    /*
+     FNXC:SettingsCliWhitelist 2026-07-26-07:20:
+     baseBranch is a per-Task/Mission field, NOT a ProjectSettings key — it must
+     never be added to VALID_SETTINGS/PROJECT_ONLY_SETTINGS/STRING_SETTINGS.
+    */
     expect(VALID_SETTINGS).not.toContain("baseBranch");
     expect(VALID_SETTINGS).toContain("mergeIntegrationWorktree");
-    // Moved keys are NOT settable via the CLI (they live in workflow settings).
+    /*
+     FNXC:SettingsCliWhitelist 2026-07-26-07:20:
+     Moved keys are NOT settable via the CLI (they live in workflow settings).
+     requirePrApproval was hard-MOVED to workflow settings in U4 and has no
+     DEFAULT_PROJECT_SETTINGS entry — it must never be whitelisted here.
+    */
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
     expect(VALID_SETTINGS).not.toContain("requirePlanApproval");
-    // requirePrApproval was hard-MOVED to workflow settings in U4 and has no
-    // DEFAULT_PROJECT_SETTINGS entry — it must never be whitelisted here.
     expect(VALID_SETTINGS).not.toContain("requirePrApproval");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
@@ -176,14 +182,16 @@ describe("settings commands", () => {
     expect(parseValue("owningNodeHandoffPolicy", "reassign-any-healthy")).toBe("reassign-any-healthy");
     expect(() => parseValue("owningNodeHandoffPolicy", "invalid")).toThrow(/block, reassign-to-local, reassign-any-healthy/);
 
-    // AIWO-041: mergeIntegrationWorktree — real, unmoved ProjectSettings key
-    // that was still missing from the CLI whitelist.
+    /*
+     FNXC:SettingsCliWhitelist 2026-07-26-07:20:
+     AIWO-041: mergeIntegrationWorktree — real, unmoved ProjectSettings key
+     that was still missing from the CLI whitelist. The deprecated "cwd-main"
+     legacy alias must be REJECTED by the CLI, not silently coerced —
+     normalizeMergeIntegrationWorktreeMode()'s coercion is reserved for the
+     engine's read-time normalization, not new CLI input.
+    */
     expect(parseValue("mergeIntegrationWorktree", "reuse-task-worktree")).toBe("reuse-task-worktree");
     expect(parseValue("mergeIntegrationWorktree", "cwd-integration-branch")).toBe("cwd-integration-branch");
-    // The deprecated "cwd-main" legacy alias must be REJECTED by the CLI, not
-    // silently coerced — normalizeMergeIntegrationWorktreeMode()'s coercion
-    // behavior is reserved for the engine's read-time normalization, not new
-    // CLI input.
     expect(() => parseValue("mergeIntegrationWorktree", "cwd-main")).toThrow(
       /reuse-task-worktree, cwd-integration-branch/
     );

@@ -10,7 +10,7 @@ Any direct push to `origin` (`https://github.com/Runfusion/Fusion.git`) from the
 `ischindl` git/GitHub identity fails, including for a plain branch push (not just
 `main`):
 
-```
+```console
 $ git push origin main --dry-run
 remote: Permission to Runfusion/Fusion.git denied to ischindl.
 fatal: unable to access 'https://github.com/Runfusion/Fusion.git/': The requested URL returned error: 403
@@ -83,16 +83,17 @@ Because `origin` push is denied, use the fork instead of pushing branches to
 # One-time setup (already done for ischindl's fork, but shown for completeness):
 #   gh repo fork Runfusion/Fusion --clone=false   # only if a fork doesn't exist yet
 
+# Keep the primary checkout on main. Do all branch work in an isolated worktree
+# (AGENTS.md standing rule / Worktrunk preference when available).
 cd ~/git/Fusion
 git remote add fork https://github.com/ischindl/Fusion.git   # if not already present
-git fetch fork
-
-# Do the work on a feature/fix branch as usual, e.g.:
-git checkout -b my-fix-branch
-# ... commit the change ...
+git fetch fork origin
+git worktree add -b my-fix-branch ../Fusion-my-fix-branch origin/main
+cd ../Fusion-my-fix-branch
+# ... commit the change in this worktree only ...
 
 # Push to the fork (NOT origin):
-git push fork my-fix-branch
+git push fork HEAD:my-fix-branch
 
 # Open a PR from the fork branch against upstream main:
 gh pr create --repo Runfusion/Fusion \
@@ -106,8 +107,10 @@ gh pr create --repo Runfusion/Fusion \
 # from an account that has merge permission. `ischindl` cannot merge its own PR
 # into upstream `main` without such rights, even though it can open the PR.
 
-# Clean up afterwards:
+# Clean up afterwards (from the primary checkout, still on main):
+cd ~/git/Fusion
 git push fork --delete my-fix-branch
+git worktree remove ../Fusion-my-fix-branch
 git branch -D my-fix-branch
 git remote remove fork   # optional, if not reused across tasks
 ```

@@ -409,26 +409,15 @@ async function bootSchemaBackend(
   }
 }
 
+/*
+ FNXC:PostgresStartup 2026-07-26-07:20:
+ PR #2438 rebase left a second `bootSchemaBackendOnce` that recursively called
+ itself (infinite stack) before the real implementation. Non-UTF-8 cluster
+ recovery already lives in the outer `bootSchemaBackend` retry loop — keep a
+ single real Once body with the main-line signature (including globalSettingsDir).
+*/
 async function bootSchemaBackendOnce(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir">,
-  bypassProjectIsolation = false,
-): Promise<SchemaBackendBootResult> {
-  try {
-    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
-  } catch (error) {
-    if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
-    log.warn(
-      `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
-        `encoding by an earlier version and never completed a boot (issue #2286). ` +
-        `Re-initializing it as UTF-8 and retrying once.`,
-    );
-    rmSync(error.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
-  }
-}
-
-async function bootSchemaBackendOnce(
-  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
   const env = options.env ?? process.env;
@@ -465,19 +454,16 @@ async function bootSchemaBackendOnce(
     DEFAULT_GLOBAL_SETTINGS so this server-side resolution can see "operator never
     set it" — a concrete schema default would be merged in by getSettings() and
     mask the platform choice.
+
+    FNXC:PostgresMaxConnections 2026-07-26-07:20:
+    Ceiling is NOT a fixed 250. Value comes from resolveEmbeddedMaxConnections():
+    operator `embeddedPostgresMaxConnections` when set, else platform-aware
+    defaults (win32 150, else 500). Flags below always use that resolved value.
     */
     const maxConnections = resolveEmbeddedMaxConnections(configuredMaxConnections);
     const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
     embeddedDataDir = dataDir;
     log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
-    /*
-    FNXC:PostgresMaxConnections 2026-07-18-14:20:
-    Embedded PG default max_connections is 100 (compiled-in default for PG15).
-    With 9+ project engines each maintaining connection pools, we exhaust the
-    limit and block new engine starts with "sorry, too many clients already".
-    Raise the ceiling to 250 so that all project engines + API + agent sessions
-    can coexist without hitting the connection limit during normal operation.
-    */
     embeddedLifecycle = new EmbeddedPostgresLifecycle({
       dataDir,
       database: DEFAULT_EMBEDDED_DATABASE,
