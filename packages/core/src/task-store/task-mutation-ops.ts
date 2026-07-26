@@ -119,43 +119,21 @@ export function getSoftDeletedWriteConflictImpl(store: TaskStore, id: string, ta
 export async function readTaskJsonImpl(store: TaskStore, dir: string): Promise<Task> {
     const id = store.getTaskIdFromDir(dir);
 
-    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-15:40:
-    // Backend mode: read the task row via the async helper directly (without
-    // acquiring the task lock, since this method is often called INSIDE
-    // withTaskLock). Using getTask() here would deadlock because getTask
-    // also acquires withTaskLock. Instead, we read the raw row and convert it
-    // using the same pgRowToTaskRow + rowToTask pipeline. The file-system
-    // fallback is still used if the DB read returns nothing.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
-      if (pgRow) {
-        if (pgRow.deletedAt) {
-          throw new TaskDeletedError(id, pgRow.deletedAt as string);
-        }
-        return store.rowToTask(store.pgRowToTaskRow(pgRow));
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:30:
+    readTaskJson is PostgreSQL + task.json only. The SQLite store.readTaskFromDb arm is deleted.
+    Read the task row via async helper without acquiring withTaskLock (callers often already hold it; getTask would deadlock).
+    File-system task.json remains the fallback when no live DB row exists (not SQLite authority).
+    FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-15:40: same lock/deadlock constraint as before.
+    */
+    const layer = store.asyncLayer!;
+    const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+    if (pgRow) {
+      if (pgRow.deletedAt) {
+        throw new TaskDeletedError(id, pgRow.deletedAt as string);
       }
-      // Fallback to file-based reading.
-      const filePath = join(dir, "task.json");
-      const raw = await readFile(filePath, "utf-8");
-      try {
-        return store.normalizeTaskFromDisk(JSON.parse(raw) as Task);
-      } catch (err) {
-        throw new Error(
-          `Failed to parse task.json at ${filePath}: ${(err as Error).message}`,
-        );
-      }
+      return store.rowToTask(store.pgRowToTaskRow(pgRow));
     }
-
-    const task = store.readTaskFromDb(id);
-    if (task) return task;
-
-    const deletedTask = store.readTaskFromDb(id, { includeDeleted: true });
-    if (deletedTask?.deletedAt) {
-      throw new TaskDeletedError(id, deletedTask.deletedAt);
-    }
-
-    // Fallback to file-based reading (for legacy compatibility when no DB row exists).
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
     try {
@@ -283,42 +261,41 @@ export async function listTasksForGitlabTrackingReconcileImpl(store: TaskStore, 
     const offset = Math.max(0, options?.offset ?? 0);
     const limit = Math.max(0, options?.limit ?? reconcileScanLimit);
 
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const trackedDeletedFilter = and(
-        isNotNull(schema.project.tasks.gitlabTracking),
-        isNotNull(schema.project.tasks.deletedAt),
-      );
-      const countRows = await layer.db
-        .select({ count: sql<number>`count(*)` })
-        .from(schema.project.tasks)
-        .where(trackedDeletedFilter);
-      const deletedCount = Number(countRows[0]?.count ?? 0);
-      const deletedOffset = Math.min(offset, deletedCount);
-      const deletedRowsRaw = await layer.db
-        .select()
-        .from(schema.project.tasks)
-        .where(trackedDeletedFilter)
-        .orderBy(asc(schema.project.tasks.updatedAt))
-        .limit(limit)
-        .offset(deletedOffset);
-      const deletedTasks = deletedRowsRaw.map((row) => {
-        const raw = row as unknown as Record<string, unknown>;
-        // FNXC:GitLabTracking 2026-07-16-05:36: rowToTask now hydrates GitLab
-        // tracking through the shared persistence registry, so reconcile uses
-        // the same authoritative mapper as every other live-task read.
-        const task = store.rowToTask(store.pgRowToTaskRow(raw));
-        task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
-        task.log = [];
-        return task;
-      });
-      const totalCount = deletedCount;
-      const hasMore = offset + limit < totalCount;
-      return { tasks: deletedTasks, hasMore };
-    }
-    // FNXC:SqliteFinalRemoval 2026-07-12-00:00: non-backend (SQLite) path is unreachable after
-    // VAL-REMOVAL-005; throw so a misconfigured caller is not silently fed empty data.
-    throw new Error("listTasksForGitlabTrackingReconcile requires backend mode (PostgreSQL).");
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:32:
+    GitLab tracking reconcile is PostgreSQL-only; the non-backend throw arm is deleted.
+    */
+    const layer = store.asyncLayer!;
+    const trackedDeletedFilter = and(
+      isNotNull(schema.project.tasks.gitlabTracking),
+      isNotNull(schema.project.tasks.deletedAt),
+    );
+    const countRows = await layer.db
+      .select({ count: sql<number>`count(*)` })
+      .from(schema.project.tasks)
+      .where(trackedDeletedFilter);
+    const deletedCount = Number(countRows[0]?.count ?? 0);
+    const deletedOffset = Math.min(offset, deletedCount);
+    const deletedRowsRaw = await layer.db
+      .select()
+      .from(schema.project.tasks)
+      .where(trackedDeletedFilter)
+      .orderBy(asc(schema.project.tasks.updatedAt))
+      .limit(limit)
+      .offset(deletedOffset);
+    const deletedTasks = deletedRowsRaw.map((row) => {
+      const raw = row as unknown as Record<string, unknown>;
+      // FNXC:GitLabTracking 2026-07-16-05:36: rowToTask now hydrates GitLab
+      // tracking through the shared persistence registry, so reconcile uses
+      // the same authoritative mapper as every other live-task read.
+      const task = store.rowToTask(store.pgRowToTaskRow(raw));
+      task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
+      task.log = [];
+      return task;
+    });
+    const totalCount = deletedCount;
+    const hasMore = offset + limit < totalCount;
+    return { tasks: deletedTasks, hasMore };
   }
 
 export async function listTasksModifiedSinceImpl2(store: TaskStore, since: string, limit?: number, opts?: { includeArchived?: boolean },): Promise<{ tasks: Task[]; hasMore: boolean }> {
@@ -894,28 +871,9 @@ export async function registerArtifactImpl(store: TaskStore, input: ArtifactCrea
     const now = new Date().toISOString();
 
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * P1 fix: the preliminary taskId existence/archived check below used
-     * store.db.prepare directly and sat OUTSIDE the backend guard, so it threw
-     * in PG mode whenever input.taskId was set. In backend mode, skip this
-     * pre-check — insertArtifactRow (async-comments-attachments.ts) already
-     * performs the same archived/not-found gate INSIDE its transaction
-     * (getLiveTaskColumn), which is the correct atomic placement.
-     */
-    if (input.taskId && !store.backendMode) {
-      const taskExists = store.db.prepare(`SELECT id, "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(input.taskId) as
-        | { id: string; column: Column }
-        | undefined;
-      if (taskExists?.column === "archived") {
-        throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
-      }
-      if (!taskExists) {
-        if (store.isTaskArchived(input.taskId)) {
-          throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
-        }
-        throw new Error(`Task ${input.taskId} not found`);
-      }
-    }
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:30:
+    Artifact registration is PostgreSQL-only. The former non-backend SQLite precheck (store.db.prepare) is deleted; insertArtifactRowAsync performs the archived/not-found gate inside its transaction via getLiveTaskColumn (correct atomic placement).
+    */
 
     const register = async (): Promise<Artifact> => {
       const stored = await store.writeArtifactData(input, id);
@@ -1153,14 +1111,14 @@ export async function evacuateCustomColumnsToLegacyImpl(store: TaskStore, trigge
     // (triage). Falls back to "triage" defensively if the IR can't be resolved.
     const targetColumn = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR) ?? "triage";
 
-    const rows: Array<{ id: string; col: string }> = store.backendMode
-      ? (await store.asyncLayer!.db
-          .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
-          .from(schema.project.tasks)
-          .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!))))
-      : store.db
-          .prepare(`SELECT id, "column" AS col FROM tasks WHERE deletedAt IS NULL`)
-          .all() as Array<{ id: string; col: string }>;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:32:
+    Custom-column evacuation scans live tasks via PostgreSQL only.
+    */
+    const rows: Array<{ id: string; col: string }> = await store.asyncLayer!.db
+      .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
+      .from(schema.project.tasks)
+      .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!)));
 
     for (const { id, col } of rows) {
       scanned += 1;
