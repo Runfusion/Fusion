@@ -141,6 +141,36 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/*
+FNXC:MergeNoCommits 2026-07-26-14:18:
+`noCommitsExpected` is only an operator expectation, not proof the branch is empty.
+Skip clean-room dependency install only when the branch tip also has no source or
+dependency-manifest changes vs the integration tip. If a flagged task still touches
+package manifests, lockfiles, or runtime source, keep install so those changes cannot
+land without dependency-backed verification (Greptile P1 on PR #2437 / RUFU-018).
+*/
+const NO_COMMITS_DEP_RELEVANT_BASENAME = new Set([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "pnpm-workspace.yaml",
+]);
+const NO_COMMITS_DEP_RELEVANT_EXT = /\.(?:[cm]?[jt]sx?|vue|svelte|css|scss|less)$/i;
+
+export function branchHasSourceOrDependencyChanges(paths: string[]): boolean {
+  for (const raw of paths) {
+    const p = raw.trim().replace(/\\/g, "/");
+    if (!p) continue;
+    const base = p.slice(p.lastIndexOf("/") + 1);
+    if (NO_COMMITS_DEP_RELEVANT_BASENAME.has(base)) return true;
+    if (NO_COMMITS_DEP_RELEVANT_EXT.test(base)) return true;
+  }
+  return false;
+}
+
 function short(sha: string): string {
   return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 8) : sha;
 }
@@ -763,9 +793,12 @@ export interface LandRepoContext {
   /*
   FNXC:MergeNoCommits 2026-07-17-12:00:
   When true, the task is expected to produce no code changes (audit, documentation, decision-only).
-  The clean-room dependency sync is skipped entirely because there are no source changes to install
-  or build. Avoiding the dep-sync prevents "pnpm: command not found" failures when pnpm is not
-  resolvable in the engine process environment, and avoids unnecessary work.
+  The clean-room dependency sync may be skipped when the branch also has no source/dependency
+  changes, avoiding "pnpm: command not found" when pnpm is not resolvable and avoiding unnecessary work.
+
+  FNXC:MergeNoCommits 2026-07-26-14:18:
+  The flag alone must not bypass install: landOneRepo still runs dependency sync when the branch
+  tip contains source or dependency-manifest changes vs the integration tip (expectation ≠ proof).
   */
   noCommitsExpected?: boolean;
   store: TaskStore;
@@ -890,15 +923,32 @@ export async function landOneRepo(
        */
       /*
       FNXC:MergeNoCommits 2026-07-17-12:00:
-      No-commits tasks (audit, documentation, decision-only) have no code changes to install or
-      build. Skip the entire dependency-sync step in the clean-room worktree to avoid "pnpm: command
-      not found" when pnpm is not resolvable in the engine process environment. The merge/review
-      agents still run (they may verify documentation or produce merge metadata); only the
-      dependency install is skipped.
+      No-commits tasks (audit, documentation, decision-only) ideally have no code changes to install
+      or build. Skip dependency-sync only when that expectation is confirmed by the branch diff.
+
+      FNXC:MergeNoCommits 2026-07-26-14:18:
+      `noCommitsExpected` alone must not bypass install: if `tipSha...branch` includes source or
+      dependency-manifest paths, keep clean-room install so those changes cannot land without
+      dependency-backed verification. Docs/metadata-only no-commit lands still skip to avoid
+      "pnpm: command not found" when pnpm is not resolvable in the engine process environment.
       */
+      let skipDependencySyncForNoCommits = false;
       if (ctx.noCommitsExpected === true) {
-        await log(`AI merge: skipping dependency sync — no-commits task (no code changes expected)`);
-      } else {
+        const changedRaw = await git(
+          ["diff", "--name-only", "--diff-filter=ACMR", `${tipSha}...${branch}`],
+          repoRootDir,
+        ).catch(() => "");
+        const changedPaths = changedRaw.split("\n").map((l) => l.trim()).filter(Boolean);
+        if (branchHasSourceOrDependencyChanges(changedPaths)) {
+          await log(
+            `AI merge: noCommitsExpected=true but branch has source/dependency changes (${changedPaths.length} path(s)) — running dependency sync`,
+          );
+        } else {
+          skipDependencySyncForNoCommits = true;
+          await log(`AI merge: skipping dependency sync — no-commits task with no source/dependency changes`);
+        }
+      }
+      if (!skipDependencySyncForNoCommits) {
       const depsSyncStartedAt = Date.now();
       let depsSyncResult: Awaited<ReturnType<typeof installWorktreeDependencies>> | null = null;
       try {

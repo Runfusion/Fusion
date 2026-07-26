@@ -141,14 +141,24 @@ FNXC:MergeDeps 2026-07-17-12:00:
 Env passthrough coverage for installWorktreeDependencies. The explicit forwarding of corepack/pnpm
 env vars mirrors mission-verification.ts VERIFICATION_ENV_ALLOWLIST so pnpm is resolvable even when
 the engine process starts without full shell initialization.
+
+FNXC:MergeDeps 2026-07-26-14:18:
+Restore absent process.env keys via delete, not assignment. Assigning `undefined` materializes the
+string "undefined" and leaks into later tests (CodeRabbit on PR #2437). PATH stays string | undefined.
 */
 describe("installWorktreeDependencies env passthrough", () => {
+  function restoreEnv(key: string, original: string | undefined): void {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  }
+
   /**
    * Install a fake `pnpm` that logs selected env vars to a file so we can assert
    * the child process receives the expected environment. Writes a JSON object with
    * the requested env var values.
+   * Returns the prior PATH (possibly undefined when PATH was absent).
    */
-  function installEnvLoggingPnpm(envVars: string[], logPath: string): string {
+  function installEnvLoggingPnpm(envVars: string[], logPath: string): string | undefined {
     const binDir = tmp("fusion-env-fake-bin-");
     const script = join(binDir, "pnpm");
     const varsJson = JSON.stringify(envVars);
@@ -163,8 +173,8 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
 `,
     );
     chmodSync(script, 0o755);
-    const previousPath = process.env.PATH ?? "";
-    process.env.PATH = `${binDir}${delimiter}${previousPath}`;
+    const previousPath = process.env.PATH;
+    process.env.PATH = previousPath === undefined ? binDir : `${binDir}${delimiter}${previousPath}`;
     return previousPath;
   }
 
@@ -193,10 +203,10 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
       expect(captured.PNPM_HOME).toBe("/tmp/fake-pnpm");
       expect(captured.npm_config_registry).toBe("https://fake.registry/");
     } finally {
-      process.env.PATH = previousPath;
-      process.env.COREPACK_HOME = origCorepackHome;
-      process.env.PNPM_HOME = origPnpmHome;
-      process.env.npm_config_registry = origNpmRegistry;
+      restoreEnv("PATH", previousPath);
+      restoreEnv("COREPACK_HOME", origCorepackHome);
+      restoreEnv("PNPM_HOME", origPnpmHome);
+      restoreEnv("npm_config_registry", origNpmRegistry);
     }
   });
 
@@ -219,7 +229,7 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
       expect(captured.HOME).toBe(process.env.HOME);
       expect(captured.SHELL).toBe(process.env.SHELL);
     } finally {
-      process.env.PATH = previousPath;
+      restoreEnv("PATH", previousPath);
     }
   });
 
@@ -252,10 +262,10 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
       // PATH should still be present
       expect(captured.PATH).toBeDefined();
     } finally {
-      process.env.PATH = previousPath;
-      process.env.COREPACK_HOME = origCorepackHome;
-      process.env.PNPM_HOME = origPnpmHome;
-      process.env.npm_config_registry = origNpmRegistry;
+      restoreEnv("PATH", previousPath);
+      restoreEnv("COREPACK_HOME", origCorepackHome);
+      restoreEnv("PNPM_HOME", origPnpmHome);
+      restoreEnv("npm_config_registry", origNpmRegistry);
     }
   });
 });
