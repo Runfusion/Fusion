@@ -495,6 +495,14 @@ export interface ServerOptions {
    *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
    *  stale token in a project .env doesn't silently override the flag. */
   noAuth?: boolean;
+  /*
+  FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+  Resolved auth-middleware state, wired by createServer once it has decided whether the
+  bearer-token middleware is actually installed. Routes that gate or log privileged
+  operator actions (approval decisions) read this instead of re-deriving token state, so
+  the route-visible answer can never disagree with the middleware that was mounted.
+  */
+  isDaemonAuthEnabled?: boolean;
   /** Optional runtime logger for server/routes diagnostics.
    *  Defaults to a console-backed logger scoped to `server` when omitted. */
   runtimeLogger?: RuntimeLogger;
@@ -2166,6 +2174,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // REST API
   const apiRouter = createApiRoutes(store, {
     ...options,
+    // FNXC:ApprovalDecisionAuthority 2026-07-26-16:10: routes must see the same answer
+    // as the middleware mounted above — auth is enabled iff a daemonToken was installed.
+    isDaemonAuthEnabled: Boolean(daemonToken),
     runtimeLogger,
     aiSessionStore: aiSessionStore as AiSessionStore,
     chatStore,

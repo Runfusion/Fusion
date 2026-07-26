@@ -3047,7 +3047,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (typeof reason !== "string" || reason.trim().length === 0) {
         throw badRequest("reason is required to bypass a failed pre-merge review step");
       }
-      const resolvedActor = typeof actor === "string" && actor.trim().length > 0 ? actor.trim() : "dashboard-operator";
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-16:20:
+      The recorded bypass actor is derived SERVER-SIDE. The daemon bearer token is a
+      single shared operator secret, so the only honest attribution for an HTTP bypass is
+      the synthetic dashboard operator; a body-supplied `actor` is client-claimed,
+      unverifiable identity and is carried as advisory display metadata only — it can no
+      longer replace the attribution (an agent could previously stamp any name into
+      `bypassedBy`). Format: `dashboard-operator` or `dashboard-operator (as "<name>")`.
+      Mandatory `reason` stays mandatory.
+      */
+      const advisoryName = typeof actor === "string" && actor.trim().length > 0 ? actor.trim() : undefined;
+      const resolvedActor = advisoryName && advisoryName !== "dashboard-operator"
+        ? `dashboard-operator (as ${JSON.stringify(advisoryName)})`
+        : "dashboard-operator";
       const updated = await scopedStore.bypassFailedPreMergeReviewStep(req.params.id, {
         reason: reason.trim(),
         actor: resolvedActor,
@@ -3269,6 +3282,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Archive all done tasks
   router.post("/tasks/archive-all-done", async (req, res) => {
     try {
+      /*
+      FNXC:ArchiveConfirmGate 2026-07-26-16:30:
+      Bulk archive sweeps every done task in one call, yet had no confirmation while the
+      single-task reset (a comparable board-wide-impact mutation) already requires
+      `{ confirm: true }`. An agent or stray script hitting this route could silently
+      empty the Done column. Require the same explicit `{ confirm: true }` body; the
+      dashboard's "Archive all done" button sends it after its user-facing confirm.
+      */
+      const { confirm: confirmed } = (req.body ?? {}) as { confirm?: boolean };
+      if (confirmed !== true) {
+        throw badRequest(
+          "This operation archives every done task. Pass { \"confirm\": true } in the request body to proceed.",
+        );
+      }
       const { store: scopedStore } = await getProjectContext(req);
       const archived = await scopedStore.archiveAllDone();
       res.json({ archived });

@@ -11,7 +11,17 @@ import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { emitApprovalSseEvent } from "../sse.js";
 import { requireAsyncLayer } from "../require-async-layer.js";
+import { isDaemonAuthActive } from "../auth-middleware.js";
 
+/*
+FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+The synthetic dashboard operator. The daemon bearer token is a single shared operator
+secret, so every authenticated HTTP decision is, at best, "the operator" — the server
+cannot distinguish individual humans, and it must never accept a client-claimed agent
+identity as the decider (an AI agent self-approved a live-task deletion through exactly
+that hole). All decisions are therefore recorded against this snapshot; a body-supplied
+actor is advisory display metadata only (see the decision route).
+*/
 const DEFAULT_ACTOR: ApprovalRequestActorSnapshot = {
   actorId: "user",
   actorType: "user",
@@ -297,7 +307,13 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
 
   router.post("/approvals/:id/decision", async (req, res) => {
     try {
-      const body = (req.body ?? {}) as { decision?: "approve" | "deny"; comment?: string; actor?: ApprovalRequestActorSnapshot };
+      // FNXC:ApprovalDecisionAuthority 2026-07-26-16:10: `actor` is deliberately typed as
+      // untrusted wire input, not ApprovalRequestActorSnapshot — it never becomes the decider.
+      const body = (req.body ?? {}) as {
+        decision?: "approve" | "deny";
+        comment?: string;
+        actor?: { actorId?: unknown; actorType?: unknown; actorName?: unknown } | null;
+      };
       if (body.decision !== "approve" && body.decision !== "deny") {
         throw badRequest("decision must be one of: approve, deny");
       }
@@ -312,9 +328,86 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       const existing = await approvalStore.get(requestId);
       if (!existing) throw notFound("Approval request not found");
 
-      const actor = body.actor ?? DEFAULT_ACTOR;
-      if (!actor || typeof actor.actorId !== "string" || typeof actor.actorType !== "string" || typeof actor.actorName !== "string") {
-        throw badRequest("actor must include actorId, actorType, and actorName");
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+      The decider is derived SERVER-SIDE, never taken from the request body. Previously
+      `body.actor` was shape-validated only and passed straight into `decide(...)`, so an
+      AI agent holding the API could stamp its own (or any) identity on the approval of
+      its own request. Rules:
+        - A body actor with actorType !== "user" is rejected 403 — agents/system callers
+          cannot decide approvals over HTTP at all.
+        - A body actor whose actorId matches the request's requester is rejected 403
+          (explicit self-approval claim).
+        - The effective decider is always DEFAULT_ACTOR's actorId/actorType; only the
+          advisory display actorName may be carried from a body actor whose actorType is
+          "user".
+        - If the derived decider's actorId equals the requester's actorId, the decision
+          is refused 403 (the requester queue cannot approve itself).
+      */
+      let advisoryActorName: string | undefined;
+      const bodyActor = body.actor;
+      if (bodyActor !== undefined) {
+        if (
+          bodyActor === null
+          || typeof bodyActor !== "object"
+          || typeof bodyActor.actorId !== "string"
+          || typeof bodyActor.actorType !== "string"
+          || typeof bodyActor.actorName !== "string"
+        ) {
+          throw badRequest("actor must include actorId, actorType, and actorName");
+        }
+        if (bodyActor.actorType !== "user") {
+          throw new ApiError(403, "Approval decisions are operator-only; a non-user actor cannot decide an approval request");
+        }
+        if (bodyActor.actorId === existing.requester.actorId) {
+          throw new ApiError(403, "An approval request cannot be decided by its own requester");
+        }
+        if (bodyActor.actorName.trim().length > 0) {
+          advisoryActorName = bodyActor.actorName;
+        }
+      }
+      const actor: ApprovalRequestActorSnapshot = {
+        actorId: DEFAULT_ACTOR.actorId,
+        actorType: DEFAULT_ACTOR.actorType,
+        actorName: advisoryActorName ?? DEFAULT_ACTOR.actorName,
+      };
+      if (actor.actorId === existing.requester.actorId) {
+        throw new ApiError(403, "An approval request cannot be decided by its own requester");
+      }
+
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+      Auth-disabled trust assumption, stated explicitly: when no daemon bearer token is
+      installed (local single-operator mode), anyone who can reach the socket is treated
+      as the operator. The decision is still allowed — locking approvals out of unauth
+      local mode would break the shipped default — but each decision is loudly logged so
+      the trust boundary is visible, not silent.
+      */
+      const daemonAuthEnabled = ctx.isDaemonAuthEnabled
+        ?? ctx.options?.isDaemonAuthEnabled
+        ?? isDaemonAuthActive(ctx.options);
+      if (!daemonAuthEnabled) {
+        runtimeLogger.warn("Approval decision accepted without daemon auth (local single-operator trust)", {
+          requestId,
+          decision: body.decision,
+        });
+      }
+
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+      Sandbox-provisioning honesty: without a registered executor, "approve" used to
+      succeed silently and write an approved audit event while provisioning never ran —
+      a control that lies. Refuse 409 BEFORE decide() so the request stays pending until
+      a server with a real executor handles it.
+      */
+      if (
+        body.decision === "approve"
+        && existing.targetAction.category === "sandbox_provisioning"
+        && !sandboxProvisioningExecutor
+      ) {
+        throw conflict(
+          "Cannot approve sandbox provisioning: no sandbox provisioning executor is registered on this server; the request remains pending",
+        );
       }
 
       const targetStatus = body.decision === "approve" ? "approved" : "denied";
@@ -323,7 +416,14 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
         updated = await approvalStore.decide(requestId, targetStatus, { actor, note: body.comment });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("Invalid approval request transition")) {
+        /*
+        FNXC:ApprovalDecisionAuthority 2026-07-26-16:10:
+        The core store rejects replayed/already-decided requests with messages starting
+        "Invalid approval request transition" and expired requests with messages
+        containing "expired". Both are client-resolvable races on a request's lifecycle,
+        so both map to 409 conflict rather than a 500.
+        */
+        if (message.includes("Invalid approval request transition") || message.includes("expired")) {
           throw conflict(message);
         }
         throw error;

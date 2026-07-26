@@ -459,14 +459,16 @@ async function createChatMissionGateContexts(
     createApprovalRequest,
     findApprovalByDedupeKey: async (dedupeKey) => {
       const latest = await approvalStore.findLatestByDedupeKey({ requesterActorId: agent.id, dedupeKey });
-      return latest ? { id: latest.id, status: latest.status } : null;
+      // FNXC:ApprovalRedemption 2026-07-26-13:50: decidedAt lets resolveGateOutcome apply the approval-grant TTL at redemption.
+      return latest ? { id: latest.id, status: latest.status, decidedAt: latest.decidedAt } : null;
     },
     pauseForApproval: async () => {
       await agentStore.updateAgentState(agent.id, "paused");
       await agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
     },
     markApprovalCompleted: async (approvalRequestId) => {
-      await approvalStore.markCompleted(approvalRequestId, { actor: requester, note: "Tool executed after approval" });
+      // FNXC:ApprovalRedemption 2026-07-26-14:35: ownership guard — an agent must not be able to burn another agent's approval by id.
+      await approvalStore.markCompleted(approvalRequestId, { actor: requester, note: "Tool executed after approval", expectedRequesterActorId: agent.id });
     },
   };
   const permanentAgentGating: PermanentAgentGatingContext = {
@@ -486,6 +488,11 @@ async function createChatMissionGateContexts(
     findPendingApprovalRequest: async (dedupeKey) => {
       const pending = await approvalStore.list({ status: "pending", requesterActorId: agent.id, limit: 100 });
       return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+    },
+    // FNXC:AgentGating 2026-07-26-14:50: gate-path parity — pause the bound agent when the permanent gate parks a pending approval, matching the action-gate context above.
+    pauseForApproval: async () => {
+      await agentStore.updateAgentState(agent.id, "paused");
+      await agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
     },
   };
 

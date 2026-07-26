@@ -73,7 +73,7 @@ function rethrowPlanningWorkflowCreateError(
 }
 
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
-  const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
+  const { router, getProjectContext, planningLogger, runtimeLogger, rethrowAsApiError } = ctx;
   const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
   const planningRuntime = (settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
     clarificationEnabled: settings.agentClarificationEnabled === true,
@@ -439,6 +439,17 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           // is what left FN-2164 blocked by the ghost of FN-2163.
           parentTaskClosed = false;
           parentTaskCloseError = err instanceof Error ? err.message : String(err);
+          /*
+          FNXC:TaskDeleteAttribution 2026-07-26-16:25:
+          A parent-close failure must be operator-visible in server diagnostics, not only
+          in the (easily ignored) response field — the FN-2164 incident was a parent
+          delete failing silently and leaving children permanently blocked on a ghost id.
+          */
+          runtimeLogger.warn("Subtask breakdown: failed to close parent task after creating subtasks", {
+            parentTaskId: normalizedParentId,
+            sessionId,
+            error: parentTaskCloseError,
+          });
         }
       }
 
