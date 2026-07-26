@@ -72,7 +72,8 @@ describe("startWork", () => {
   it("moves allowed tasks to in-progress and returns task card", async () => {
     const deps = createDeps(makeTask({ column: "todo", status: null }));
     const result = await startWork({ taskId: "FN-1" }, deps as never);
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+    // FNXC:GlassesAgentActions 2026-07-26-12:40: human gestures carry the user move source.
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress", { moveSource: "user" });
     expect(result.card.kind).toBe("task");
     expect(result.task.column).toBe("in-progress");
   });
@@ -99,7 +100,8 @@ describe("requestReview", () => {
   it("moves in-progress task to in-review", async () => {
     const deps = createDeps(makeTask({ column: "in-progress" }));
     const result = await requestReview({ taskId: "FN-1" }, deps as never);
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-review");
+    // FNXC:GlassesAgentActions 2026-07-26-12:40: human gestures carry the user move source.
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-review", { moveSource: "user" });
     expect(result.task.column).toBe("in-review");
   });
 

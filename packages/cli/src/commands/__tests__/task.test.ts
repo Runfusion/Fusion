@@ -1176,7 +1176,53 @@ describe("project-aware task command behavior", () => {
     await runTaskMove("FN-123", "done", "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done");
+    // FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
+    // must carry the user move source so user-move semantics (hard cancel) apply.
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" });
+  });
+
+  it("runTaskMove passes the user source through to the task-move disposer seam (hard cancel)", async () => {
+    /*
+    FNXC:TaskMovement 2026-07-26-12:35:
+    Regression coverage for the moveSource hard-cancel gap: only user-source
+    in-progress → todo moves run disposeTaskBeforeMove. The fake store forwards
+    the CLI-provided moveSource into the REAL core disposer seam (the from/todo
+    columns are pinned by the harness because this file's @fusion/core mock
+    replaces COLUMNS with a fixture list that has no "todo"), so this fails if
+    runTaskMove ever drops `moveSource: "user"` again — the disposer would not
+    fire and the agent session would keep running behind a Todo card.
+    */
+    const { disposeTaskBeforeMove, registerTaskMoveDisposer } = await import("@fusion/core");
+    const disposer = vi.fn().mockResolvedValue(undefined);
+    const fakeStore = {
+      moveTask: vi.fn(
+        async (id: string, column: string, options?: { moveSource?: "user" | "engine" | "scheduler" }) => {
+          const task = makeTask({ id, column: "in-progress" });
+          await disposeTaskBeforeMove(fakeStore as unknown as TaskStore, {
+            task: task as never,
+            from: "in-progress",
+            to: "todo",
+            // Mirrors moves.ts: an absent moveSource defaults to "engine".
+            source: options?.moveSource ?? "engine",
+          });
+          return makeTask({ id, column });
+        },
+      ),
+    };
+    registerTaskMoveDisposer(fakeStore as unknown as TaskStore, disposer);
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: fakeStore as unknown as TaskStore,
+    });
+
+    await runTaskMove("FN-123", "in-progress", "demo-project");
+
+    expect(disposer).toHaveBeenCalledOnce();
+    expect(disposer).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-123" }));
   });
 
   it("runTaskAttach uses resolved project store when project name is provided", async () => {

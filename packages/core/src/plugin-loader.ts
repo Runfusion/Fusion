@@ -47,6 +47,7 @@ import { createLogger } from "./logger.js";
 import { getCreateAiSessionFactory, getCreateInteractiveAiSessionFactory } from "./ai-engine-loader.js";
 import { scanPluginSecurity } from "./plugin-security-scan.js";
 import { resolvePluginRootFromEntryPath } from "./plugin-skill-paths.js";
+import { createPluginGatedTaskStore } from "./plugin-task-store-gate.js";
 
 // Minimum Fusion version for plugin compatibility checks (can be expanded later)
 const MINIMUM_FUSION_VERSION = "0.1.0";
@@ -214,6 +215,15 @@ export class PluginLoader extends EventEmitter<{
   "plugin:error": [PluginErrorEvent];
   "plugin:stopped": [string]; // Kept for backward compatibility
 }> {
+  /*
+  FNXC:PluginTaskStoreGate 2026-07-26-12:20:
+  Re-exposed here (in addition to plugin-task-store-gate.ts) because the engine's
+  PluginRunner builds its own PluginContexts and must apply the same gate; the
+  core barrel (index.ts) is edit-frozen, so the already-exported PluginLoader
+  class is the cross-package access point.
+  */
+  static readonly createGatedTaskStore = createPluginGatedTaskStore;
+
   /** Loaded plugin instances keyed by plugin id */
   private plugins: Map<string, FusionPlugin> = new Map();
 
@@ -277,14 +287,27 @@ export class PluginLoader extends EventEmitter<{
       );
     }
 
+    /*
+    FNXC:PluginTaskStoreGate 2026-07-26-12:20:
+    Every context handed to a plugin carries a gated TaskStore: destructive methods
+    throw unless the manifest declares permissions.destructiveTaskOps. The gate also
+    wraps override stores and project stores resolved via resolveProjectTaskStore so
+    a plugin cannot escape the gate through a project-scoped handle.
+    */
+    const permissions = this.getPlugin(pluginId)?.manifest.permissions;
+    const rawTaskStore = overrides?.taskStore ?? this.options.taskStore;
+    const rawResolveProjectTaskStore = overrides?.resolveProjectTaskStore;
     return {
       pluginId,
-      taskStore: overrides?.taskStore ?? this.options.taskStore,
+      taskStore: createPluginGatedTaskStore(rawTaskStore, { pluginId, permissions }),
       settings: overrides?.settings ?? await this.getPluginSettings(pluginId),
       logger: this.createLogger(pluginId),
       createAiSession,
       createInteractiveAiSession,
-      resolveProjectTaskStore: overrides?.resolveProjectTaskStore,
+      resolveProjectTaskStore: rawResolveProjectTaskStore
+        ? async (projectId: string) =>
+            createPluginGatedTaskStore(await rawResolveProjectTaskStore(projectId), { pluginId, permissions })
+        : undefined,
       // The host (dashboard) may supply a real publisher that forwards custom
       // plugin events to connected SSE clients. Absent an override, fall back to
       // logging (the historical no-op behavior) so non-dashboard hosts and tests

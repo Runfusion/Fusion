@@ -1238,8 +1238,16 @@ export async function runTaskMove(id: string, column: string, projectName?: stri
   // every attempt. Only `database is locked`/SQLITE_BUSY|LOCKED errors are
   // retried; a genuinely invalid move (bad column, missing task) propagates
   // immediately without looping.
+  /*
+  FNXC:TaskMovement 2026-07-26-12:35:
+  `fn task move` is a human board action and must carry `moveSource: "user"` like
+  the dashboard's move route. Without it, moveTask defaulted the source to
+  "engine", so an in-progress → todo move from the CLI skipped the
+  disposeTaskBeforeMove hard-cancel seam — the board showed Todo while the
+  agent session kept running (Move-Task contract violation).
+  */
   await withBoardWrite(projectName, { id, action: "move task" }, async (context) => {
-    const task = await context.store.moveTask(id, column as Column);
+    const task = await context.store.moveTask(id, column as Column, { moveSource: "user" });
     console.log();
     console.log(`  ✓ Moved ${task.id} → ${columnLabel(task.column)}`);
     console.log();

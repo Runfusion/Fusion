@@ -294,7 +294,8 @@ export async function startWork(input: AgentActionInput, deps: AgentActionDeps):
   const startTarget = destination(startLanes, "wip");
   if (!startTarget) conflict("start-work", task);
   // Intentional v1 limitation: plugin cannot import engine allocator, so moveTask runs without allocateWorktree.
-  await deps.taskStore.moveTask(taskId, startTarget);
+      /* FNXC:GlassesAgentActions 2026-07-30-12:40: human gesture — user move source, matching the dashboard move route. */
+  await deps.taskStore.moveTask(taskId, startTarget, { moveSource: "user" });
   return toResult(deps.taskStore, taskId);
 }
 
@@ -315,7 +316,8 @@ export async function requestReview(input: AgentActionInput, deps: AgentActionDe
   }
   const reviewTarget = destination(reviewLanes, "review");
   if (!reviewTarget) conflict("request-review", task);
-  await deps.taskStore.moveTask(taskId, reviewTarget);
+      /* FNXC:GlassesAgentActions 2026-07-30-12:40: human gesture — user source (see startWork). */
+  await deps.taskStore.moveTask(taskId, reviewTarget, { moveSource: "user" });
   return toResult(deps.taskStore, taskId);
 }
 
@@ -332,7 +334,8 @@ export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps
   }
   const approveTarget = destination(approveLanes, "hold");
   if (!approveTarget) conflict("approve-plan", task);
-  await deps.taskStore.moveTask(taskId, approveTarget);
+      /* FNXC:GlassesAgentActions 2026-07-30-12:40: human gesture — user source (see startWork). */
+  await deps.taskStore.moveTask(taskId, approveTarget, { moveSource: "user" });
   await deps.taskStore.updateTask(taskId, { status: undefined });
   return toResult(deps.taskStore, taskId);
 }
@@ -372,6 +375,7 @@ export async function returnToAgent(input: AgentActionInput, deps: AgentActionDe
     status: null,
     assignedAgentId: null,
   });
+      /* FNXC:GlassesAgentActions 2026-07-30-12:40: intentionally DEFAULT (engine) source: a user-source move to the hold lane parks the task userPaused, defeating the return-to-agent intent. */
   await deps.taskStore.moveTask(taskId, returnTarget);
   return toResult(deps.taskStore, taskId);
 }
@@ -447,6 +451,7 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
       recoveryRetryCount: null,
       nextRecoveryAt: null,
     });
+      /* FNXC:GlassesAgentActions 2026-07-30-12:40: intentionally DEFAULT (engine) source: retry requeues for execution; a user source would userPaused-park the row. */
     await deps.taskStore.moveTask(taskId, retryTarget);
     return toResult(deps.taskStore, taskId);
   }

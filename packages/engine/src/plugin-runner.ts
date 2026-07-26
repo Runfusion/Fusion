@@ -38,6 +38,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { isAbsolute } from "node:path";
 import {
+  PluginLoader as CorePluginLoader,
   getTraitRegistry,
   getWorkflowExtensionRegistry,
   evaluatePromptConditionDetailed,
@@ -813,9 +814,13 @@ export class PluginRunner {
       const pluginId = plugin.manifest.id;
       try {
         const settings = await this.getPluginSettings(pluginId);
+        // FNXC:PluginTaskStoreGate 2026-07-26-12:20: same gate as createToolContext.
         const context: PluginContext = {
           pluginId,
-          taskStore: this.options.taskStore,
+          taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+            pluginId,
+            permissions: plugin.manifest.permissions,
+          }),
           settings,
           logger: this.createPluginLogger(pluginId),
           emitEvent: (event: string, data: unknown) => {
@@ -1252,9 +1257,14 @@ export class PluginRunner {
    */
   private async createToolContext(plugin: FusionPlugin): Promise<PluginContext> {
     const settings = await this.getPluginSettings(plugin.manifest.id);
+    // FNXC:PluginTaskStoreGate 2026-07-26-12:20: destructive TaskStore methods are
+    // gated behind manifest permissions.destructiveTaskOps for every plugin context.
     return {
       pluginId: plugin.manifest.id,
-      taskStore: this.options.taskStore,
+      taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+        pluginId: plugin.manifest.id,
+        permissions: plugin.manifest.permissions,
+      }),
       settings,
       logger: this.createPluginLogger(plugin.manifest.id),
       emitEvent: (event: string, data: unknown) => {
@@ -1281,9 +1291,13 @@ export class PluginRunner {
     }
 
     const settings = await this.getPluginSettings(pluginId);
+    // FNXC:PluginTaskStoreGate 2026-07-26-12:20: same gate as createToolContext.
     return {
       pluginId,
-      taskStore: this.options.taskStore,
+      taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+        pluginId,
+        permissions: plugin.manifest.permissions,
+      }),
       settings,
       logger: this.createPluginLogger(pluginId),
       emitEvent: (event: string, data: unknown) => {
