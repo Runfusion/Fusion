@@ -955,20 +955,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   public async _createTaskInternal( input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; }, ): Promise<Task> {
     /*
-    FNXC:SqliteFinalRemoval 2026-06-25-10:35:
-    Route to the async backend variant when the store is in backend mode so
-    callers like createTaskWithReservedId (which go through this internal
-    create path with an explicit reserved id) work against PostgreSQL. The
-    sync path uses atomicCreateTaskJson -> store.db.transactionImmediate(),
-    which throws "SQLite Database is not available in backend mode". The
-    backend variant uses layer.transactionImmediate + insertTaskRowInTransaction
-    against PostgreSQL, preserving create-class non-destructive insert
-    semantics (see docs/storage.md invariants).
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Task create is PostgreSQL-only (layer.transactionImmediate + insertTaskRowInTransaction). The former sync SQLite _createTaskInternalImpl arm is deleted; production always injects AsyncDataLayer.
     */
-    if (this.backendMode) {
-      return _createTaskInternalBackendImpl(this, input, title, resolvedWorkflowSteps, id, options);
-    }
-    return _createTaskInternalImpl(this, input, title, resolvedWorkflowSteps, id, options);
+    return _createTaskInternalBackendImpl(this, input, title, resolvedWorkflowSteps, id, options);
   }
   public async _maybeAutoArchiveSameAgentDuplicate(task: Task, input: TaskCreateInput): Promise<void> {
     return _maybeAutoArchiveSameAgentDuplicateImpl(this, task, input);
@@ -1989,8 +1979,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     predicate: (live: Task) => boolean | Promise<boolean>,
     options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
   ): Promise<DeleteTaskIfResult> {
-    if (this.backendMode) return deleteTaskIfBackendImpl(this, id, predicate, options);
-    return deleteTaskIfImpl(this, id, predicate, options);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Conditional delete is PostgreSQL-only; the SQLite deleteTaskIfImpl arm is deleted.
+    */
+    return deleteTaskIfBackendImpl(this, id, predicate, options);
   }
   public deleteTaskById(taskId: string): void {
     return deleteTaskByIdImpl(this, taskId);

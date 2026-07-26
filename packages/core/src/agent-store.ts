@@ -534,73 +534,8 @@ export class AgentStore extends EventEmitter {
     to import against PostgreSQL (the PG baseline already covers this), so no-op
     cleanly instead of laundering a stub throw into a false success.
     */
-    if (this.backendMode) return 0;
-    const entries = await readdir(this.agentsDir, { withFileTypes: true }).catch(() => []);
-    const runDirs = entries.filter((entry) => entry.isDirectory() && entry.name.endsWith("-runs"));
-
-    let imported = 0;
-    for (const dir of runDirs) {
-      const agentId = dir.name.replace(/-runs$/, "");
-      const runDir = join(this.agentsDir, dir.name);
-      const runFiles = await readdir(runDir).catch(() => [] as string[]);
-
-      for (const file of runFiles) {
-        if (!file.endsWith(".json")) {
-          continue;
-        }
-
-        try {
-          const content = await readFile(join(runDir, file), "utf-8");
-          const run = JSON.parse(content) as Partial<AgentHeartbeatRun>;
-          if (
-            typeof run.id !== "string" ||
-            typeof run.startedAt !== "string" ||
-            !["active", "completed", "terminated", "failed"].includes(String(run.status))
-          ) {
-            continue;
-          }
-
-          const normalizedRun: AgentHeartbeatRun = {
-            id: run.id,
-            agentId: typeof run.agentId === "string" ? run.agentId : agentId,
-            startedAt: run.startedAt,
-            endedAt: typeof run.endedAt === "string" ? run.endedAt : null,
-            status: run.status as AgentHeartbeatRun["status"],
-            invocationSource: run.invocationSource,
-            triggerDetail: run.triggerDetail,
-            processPid: run.processPid,
-            exitCode: run.exitCode,
-            sessionIdBefore: run.sessionIdBefore,
-            sessionIdAfter: run.sessionIdAfter,
-            usageJson: run.usageJson,
-            resultJson: run.resultJson,
-            contextSnapshot: run.contextSnapshot,
-            stdoutExcerpt: run.stdoutExcerpt,
-            stderrExcerpt: run.stderrExcerpt,
-          };
-
-          const result = this.db.prepare(`
-            INSERT OR IGNORE INTO agentRuns (id, agentId, data, startedAt, endedAt, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(
-            normalizedRun.id,
-            normalizedRun.agentId,
-            JSON.stringify(normalizedRun),
-            normalizedRun.startedAt,
-            normalizedRun.endedAt,
-            normalizedRun.status,
-          );
-          imported += Number(result.changes);
-        } catch {
-          // Legacy run files may be partially written or manually edited; ignore them.
-        }
-      }
-    }
-
-    if (imported > 0) {
-      this.db.bumpLastModified();
-    }
-    return imported;
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: legacy run-dir import is SQLite-only; no-op under PG. */
+    return 0;
   }
 
   private async importLegacyFileDataOnce(): Promise<void> {
@@ -794,21 +729,15 @@ export class AgentStore extends EventEmitter {
    * @returns The agent, or null if not found
    */
   async getAgent(agentId: string): Promise<Agent | null> {
-    // FNXC:SqliteFinalRemoval 2026-06-25-23:35:
-    // Backend mode: read via async Drizzle helper instead of sync readAgent.
-    if (this.backendMode) {
-      const agent = await readAgentAsync(this.asyncLayer!.db, agentId);
-      const parsed = agent ? this.parseAgent(agent) : null;
-      /*
-      FNXC:IncompletePgPorts 2026-07-26-20:40:
-      Populate getCachedAgent memory so sync heartbeat resolveAgentConfig can
-      honor per-agent runtimeConfig without a sync SQLite handle.
-      */
-      if (parsed) this.agentMemoryCache.set(agentId, parsed);
-      else this.agentMemoryCache.delete(agentId);
-      return parsed;
-    }
-    return this.readAgent(agentId);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Agent reads are PostgreSQL-only via readAgentAsync. Populate getCachedAgent memory so sync heartbeat resolveAgentConfig can honor per-agent runtimeConfig without a SQLite handle.
+    */
+    const agent = await readAgentAsync(this.asyncLayer!.db, agentId);
+    const parsed = agent ? this.parseAgent(agent) : null;
+    if (parsed) this.agentMemoryCache.set(agentId, parsed);
+    else this.agentMemoryCache.delete(agentId);
+    return parsed;
   }
 
   /**
@@ -2890,10 +2819,8 @@ export class AgentStore extends EventEmitter {
     null until the first async getAgent warms the cache (heartbeat timer path
     uses async getAgentConfig as authority).
     */
-    if (this.backendMode) {
-      return this.agentMemoryCache.get(agentId) ?? null;
-    }
-    return this.readAgent(agentId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: getCachedAgent is memory/PG-only; no SQLite readAgent. */
+    return this.agentMemoryCache.get(agentId) ?? null;
   }
 
   private parseAgent(data: AgentData): Agent {

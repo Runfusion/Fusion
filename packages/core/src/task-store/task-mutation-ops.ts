@@ -920,13 +920,11 @@ export async function registerArtifactImpl(store: TaskStore, input: ArtifactCrea
     const register = async (): Promise<Artifact> => {
       const stored = await store.writeArtifactData(input, id);
       try {
-        // FNXC:RuntimeWorkflowAsync 2026-06-24-16:55:
-        // Backend mode: delegate row insert to insertArtifactRowAsync (async-comments-attachments.ts).
-        if (store.backendMode) {
-          const layer = store.asyncLayer!;
-          return insertArtifactRowAsync(layer, input, stored);
-        }
-        return store.insertArtifactRow(input, id, now, stored);
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+        Artifact row insert is PostgreSQL-only via insertArtifactRowAsync.
+        */
+        return insertArtifactRowAsync(store.asyncLayer!, input, stored);
       } catch (error) {
         if (stored.absolutePath) {
           await unlink(stored.absolutePath).catch(() => undefined);

@@ -343,10 +343,11 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
-    if (this.backendMode) {
-      return getScheduleAsync(this.asyncLayer!, id);
-    }
-    return this.readScheduleJson(id);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Schedule reads are PostgreSQL-only; the SQLite readScheduleJson arm is deleted.
+    */
+    return getScheduleAsync(this.asyncLayer!, id);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {

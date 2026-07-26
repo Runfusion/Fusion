@@ -103,40 +103,19 @@ export async function replaceActiveTaskWorkflowContinuationImpl(
 }
 
 export async function seedStrandedPlanReviewContinuationImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
-  if (store.backendMode) return seedStrandedPlanReviewContinuationAsync(store.asyncLayer!, input);
-
   /*
-  FNXC:WorkflowSerialization 2026-07-26-23:58:
-  The legacy embedded-store fallback preserves FN-8592's conditional-seed
-  invariant by holding SQLite's immediate write transaction across both
-  predicate reads and the insert. Do not await list/get/upsert helpers here:
-  their separate transactions would reopen the race that PostgreSQL closes
-  with withTaskWorkflowSerialization.
+  FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+  Stranded plan-review continuation seed is PostgreSQL-only (withTaskWorkflowSerialization). The SQLite transactionImmediate fallback is deleted.
   */
-  return store.db.transactionImmediate(() => {
-    const active = store.db.prepare(
-      `SELECT id FROM workflow_work_items
-       WHERE taskId = ? AND state IN ('runnable', 'running', 'held', 'retrying')`,
-    ).get(input.taskId);
-    if (active) return { seeded: false, reason: "active-continuation" as const };
-
-    const task = store.db.prepare("SELECT workflowStepResults FROM tasks WHERE id = ?").get(input.taskId) as { workflowStepResults: string | null } | undefined;
-    const results = task?.workflowStepResults ? JSON.parse(task.workflowStepResults) as Array<{ workflowStepId?: string; status?: string }> : [];
-    if (results.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) {
-      return { seeded: false, reason: "plan-review-passed" as const };
-    }
-
-    const item = upsertWorkflowWorkItemSyncInTransaction(store, input);
-    return { seeded: true, workItemId: item.id };
-  });
+  return seedStrandedPlanReviewContinuationAsync(store.asyncLayer!, input);
 }
 
 export async function transitionWorkflowWorkItemImpl(store: TaskStore, id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: DbTransaction,): Promise<WorkflowWorkItem> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return transitionWorkflowWorkItemAsync(layer, id, state, patch, tx);
-    }
-    return store.transitionWorkflowWorkItemSync(id, state, patch);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Workflow work-item transitions are PostgreSQL-only.
+    */
+    return transitionWorkflowWorkItemAsync(store.asyncLayer!, id, state, patch, tx);
   }
 
 export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: string, leaseOwner: string, opts: { leaseDurationMs: number; now?: string },): Promise<WorkflowWorkItem | null> {

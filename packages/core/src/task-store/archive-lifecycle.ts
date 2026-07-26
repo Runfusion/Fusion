@@ -226,64 +226,22 @@ export async function deleteTaskIfImpl(
   options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
 ): Promise<DeleteTaskIfResult> {
   if (options?.auditContext?.taskId === id) throw new TaskSelfDeleteError(id);
-  if (store.backendMode) return store.deleteTaskIf(id, predicate, options);
-  // FNXC:TaskDeleteNotice 2026-07-26-16:10: see deleteTaskImpl — snapshot inside the lock, notify
-  // after commit. Stays `undefined` when the predicate declines, so a skipped delete is silent.
-  let noticeSnapshot: TaskDeleteNoticeSnapshot | undefined;
-  const result = await store.withTaskLock(id, async () => {
-    store.flushAgentLogBuffer();
-    const task = store.readTaskFromDb(id, { includeDeleted: true });
-    if (!task) throw new Error(`Task ${id} not found`);
-    if (task.deletedAt) return { task, deleted: false };
-    const dependentIds = store.findLiveDependents(id);
-    if (dependentIds.length > 0 && !options?.removeDependencyReferences) throw new TaskHasDependentsError(id, dependentIds);
-    const lineageChildIds = await store.findLiveLineageChildren(id);
-    if (lineageChildIds.length > 0 && !options?.removeLineageReferences) throw new TaskHasLineageChildrenError(id, lineageChildIds);
-    if (!await predicate(task)) return { task, deleted: false };
-    noticeSnapshot = { id: task.id, title: task.title, previousColumn: task.column, previousStatus: task.status ?? null };
-    let deletedAt = "";
-    let rewrittenDependents: Task[] = [];
-    let rewrittenBlockedByResidueDependents: Task[] = [];
-    let rewrittenLineageChildren: Task[] = [];
-    store.db.transaction(() => {
-      rewrittenDependents = store.rewriteDependentsForRemoval(id, dependentIds);
-      rewrittenBlockedByResidueDependents = store.rewriteBlockedByResidueDependentsForRemoval(id, new Set(dependentIds));
-      rewrittenLineageChildren = store.rewriteLineageChildrenForRemoval(id, lineageChildIds);
-      deletedAt = new Date().toISOString();
-      const allowResurrection = options?.allowResurrection === true ? 1 : 0;
-      store.db.prepare("UPDATE tasks SET \"column\" = 'archived', deletedAt = ?, allowResurrection = ?, updatedAt = ? WHERE id = ?").run(deletedAt, allowResurrection, deletedAt, id);
-      void store.recordRunAuditEvent({ domain: "database", mutationType: "task:deleted", target: task.id, taskId: task.id, agentId: options?.auditContext?.agentId ?? "system", runId: options?.auditContext?.runId ?? store.makeSyntheticDeleteRunId(task.id), metadata: { previousColumn: task.column, previousStatus: task.status ?? null, githubIssueAction: options?.githubIssueAction ?? "auto", removeDependencyReferences: !!options?.removeDependencyReferences, removeLineageReferences: !!options?.removeLineageReferences, allowResurrection: options?.allowResurrection === true, sessionId: options?.auditContext?.sessionId, ...buildDeleteCallerAuditFields(options?.auditContext) } });
-      store.clearLinkedAgentTaskIds(id, deletedAt);
-      store.db.bumpLastModified();
-    });
-    task.column = "archived";
-    task.deletedAt = deletedAt;
-    task.updatedAt = deletedAt;
-    scheduleDeleteBranchCleanup(store, task);
-    if (store.agentLogBuffer.length > 0) store.agentLogBuffer = store.agentLogBuffer.filter((entry) => entry.taskId !== id);
-    if (store.isWatching) store.taskCache.delete(id);
-    for (const dependentTask of rewrittenDependents) store.emit("task:updated", dependentTask);
-    for (const dependentTask of rewrittenBlockedByResidueDependents) store.emit("task:updated", dependentTask);
-    for (const lineageChild of rewrittenLineageChildren) store.emit("task:updated", lineageChild);
-    const missionStore = store.missionStore;
-    if (missionStore instanceof MissionStore) {
-      const linkedFeature = missionStore.getFeatureByTaskId(id);
-      if (linkedFeature) missionStore.unlinkFeatureFromTask(linkedFeature.id);
-    }
-    store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
-    return { task, deleted: true };
-  });
-  if (result.deleted) await store.clearNearDuplicateReferencesToFailSoft(id, { column: "archived", deletedAt: result.task.deletedAt ?? new Date().toISOString(), reason: "deleted" });
-  if (result.deleted && noticeSnapshot) await notifyOperatorOfNonOperatorDelete(store, noticeSnapshot, options?.auditContext);
-  return result;
+  /*
+  FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+  deleteTaskIf is PostgreSQL-only; the SQLite transaction arm is deleted. Delegate to the store entry which routes to deleteTaskIfBackendImpl.
+  */
+  /*
+  FNXC:SqliteDualPathCleanup 2026-07-26-14:08:
+  Avoid store.deleteTaskIf recursion; call the PG backend impl directly.
+  */
+  return store.deleteTaskIf(id, predicate, options);
 }
 
 export async function archiveTaskImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean } = true,): Promise<Task> {
-    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:50:
-    // Backend-mode archiveTask: delegates to archiveTaskBackend which uses the
-    // async archive-lineage helper (archiveParentTaskWithLineageGate) to perform
-    // the lineage gate + lineage clear + archive snapshot + soft-delete in one
-    // transaction (VAL-CROSS-014/015). The SQLite path below is unchanged.
-        return store.archiveTaskBackend(id, optionsOrCleanup);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:08:
+    archiveTask is PostgreSQL-only via archiveTaskBackend (async archive-lineage helper).
+    */
+    return store.archiveTaskBackend(id, optionsOrCleanup);
 }
 

@@ -103,16 +103,11 @@ export async function computeWorkflowColumnsGraduationReportImpl(store: TaskStor
 }
 
 export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions = {}): Promise<MergeQueueEntry> {
-    // FNXC:RuntimeLifecycleAsync 2026-06-24-11:12:
-    // Backend-mode: delegate to the async merge-coordination helper (async-merge-coordination.ts).
-    // This preserves enqueue semantics (column check, idempotent ON CONFLICT DO NOTHING insert,
-    // mergeQueue:enqueue audit event) against PostgreSQL via Drizzle.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return enqueueMergeQueueAsync(layer, taskId, opts);
-    }
-    // SQLite path: delegate to the sync internal (also used by moveTaskInternal).
-    return store.enqueueMergeQueueSyncInternal(taskId, opts);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite enqueueMergeQueueSyncInternal arm is deleted.
+    */
+    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts);
 }
 
 export function cleanupStaleMergeQueueRowsImpl(store: TaskStore, now: string): void {
@@ -496,7 +491,7 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
 }
 
 export async function updateTaskCommentImpl(store: TaskStore, id: string, commentId: string, text: string): Promise<Task> {
-    if (store.backendMode) {
+    {
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
@@ -530,7 +525,7 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
 }
 
 export async function deleteTaskCommentImpl(store: TaskStore, id: string, commentId: string): Promise<Task> {
-    if (store.backendMode) {
+    {
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);

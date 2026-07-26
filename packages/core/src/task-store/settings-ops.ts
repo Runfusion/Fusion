@@ -50,7 +50,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
     Reject legacy project setting writes before side effects rather than claim a
     rollback guarantee that the compatibility backend cannot provide.
     */
-    if (!store.backendMode) throw new Error("Project configuration changes require the PostgreSQL revision store");
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project configuration changes always use PostgreSQL revision store. */
 
     // Stale-writer guard (U4, R8): moved keys no longer live in project settings —
     // they belong to workflow setting values. Drop any moved key arriving from a

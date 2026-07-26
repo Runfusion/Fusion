@@ -52,31 +52,11 @@ export async function ensureBranchGroupForSourceImpl(store: TaskStore,
     sourceId: string,
     init: Omit<BranchGroupCreateInput, "sourceType" | "sourceId">,
   ): Promise<BranchGroup> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return ensureBranchGroupForSourceAsync(layer.db, sourceType, sourceId, init);
-    }
-    const existing = await store.getBranchGroupBySource(sourceType, sourceId);
-    if (existing) {
-      return existing;
-    }
-
-    // `branch_groups.branchName` is globally UNIQUE — a branch is represented by
-    // exactly one open group. If another source already owns an open group for
-    // store branch, reuse it rather than calling createBranchGroup and violating
-    // the UNIQUE constraint. Without store, two missions whose shared base resolves
-    // to the same branch (e.g. "main") collide: the throw escapes triageFeature
-    // and is swallowed by its callers, silently stranding "defined" features.
-    const existingByBranch = await store.getBranchGroupByBranchName(init.branchName);
-    if (existingByBranch) {
-      return existingByBranch;
-    }
-
-    return store.createBranchGroup({
-      sourceType,
-      sourceId,
-      ...init,
-    });
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Branch-group ensure is PostgreSQL-only via ensureBranchGroupForSourceAsync (UNIQUE branchName reuse lives in the async helper).
+    */
+    return ensureBranchGroupForSourceAsync(store.asyncLayer!.db, sourceType, sourceId, init);
 }
 
 export async function listBranchGroupsImpl(store: TaskStore, options?: { status?: BranchGroup["status"] }): Promise<BranchGroup[]> {
@@ -663,12 +643,8 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     swallow produced, without the spurious stub throw. Only the true legacy
     (non-backend) path consults the SQLite identity.
     */
-    if (store.backendMode) return store.rootDir;
-    try {
-      return store.db.getProjectIdentity()?.id ?? store.rootDir;
-    } catch {
-      return store.rootDir;
-    }
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG. */
+    return store.rootDir;
 }
 
 export async function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Promise<Record<string, Record<string, unknown>>> {
@@ -740,7 +716,7 @@ export async function getWorkflowSettingValuesAsyncImpl(
     workflowId: string,
     projectId: string,
   ): Promise<Record<string, unknown>> {
-    if (!store.backendMode) return store.getWorkflowSettingValues(workflowId, projectId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const rows = await store.asyncLayer!.db
       .select({ values: schema.project.workflowSettings.values })
       .from(schema.project.workflowSettings)
@@ -779,7 +755,7 @@ export async function getWorkflowPromptOverridesAsyncImpl(
     workflowId: string,
     projectId: string,
   ): Promise<Record<string, string>> {
-    if (!store.backendMode) return store.getWorkflowPromptOverrides(workflowId, projectId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const rows = await store.asyncLayer!.db
       .select({ overrides: schema.project.workflowPromptOverrides.overrides })
       .from(schema.project.workflowPromptOverrides)

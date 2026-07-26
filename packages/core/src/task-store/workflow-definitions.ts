@@ -80,28 +80,16 @@ export async function importLegacyAgentLogsOnceImpl(store: TaskStore): Promise<v
 }
 
 export async function readRawProjectSettingsImpl(store: TaskStore): Promise<Record<string, unknown>> {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: backend mode previously
-    // returned {} from the catch below, hiding raw persisted project settings
-    // on PostgreSQL. Read the config row via the async layer instead.
-    if (store.backendMode) {
-      try {
-        const config = await readProjectConfig(store.asyncLayer!);
-        const settings = config.settings;
-        return settings && typeof settings === "object" && !Array.isArray(settings)
-          ? (settings as Record<string, unknown>)
-          : {};
-      } catch {
-        return {};
-      }
-    }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Raw project settings are read from PostgreSQL project config only. The SQLite config-row arm is deleted.
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: never hide settings behind an empty {} when the layer is present.
+    */
     try {
-      const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
-        | { settings: string }
-        | undefined;
-      if (!row) return {};
-      const parsed = JSON.parse(row.settings) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
+      const config = await readProjectConfig(store.asyncLayer!);
+      const settings = config.settings;
+      return settings && typeof settings === "object" && !Array.isArray(settings)
+        ? (settings as Record<string, unknown>)
         : {};
     } catch {
       return {};
@@ -334,9 +322,7 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
         const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(id);
         if (!requiredPluginId || !(await store.isPluginInstalled(requiredPluginId))) return undefined;
       }
-      const ir = store.backendMode
-        ? await store.applyBuiltInPromptOverridesAsync(id, builtin.ir)
-        : store.applyBuiltInPromptOverridesSync(id, builtin.ir);
+      const ir = await store.applyBuiltInPromptOverridesAsync(id, builtin.ir);
       return { ...builtin, ir };
     }
     // FNXC:WorkflowDefinitions 2026-06-27-06:00: PG backend reads the custom row
@@ -522,19 +508,8 @@ export function getTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): 
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
     */
-    if (store.backendMode) return undefined;
-    const row = store.db
-      .prepare("SELECT workflowId, stepIds FROM task_workflow_selection WHERE taskId = ?")
-      .get(taskId) as { workflowId: string; stepIds: string } | undefined;
-    if (!row) return undefined;
-    let stepIds: string[] = [];
-    try {
-      const parsed = JSON.parse(row.stepIds) as unknown;
-      if (Array.isArray(parsed)) stepIds = parsed.filter((s): s is string => typeof s === "string");
-    } catch {
-      // Corrupt list falls back to empty.
-    }
-    return { workflowId: row.workflowId, stepIds };
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync selection reader is incomplete-PG; use getTaskWorkflowSelectionAsync. */
+    return undefined;
 }
 
 /*
@@ -542,7 +517,7 @@ FNXC:PostgresCutover 2026-07-04-00:00:
 Async backend-mode read of a task's workflow selection (PostgreSQL). stepIds is a JSONB array, returned by Drizzle already parsed. Returns undefined when no row exists. SQLite mode delegates to the sync impl.
 */
 export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
-    if (!store.backendMode) return store.getTaskWorkflowSelection(taskId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const layer = store.asyncLayer!;
     /*
     FNXC:WorkflowModelLanes 2026-07-14-16:34:
@@ -723,9 +698,7 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     if (!(await store.workflowColumnsFlagOn())) {
       return { enabledWorkflowSteps };
     }
-    const newIr = store.backendMode
-      ? await resolveWorkflowIrForTask(store, taskId)
-      : store.resolveTaskWorkflowIrSync(taskId);
+    const newIr = await resolveWorkflowIrForTask(store, taskId);
     const current = store.readTaskFromDb(taskId, { includeDeleted: false });
     if (!current) return { enabledWorkflowSteps };
     const fromColumn = current.column;

@@ -124,13 +124,11 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
-        if (store.backendMode) {
+        {
           const layer = store.asyncLayer!;
           const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
           if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
-        } else if (store.isTaskArchived(id)) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
         }
 
         const dir = store.taskDir(id);

@@ -199,16 +199,12 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
    * project-state authority remains in PostgreSQL.
    */
   async init(): Promise<void> {
-    if (this.backendMode) {
-      /*
-      FNXC:PluginLegacyMigration 2026-07-15-02:09:
-      PostgreSQL plugin reads use central.plugin_installs plus path-scoped project_plugin_states. The startup factory completes the retained-SQLite bridge with its privileged migration connection before constructing the runtime layer; PluginStore.init must not attempt DDL or migration writes through the restricted project-scoped role used by dashboard, serve, desktop, and engine startup.
-      */
-      return;
-    }
-    const _ = this.localDb;
-    const __ = this.centralDb;
-    this.migrateLegacyProjectRows();
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:06:
+    PluginStore.init is a no-op under PostgreSQL. The startup factory completes the retained-SQLite bridge with its privileged migration connection before constructing the runtime layer; do not open SQLite local/central DBs here.
+    FNXC:PluginLegacyMigration 2026-07-15-02:09:
+    PostgreSQL plugin reads use central.plugin_installs plus path-scoped project_plugin_states.
+    */
   }
 
   private validateIdFormat(id: string): boolean {
@@ -487,20 +483,10 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
 
   async enablePlugin(id: string): Promise<PluginInstallation> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
-     * Backend-mode: delegate to the async Drizzle enablePlugin helper.
-     */
-    if (this.backendMode) {
-      const updated = await enablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
-      this.emit("plugin:enabled", updated);
-      this.emit("plugin:updated", updated);
-      return updated;
-    }
-    await this.getPlugin(id);
-    this.upsertProjectState(id, { enabled: true });
-    this.centralDb.bumpLastModified();
-
-    const updated = await this.getPlugin(id);
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:06:
+    Plugin enable is PostgreSQL-only; SQLite upsertProjectState arm deleted.
+    */
+    const updated = await enablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
     this.emit("plugin:enabled", updated);
     this.emit("plugin:updated", updated);
     return updated;
@@ -508,20 +494,10 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
 
   async disablePlugin(id: string): Promise<PluginInstallation> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
-     * Backend-mode: delegate to the async Drizzle disablePlugin helper.
-     */
-    if (this.backendMode) {
-      const updated = await disablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
-      this.emit("plugin:disabled", updated);
-      this.emit("plugin:updated", updated);
-      return updated;
-    }
-    await this.getPlugin(id);
-    this.upsertProjectState(id, { enabled: false });
-    this.centralDb.bumpLastModified();
-
-    const updated = await this.getPlugin(id);
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:06:
+    Plugin disable is PostgreSQL-only; SQLite upsertProjectState arm deleted.
+    */
+    const updated = await disablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
     this.emit("plugin:disabled", updated);
     this.emit("plugin:updated", updated);
     return updated;
@@ -544,25 +520,16 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       }
 
       /*
-       * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
-       * Backend-mode: delegate state persistence to the async helper.
-       */
-      if (this.backendMode) {
-        const updated = await updatePluginStateAsync(
-          this.asyncLayer!.db,
-          id,
-          this.normalizedProjectPath,
-          state,
-          error,
-        );
-        this.emit("plugin:updated", updated);
-        return updated;
-      }
-
-      this.upsertProjectState(id, { state, error });
-      this.centralDb.bumpLastModified();
-
-      const updated = await this.getPlugin(id);
+      FNXC:SqliteDualPathCleanup 2026-07-26-14:06:
+      Plugin state updates are PostgreSQL-only.
+      */
+      const updated = await updatePluginStateAsync(
+        this.asyncLayer!.db,
+        id,
+        this.normalizedProjectPath,
+        state,
+        error,
+      );
       this.emit("plugin:updated", updated);
       return updated;
     }
@@ -580,26 +547,16 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     }
 
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
-     * Backend-mode: delegate state persistence to the async helper.
-     */
-    if (this.backendMode) {
-      const updated = await updatePluginStateAsync(
-        this.asyncLayer!.db,
-        id,
-        this.normalizedProjectPath,
-        state,
-        error ?? null,
-      );
-      this.emit("plugin:stateChanged", updated, oldState, state);
-      this.emit("plugin:updated", updated);
-      return updated;
-    }
-
-    this.upsertProjectState(id, { state, error: error ?? null });
-    this.centralDb.bumpLastModified();
-
-    const updated = await this.getPlugin(id);
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:06:
+    Plugin state transitions are PostgreSQL-only; SQLite upsertProjectState arm deleted.
+    */
+    const updated = await updatePluginStateAsync(
+      this.asyncLayer!.db,
+      id,
+      this.normalizedProjectPath,
+      state,
+      error ?? null,
+    );
     this.emit("plugin:stateChanged", updated, oldState, state);
     this.emit("plugin:updated", updated);
     return updated;

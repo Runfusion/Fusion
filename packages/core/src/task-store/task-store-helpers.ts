@@ -118,9 +118,8 @@ export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): Mer
     degradation) instead of throwing. Callers that need the real record in PG
     must use getMergeRequestRecordAsync below.
     */
-    if (store.backendMode) return null;
-    const row = store.db.prepare("SELECT * FROM merge_requests WHERE taskId = ?").get(taskId) as MergeRequestRow | undefined;
-    return row ? store.rowToMergeRequestRecord(row) : null;
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync merge-request reader is incomplete-PG; use getMergeRequestRecordAsync. */
+    return null;
 }
 
 /**
@@ -133,7 +132,7 @@ export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): Mer
  * mode it delegates to the sync impl.
  */
 export async function getMergeRequestRecordAsyncImpl(store: TaskStore, taskId: string): Promise<MergeRequestRecord | null> {
-    if (!store.backendMode) return store.getMergeRequestRecord(taskId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const layer = store.asyncLayer!;
     const rows = await layer.db
       .select()
@@ -222,9 +221,7 @@ silently dropped operator customizations from getWorkflowDefinition / move IR.
 export async function applyBuiltInPromptOverridesAsyncImpl(store: TaskStore, workflowId: string, ir: WorkflowIr): Promise<WorkflowIr> {
     if (!isBuiltinWorkflowId(workflowId)) return ir;
     const projectId = store.getWorkflowSettingsProjectId();
-    const overrides = store.backendMode
-      ? await store.getWorkflowPromptOverridesAsync(workflowId, projectId)
-      : store.getWorkflowPromptOverrides(workflowId, projectId);
+    const overrides = await store.getWorkflowPromptOverridesAsync(workflowId, projectId);
     return applyPromptOverridesToIr(ir, overrides);
 }
 
@@ -270,7 +267,8 @@ the result on TaskStore.postgresHealthSnapshot for sync getDatabaseHealth /
 healthCheck readers.
 */
 export async function refreshDatabaseHealthAsyncImpl(store: TaskStore): Promise<ReturnType<TaskStore["getDatabaseHealth"]>> {
-    if (!store.backendMode || !store.asyncLayer) {
+    if (!store.asyncLayer) {
+      /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: without AsyncDataLayer, return safe incomplete-PG health snapshot path. */
       return refreshDatabaseHealthImpl(store);
     }
     store.postgresHealthSnapshot = {

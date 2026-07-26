@@ -178,15 +178,10 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * Replace with async store.getTask() calls.
        */
       const assertTaskExists = async (dependencyId: string) => {
-        if (store.backendMode) {
-          try {
-            await store.getTask(dependencyId);
-          } catch {
-            throw new Error(`Dependency task ${dependencyId} not found`);
-          }
-          return;
-        }
-        if (!store.readTaskFromDb(dependencyId)) {
+        /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: dependency existence checks use PostgreSQL getTask only. */
+        try {
+          await store.getTask(dependencyId);
+        } catch {
           throw new Error(`Dependency task ${dependencyId} not found`);
         }
       };
@@ -287,10 +282,8 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * to resolve unresolved dependency and current blocker columns.
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
-        if (store.backendMode) {
-          try { return await store.getTask(depId); } catch { return null; }
-        }
-        return store.readTaskFromDb(depId) ?? null;
+        /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: dependency reads use PostgreSQL getTask only. */
+        try { return await store.getTask(depId); } catch { return null; }
       };
 
       const allDepTasks = await Promise.all(nextDependencies.map(readDepTask));

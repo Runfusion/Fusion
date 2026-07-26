@@ -745,9 +745,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
       constraints from plugin and API callers.
       */
       for (let attempt = 0; attempt < 8; attempt += 1) {
-        const id = store.backendMode
-          ? await nextWorkflowDefinitionIdAsyncImpl(store)
-          : store.nextWorkflowDefinitionId();
+        const id = await nextWorkflowDefinitionIdAsyncImpl(store);
         const definition: WorkflowDefinition = {
           id,
           name,
@@ -780,8 +778,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
         }
 
         store.workflowDefinitionsCache = null;
-        if (!store.backendMode) store.db.bumpLastModified();
-        return definition;
+                return definition;
       }
       throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
     });
