@@ -2641,7 +2641,8 @@ export class TaskExecutor {
       }),
       findApprovalByDedupeKey: async (dedupeKey) => {
         const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
-        return latest ? { id: latest.id, status: latest.status } : null;
+        // FNXC:ApprovalRedemption 2026-07-26-14:30: decidedAt lets resolveGateOutcome apply the approval-grant TTL at redemption.
+        return latest ? { id: latest.id, status: latest.status, decidedAt: latest.decidedAt } : null;
       },
       findPendingApprovalByDedupeKey: async (dedupeKey) => {
         const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
@@ -2710,6 +2711,8 @@ export class TaskExecutor {
         await this.approvalRequestStore.markCompleted(approvalRequestId, {
           actor: { actorId, actorType: "agent", actorName },
           note: "Tool executed after approval",
+          // FNXC:ApprovalRedemption 2026-07-26-14:35: ownership guard — an agent must not be able to burn another agent's approval by id.
+          expectedRequesterActorId: actorId,
         });
       },
     };
@@ -2766,6 +2769,30 @@ export class TaskExecutor {
       findPendingApprovalRequest: async (dedupeKey) => {
         const pending = await this.approvalRequestStore.list({ status: "pending", requesterActorId: actorId, taskId, limit: 100 });
         return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+      },
+      /*
+      FNXC:AgentGating 2026-07-26-14:50:
+      Audit finding (gate-path divergence): the permanent gate minted an
+      approval request but never paused, so the agent kept its turn while
+      "awaiting approval". Mirror the action gate's task-level hold (canonical
+      AWAITING_APPROVAL_PAUSE_REASON + approvalSuspended marker). Session
+      suspension is intentionally not wired here: the permanent gate only runs
+      in lanes WITHOUT an actionGateContext, where no executor in-flight
+      session surface exists to abort.
+      */
+      pauseForApproval: async ({ approvalRequestId, toolName }) => {
+        if (!taskId) return;
+        this.approvalSuspended.add(taskId);
+        try {
+          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          await this.store.logEntry(
+            taskId,
+            `Approval required for ${toolName}. Request ${approvalRequestId} created; task paused awaiting decision.`,
+          );
+        } catch (error) {
+          this.approvalSuspended.delete(taskId);
+          throw error;
+        }
       },
     };
   }
@@ -13820,6 +13847,19 @@ export class TaskExecutor {
           },
         }).catch(() => undefined);
       }
+      /*
+      FNXC:AgentProvisioningGate 2026-07-26-13:20:
+      fn_agent_create / fn_agent_delete previously received no options in the executor lane,
+      which made the factory synthesize approvalMode "never" and disabled the provisioning
+      approval gate in production. Pass a live settingsProvider plus the shared
+      PostgreSQL-backed ApprovalRequestStore when the async layer exists; without a layer we
+      pass no approval store so the factory fails CLOSED (require-approval => DENY).
+      */
+      const provisioningApprovalLayer = typeof this.store.getAsyncLayer === "function" ? this.store.getAsyncLayer() : null;
+      const agentProvisioningToolOptions = {
+        settingsProvider: async () => await this.store.getSettings(),
+        ...(provisioningApprovalLayer ? { approvalRequestStore: this.approvalRequestStore } : {}),
+      };
       const customTools = [
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stuckDetector),
         this.createTaskLogTool(task.id),
@@ -13915,8 +13955,8 @@ export class TaskExecutor {
           ...(assignedAgentId ? [
             createGetAgentConfigTool(this.options.agentStore, assignedAgentId),
             createUpdateAgentConfigTool(this.options.agentStore, assignedAgentId),
-            createAgentCreateTool(this.options.agentStore, assignedAgentId),
-            createAgentDeleteTool(this.options.agentStore, assignedAgentId),
+            createAgentCreateTool(this.options.agentStore, assignedAgentId, agentProvisioningToolOptions),
+            createAgentDeleteTool(this.options.agentStore, assignedAgentId, agentProvisioningToolOptions),
           ] : []),
         ] : []),
         // Messaging tools — allows executor agents to send and receive messages.

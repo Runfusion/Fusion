@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { isApprovalRequestExpired } from "@fusion/core";
 import type {
   AgentPermissionPolicy,
   AgentPermissionPolicyActionCategory,
@@ -6,11 +8,14 @@ import type {
 } from "@fusion/core";
 import {
   ACTION_GATE_NETWORK_API_TOOLS,
+  ACTION_GATE_PROVISIONING_POLICY_TOOLS,
   ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,
   COMMAND_EXECUTION_FN_TOOLS,
   COORDINATION_EXEMPT_TOOLS,
   FILE_SCOPE_FN_TOOLS,
+  FILE_WRITE_DELETE_FN_TOOLS,
   READONLY_BUILTIN_TOOLS,
+  READONLY_FN_TOOLS,
   REVIEW_GATE_BYPASS_FN_TOOLS,
   classifyGitCommand,
 } from "./gating-classifications.js";
@@ -42,7 +47,14 @@ export interface AgentActionGateContext {
   runId?: string;
   permissionPolicy: AgentPermissionPolicy;
   createApprovalRequest: (decision: AgentActionGateDecision, args: Record<string, unknown>) => Promise<unknown>;
-  findApprovalByDedupeKey?: (dedupeKey: string) => Promise<{ id: string; status: ApprovalRequestStatus } | null>;
+  /**
+   * FNXC:ApprovalRedemption 2026-07-26-13:05:
+   * `decidedAt` lets resolveGateOutcome apply the approval-grant TTL at
+   * redemption time (approved-but-unredeemed grants were redeemable forever —
+   * live DB showed 17 approved / 0 completed). Optional for backward
+   * compatibility: a closure that omits it skips TTL evaluation.
+   */
+  findApprovalByDedupeKey?: (dedupeKey: string) => Promise<{ id: string; status: ApprovalRequestStatus; decidedAt?: string } | null>;
   /** @deprecated Use findApprovalByDedupeKey */
   findPendingApprovalByDedupeKey?: (dedupeKey: string) => Promise<{ id: string } | null>;
   pauseForApproval?: (info: { approvalRequestId: string; decision: AgentActionGateDecision }) => Promise<void>;
@@ -144,6 +156,16 @@ export function evaluateAgentActionGate(params: {
   if (params.toolName === "bash") {
     const command = extractShellCommand(args);
     const git = classifyGitCommand(command);
+    /*
+    FNXC:ApprovalRedemption 2026-07-26-13:05:
+    Bind bash approvals to the EXACT command. Previously the dedupe key for
+    non-git bash collapsed to operation "shell command", so one approved
+    request authorized arbitrary future shell commands for that agent+task.
+    Hashing the full command string into resourceId makes each distinct
+    command a distinct approval, and redemption (execute-once-then-complete)
+    can only consume an approval minted for that same command.
+    */
+    resourceId = command ? `cmd:${createHash("sha256").update(command).digest("hex").slice(0, 16)}` : undefined;
     if (git?.write) {
       category = "git_write";
       operation = git.operation;
@@ -199,6 +221,47 @@ export function evaluateAgentActionGate(params: {
     category = "network_api";
     operation = params.toolName;
     resourceType = params.toolName.startsWith("mcp__") ? "mcp" : "research";
+  } else if (FILE_WRITE_DELETE_FN_TOOLS.has(params.toolName)) {
+    // FNXC:AgentGating 2026-07-26-15:10: fn_task_attach mutates persisted task
+    // attachments; the permanent gate already classifies it file_write_delete.
+    // The action gate previously let it through via the exempt fallback — a
+    // silent-exemption defect. Positive parity classification; still "allow"
+    // under the default unrestricted preset.
+    category = "file_write_delete";
+    operation = params.toolName;
+    resourceType = "file";
+  } else if (ACTION_GATE_PROVISIONING_POLICY_TOOLS.has(params.toolName)) {
+    // FNXC:AgentGating 2026-07-26-15:05: FN-3953 — provisioning tools are governed
+    // solely by the dedicated agent_provisioning policy; positive exemption here
+    // avoids double approval rows now that the unknown fallback fails closed.
+    category = "exempt";
+    operation = params.toolName;
+  } else if (READONLY_FN_TOOLS.has(params.toolName)) {
+    /*
+    FNXC:AgentGating 2026-07-26-15:00:
+    Read-only fn_* discovery tools were previously "recognized" only by
+    falling into the exempt default. With the unknown-tool fallback now fail
+    closed, they need a POSITIVE exempt classification (matching the
+    permanent gate's recognized "none" class) so read paths stay ungated in
+    both directions.
+    */
+    category = "exempt";
+    operation = params.toolName;
+  } else {
+    /*
+    FNXC:AgentGating 2026-07-26-13:10:
+    Audit finding: an UNCLASSIFIED tool used to fall through with category
+    "exempt" → hardcoded allow, so anything the classifier missed bypassed
+    even a locked-down policy. Fail closed instead: unknown tools resolve to
+    the policy-governed `command_execution` category. Under the shipped
+    default `unrestricted` preset this is still "allow", so out-of-the-box
+    behavior is UNCHANGED; under strict presets unknown tools are now
+    actually governed. Genuine coordination exemptions must be positively
+    registered in COORDINATION_EXEMPT_TOOLS.
+    */
+    category = "command_execution";
+    operation = params.toolName;
+    resourceType = "other";
   }
 
   /*
@@ -253,7 +316,7 @@ export function evaluateAgentActionGate(params: {
 
 export function resolveGateOutcome(
   decision: AgentActionGateDecision,
-  latestRequest: { id: string; status: ApprovalRequestStatus } | null,
+  latestRequest: { id: string; status: ApprovalRequestStatus; decidedAt?: string } | null,
 ): { outcome: "allow" | "block" | "execute-once-then-complete" | "wait-for-approval"; approvalRequestId?: string } {
   if (decision.disposition === "allow") {
     return { outcome: "allow" };
@@ -268,6 +331,20 @@ export function resolveGateOutcome(
     return { outcome: "wait-for-approval", approvalRequestId: latestRequest.id };
   }
   if (latestRequest.status === "approved") {
+    /*
+    FNXC:ApprovalRedemption 2026-07-26-13:05:
+    Approved-but-unredeemed grants expire after the grant TTL instead of
+    staying redeemable forever. An expired grant is treated as absent so a
+    fresh request is minted (wait-for-approval), never silently executed.
+    Closures that do not yet supply decidedAt skip TTL evaluation
+    (backward-compatible; both engine closures now supply it).
+    */
+    if (
+      latestRequest.decidedAt !== undefined
+      && isApprovalRequestExpired({ status: "approved", requestedAt: latestRequest.decidedAt, decidedAt: latestRequest.decidedAt })
+    ) {
+      return { outcome: "wait-for-approval" };
+    }
     return { outcome: "execute-once-then-complete", approvalRequestId: latestRequest.id };
   }
   if (latestRequest.status === "denied") {

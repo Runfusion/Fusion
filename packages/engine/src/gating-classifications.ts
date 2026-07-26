@@ -25,6 +25,16 @@ const SHARED_TASK_AGENT_TOOLS = [
   "fn_task_refine",
 ] as const;
 const PROVISIONING_TOOLS = ["fn_agent_create", "fn_agent_delete"] as const;
+/**
+ * FNXC:AgentGating 2026-07-26-15:05:
+ * FN-3953 keeps provisioning tools OUT of action-gate task_agent_mutation so the
+ * dedicated agent_provisioning approval policy (resolveAgentProvisioningPolicy,
+ * now live in production lanes) is the single authority — double approval rows
+ * would otherwise be minted. With the action gate's unknown-tool fallback now
+ * fail-closed, this deliberate exemption must be POSITIVE, not an accident of
+ * the old exempt default.
+ */
+export const ACTION_GATE_PROVISIONING_POLICY_TOOLS: ReadonlySet<string> = new Set(PROVISIONING_TOOLS);
 
 /**
  * FNXC:ToolGovernance 2026-06-27-12:00:
@@ -153,6 +163,8 @@ export const NETWORK_API_TOOLS: ReadonlySet<string> = new Set([
 export const ACTION_GATE_NETWORK_API_TOOLS: ReadonlySet<string> = new Set([
   "fn_research_run",
   "fn_research_cancel",
+  // FNXC:AgentGating 2026-07-26-15:15: fn_research_retry re-runs an outbound research call; it previously slipped through the action gate via the exempt fallback (silent-exemption defect). Parity with the permanent gate's network_api classification; still "allow" under the default preset.
+  "fn_research_retry",
   "fn_web_fetch", // FN-4603: honor network_api approval policy for web fetches.
   "worktrunk_install", // FN-4624: gate binary auto-install under network_api policy.
 ]);

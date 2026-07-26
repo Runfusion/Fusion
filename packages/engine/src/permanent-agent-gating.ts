@@ -171,11 +171,21 @@ export function resolvePermanentAgentToolDecision(input: {
   Keep permanent-agent results in lockstep with evaluateAgentActionGate.
   */
 
+  /*
+  FNXC:AgentGating 2026-07-26-13:45:
+  Audit finding: a gating context with a wholly MISSING permissionPolicy used
+  to resolve every tool to "allow" — an accidental unrestricted bypass. Fail
+  closed instead: recognized coordination ("none") tools stay allowed so
+  heartbeats cannot deadlock, everything else requires approval. Production
+  context builders (executor.ts, agent-heartbeat.ts, chat.ts) always resolve a
+  policy via resolveEffectiveAgentPermissionPolicy, so default-preset behavior
+  is unchanged; this branch only bites a buggy/hand-rolled context.
+  */
   if (!input.gating?.permissionPolicy) {
     return {
       ...classification,
       toolName: input.toolName,
-      disposition: "allow",
+      disposition: classification.category === "none" && classification.recognized ? "allow" : "require-approval",
     };
   }
 

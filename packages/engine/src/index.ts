@@ -5,8 +5,9 @@ export {
   type ReportHealthClassification,
   type ReportHealthInput,
 } from "./reports-health.js";
-export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent-action-gate.js";
-export type { AgentActionGateContext } from "./agent-action-gate.js";
+// FNXC:ToolPermissionGates 2026-07-26-13:55: evaluateAgentActionGate/resolveGateOutcome are exported so the @runfusion/fusion pi extension can enforce the SAME per-agent permission policy on host-extension fn_* tools that engine lanes enforce, instead of shipping a second drift-prone policy evaluator.
+export { reloadExemptTools, addToExemptTools, getExemptToolNames, evaluateAgentActionGate, resolveGateOutcome } from "./agent-action-gate.js";
+export type { AgentActionGateContext, AgentActionGateDecision } from "./agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
 export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,

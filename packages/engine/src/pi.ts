@@ -50,6 +50,7 @@ import {
   mergeSupplementalOpenAiCodexModels,
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
+  registerFusionSessionIdentity,
   resolvePiExtensionProjectRoot,
   resolveToolOutputBudget,
 } from "@fusion/core";
@@ -78,6 +79,7 @@ import {
   type AgentActionGateContext,
 } from "./agent-action-gate.js";
 import { resolvePermanentAgentToolDecision } from "./permanent-agent-gating.js";
+import { buildBashContainmentDenialMessage, evaluateBashContainment } from "./bash-containment.js";
 import type { SystemPromptLayers } from "./prompt-layers.js";
 import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflow-step-tool-policy.js";
 import { createStreamingDeltaNormalizer } from "./streaming-delta.js";
@@ -1878,6 +1880,42 @@ export function wrapToolsWithBoundary(
 }
 
 /*
+/*
+FNXC:BashContainment 2026-07-26-13:20:
+Unconditional privilege-escalation floor for engine-spawned sessions (see
+bash-containment.ts for the threat model and honest limitations). Applied
+INNERMOST in the wrapper chain so it evaluates the FINAL command string —
+including an rtk-rewritten command — immediately before execution. This is
+deliberately NOT policy-driven: it holds at every permission preset including
+the default `unrestricted`, because it guards the agent-self-escalation
+boundary (daemon token, credential stores, approvals API), not an operator
+preference. Ordinary bash permission gating remains the action gate's job.
+*/
+export function wrapToolsWithBashContainment(tools: ToolDefinition[]): ToolDefinition[] {
+  return tools.map((tool) => {
+    if (tool.name !== "bash") {
+      return tool;
+    }
+    const originalExecute = tool.execute as any;
+    return {
+      ...tool,
+      execute: async (...args: any[]) => {
+        const params = (args[1] ?? {}) as Record<string, unknown>;
+        const command = typeof params.command === "string" ? params.command : "";
+        const verdict = evaluateBashContainment(command);
+        if (!verdict.allowed) {
+          piLog.warn(`[bash-containment] denied rule=${verdict.rule ?? "unknown"}`);
+          return boundaryRejection(buildBashContainmentDenialMessage(verdict), {
+            containmentRule: verdict.rule,
+          });
+        }
+        return originalExecute(...args);
+      },
+    };
+  });
+}
+
+/*
 FNXC:ToolOutputBudget 2026-08-06-12:00:
 FN-8614 requires one finite budget for the total model-visible text in every
 engine-injected tool result. Per-tool overrides remain finite positive integers;
@@ -2034,6 +2072,19 @@ export function wrapToolsWithPermanentAgentGating(
 
           if (approvalRequest?.id) {
             details.approvalRequestId = approvalRequest.id;
+            /*
+            FNXC:AgentGating 2026-07-26-14:45:
+            Keep the permanent gate consistent with the action gate: once a
+            pending approval exists (fresh or reused), pause via the context
+            hook so the agent does not keep its turn while "awaiting approval".
+            Optional: legacy contexts without the hook keep prior behavior.
+            */
+            try {
+              await gating.pauseForApproval?.({ approvalRequestId: approvalRequest.id, toolName: decision.toolName });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              piLog.warn(`[permanent-gate] pauseForApproval failed: ${message}`);
+            }
           }
         }
 
@@ -2561,7 +2612,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       ...(tools as ToolDefinition[]),
       ...allowlistFilteredCustomTools.allowed,
     ];
-    const toolsWithRtkRewrite = wrapToolsWithRtkRewrite(toolChainStart);
+    // FNXC:BashContainment 2026-07-26-13:20: innermost wrapper — sees the final
+    // (post-rtk-rewrite) command; applies to every engine session unconditionally.
+    const toolsWithContainment = wrapToolsWithBashContainment(toolChainStart);
+    const toolsWithRtkRewrite = wrapToolsWithRtkRewrite(toolsWithContainment);
     /*
      * FNXC:AgentGating 2026-07-12-17:22:
      * MAIN-008 requires one approval authority per tool call. Executor sessions
@@ -2990,6 +3044,51 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       options.onToolEnd?.(event.toolName, event.isError, event.result);
     }
   });
+
+  /*
+  FNXC:SessionIdentity 2026-07-26-13:35:
+  Register this engine-spawned session in the globalThis identity registry so
+  the bundled @runfusion/fusion pi extension (whose tools bypass every engine
+  gate wrapper — they are loaded by pi's resource loader, not customTools) can
+  distinguish agent principals from a human operator CLI. EVERY createFnAgent
+  session is an LLM principal, never a human terminal, so registration is
+  unconditional; the best-known agent identity comes from the action-gate or
+  permanent-gating contexts, falling back to a synthetic "engine-session" id
+  that the extension must still treat as an agent (fail closed). Registered
+  AFTER successful session construction (extension tools only run once the
+  caller prompts, i.e. post-return), keyed under both the session cwd and the
+  resolved project root because pi may surface either as ExtensionContext.cwd.
+  Deregistration rides the session's dispose chain.
+  */
+  {
+    const principalAgentId = options.actionGateContext?.agentId
+      ?? options.permanentAgentGating?.requester?.actorId
+      ?? "engine-session";
+    const principalAgentName = options.actionGateContext?.agentName
+      ?? options.permanentAgentGating?.requester?.actorName;
+    const identity = {
+      agentId: principalAgentId,
+      ...(principalAgentName ? { agentName: principalAgentName } : {}),
+      ...(options.taskId ? { taskId: options.taskId } : {}),
+      ...(options.sessionPurpose ? { purpose: options.sessionPurpose } : {}),
+    };
+    const identityKeys = new Set([options.cwd, resolvedProjectRoot].filter((key): key is string => Boolean(key)));
+    const identityDisposers = [...identityKeys].map((key) => registerFusionSessionIdentity(key, identity));
+    const sessionWithDispose = promptableSession as PromptableSession & { dispose?: () => void | Promise<void> };
+    const disposeBeforeIdentity = typeof sessionWithDispose.dispose === "function"
+      ? sessionWithDispose.dispose.bind(sessionWithDispose)
+      : () => undefined;
+    sessionWithDispose.dispose = async () => {
+      for (const disposeIdentity of identityDisposers) {
+        try {
+          disposeIdentity();
+        } catch {
+          // Registry cleanup must never mask the underlying dispose.
+        }
+      }
+      await Promise.resolve(disposeBeforeIdentity());
+    };
+  }
 
   return { session: promptableSession, sessionFile: promptableSession.sessionFile };
 }

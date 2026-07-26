@@ -34,6 +34,14 @@ export interface SandboxProvisioningGateContext {
   taskId?: string;
   runId?: string;
   requester: ApprovalRequestActorSnapshot;
+  /*
+  FNXC:SandboxProvisioningGate 2026-07-26-13:25:
+  Privilege must be asserted by TRUSTED ENGINE CODE that verified the caller, never derived
+  from request-context strings. The gate previously treated the self-asserted
+  requester.actorType === "user" as privileged, so any caller claiming to be a user bypassed
+  the sandbox provisioning policy entirely. Defaults to unprivileged when omitted.
+  */
+  callerVerifiedPrivileged?: boolean;
   settings: Pick<ProjectSettings, "sandboxProvisioning"> | undefined;
   createApprovalRequest: (input: {
     category: "sandbox_provisioning";
@@ -64,13 +72,25 @@ export async function requireSandboxProvisioningApproval(input: {
     operation,
   });
 
+  /*
+  FNXC:SandboxProvisioningGate 2026-07-26-13:25:
+  isPrivileged now comes only from callerVerifiedPrivileged (set by trusted engine code),
+  not from the self-asserted requester.actorType string.
+  Status note: this gate currently has NO production caller — it is exported via
+  sandbox/index.ts but only exercised by sandbox/__tests__/provisioning-gate.test.ts, and no
+  approval executor is registered for the sandbox_provisioning category. Approving a request
+  created here therefore cannot silently no-op from this module's perspective: execution only
+  happens when the caller re-runs this gate and resolveGateOutcome maps the approved request
+  (via findApprovalByDedupeKey) to "execute-once-then-complete"; without that re-run nothing
+  executes at all.
+  */
   const policyDecision = resolveSandboxProvisioningPolicy({
     backendId,
     operation,
     caller: {
       id: context.requester.actorId,
       role: context.requester.actorType === "agent" ? "agent" : context.requester.actorType,
-      isPrivileged: context.requester.actorType === "user",
+      isPrivileged: context.callerVerifiedPrivileged === true,
     },
     settings: context.settings,
   });

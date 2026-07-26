@@ -1014,6 +1014,28 @@ export class HeartbeatMonitor {
     return this.approvalRequestStore;
   }
 
+  /*
+  FNXC:AgentProvisioningGate 2026-07-26-13:15:
+  fn_agent_create / fn_agent_delete previously received no options here, which made the
+  factory synthesize approvalMode "never" and disabled the provisioning approval gate for
+  every production heartbeat lane. Always pass a real settingsProvider (guarded — lightweight
+  test TaskStores may lack getSettings) plus the shared PostgreSQL-backed ApprovalRequestStore
+  when the async layer is available. When no layer exists we deliberately pass no approval
+  store: the factory then fails CLOSED (require-approval => DENY), never silently allows.
+  */
+  private buildAgentProvisioningToolOptions(taskStore: TaskStore): import("./agent-tools.js").AgentProvisioningToolOptions {
+    const maybeGetSettings = (taskStore as { getSettings?: () => Promise<Settings> }).getSettings;
+    const options: import("./agent-tools.js").AgentProvisioningToolOptions = {};
+    if (typeof maybeGetSettings === "function") {
+      options.settingsProvider = () => maybeGetSettings.call(taskStore);
+    }
+    const layer = typeof taskStore.getAsyncLayer === "function" ? taskStore.getAsyncLayer() : null;
+    if (layer) {
+      options.approvalRequestStore = new ApprovalRequestStore(null, { asyncLayer: layer });
+    }
+    return options;
+  }
+
   private buildActionGateContext(agent: Agent, taskId?: string, runId?: string, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
     const policy = resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy, projectDefaultPolicy);
     return {
@@ -1038,7 +1060,8 @@ export class HeartbeatMonitor {
       }),
       findApprovalByDedupeKey: async (dedupeKey) => {
         const latest = await this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
-        return latest ? { id: latest.id, status: latest.status } : null;
+        // FNXC:ApprovalRedemption 2026-07-26-14:30: decidedAt lets resolveGateOutcome apply the approval-grant TTL at redemption.
+        return latest ? { id: latest.id, status: latest.status, decidedAt: latest.decidedAt } : null;
       },
       findPendingApprovalByDedupeKey: async (dedupeKey) => {
         const latest = await this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
@@ -1076,6 +1099,8 @@ export class HeartbeatMonitor {
         await this.getApprovalRequestStore().markCompleted(approvalRequestId, {
           actor: { actorId: agent.id, actorType: "agent", actorName: agent.name },
           note: "Tool executed after approval",
+          // FNXC:ApprovalRedemption 2026-07-26-14:35: ownership guard — an agent must not be able to burn another agent's approval by id.
+          expectedRequesterActorId: agent.id,
         });
       },
     };
@@ -1121,6 +1146,24 @@ export class HeartbeatMonitor {
       findPendingApprovalRequest: async (dedupeKey) => {
         const pending = await this.getApprovalRequestStore().list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
         return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+      },
+      /*
+      FNXC:AgentGating 2026-07-26-14:50:
+      Gate-path parity (audit): the permanent gate now pauses on a pending
+      approval exactly like this monitor's action-gate pauseForApproval —
+      task-level AWAITING_APPROVAL_PAUSE_REASON hold plus agent pause — so a
+      gated heartbeat agent stops instead of hunting for ungated workarounds.
+      */
+      pauseForApproval: async ({ approvalRequestId, toolName }) => {
+        if (taskId && this.taskStore) {
+          await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          await this.taskStore.logEntry(
+            taskId,
+            `Approval required for ${toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
+          );
+        }
+        await this.store.updateAgentState(agent.id, "paused");
+        await this.store.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
       },
     };
   }
@@ -2625,8 +2668,10 @@ export class HeartbeatMonitor {
           heartbeatTools.push(createTaskAssignTool(this.store, taskStore));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
           heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));
-          heartbeatTools.push(createAgentCreateTool(this.store, agentId));
-          heartbeatTools.push(createAgentDeleteTool(this.store, agentId));
+          // FNXC:AgentProvisioningGate 2026-07-26-13:15: real settings + approval store so the provisioning policy actually gates idle-heartbeat lanes.
+          const idleProvisioningOptions = this.buildAgentProvisioningToolOptions(taskStore);
+          heartbeatTools.push(createAgentCreateTool(this.store, agentId, idleProvisioningOptions));
+          heartbeatTools.push(createAgentDeleteTool(this.store, agentId, idleProvisioningOptions));
 
           // Messaging tools — when MessageStore is available
           if (this.messageStore) {
@@ -3956,8 +4001,10 @@ export class HeartbeatMonitor {
     tools.push(createTaskAssignTool(this.store, taskStore));
     tools.push(createGetAgentConfigTool(this.store, agentId));
     tools.push(createUpdateAgentConfigTool(this.store, agentId));
-    tools.push(createAgentCreateTool(this.store, agentId));
-    tools.push(createAgentDeleteTool(this.store, agentId));
+    // FNXC:AgentProvisioningGate 2026-07-26-13:15: real settings + approval store so the provisioning policy actually gates task-scoped heartbeat lanes.
+    const taskProvisioningOptions = this.buildAgentProvisioningToolOptions(taskStore);
+    tools.push(createAgentCreateTool(this.store, agentId, taskProvisioningOptions));
+    tools.push(createAgentDeleteTool(this.store, agentId, taskProvisioningOptions));
 
     // Messaging tools — when MessageStore is available, agents can send and receive messages
     if (messageStore) {

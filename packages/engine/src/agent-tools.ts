@@ -4611,9 +4611,19 @@ export function createGetAgentConfigTool(agentStore: AgentStore, callingAgentId:
   };
 }
 
+/*
+FNXC:AgentProvisioningGate 2026-07-26-13:05:
+Deliberate decision: only the "ceo" role is provisioning-privileged. Top-level position
+(reportsTo == null) is NOT trust — any orphaned/imported/misconfigured top-level agent used
+to auto-bypass resolveAgentProvisioningPolicy entirely, making the deny/require-approval
+branches unreachable for it. Operator trust is expressed via
+settings.agentProvisioning.trustedAgentIds/trustedRoles, not org position. Top-level
+non-ceo agents now flow through the normal approval policy (default mode "trusted-only"
+=> require-approval).
+*/
 function isCallerPrivileged(caller: { id: string; role: string; reportsTo?: string | null } | null): boolean {
   if (!caller) return false;
-  return caller.role === "ceo" || caller.reportsTo == null;
+  return caller.role === "ceo";
 }
 
 export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
@@ -4723,7 +4733,7 @@ export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgent
  * @param taskStore - TaskStore for task creation
  * @returns ToolDefinition for the `fn_delegate_task` tool
  */
-type AgentProvisioningToolOptions = {
+export type AgentProvisioningToolOptions = {
   hireApprovalEnabled?: boolean;
   approvalRequestStore?: ApprovalRequestStore;
   settingsProvider?: () => Promise<ProjectSettings | undefined>;
@@ -4752,14 +4762,20 @@ export function createAgentCreateTool(
         };
       }
 
+      /*
+      FNXC:AgentProvisioningGate 2026-07-26-13:10:
+      Never synthesize approvalMode "never" when the factory receives no options. All three
+      production call sites (heartbeat idle + task lanes, executor lane) previously passed no
+      options, so the synthesized "never" disabled the provisioning gate everywhere outside
+      tests. With no settingsProvider the policy now resolves with settings undefined
+      (normalizeMode default "trusted-only"); a require-approval decision with no
+      approvalRequestStore fails CLOSED below — never silently allows.
+      */
       const settings = await options?.settingsProvider?.();
-      const fallbackSettings = !options?.settingsProvider && !options?.approvalRequestStore
-        ? { agentProvisioning: { approvalMode: "never" as const } }
-        : settings;
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_create",
         caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
-        settings: fallbackSettings,
+        settings,
       });
       await options?.runAuditor?.database({ type: "agent:create:requested", target: callingAgentId, metadata: { policy } });
 
@@ -4872,14 +4888,17 @@ export function createAgentDeleteTool(
         return { content: [{ type: "text" as const, text: `ERROR: Cannot delete ephemeral/runtime agent ${params.agent_id}` }], details: {} };
       }
 
+      /*
+      FNXC:AgentProvisioningGate 2026-07-26-13:10:
+      Same fail-closed contract as fn_agent_create: no synthesized "never" mode when options
+      are absent; settings undefined resolves to the "trusted-only" default and a
+      require-approval decision with no approvalRequestStore is DENIED below.
+      */
       const settings = await options?.settingsProvider?.();
-      const fallbackSettings = !options?.settingsProvider && !options?.approvalRequestStore
-        ? { agentProvisioning: { approvalMode: "never" as const } }
-        : settings;
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_delete",
         caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
-        settings: fallbackSettings,
+        settings,
       });
       await options?.runAuditor?.database({ type: "agent:delete:requested", target: target.id, metadata: { policy } });
 
