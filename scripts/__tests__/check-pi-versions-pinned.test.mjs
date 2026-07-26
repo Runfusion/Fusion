@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  PI_RUNTIME_PACKAGES,
   scanTrackedManifests,
   validateManifestSet,
+  validateWorkspaceOverrides,
 } from "../check-pi-versions-pinned.mjs";
 
 const pinnedManifest = {
@@ -41,5 +43,33 @@ describe("check-pi-versions-pinned", () => {
 
   it("accepts a clean exact matched pair", () => {
     assert.deepEqual(validate(pinnedManifest), []);
+  });
+
+  /*
+  FNXC:DesktopPackaging 2026-07-25-17:15:
+  Legacy desktop deploy resolves transitive pi-mono ranges without the workspace
+  lockfile. Guard every Pi runtime package in the staged closure, not only the
+  direct pi-ai and pi-coding-agent declarations, so a newly published patch
+  cannot split agent-core or tui from the exact runtime version.
+  */
+  it("requires one exact workspace override for every staged Pi runtime package", () => {
+    const coherentOverrides = Object.fromEntries(PI_RUNTIME_PACKAGES.map((packageName) => [packageName, "0.82.0"]));
+
+    assert.deepEqual(validateWorkspaceOverrides(coherentOverrides), []);
+    assert.equal(
+      validateWorkspaceOverrides({ ...coherentOverrides, "@earendil-works/pi-tui": undefined })
+        .some((violation) => violation.includes("pi-tui") && violation.includes("must be pinned")),
+      true,
+    );
+    assert.equal(
+      validateWorkspaceOverrides({ ...coherentOverrides, "@earendil-works/pi-agent-core": "^0.82.0" })
+        .some((violation) => violation.includes("pi-agent-core") && violation.includes("exact semver")),
+      true,
+    );
+    assert.equal(
+      validateWorkspaceOverrides({ ...coherentOverrides, "@earendil-works/pi-tui": "0.82.1" })
+        .some((violation) => violation.includes("one exact version")),
+      true,
+    );
   });
 });

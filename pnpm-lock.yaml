@@ -7,8 +7,10 @@ settings:
 overrides:
   '@types/node': ^25.5.2
   protobufjs: ^7.5.8
+  '@earendil-works/pi-agent-core': 0.82.0
   '@earendil-works/pi-ai': 0.82.0
   '@earendil-works/pi-coding-agent': 0.82.0
+  '@earendil-works/pi-tui': 0.82.0
 
 importers:
 
