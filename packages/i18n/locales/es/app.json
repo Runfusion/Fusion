@@ -6043,6 +6043,8 @@
       "enableProactiveTaskChatHint": "",
       "releaseChannel": "",
       "releaseChannelHelp": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": "",
       "channelStable": "",
       "channelBeta": "",
       "agentToolOutputLimit": "",
