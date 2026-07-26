@@ -682,7 +682,7 @@ jobs:
       # of truth so tag-push-triggered binary builds do the right thing.
       - name: Create GitHub Release
         if: ${{ steps.collect.outputs.count != '0' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: /tmp/release-notes.md
           fail_on_unmatched_files: true
