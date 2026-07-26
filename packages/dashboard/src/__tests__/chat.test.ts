@@ -98,6 +98,22 @@ vi.mock("@fusion/engine", () => ({
   createIdeationTools: vi.fn(() => []),
   createMemoryTools: vi.fn(() => []),
   createResearchTools: vi.fn(() => []),
+  /*
+  FNXC:ChatToolset 2026-07-26-12:00:
+  #2376 chat permission-parity imported task-lifecycle / identity / evaluation factories into chat.ts.
+  Keep this hardcoded @fusion/engine mock complete so check-mock-completeness stays green (Gate).
+  */
+  createTaskArchiveTool: vi.fn(() => ({})),
+  createTaskUnarchiveTool: vi.fn(() => ({})),
+  createTaskDeleteTool: vi.fn(() => ({})),
+  createTaskRetryTool: vi.fn(() => ({})),
+  createTaskPauseTool: vi.fn(() => ({})),
+  createTaskUnpauseTool: vi.fn(() => ({})),
+  createTaskDuplicateTool: vi.fn(() => ({})),
+  createTaskMergeTool: vi.fn(() => ({})),
+  createTraitListTool: vi.fn(() => ({})),
+  createReadEvaluationsTool: vi.fn(() => ({})),
+  createUpdateIdentityTool: vi.fn(() => ({})),
 }));
 
 describe("resolveFileReferences", () => {

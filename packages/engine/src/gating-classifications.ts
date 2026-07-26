@@ -78,6 +78,8 @@ const PERMANENT_TASK_AGENT_ONLY_TOOLS = [
   "fn_task_archive",
   "fn_task_unarchive",
   "fn_task_delete",
+  // FNXC:AgentGating 2026-07-26-12:00: #2376 chat permission-parity exposes fn_task_merge; classify it so the action gate cannot fall through to exempt.
+  "fn_task_merge",
   "fn_task_plan",
   "fn_mission_create",
   "fn_mission_delete",

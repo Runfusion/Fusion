@@ -2981,6 +2981,15 @@ export function createTaskPromoteTool(store: TaskStore, currentTaskId: string): 
   };
 }
 
+/*
+FNXC:ChatTaskMutationTools 2026-07-26-12:00:
+Chat permission-parity (#2376) adds these lifecycle tools so permanent-agent chat can archive/delete/retry/etc under the same task_agent_mutation gate as heartbeat/executor.
+Keep catch blocks typed as unknown (no-explicit-any) and surface err.message via instanceof — the PR lint gate fails bare `any` here even though older factories still use the disable-comment pattern.
+*/
+function toolErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_archive",
@@ -2999,8 +3008,8 @@ export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
           content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
           details: { taskId: task.id, column: task.column },
         };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to archive task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to archive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3021,8 +3030,8 @@ export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
           content: [{ type: "text" as const, text: `Unarchived ${task.id} → ${task.column}` }],
           details: { taskId: task.id, column: task.column },
         };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to unarchive task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unarchive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3045,8 +3054,8 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
           auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
         });
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3064,12 +3073,12 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
         if (task.status !== "failed" && task.status !== "stuck-killed") {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }
-        await store.updateTask(params.id, { status: null, error: null } as any);
+        await store.updateTask(params.id, { status: null, error: null });
         await store.moveTask(params.id, "todo");
         await store.logEntry(params.id, "Retry requested via chat tool", "Task reset to todo for retry");
         return { content: [{ type: "text" as const, text: `Retried ${params.id} → todo` }], details: { taskId: params.id, newColumn: "todo" } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3085,8 +3094,8 @@ export function createTaskPauseTool(store: TaskStore): ToolDefinition {
       try {
         const task = await store.pauseTask(params.id, true);
         return { content: [{ type: "text" as const, text: `Paused ${task.id}` }], details: { taskId: task.id, column: task.column } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to pause task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to pause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3102,8 +3111,8 @@ export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
       try {
         const task = await store.pauseTask(params.id, false);
         return { content: [{ type: "text" as const, text: `Unpaused ${task.id}` }], details: { taskId: task.id, column: task.column } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to unpause task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unpause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3119,14 +3128,19 @@ export function createTaskDuplicateTool(store: TaskStore): ToolDefinition {
       try {
         const task = await store.duplicateTask(params.id);
         return { content: [{ type: "text" as const, text: `Duplicated to ${task.id}` }], details: { taskId: task.id } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to duplicate task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to duplicate task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
 }
 
-export function createTaskMergeTool(store: TaskStore, currentTaskId: string): ToolDefinition {
+/*
+FNXC:ChatTaskMutationTools 2026-07-26-12:00:
+fn_task_merge targets params.task_id only; the ambient currentTaskId arg is retained for call-site parity with other task tools but is intentionally unused (project chat passes "").
+Prefix with underscore so the lint gate does not fail on the unused parameter.
+*/
+export function createTaskMergeTool(store: TaskStore, _currentTaskId: string): ToolDefinition {
   return {
     name: "fn_task_merge",
     label: "Merge Task",
@@ -3140,8 +3154,8 @@ export function createTaskMergeTool(store: TaskStore, currentTaskId: string): To
         const result = await store.mergeTask(targetId);
         const mergedInto = result?.task?.id ?? targetId;
         return { content: [{ type: "text" as const, text: `Merged ${targetId} into ${mergedInto}` }], details: { targetId, mergedInto } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to merge task: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to merge task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3182,15 +3196,15 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
           await store.updateTask(taskId, { dependencies: params.dependencies });
         }
         if (params.step !== undefined && params.status !== undefined) {
-          const task = await store.updateStep(taskId, params.step, params.status as any);
+          const task = await store.updateStep(taskId, params.step, params.status);
           return { content: [{ type: "text" as const, text: `Updated ${taskId}: step ${params.step} → ${params.status}` }], details: { taskId: task.id, step: params.step, status: params.status } };
         }
         if (params.custom_fields !== undefined || params.dependencies !== undefined) {
           return { content: [{ type: "text" as const, text: "Updated." }], details: {} };
         }
         return { content: [{ type: "text" as const, text: "No-op: provide step+status, dependencies, or custom_fields." }], details: {} };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -3218,8 +3232,8 @@ export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefi
         if (depId === taskId) return { content: [{ type: "text" as const, text: "ERROR: cannot add self-dependency." }], details: {}, isError: true };
         await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] });
         return { content: [{ type: "text" as const, text: `Added dependency ${depId} to ${taskId}` }], details: { taskId, dependency: depId } };
-      } catch (err: any) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${err?.message ?? err}` }], details: {}, isError: true };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };

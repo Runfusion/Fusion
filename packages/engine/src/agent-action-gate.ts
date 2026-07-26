@@ -176,9 +176,20 @@ export function evaluateAgentActionGate(params: {
     operation = params.toolName;
     resourceType = "file";
   } else if (TASK_AGENT_MANAGEMENT_TOOLS.has(params.toolName)) {
+    /*
+    FNXC:AgentGating 2026-07-26-12:00:
+    PR #2376 review (greptile): chat sessions pass an empty ambient gateContext.taskId for project-scoped tools, so approval dedupe previously collapsed every fn_task_delete/archive/… call by the same agent into one empty-task key — approving task A let task B execute under that approval.
+    Prefer the invocation's target id (`id` or `task_id`) as resourceId (and as the effective taskId when ambient is empty) so each target gets its own approval identity.
+    */
     category = "task_agent_mutation";
     operation = params.toolName;
     resourceType = params.toolName.includes("agent") || params.toolName.includes("spawn") ? "agent" : "task";
+    if (resourceType === "task") {
+      const fromId = typeof args.id === "string" ? args.id.trim() : "";
+      const fromTaskId = typeof args.task_id === "string" ? args.task_id.trim() : "";
+      const targetTaskId = fromId || fromTaskId || undefined;
+      if (targetTaskId) resourceId = targetTaskId;
+    }
   } else if (COMMAND_EXECUTION_TOOLS.has(params.toolName)) {
     category = "command_execution";
     operation = params.toolName;
@@ -220,9 +231,11 @@ export function evaluateAgentActionGate(params: {
     ? "allow"
     : exactDisposition ?? params.permissionPolicy.rules[category];
 
+  // Prefer ambient task scope; fall back to arg-derived resourceId so chat tools (empty ambient taskId) still isolate approvals per target.
+  const effectiveTaskId = params.taskId?.trim() || resourceId;
   const dedupeKey = computeApprovalDedupeKey({
     agentId: params.agentId,
-    taskId: params.taskId,
+    taskId: effectiveTaskId,
     toolName: params.toolName,
     category,
     resourceType,
