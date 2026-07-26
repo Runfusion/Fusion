@@ -18,9 +18,6 @@ import {
   getTaskMergeBlocker,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
   processAndAuditInsightExtraction,
-  DaemonTokenManager,
-  GlobalSettingsStore,
-  resolveGlobalDir,
   getEnabledPiExtensionPaths,
   mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
@@ -40,6 +37,7 @@ import {
   refreshFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
+import { resolveServeDaemonToken } from "./serve-daemon-token.js";
 import {
   DefaultPackageManager,
   SettingsManager,
@@ -243,7 +241,9 @@ function ensureProcessDiagnostics(): void {
 
 export async function runServe(
   port: number,
-  opts: { interactive?: boolean; paused?: boolean; host?: string; daemon?: boolean; noAutoRegister?: boolean; project?: string } = {},
+  // FNXC:ServeSecureByDefault 2026-07-26-16:55: `noAuth` is the explicit opt-out from
+  // the always-on bearer-token default (mirrors `fn dashboard --no-auth`).
+  opts: { interactive?: boolean; paused?: boolean; host?: string; daemon?: boolean; noAuth?: boolean; noAutoRegister?: boolean; project?: string } = {},
 ) {
   serveStartTime = Date.now();
   ensureProcessDiagnostics();
@@ -869,31 +869,18 @@ export async function runServe(
   });
 
   // ── Daemon token resolution ─────────────────────────────────────────────
-  //
-  // When --daemon flag is set, resolve the daemon token using the same
-  // priority as fn daemon: env var > stored token > generate new token.
-  //
-  let daemonToken: string | undefined;
-  if (opts.daemon) {
-    // 1. Check environment variable first
-    daemonToken = process.env.FUSION_DAEMON_TOKEN;
-
-    // 2. Check stored token in global settings
-    if (!daemonToken) {
-      const globalDir = resolveGlobalDir();
-      const settingsStore = new GlobalSettingsStore(globalDir);
-      const tokenManager = new DaemonTokenManager(settingsStore);
-      daemonToken = await tokenManager.getToken();
-    }
-
-    // 3. Generate and store a new token if none exists
-    if (!daemonToken) {
-      const globalDir = resolveGlobalDir();
-      const settingsStore = new GlobalSettingsStore(globalDir);
-      const tokenManager = new DaemonTokenManager(settingsStore);
-      daemonToken = await tokenManager.generateToken();
-    }
-  }
+  /*
+  FNXC:ServeSecureByDefault 2026-07-26-16:55:
+  Token resolution is now UNCONDITIONAL, not gated on `--daemon`. Plain `fn serve`
+  previously started with no token, so `createServer` installed no auth middleware and
+  the whole API (including POST /api/approvals/:id/decision) was reachable
+  unauthenticated — the hole an AI agent used to self-approve destructive actions.
+  `fn serve` now always resolves/mints a persisted token (env > stored > generated,
+  matching `fn daemon` and `fn dashboard`) unless the operator explicitly passes
+  `--no-auth`. The resolved token/URL is printed after listen so operators can still
+  connect (see the startup banner below).
+  */
+  const daemonToken = await resolveServeDaemonToken({ noAuth: opts.noAuth });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
   //
@@ -1070,6 +1057,9 @@ export async function runServe(
     headless: true,
     skillsAdapter,
     daemon: daemonToken ? { token: daemonToken } : undefined,
+    // FNXC:ServeSecureByDefault 2026-07-26-16:55: forward the explicit opt-out so a
+    // stale FUSION_DAEMON_TOKEN env var cannot silently re-enable auth under --no-auth.
+    noAuth: opts.noAuth === true ? true : undefined,
     https: loadTlsCredentialsFromEnv(),
   });
 
@@ -1151,10 +1141,18 @@ export async function runServe(
   const { maskApiKey } = await import("./node.js");
 
   console.log();
+  /*
+  FNXC:ServeSecureByDefault 2026-07-26-16:55:
+  Auth is now the default for every `fn serve` (not just --daemon), so the banner must
+  always surface the token and a click-through `?token=` launch URL — the same operator
+  affordance `fn dashboard` provides — or a secure-by-default serve would lock the
+  operator out of their own dashboard. The explicit `--no-auth` opt-out is called out
+  loudly instead of silently printing an open endpoint.
+  */
   if (daemonToken) {
-    console.log(`  Fusion Node (daemon mode)`);
+    console.log(opts.daemon ? `  Fusion Node (daemon mode)` : `  Fusion Node`);
     console.log(`  ────────────────────────`);
-    console.log(`  → http://${selectedHost}:${actualPort}`);
+    console.log(`  → http://${selectedHost}:${actualPort}/?token=${daemonToken}`);
     console.log();
     console.log(`  Token: fn_${maskApiKey(daemonToken)}`);
     console.log();
@@ -1171,7 +1169,7 @@ export async function runServe(
     console.log(`  → http://${selectedHost}:${actualPort}`);
     console.log();
     console.log(`  Health:     GET /api/health`);
-    console.log(`  API:        /api/*`);
+    console.log(`  API:        /api/* (auth DISABLED via --no-auth — anyone who can reach this socket has full API access)`);
     console.log(`  AI engine:  ✓ active`);
     console.log(`  Press Ctrl+C to stop`);
   }

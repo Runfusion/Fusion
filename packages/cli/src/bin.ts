@@ -310,7 +310,7 @@ Usage:
   fn dashboard --dev                  Start dashboard in development mode
   fn dashboard --no-engine            Start web UI only (no AI engine)
   fn dashboard --interactive          Start with interactive port selection
-  fn serve [--port <port>] [--host <host>] [--paused] [--daemon] [--project <id|name>] [--no-auto-register]
+  fn serve [--port <port>] [--host <host>] [--paused] [--daemon] [--no-auth] [--project <id|name>] [--no-auto-register]
                                       Start Fusion as a headless node (API + engine, no UI)
                                       Auto-registers cwd project on first run (use --no-auto-register to disable)
   fn daemon [--port <port>] [--host <host>] [--token <token>] [--paused] [--token-only] [--project <id|name>] [--no-auto-register]
@@ -495,7 +495,7 @@ Options:
   --port, -p <port>          Dashboard/serve port (default: 4040)
   --host <host>              Serve host (default: 127.0.0.1 — localhost only; pass 0.0.0.0 to expose)
   --token <token>            Dashboard/daemon bearer token. Default: $FUSION_DASHBOARD_TOKEN, $FUSION_DAEMON_TOKEN, or auto-generated.
-  --no-auth                  Disable dashboard bearer-token auth for dashboard/desktop (local-only; not recommended on 0.0.0.0)
+  --no-auth                  Disable bearer-token auth for dashboard/desktop/serve (local-only; not recommended on 0.0.0.0)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
   --dev                      Start dashboard in development mode
@@ -928,9 +928,12 @@ async function main() {
         const hostIdx = args.indexOf("--host");
         const host = hostIdx !== -1 && hostIdx + 1 < args.length ? args[hostIdx + 1] : undefined;
         const daemon = args.includes("--daemon");
+        // FNXC:ServeSecureByDefault 2026-07-26-17:00: `fn serve` is authenticated by
+        // default; `--no-auth` is the explicit local-trust opt-out (mirrors dashboard).
+        const noAuth = args.includes("--no-auth");
         const project = getFlagValue(args, "--project");
         const noAutoRegister = args.includes("--no-auto-register");
-        await runServe(port, { paused, interactive, host, daemon, project, noAutoRegister });
+        await runServe(port, { paused, interactive, host, daemon, noAuth, project, noAutoRegister });
         break;
       }
 
