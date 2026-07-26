@@ -316,16 +316,11 @@ export async function readAllWorkflowDefinitionsImpl(store: TaskStore): Promise<
     // PG backend mode reads custom workflow rows from project.workflows via the
     // AsyncDataLayer (the sync store.db SELECT throws). Builtins are merged the
     // same way in both backends. Every caller already awaits this method.
-    if (store.backendMode) {
-      const layer = store.getAsyncLayer();
-      if (!layer) {
-        throw new Error("workflow definitions: AsyncDataLayer not initialized in backend mode");
-      }
-      const rows = await listWorkflowRows(layer);
-      store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
-      return store.workflowDefinitionsCache;
+        const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("workflow definitions: AsyncDataLayer not initialized in backend mode");
     }
-    const rows = store.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as StoredWorkflowRow[];
+    const rows = await listWorkflowRows(layer);
     store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
     return store.workflowDefinitionsCache;
 }
@@ -346,18 +341,12 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
     }
     // FNXC:WorkflowDefinitions 2026-06-27-06:00: PG backend reads the custom row
     // from project.workflows via the AsyncDataLayer; sync store.db otherwise.
-    if (store.backendMode) {
-      const layer = store.getAsyncLayer();
-      if (!layer) {
-        throw new Error("workflow definition: AsyncDataLayer not initialized in backend mode");
-      }
-      const asyncRow = await getWorkflowRow(layer, id);
-      return asyncRow ? store.toWorkflowDefinition(asyncRow) : undefined;
+        const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("workflow definition: AsyncDataLayer not initialized in backend mode");
     }
-    const row = store.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as
-      | StoredWorkflowRow
-      | undefined;
-    return row ? store.toWorkflowDefinition(row) : undefined;
+    const asyncRow = await getWorkflowRow(layer, id);
+    return asyncRow ? store.toWorkflowDefinition(asyncRow) : undefined;
 }
 
 export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
@@ -366,26 +355,16 @@ export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
   ): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
     const taskIds = await store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection);
-    if (store.backendMode) {
-      if (taskIds.length === 0) return counts;
-      const rows = await store.asyncLayer!.db
-        .select({ column: schema.project.tasks.column })
-        .from(schema.project.tasks)
-        .where(and(
-          inArray(schema.project.tasks.id, taskIds),
-          isNull(schema.project.tasks.deletedAt),
-          taskProjectScope(store.asyncLayer!),
-        ));
-      for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
-      return counts;
-    }
-    for (const taskId of taskIds) {
-      const row = store.db.prepare(`SELECT "column" AS column FROM tasks WHERE id = ?`).get(taskId) as
-        | { column: string }
-        | undefined;
-      if (!row) continue;
-      counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
-    }
+        if (taskIds.length === 0) return counts;
+    const rows = await store.asyncLayer!.db
+      .select({ column: schema.project.tasks.column })
+      .from(schema.project.tasks)
+      .where(and(
+        inArray(schema.project.tasks.id, taskIds),
+        isNull(schema.project.tasks.deletedAt),
+        taskProjectScope(store.asyncLayer!),
+      ));
+    for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
     return counts;
 }
 
@@ -592,30 +571,18 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode upsert of the task_workflow_selection row via async Drizzle (taskId is the primary key). stepIds is stored as a JSONB array.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
-        .insert(schema.project.taskWorkflowSelection)
-        .values({ taskId, workflowId, stepIds, updatedAt })
-        .onConflictDoUpdate({
-          target: [
-            schema.project.taskWorkflowSelection.projectId,
-            schema.project.taskWorkflowSelection.taskId,
-          ],
-          set: { workflowId, stepIds, updatedAt },
-        });
-      return;
-    }
-    store.db
-      .prepare(
-        `INSERT INTO task_workflow_selection (taskId, workflowId, stepIds, updatedAt)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(taskId) DO UPDATE SET
-           workflowId = excluded.workflowId,
-           stepIds = excluded.stepIds,
-           updatedAt = excluded.updatedAt`,
-      )
-      .run(taskId, workflowId, JSON.stringify(stepIds), updatedAt);
+        const layer = store.asyncLayer!;
+    await layer.db
+      .insert(schema.project.taskWorkflowSelection)
+      .values({ taskId, workflowId, stepIds, updatedAt })
+      .onConflictDoUpdate({
+        target: [
+          schema.project.taskWorkflowSelection.projectId,
+          schema.project.taskWorkflowSelection.taskId,
+        ],
+        set: { workflowId, stepIds, updatedAt },
+      });
+    return;
 }
 
 export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
@@ -623,18 +590,8 @@ export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: 
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode delete reuses purgeTaskWorkflowSelectionRowsAsyncImpl (read stepIds, delete workflow_steps children, delete the selection row) so PG stays in lockstep with the SQLite path.
     */
-    if (store.backendMode) {
-      await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
-      return;
-    }
-    const existing = store.getTaskWorkflowSelection(taskId);
-    if (existing) {
-      for (const stepId of existing.stepIds) {
-        store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);
-      }
-      store.workflowStepsCache = null;
-    }
-    store.db.prepare("DELETE FROM task_workflow_selection WHERE taskId = ?").run(taskId);
+        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
+    return;
 }
 
 export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: string): void {
@@ -648,36 +605,16 @@ export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: str
      * recreation works in PG mode (FN-5233 soft-delete-stickiness invariant,
      * VAL-DATA-005/006).
      */
-    if (store.backendMode) {
-      // Drizzle queries are async; synchronously schedule the purge and let
-      // the awaiting caller (maybeResolveTombstonedTaskId, already async)
-      // observe completion. We cannot await here without changing the return
-      // type, so we throw-and-rethrow via a microtask is not viable. Instead
-      // the async caller must use purgeTaskWorkflowSelectionRowsAsync below.
-      // To preserve the existing synchronous call sites that ignore the result,
-      // we fire-and-forget ONLY in the non-critical path. The resurrection
-      // path uses the async variant directly.
-      void purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
-      return;
-    }
-    const row = store.db
-      .prepare("SELECT stepIds FROM task_workflow_selection WHERE taskId = ?")
-      .get(taskId) as { stepIds: string } | undefined;
-    if (!row) return;
-    try {
-      const parsed = JSON.parse(row.stepIds) as unknown;
-      if (Array.isArray(parsed)) {
-        for (const stepId of parsed) {
-          if (typeof stepId === "string") {
-            store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);
-          }
-        }
-      }
-    } catch {
-      // Corrupt stepIds list — still remove the selection row below.
-    }
-    store.db.prepare("DELETE FROM task_workflow_selection WHERE taskId = ?").run(taskId);
-    store.workflowStepsCache = null;
+        // Drizzle queries are async; synchronously schedule the purge and let
+    // the awaiting caller (maybeResolveTombstonedTaskId, already async)
+    // observe completion. We cannot await here without changing the return
+    // type, so we throw-and-rethrow via a microtask is not viable. Instead
+    // the async caller must use purgeTaskWorkflowSelectionRowsAsync below.
+    // To preserve the existing synchronous call sites that ignore the result,
+    // we fire-and-forget ONLY in the non-critical path. The resurrection
+    // path uses the async variant directly.
+    void purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
+    return;
 }
 
 /**
@@ -688,10 +625,7 @@ export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: str
  * Called by maybeResolveTombstonedTaskId on the resurrection hard-delete path.
  */
 export async function purgeTaskWorkflowSelectionRowsAsyncImpl(store: TaskStore, taskId: string): Promise<void> {
-  if (!store.backendMode) {
-    purgeTaskWorkflowSelectionRowsImpl(store, taskId);
-    return;
-  }
+  
   const layer = store.asyncLayer!;
   const rows = await layer.db
     .select({ stepIds: schema.project.taskWorkflowSelection.stepIds })
@@ -836,25 +770,13 @@ export async function getSecretsStoreImpl(store: TaskStore): Promise<SecretsStor
     // In backend mode, pass the AsyncDataLayer so SecretsStore delegates to
     // the async helpers. The sync projectDb/centralDb are still required by
     // the constructor signature but are unused when asyncLayer is set.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      // CentralCore is not needed in backend mode; the async layer serves both
-      // project and central schemas. We pass dummy stubs for the sync DBs since
-      // they are never used when asyncLayer is present.
-      const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db.js").Database;
-      const noopCentral = noopDb as unknown as import("../central-db.js").CentralDatabase;
-      store.secretsStore = new SecretsStore(noopDb, noopCentral, masterKeyProvider, { asyncLayer: layer });
-      return store.secretsStore;
-    }
-
-    const central = new CentralCore(store.getFusionDir());
-    await central.init();
-    store.secretsCentralCore = central;
-    const centralDb = (central as unknown as { db: import("../central-db.js").CentralDatabase | null }).db;
-    if (!centralDb) {
-      throw new Error("Central database unavailable for secrets store");
-    }
-    store.secretsStore = new SecretsStore(store.db, centralDb, masterKeyProvider);
+        const layer = store.asyncLayer!;
+    // CentralCore is not needed in backend mode; the async layer serves both
+    // project and central schemas. We pass dummy stubs for the sync DBs since
+    // they are never used when asyncLayer is present.
+    const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db.js").Database;
+    const noopCentral = noopDb as unknown as import("../central-db.js").CentralDatabase;
+    store.secretsStore = new SecretsStore(noopDb, noopCentral, masterKeyProvider, { asyncLayer: layer });
     return store.secretsStore;
 }
 
@@ -871,22 +793,12 @@ export function getDatabaseHealthImpl(store: TaskStore): {
     first probe runs, report healthy with lastCheckedAt null (unknown, not a
     lie about a successful integrity check).
     */
-    if (store.backendMode) {
-      return store.postgresHealthSnapshot ?? {
-        healthy: true,
-        corruptionDetected: false,
-        corruptionErrors: [],
-        lastCheckedAt: null,
-        isRunning: false,
-      };
-    }
-    const corruptionDetected = store.db.corruptionDetected;
-    return {
-      healthy: !corruptionDetected,
-      corruptionDetected,
-      corruptionErrors: store.db.integrityCheckErrors.slice(0, 5),
-      lastCheckedAt: store.db.integrityCheckLastRunAt ? new Date(store.db.integrityCheckLastRunAt) : null,
-      isRunning: store.db.integrityCheckPending,
+        return store.postgresHealthSnapshot ?? {
+      healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
+      lastCheckedAt: null,
+      isRunning: false,
     };
 }
 
@@ -899,16 +811,10 @@ export function getDistributedTaskIdAllocatorImpl(store: TaskStore): Distributed
     // reconcileTaskIdStateAsync() during init(). The async allocator handles
     // the reserve/commit/abort lifecycle against the PostgreSQL
     // distributed_task_id_state and distributed_task_id_reservations tables.
-    if (store.backendMode) {
-      if (!store.asyncDistributedTaskIdAllocator) {
-        store.asyncDistributedTaskIdAllocator = createAsyncDistributedTaskIdAllocator(store.asyncLayer!);
-      }
-      return store.asyncDistributedTaskIdAllocator;
+        if (!store.asyncDistributedTaskIdAllocator) {
+      store.asyncDistributedTaskIdAllocator = createAsyncDistributedTaskIdAllocator(store.asyncLayer!);
     }
-    if (!store.distributedTaskIdAllocator) {
-      store.distributedTaskIdAllocator = createDistributedTaskIdAllocator(store.db);
-    }
-    return store.distributedTaskIdAllocator;
+    return store.asyncDistributedTaskIdAllocator;
 }
 
 export function healthCheckImpl(store: TaskStore): boolean {
@@ -917,17 +823,8 @@ export function healthCheckImpl(store: TaskStore): boolean {
     Backend mode: report last postgresHealthSnapshot.healthy and schedule a
     background refresh so CLI/daemon probes converge on real connectivity.
     */
-    if (store.backendMode) {
-      void store.refreshDatabaseHealthAsync().catch(() => undefined);
-      return store.getDatabaseHealth().healthy;
-    }
-    try {
-      // Simple query to verify database responsiveness
-      store.db.prepare("SELECT 1").get();
-      return store.db.checkFts5Integrity();
-    } catch {
-      return false;
-    }
+        void store.refreshDatabaseHealthAsync().catch(() => undefined);
+    return store.getDatabaseHealth().healthy;
 }
 
 export function getSettingsSyncImpl(store: TaskStore): Settings {
@@ -936,69 +833,17 @@ export function getSettingsSyncImpl(store: TaskStore): Settings {
     Backend mode returns settingsSyncCache populated by getSettings/getSettingsFast.
     Before the first async load, DEFAULT_SETTINGS is the only safe sync value.
     */
-    if (store.backendMode) {
-      return store.settingsSyncCache ?? DEFAULT_SETTINGS;
-    }
-    try {
-      const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings: string | null } | undefined;
-      if (!row) return DEFAULT_SETTINGS;
-      const settings = fromJson<Settings>(row.settings);
-      return { ...DEFAULT_SETTINGS, ...settings };
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
+        return store.settingsSyncCache ?? DEFAULT_SETTINGS;
 }
 
 export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT * FROM activityLog
-         WHERE type = 'task:moved'
-           AND timestamp > ?
-           AND timestamp <= ?
-           AND (
-             json_extract(metadata, '$.to') = 'in-review'
-             OR (
-               json_extract(metadata, '$.from') = 'in-review'
-               AND json_extract(metadata, '$.to') = 'done'
-             )
-           )
-         ORDER BY timestamp ASC
-         LIMIT ?`,
-      )
-      .all(options.since, options.until, 200_000) as unknown as ActivityLogRow[];
-
-    return rows.map((row) => ({
-      id: row.id,
-      timestamp: row.timestamp,
-      type: row.type as ActivityEventType,
-      taskId: row.taskId || undefined,
-      taskTitle: row.taskTitle || undefined,
-      details: row.details,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-    }));
+        const layer = store.asyncLayer!;
+    return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options);
 }
 
 export async function getTaskMergedTaskIdsImpl(store: TaskStore, options: { since: string; until: string }): Promise<Set<string>> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getTaskMergedTaskIdsAsync(layer.db, layer.projectId ?? "", options);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT DISTINCT taskId FROM activityLog
-         WHERE type = 'task:merged'
-           AND timestamp > ?
-           AND timestamp <= ?
-           AND taskId IS NOT NULL`,
-      )
-      .all(options.since, options.until) as Array<{ taskId: string }>;
-
-    return new Set(rows.map((row) => row.taskId));
+        const layer = store.asyncLayer!;
+    return getTaskMergedTaskIdsAsync(layer.db, layer.projectId ?? "", options);
 }
 
 export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissionStore {
@@ -1013,15 +858,12 @@ export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissi
       // SSE mission events stay degraded in PG mode — the engine MissionAutopilot +
       // dashboard SSE are coupled to the sync EventEmitter MissionStore and guard their
       // init with `instanceof MissionStore`.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("MissionStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.missionStore = new AsyncMissionStore(layer, store);
-      } else {
-        store.missionStore = new MissionStore(store.fusionDir, store.db, store);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("MissionStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.missionStore = new AsyncMissionStore(layer, store);
+
     }
     return store.missionStore;
 }
@@ -1077,11 +919,8 @@ export function getExperimentSessionStoreImpl(store: TaskStore): ExperimentSessi
       // FNXC:RuntimeSatelliteAsync 2026-06-24-15:00:
       // In backend mode, pass the AsyncDataLayer so the store delegates to
       // async helpers; otherwise pass the sync SQLite Database.
-      if (store.backendMode) {
-        store.experimentSessionStore = new ExperimentSessionStore(null, { asyncLayer: store.asyncLayer });
-      } else {
-        store.experimentSessionStore = new ExperimentSessionStore(store.db);
-      }
+            store.experimentSessionStore = new ExperimentSessionStore(null, { asyncLayer: store.asyncLayer });
+
     }
     return store.experimentSessionStore;
 }
@@ -1100,28 +939,17 @@ export async function getVerificationCacheHitImpl(store: TaskStore,
   ): Promise<{ recordedAt: string; taskId: string | null } | null> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
-    if (store.backendMode) {
-      const table = schema.project.verificationCache;
-      const rows = await store.asyncLayer!.db
-        .select({ recordedAt: table.recordedAt, taskId: table.taskId })
-        .from(table)
-        .where(and(
-          eq(table.treeSha, treeSha),
-          eq(table.testCommand, normalizedTest),
-          eq(table.buildCommand, normalizedBuild),
-        ))
-        .limit(1);
-      return rows[0] ?? null;
-    }
-    const row = store.db
-      .prepare(
-        `SELECT recordedAt, taskId FROM verification_cache
-         WHERE treeSha = ? AND testCommand = ? AND buildCommand = ?`,
-      )
-      .get(treeSha, normalizedTest, normalizedBuild) as
-      | { recordedAt: string; taskId: string | null }
-      | undefined;
-    return row ?? null;
+        const table = schema.project.verificationCache;
+    const rows = await store.asyncLayer!.db
+      .select({ recordedAt: table.recordedAt, taskId: table.taskId })
+      .from(table)
+      .where(and(
+        eq(table.treeSha, treeSha),
+        eq(table.testCommand, normalizedTest),
+        eq(table.buildCommand, normalizedBuild),
+      ))
+      .limit(1);
+    return rows[0] ?? null;
 }
 
 export async function recordVerificationCachePassImpl(store: TaskStore,
@@ -1133,29 +961,21 @@ export async function recordVerificationCachePassImpl(store: TaskStore,
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
     const recordedAt = new Date().toISOString();
-    if (store.backendMode) {
-      /*
-      FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
-      Target the PK by constraint name: migration 0006_project_ownership
-      rebuilds every project-schema PK to lead with project_id, so a
-      column-list ON CONFLICT on the three logical key columns cannot infer
-      the arbiter index (42P10). project_id itself comes from the column's
-      current_setting('fusion.project_id') default under RLS.
-      */
-      await store.asyncLayer!.db.execute(sql`
-        INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
-        VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
-        ON CONFLICT ON CONSTRAINT verification_cache_pkey
-        DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
-      `);
-      return;
-    }
-    store.db
-      .prepare(
-        `INSERT OR REPLACE INTO verification_cache (treeSha, testCommand, buildCommand, recordedAt, taskId)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
+        /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
+    Target the PK by constraint name: migration 0006_project_ownership
+    rebuilds every project-schema PK to lead with project_id, so a
+    column-list ON CONFLICT on the three logical key columns cannot infer
+    the arbiter index (42P10). project_id itself comes from the column's
+    current_setting('fusion.project_id') default under RLS.
+    */
+    await store.asyncLayer!.db.execute(sql`
+      INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
+      VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
+      ON CONFLICT ON CONSTRAINT verification_cache_pkey
+      DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
+    `);
+    return;
 }
 
 /*

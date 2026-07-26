@@ -1180,16 +1180,12 @@ export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Ta
         matchedTaskId: tombstonedMatch.id, score: tombstonedMatch.score,
         tombstoneDeletedAt: tombstonedMatch.deletedAt, stickyWindowDays,
       };
-      if (store.backendMode) {
-        await recordRunAuditEventAsync(store.asyncLayer!, {
-          taskId: task.id, agentId: "system", runId: `store:intake:resurrection-blocked:${task.id}`,
-          domain: "database", mutationType: "intake:resurrection-blocked", target: task.id, metadata,
-        });
-        await softDeleteTaskRowAsync(store.asyncLayer!, task.id, new Date().toISOString());
-      } else {
-        store.insertRunAuditEventRow({ taskId: task.id, domain: "database", mutationType: "intake:resurrection-blocked", target: task.id, metadata });
-        store.deleteTaskById(task.id);
-      }
+            await recordRunAuditEventAsync(store.asyncLayer!, {
+        taskId: task.id, agentId: "system", runId: `store:intake:resurrection-blocked:${task.id}`,
+        domain: "database", mutationType: "intake:resurrection-blocked", target: task.id, metadata,
+      });
+      await softDeleteTaskRowAsync(store.asyncLayer!, task.id, new Date().toISOString());
+
       if (store.isWatching) store.taskCache.delete(task.id);
       const taskDir = store.taskDir(task.id);
       if (existsSync(taskDir)) await rm(taskDir, { recursive: true, force: true });

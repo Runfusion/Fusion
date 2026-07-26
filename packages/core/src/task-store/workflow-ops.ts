@@ -32,17 +32,14 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
        * backend mode, read the counter via readProjectConfig, insert the row
        * via Drizzle, and bump the counter via writeProjectConfig.
        */
-      let nextWsId: number;
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        const configRow = await readProjectConfig(layer);
-        nextWsId = configRow.nextWorkflowStepId ?? 1;
-      } else {
-        const counterRow = store.db
-          .prepare("SELECT nextWorkflowStepId FROM config WHERE id = 1")
-          .get() as { nextWorkflowStepId?: number } | undefined;
-        nextWsId = counterRow?.nextWorkflowStepId || 1;
-      }
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-13:35:
+      Workflow step creation is PostgreSQL-only after dual-path collapse; reuse one AsyncDataLayer binding for counter read + insert.
+      */
+      const layer = store.asyncLayer!;
+      const configRow = await readProjectConfig(layer);
+      let nextWsId = configRow.nextWorkflowStepId ?? 1;
+
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
 
       const mode = input.mode || "prompt";
@@ -74,133 +71,8 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
         updatedAt: now,
       };
 
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        await layer.db.insert(schema.project.workflowSteps).values({
-          id: step.id,
-          templateId: step.templateId ?? null,
-          name: step.name,
-          description: step.description,
-          mode: step.mode,
-          phase: step.phase || "pre-merge",
-          gateMode: step.gateMode,
-          prompt: step.prompt,
-          toolMode: step.toolMode ?? null,
-          scriptName: step.scriptName ?? null,
-          enabled: step.enabled ? 1 : 0,
-          defaultOn: step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-          modelProvider: step.modelProvider ?? null,
-          modelId: step.modelId ?? null,
-          migratedFragmentId: step.migratedFragmentId ?? null,
-          createdAt: step.createdAt,
-          updatedAt: step.updatedAt,
-        });
-        await writeProjectConfig(layer, {}, { nextWorkflowStepId: nextWsId + 1 });
-        store.workflowStepsCache = null;
-        return step;
-      }
-
-      store.db.prepare(
-        `INSERT INTO workflow_steps (
-          id,
-          templateId,
-          name,
-          description,
-          mode,
-          phase,
-          gateMode,
-          prompt,
-          toolMode,
-          scriptName,
-          enabled,
-          defaultOn,
-          modelProvider,
-          modelId,
-          migrated_fragment_id,
-          createdAt,
-          updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        step.id,
-        step.templateId ?? null,
-        step.name,
-        step.description,
-        step.mode,
-        step.phase || "pre-merge",
-        step.gateMode,
-        step.prompt,
-        step.toolMode ?? null,
-        step.scriptName ?? null,
-        step.enabled ? 1 : 0,
-        step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-        step.modelProvider ?? null,
-        step.modelId ?? null,
-        step.migratedFragmentId ?? null,
-        step.createdAt,
-        step.updatedAt,
-      );
-
-      const config = await store.readConfig();
-      await store.writeConfig(config, { nextWorkflowStepId: nextWsId + 1 });
-      store.workflowStepsCache = null;
-
-      return step;
-    });
-  }
-
-export async function updateWorkflowStepImpl(store: TaskStore, id: string, updates: Partial<import("../types.js").WorkflowStepInput>): Promise<import("../types.js").WorkflowStep> {
-    // FNXC:PostgresCutover 2026-06-28-10:00:
-    // Backend-mode branch: read the step row via Drizzle, apply updates, write back.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db.select().from(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, id)).limit(1);
-      const pgRow = rows[0];
-      if (!pgRow) throw new Error(`Workflow step '${id}' not found`);
-
-      const step = store.toStoredWorkflowStep({
-        id: pgRow.id,
-        templateId: pgRow.templateId,
-        name: pgRow.name,
-        description: pgRow.description,
-        mode: pgRow.mode,
-        phase: pgRow.phase,
-        gateMode: pgRow.gateMode,
-        prompt: pgRow.prompt,
-        toolMode: pgRow.toolMode,
-        scriptName: pgRow.scriptName,
-        enabled: pgRow.enabled,
-        defaultOn: pgRow.defaultOn,
-        modelProvider: pgRow.modelProvider,
-        modelId: pgRow.modelId,
-        migrated_fragment_id: pgRow.migratedFragmentId,
-        createdAt: pgRow.createdAt,
-        updatedAt: pgRow.updatedAt,
-      });
-
-      if (updates.mode !== undefined) {
-        const newMode = updates.mode;
-        if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
-          throw new Error("Script mode requires a scriptName");
-        }
-        step.mode = newMode;
-        if (newMode === "script") { step.prompt = ""; step.gateMode = step.gateMode || "gate"; step.toolMode = undefined; step.modelProvider = undefined; step.modelId = undefined; }
-        if (newMode === "prompt") { step.scriptName = undefined; step.gateMode = step.gateMode || "advisory"; step.toolMode = step.toolMode || "readonly"; }
-      }
-      if (updates.name !== undefined) step.name = updates.name;
-      if (updates.description !== undefined) step.description = updates.description;
-      if (updates.phase !== undefined) step.phase = updates.phase;
-      if (updates.gateMode !== undefined) step.gateMode = updates.gateMode;
-      if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
-      if (updates.toolMode !== undefined && step.mode === "prompt") step.toolMode = updates.toolMode;
-      if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
-      if (updates.enabled !== undefined) step.enabled = updates.enabled;
-      if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
-      if (step.mode === "script" && !step.scriptName?.trim()) throw new Error("Script mode requires a scriptName");
-      if (step.mode === "prompt") { if ("modelProvider" in updates) step.modelProvider = updates.modelProvider; if ("modelId" in updates) step.modelId = updates.modelId; }
-      if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
-      step.updatedAt = new Date().toISOString();
-
-      await layer.db.update(schema.project.workflowSteps).set({
+      await layer.db.insert(schema.project.workflowSteps).values({
+        id: step.id,
         templateId: step.templateId ?? null,
         name: step.name,
         description: step.description,
@@ -215,64 +87,52 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
         modelProvider: step.modelProvider ?? null,
         modelId: step.modelId ?? null,
         migratedFragmentId: step.migratedFragmentId ?? null,
+        createdAt: step.createdAt,
         updatedAt: step.updatedAt,
-      }).where(eq(schema.project.workflowSteps.id, id));
-
+      });
+      await writeProjectConfig(layer, {}, { nextWorkflowStepId: nextWsId + 1 });
       store.workflowStepsCache = null;
       return step;
-    }
+});
+  }
 
-    const row = store.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
-      | {
-          id: string;
-          templateId: string | null;
-          name: string;
-          description: string;
-          mode: string;
-          phase: string | null;
-          gateMode: string | null;
-          prompt: string;
-          toolMode: string | null;
-          scriptName: string | null;
-          enabled: number;
-          defaultOn: number | null;
-          modelProvider: string | null;
-          modelId: string | null;
-          createdAt: string;
-          updatedAt: string;
-        }
-      | undefined;
+export async function updateWorkflowStepImpl(store: TaskStore, id: string, updates: Partial<import("../types.js").WorkflowStepInput>): Promise<import("../types.js").WorkflowStep> {
+    // FNXC:PostgresCutover 2026-06-28-10:00:
+    // Backend-mode branch: read the step row via Drizzle, apply updates, write back.
+        const layer = store.asyncLayer!;
+    const rows = await layer.db.select().from(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, id)).limit(1);
+    const pgRow = rows[0];
+    if (!pgRow) throw new Error(`Workflow step '${id}' not found`);
 
-    if (!row) {
-      throw new Error(`Workflow step '${id}' not found`);
-    }
+    const step = store.toStoredWorkflowStep({
+      id: pgRow.id,
+      templateId: pgRow.templateId,
+      name: pgRow.name,
+      description: pgRow.description,
+      mode: pgRow.mode,
+      phase: pgRow.phase,
+      gateMode: pgRow.gateMode,
+      prompt: pgRow.prompt,
+      toolMode: pgRow.toolMode,
+      scriptName: pgRow.scriptName,
+      enabled: pgRow.enabled,
+      defaultOn: pgRow.defaultOn,
+      modelProvider: pgRow.modelProvider,
+      modelId: pgRow.modelId,
+      migrated_fragment_id: pgRow.migratedFragmentId,
+      createdAt: pgRow.createdAt,
+      updatedAt: pgRow.updatedAt,
+    });
 
-    const step = store.toStoredWorkflowStep(row);
-
-    // Handle mode change
     if (updates.mode !== undefined) {
       const newMode = updates.mode;
-      // Validate: script mode requires scriptName
       if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
         throw new Error("Script mode requires a scriptName");
       }
       step.mode = newMode;
-      // When switching to script mode, clear prompt and model overrides
-      if (newMode === "script") {
-        step.prompt = "";
-        step.gateMode = step.gateMode || "gate";
-        step.toolMode = undefined;
-        step.modelProvider = undefined;
-        step.modelId = undefined;
-      }
-      // When switching to prompt mode, clear scriptName
-      if (newMode === "prompt") {
-        step.scriptName = undefined;
-        step.gateMode = step.gateMode || "advisory";
-        step.toolMode = step.toolMode || "readonly";
-      }
+      if (newMode === "script") { step.prompt = ""; step.gateMode = step.gateMode || "gate"; step.toolMode = undefined; step.modelProvider = undefined; step.modelId = undefined; }
+      if (newMode === "prompt") { step.scriptName = undefined; step.gateMode = step.gateMode || "advisory"; step.toolMode = step.toolMode || "readonly"; }
     }
-
     if (updates.name !== undefined) step.name = updates.name;
     if (updates.description !== undefined) step.description = updates.description;
     if (updates.phase !== undefined) step.phase = updates.phase;
@@ -282,57 +142,32 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
     if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
     if (updates.enabled !== undefined) step.enabled = updates.enabled;
     if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
-    if (step.mode === "script" && !step.scriptName?.trim()) {
-      throw new Error("Script mode requires a scriptName");
-    }
-    if (step.mode === "prompt") {
-      if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
-      if ("modelId" in updates) step.modelId = updates.modelId;
-    }
+    if (step.mode === "script" && !step.scriptName?.trim()) throw new Error("Script mode requires a scriptName");
+    if (step.mode === "prompt") { if ("modelProvider" in updates) step.modelProvider = updates.modelProvider; if ("modelId" in updates) step.modelId = updates.modelId; }
     if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
     step.updatedAt = new Date().toISOString();
 
-    store.db.prepare(
-      `UPDATE workflow_steps
-       SET templateId = ?,
-           name = ?,
-           description = ?,
-           mode = ?,
-           phase = ?,
-           gateMode = ?,
-           prompt = ?,
-           toolMode = ?,
-           scriptName = ?,
-           enabled = ?,
-           defaultOn = ?,
-           modelProvider = ?,
-           modelId = ?,
-           migrated_fragment_id = ?,
-           updatedAt = ?
-       WHERE id = ?`,
-    ).run(
-      step.templateId ?? null,
-      step.name,
-      step.description,
-      step.mode,
-      step.phase || "pre-merge",
-      step.gateMode,
-      step.prompt,
-      step.toolMode ?? null,
-      step.scriptName ?? null,
-      step.enabled ? 1 : 0,
-      step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-      step.modelProvider ?? null,
-      step.modelId ?? null,
-      step.migratedFragmentId ?? null,
-      step.updatedAt,
-      step.id,
-    );
-    store.db.bumpLastModified();
-    store.workflowStepsCache = null;
+    await layer.db.update(schema.project.workflowSteps).set({
+      templateId: step.templateId ?? null,
+      name: step.name,
+      description: step.description,
+      mode: step.mode,
+      phase: step.phase || "pre-merge",
+      gateMode: step.gateMode,
+      prompt: step.prompt,
+      toolMode: step.toolMode ?? null,
+      scriptName: step.scriptName ?? null,
+      enabled: step.enabled ? 1 : 0,
+      defaultOn: step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
+      modelProvider: step.modelProvider ?? null,
+      modelId: step.modelId ?? null,
+      migratedFragmentId: step.migratedFragmentId ?? null,
+      updatedAt: step.updatedAt,
+    }).where(eq(schema.project.workflowSteps.id, id));
 
+    store.workflowStepsCache = null;
     return step;
-  }
+}
 
 export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string, updates: WorkflowDefinitionUpdate,): Promise<WorkflowDefinition> {
     if (isBuiltinWorkflowId(id)) throw new Error("Built-in workflows cannot be edited");

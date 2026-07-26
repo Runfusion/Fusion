@@ -6,7 +6,6 @@ import * as schema from "./postgres/schema/index.js";
 import { type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput } from "./types.js";
 
-
 export type OverlapBlockerRepairReason =
   | "task-not-found"
   | "no-overlap-blocker"
@@ -144,7 +143,6 @@ import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import type { BranchGroupRow, PrEntityRow, TaskDocumentRow, ArtifactRow, TaskDocumentRevisionRow, GoalCitationRow, RunAuditEventRow, MergeQueueRow, MergeRequestRow, CompletionHandoffMarkerRow, WorkflowWorkItemRow } from "./task-store/row-types.js";
 
 /** Database row shape for the tasks table (all columns). */
-
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -1077,34 +1075,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null> {
     const trimmedId = sourceTaskId.trim();
     if (trimmedId.length === 0) return null;
-    if (this.backendMode) {
-      const layer = this.asyncLayer!;
-      const rows = await layer.db.select()
-        .from(schema.project.tasks)
-        .where(and(
-          isNull(schema.project.tasks.deletedAt),
-          ne(schema.project.tasks.column, "archived"),
-          ne(schema.project.tasks.column, "done"),
-          eq(sql`json_extract(${schema.project.tasks.sourceMetadata}->>'revertOf')`, trimmedId),
-        ))
-        .orderBy(schema.project.tasks.createdAt)
-        .limit(1);
-      if (rows.length === 0) return null;
-      return this.rowToTask(this.pgRowToTaskRow(rows[0] as Record<string, unknown>));
-    }
-    const selectClause = this.getTaskSelectClause(false, "t");
-    const row = this.db.prepare(`
-      SELECT ${selectClause}
-      FROM tasks t
-      WHERE t."deletedAt" IS NULL
-        AND t."column" != 'archived'
-        AND t."column" != 'done'
-        AND json_extract(t.sourceMetadata, '$.revertOf') = ?
-      ORDER BY t.createdAt DESC
-      LIMIT 1
-    `).get(trimmedId) as TaskRow | undefined;
-    return row ? this.rowToTask(row) : null;
-  }
+        const layer = this.asyncLayer!;
+    const rows = await layer.db.select()
+      .from(schema.project.tasks)
+      .where(and(
+        isNull(schema.project.tasks.deletedAt),
+        ne(schema.project.tasks.column, "archived"),
+        ne(schema.project.tasks.column, "done"),
+        eq(sql`json_extract(${schema.project.tasks.sourceMetadata}->>'revertOf')`, trimmedId),
+      ))
+      .orderBy(schema.project.tasks.createdAt)
+      .limit(1);
+    if (rows.length === 0) return null;
+    return this.rowToTask(this.pgRowToTaskRow(rows[0] as Record<string, unknown>));
+}
 
 /** Persist (idempotent upsert) one branch's progress for a fan-out run (#1407). */
    async saveWorkflowRunBranch(state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): Promise<void> {

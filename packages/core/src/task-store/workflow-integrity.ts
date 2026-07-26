@@ -321,55 +321,36 @@ export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, o
     */
     let candidates: CommitAssociationDiffBackfillCandidateRow[];
     let applyUpdate: (commitSha: string, additions: number, deletions: number) => Promise<number>;
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const grouped = await layer.db
-        .select({
-          commitSha: schema.project.taskCommitAssociations.commitSha,
-          rowCount: sql<number>`count(*)`,
-        })
-        .from(schema.project.taskCommitAssociations)
+        const layer = store.asyncLayer!;
+    const grouped = await layer.db
+      .select({
+        commitSha: schema.project.taskCommitAssociations.commitSha,
+        rowCount: sql<number>`count(*)`,
+      })
+      .from(schema.project.taskCommitAssociations)
+      .where(
+        and(
+          isNull(schema.project.taskCommitAssociations.additions),
+          isNull(schema.project.taskCommitAssociations.deletions),
+        ),
+      )
+      .groupBy(schema.project.taskCommitAssociations.commitSha)
+      .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
+    candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
+    applyUpdate = async (commitSha, additions, deletions) => {
+      const updated = await layer.db
+        .update(schema.project.taskCommitAssociations)
+        .set({ additions, deletions, updatedAt: new Date().toISOString() })
         .where(
           and(
+            eq(schema.project.taskCommitAssociations.commitSha, commitSha),
             isNull(schema.project.taskCommitAssociations.additions),
             isNull(schema.project.taskCommitAssociations.deletions),
           ),
         )
-        .groupBy(schema.project.taskCommitAssociations.commitSha)
-        .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
-      candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const updated = await layer.db
-          .update(schema.project.taskCommitAssociations)
-          .set({ additions, deletions, updatedAt: new Date().toISOString() })
-          .where(
-            and(
-              eq(schema.project.taskCommitAssociations.commitSha, commitSha),
-              isNull(schema.project.taskCommitAssociations.additions),
-              isNull(schema.project.taskCommitAssociations.deletions),
-            ),
-          )
-          .returning({ id: schema.project.taskCommitAssociations.id });
-        return updated.length;
-      };
-    } else {
-      candidates = store.db.prepare(
-        `SELECT commitSha, COUNT(*) AS rowCount
-         FROM task_commit_associations
-         WHERE additions IS NULL AND deletions IS NULL
-         GROUP BY commitSha
-         ORDER BY commitSha`,
-      ).all() as CommitAssociationDiffBackfillCandidateRow[];
-      const updateStats = store.db.prepare(
-        `UPDATE task_commit_associations
-         SET additions = ?, deletions = ?, updatedAt = ?
-         WHERE commitSha = ? AND additions IS NULL AND deletions IS NULL`,
-      );
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const result = updateStats.run(additions, deletions, new Date().toISOString(), commitSha);
-        return Number(result.changes);
-      };
-    }
+        .returning({ id: schema.project.taskCommitAssociations.id });
+      return updated.length;
+    };
 
     const report: CommitAssociationDiffBackfillReport = {
       scannedRows: candidates.reduce((sum, row) => sum + row.rowCount, 0),

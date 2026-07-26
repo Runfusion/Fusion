@@ -46,18 +46,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
       // JSONL line + records goal citations under a just-deleted taskId. There
       // is no FK on goal_citations.task_id (plain text column), so this is an
       // orphaned-by-value metadata row, not a constraint violation or crash.
-      if (!store.backendMode) {
-        const liveTaskIds = new Set(
-          (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-        );
-        validEntries = batch.filter((entry) => liveTaskIds.has(entry.taskId));
-        const dropped = batch.length - validEntries.length;
-        if (dropped > 0) {
-          severityAuditLog.warn(
-            `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${store.fusionDir})`,
-          );
-        }
-      }
+      
 
       if (validEntries.length > 0) {
         const citationInputs: GoalCitationInput[] = [];
@@ -106,9 +95,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
             severityAuditLog.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
           }
         }
-        if (!store.backendMode) {
-          store.db.bumpLastModified();
-        }
+        
       }
     } finally {
       store.agentLogBuffer.splice(0, flushCount);
@@ -148,16 +135,7 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
     // throws) — JSONL append below is the backend-independent durable write.
     // See flushAgentLogBufferImpl for the full rationale.
     let validEntries = normalizedEntries;
-    if (!store.backendMode) {
-      const liveTaskIds = new Set(
-        (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-      );
-      validEntries = normalizedEntries.filter((entry) => liveTaskIds.has(entry.taskId));
-      const dropped = normalizedEntries.length - validEntries.length;
-      if (dropped > 0) {
-        severityAuditLog.warn(`[fusion] Dropped ${dropped} batch agent log entries for deleted tasks (${store.fusionDir})`);
-      }
-    }
+    
 
     const citationInputs: GoalCitationInput[] = [];
     const entriesByTask = new Map<string, typeof validEntries>();

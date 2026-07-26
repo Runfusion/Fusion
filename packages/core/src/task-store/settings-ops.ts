@@ -309,15 +309,12 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
      * which uses store.db (SQLite).
      */
     let config: BoardConfig;
-    if (store.backendMode) {
-      const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
-      config = {
-        nextId: projectConfig.nextId ?? 1,
-        settings: (projectConfig.settings ?? {}) as Settings,
-      };
-    } else {
-      config = store.readConfigFast();
-    }
+        const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
+    config = {
+      nextId: projectConfig.nextId ?? 1,
+      settings: (projectConfig.settings ?? {}) as Settings,
+    };
+
     const previous: Settings = { ...DEFAULT_SETTINGS, ...previousGlobal, ...config.settings } as Settings;
 
     // Stale-writer guard (U4, R8): moved keys are all project-scoped, but null

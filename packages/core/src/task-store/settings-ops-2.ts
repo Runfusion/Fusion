@@ -84,68 +84,36 @@ export async function getSettingsFastImpl(store: TaskStore): Promise<Settings> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:22:
     // Backend-mode fast settings read: delegate to the async settings helper
     // (readProjectSettingsAsync), which reads only the jsonb `settings` column.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const [globalSettings, projectSettingsRaw] = await Promise.all([
-        store.globalSettingsStore.getSettings(),
-        readProjectSettingsAsync(layer),
-      ]);
-      const raw = projectSettingsRaw ?? undefined;
-      const projectSettings: Partial<Settings> | undefined = raw
-        ? (Object.fromEntries(
-            Object.entries(raw).filter(([key]) => !isGlobalOnlySettingsKey(key)),
-          ) as Partial<Settings>)
-        : undefined;
-      const merged = {
-        ...DEFAULT_SETTINGS,
-        ...globalSettings,
-        ...projectSettings,
-        worktrunk: resolveWorktrunkSettings(
-          globalSettings.worktrunk,
-          projectSettings?.worktrunk,
-        ),
-      };
-      try {
-        merged.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
-      } catch {
-        merged.secretsSyncPassphraseConfigured = false;
-      }
-      const canonical = canonicalizeSettings(merged);
-      // FNXC:IncompletePgPorts 2026-07-26-20:40: feed getSettingsSync cache (fast path).
-      store.settingsSyncCache = canonical;
-      return canonical;
-    }
-    const [globalSettings, row] = await Promise.all([
+        const layer = store.asyncLayer!;
+    const [globalSettings, projectSettingsRaw] = await Promise.all([
       store.globalSettingsStore.getSettings(),
-      store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined,
+      readProjectSettingsAsync(layer),
     ]);
-
-    const raw = row?.settings ? fromJson<Settings>(row.settings) : undefined;
-
-    // Strip global-only keys from the project-level row so stale project-scoped
-    // values (e.g. an empty experimentalFeatures={}) don't override the correct
-    // global value during the spread merge below. getSettingsByScopeFast() has
-    // always done this; getSettingsFast() was missing the filter.
+    const raw = projectSettingsRaw ?? undefined;
     const projectSettings: Partial<Settings> | undefined = raw
       ? (Object.fromEntries(
           Object.entries(raw).filter(([key]) => !isGlobalOnlySettingsKey(key)),
         ) as Partial<Settings>)
       : undefined;
-
     const merged = {
       ...DEFAULT_SETTINGS,
       ...globalSettings,
       ...projectSettings,
-      worktrunk: resolveWorktrunkSettings(globalSettings.worktrunk, projectSettings?.worktrunk),
+      worktrunk: resolveWorktrunkSettings(
+        globalSettings.worktrunk,
+        projectSettings?.worktrunk,
+      ),
     };
     try {
       merged.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
     } catch {
       merged.secretsSyncPassphraseConfigured = false;
     }
-
-    return canonicalizeSettings(merged);
-  }
+    const canonical = canonicalizeSettings(merged);
+    // FNXC:IncompletePgPorts 2026-07-26-20:40: feed getSettingsSync cache (fast path).
+    store.settingsSyncCache = canonical;
+    return canonical;
+}
 
 export async function getSettingsByScopeImpl(store: TaskStore): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:23:
@@ -208,45 +176,17 @@ export async function getSettingsByScopeImpl(store: TaskStore): Promise<{ global
 export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:24:
     // Backend-mode fast scoped read: delegate to async settings helper.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const [globalSettings, projectSettingsRaw] = await Promise.all([
-        store.globalSettingsStore.getSettings(),
-        readProjectSettingsAsync(layer),
-      ]);
-      try {
-        globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
-      } catch {
-        globalSettings.secretsSyncPassphraseConfigured = false;
-      }
-      const projectSettings = projectSettingsRaw ?? undefined;
-      const projectScoped: Partial<ProjectSettings> = {};
-      if (projectSettings) {
-        for (const key of Object.keys(projectSettings)) {
-          if (!isGlobalOnlySettingsKey(key)) {
-            (projectScoped as Record<string, unknown>)[key] = (projectSettings as Record<string, unknown>)[key];
-          }
-        }
-      }
-      const canonicalizedProject = canonicalizeSettings(projectScoped as Settings);
-      if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
-        canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
-      }
-      return { global: globalSettings, project: canonicalizedProject };
-    }
-    const [globalSettings, row] = await Promise.all([
+        const layer = store.asyncLayer!;
+    const [globalSettings, projectSettingsRaw] = await Promise.all([
       store.globalSettingsStore.getSettings(),
-      store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined,
+      readProjectSettingsAsync(layer),
     ]);
     try {
       globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
     } catch {
       globalSettings.secretsSyncPassphraseConfigured = false;
     }
-
-    const projectSettings = row?.settings ? fromJson<Settings>(row.settings) : undefined;
-
-    // Extract only project-level keys from config.settings
+    const projectSettings = projectSettingsRaw ?? undefined;
     const projectScoped: Partial<ProjectSettings> = {};
     if (projectSettings) {
       for (const key of Object.keys(projectSettings)) {
@@ -255,14 +195,10 @@ export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ gl
         }
       }
     }
-
-    // Apply canonicalization and keep upgrade-safe default fallback behavior
-    // for legacy rows that omit this key.
     const canonicalizedProject = canonicalizeSettings(projectScoped as Settings);
     if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
       canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
     }
-
     return { global: globalSettings, project: canonicalizedProject };
-  }
+}
 

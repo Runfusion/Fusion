@@ -178,232 +178,60 @@ export class ApprovalRequestStore {
       updatedAt: now,
     };
 
-    if (this.backendMode) {
-      const id = `apr-${randomUUID().slice(0, 8)}`;
-      return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
-    }
-
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        INSERT INTO approval_requests (
-          id, status,
-          requesterActorId, requesterActorType, requesterActorName,
-          targetActionCategory, targetActionOperation, targetActionSummary,
-          targetResourceType, targetResourceId, targetContext,
-          taskId, runId,
-          requestedAt, decidedAt, completedAt,
-          createdAt, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        request.id,
-        request.status,
-        request.requester.actorId,
-        request.requester.actorType,
-        request.requester.actorName,
-        request.targetAction.category,
-        request.targetAction.action,
-        request.targetAction.summary,
-        request.targetAction.resourceType,
-        request.targetAction.resourceId,
-        toJsonNullable(request.targetAction.context),
-        request.taskId ?? null,
-        request.runId ?? null,
-        request.requestedAt,
-        null,
-        null,
-        request.createdAt,
-        request.updatedAt,
-      );
-      this.appendAuditEvent(request.id, "created", input.requester, now);
-    });
-
-    this.syncDb().bumpLastModified();
-    return request;
-  }
+        const id = `apr-${randomUUID().slice(0, 8)}`;
+    return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
+}
 
   async get(id: string): Promise<ApprovalRequest | null> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.getApprovalRequest(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(id) as ApprovalRequestRow | undefined;
-    return row ? this.rowToRequest(row) : null;
-  }
+        return asyncApprovalRequestStore.getApprovalRequest(this.asyncLayer!.db, id);
+}
 
   async list(input: ApprovalRequestListInput = {}): Promise<ApprovalRequest[]> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.listApprovalRequests(this.asyncLayer!.db, input);
-    }
-    const where: string[] = [];
-    const params: Array<string | number> = [];
-
-    if (input.status) {
-      where.push("status = ?");
-      params.push(input.status);
-    }
-    if (input.requesterActorId) {
-      where.push("requesterActorId = ?");
-      params.push(input.requesterActorId);
-    }
-    if (input.taskId) {
-      where.push("taskId = ?");
-      params.push(input.taskId);
-    }
-    if (input.runId) {
-      where.push("runId = ?");
-      params.push(input.runId);
-    }
-
-    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-    const limit = input.limit ?? 100;
-    const offset = input.offset ?? 0;
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM approval_requests
-      ${whereSql}
-      ORDER BY createdAt DESC, id DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset) as ApprovalRequestRow[];
-
-    return rows.map((row) => this.rowToRequest(row));
-  }
+        return asyncApprovalRequestStore.listApprovalRequests(this.asyncLayer!.db, input);
+}
 
   async getPendingCountsByActor(): Promise<Map<string, number>> {
-    if (this.backendMode) {
-      const table = schema.project.approvalRequests;
-      const rows = await this.asyncLayer!.db
-        .select({
-          actorId: table.requesterActorId,
-          requestCount: count(),
-        })
-        .from(table)
-        .where(eq(table.status, "pending"))
-        .groupBy(table.requesterActorId);
-      return new Map(rows.map((row) => [row.actorId, Number(row.requestCount)]));
-    }
-    const rows = this.syncDb().prepare(`
-      SELECT requesterActorId AS actorId, COUNT(*) AS requestCount
-      FROM approval_requests
-      WHERE status = 'pending'
-      GROUP BY requesterActorId
-    `).all() as Array<{ actorId: string; requestCount: number }>;
-
+        const table = schema.project.approvalRequests;
+    const rows = await this.asyncLayer!.db
+      .select({
+        actorId: table.requesterActorId,
+        requestCount: count(),
+      })
+      .from(table)
+      .where(eq(table.status, "pending"))
+      .groupBy(table.requesterActorId);
     return new Map(rows.map((row) => [row.actorId, Number(row.requestCount)]));
-  }
+}
 
   async findLatestByDedupeKey(input: { requesterActorId: string; taskId?: string; dedupeKey: string }): Promise<ApprovalRequest | null> {
-    if (this.backendMode) {
-      const table = schema.project.approvalRequests;
-      const conditions = [eq(table.requesterActorId, input.requesterActorId)];
-      if (input.taskId !== undefined) {
-        conditions.push(eq(table.taskId, input.taskId));
-      }
-      const rows = await this.asyncLayer!.db
-        .select()
-        .from(table)
-        .where(and(...conditions))
-        .orderBy(desc(table.createdAt), desc(table.id));
-      for (const row of rows as ApprovalRequestRow[]) {
-        const context = fromJson<Record<string, unknown>>(row.targetContext);
-        if (context?.approvalDedupeKey === input.dedupeKey) {
-          return this.rowToRequest(row);
-        }
-      }
-      return null;
-    }
-
-    const where = ["requesterActorId = ?"];
-    const params: Array<string> = [input.requesterActorId];
-
+        const table = schema.project.approvalRequests;
+    const conditions = [eq(table.requesterActorId, input.requesterActorId)];
     if (input.taskId !== undefined) {
-      where.push("taskId = ?");
-      params.push(input.taskId);
+      conditions.push(eq(table.taskId, input.taskId));
     }
-
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM approval_requests
-      WHERE ${where.join(" AND ")}
-      ORDER BY createdAt DESC, id DESC
-    `).all(...params) as ApprovalRequestRow[];
-
-    for (const row of rows) {
+    const rows = await this.asyncLayer!.db
+      .select()
+      .from(table)
+      .where(and(...conditions))
+      .orderBy(desc(table.createdAt), desc(table.id));
+    for (const row of rows as ApprovalRequestRow[]) {
       const context = fromJson<Record<string, unknown>>(row.targetContext);
       if (context?.approvalDedupeKey === input.dedupeKey) {
         return this.rowToRequest(row);
       }
     }
-
     return null;
-  }
+}
 
   async decide(requestId: string, status: "approved" | "denied", input: ApprovalRequestDecisionInput): Promise<ApprovalRequest> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.decideApprovalRequest(this.asyncLayer!, requestId, status, input);
-    }
-    const existing = await this.get(requestId);
-    if (!existing) {
-      throw new Error(`Approval request ${requestId} not found`);
-    }
-    if (!isValidApprovalRequestTransition(existing.status, status)) {
-      throw new Error(`Invalid approval request transition: ${existing.status} -> ${status}`);
-    }
-
-    const now = new Date().toISOString();
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        UPDATE approval_requests
-        SET status = ?, decidedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `).run(status, now, now, requestId);
-      this.appendAuditEvent(requestId, status, input.actor, now, input.note);
-    });
-
-    this.syncDb().bumpLastModified();
-    const updated = await this.get(requestId);
-    if (!updated) {
-      throw new Error(`Approval request ${requestId} not found after update`);
-    }
-    return updated;
-  }
+        return asyncApprovalRequestStore.decideApprovalRequest(this.asyncLayer!, requestId, status, input);
+}
 
   async markCompleted(requestId: string, input: ApprovalRequestCompletionInput): Promise<ApprovalRequest> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.markApprovalRequestCompleted(this.asyncLayer!, requestId, input);
-    }
-    const existing = await this.get(requestId);
-    if (!existing) {
-      throw new Error(`Approval request ${requestId} not found`);
-    }
-    if (!isValidApprovalRequestTransition(existing.status, "completed")) {
-      throw new Error(`Invalid approval request transition: ${existing.status} -> completed`);
-    }
-
-    const now = new Date().toISOString();
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        UPDATE approval_requests
-        SET status = 'completed', completedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `).run(now, now, requestId);
-      this.appendAuditEvent(requestId, "completed", input.actor, now, input.note);
-    });
-
-    this.syncDb().bumpLastModified();
-    const updated = await this.get(requestId);
-    if (!updated) {
-      throw new Error(`Approval request ${requestId} not found after completion`);
-    }
-    return updated;
-  }
+        return asyncApprovalRequestStore.markApprovalRequestCompleted(this.asyncLayer!, requestId, input);
+}
 
   async getAuditHistory(requestId: string): Promise<ApprovalRequestAuditEvent[]> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.getApprovalAuditHistory(this.asyncLayer!.db, requestId);
-    }
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM approval_request_audit_events
-      WHERE requestId = ?
-      ORDER BY createdAt ASC, rowid ASC
-    `).all(requestId) as ApprovalRequestAuditEventRow[];
-
-    return rows.map((row) => this.rowToAuditEvent(row));
-  }
+        return asyncApprovalRequestStore.getApprovalAuditHistory(this.asyncLayer!.db, requestId);
+}
 }

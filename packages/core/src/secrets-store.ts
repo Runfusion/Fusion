@@ -159,22 +159,8 @@ export class SecretsStore {
   }
 
   async listSecrets(scope?: SecretScope): Promise<SecretRecord[]> {
-    if (this.backendMode) {
-      return asyncSecretsStore.listSecrets(this.asyncLayer!.db, scope);
-    }
-    if (scope) {
-      const db = this.dbForScope(scope);
-      const table = tableForScope(scope);
-      const rows = db.prepare(`SELECT id, key, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by FROM ${table} ORDER BY key COLLATE NOCASE ASC`).all() as SecretRow[];
-      return rows.map((row) => this.rowToRecord(row, scope));
-    }
-
-    const [project, global] = await Promise.all([
-      this.listSecrets("project"),
-      this.listSecrets("global"),
-    ]);
-    return [...project, ...global];
-  }
+        return asyncSecretsStore.listSecrets(this.asyncLayer!.db, scope);
+}
 
   async listEnvExportable(opts?: { keyPrefix?: string }): Promise<EnvExportableSecret[]> {
     const keyPrefix = opts?.keyPrefix;
@@ -221,14 +207,8 @@ export class SecretsStore {
   }
 
   async getSecretMetadata(id: string, scope: SecretScope): Promise<SecretRecord | null> {
-    if (this.backendMode) {
-      return asyncSecretsStore.getSecretMetadata(this.asyncLayer!.db, id, scope);
-    }
-    const db = this.dbForScope(scope);
-    const table = tableForScope(scope);
-    const row = db.prepare(`SELECT id, key, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by FROM ${table} WHERE id = ?`).get(id) as SecretRow | undefined;
-    return row ? this.rowToRecord(row, scope) : null;
-  }
+        return asyncSecretsStore.getSecretMetadata(this.asyncLayer!.db, id, scope);
+}
 
   async createSecret(input: {
     scope: SecretScope;
@@ -247,45 +227,10 @@ export class SecretsStore {
       throw new SecretsStoreError({ code: "invalid-policy", message: "Invalid access policy" });
     }
 
-    if (this.backendMode) {
-      const created = await asyncSecretsStore.createSecret(this.asyncLayer!.db, this.cipher, input);
-      this.emitAudit({ mutationType: "secret:create", scope: input.scope, secretId: created.id, key: created.key });
-      return created;
-    }
-
-    const now = new Date().toISOString();
-    const id = randomUUID();
-    const encrypted = await this.cipher.encrypt(input.plaintextValue);
-    const scope = input.scope;
-    const db = this.dbForScope(scope);
-    const table = tableForScope(scope);
-
-    try {
-      db.prepare(`INSERT INTO ${table} (id, key, value_ciphertext, nonce, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`)
-        .run(
-          id,
-          key,
-          encrypted.ciphertext,
-          encrypted.nonce,
-          input.description ?? null,
-          input.accessPolicy ?? "auto",
-          input.envExportable ? 1 : 0,
-          input.envExportKey ?? null,
-          now,
-          now,
-        );
-      db.bumpLastModified();
-    } catch (error) {
-      if (isSqliteUniqueError(error)) {
-        throw new SecretsStoreError({ code: "duplicate-key", message: "Secret key already exists" });
-      }
-      throw error;
-    }
-
-    const created = (await this.getSecretMetadata(id, scope))!;
-    this.emitAudit({ mutationType: "secret:create", scope, secretId: created.id, key: created.key });
+        const created = await asyncSecretsStore.createSecret(this.asyncLayer!.db, this.cipher, input);
+    this.emitAudit({ mutationType: "secret:create", scope: input.scope, secretId: created.id, key: created.key });
     return created;
-  }
+}
 
   async updateSecret(id: string, scope: SecretScope, patch: {
     key?: string;
@@ -295,135 +240,28 @@ export class SecretsStore {
     envExportable?: boolean;
     envExportKey?: string | null;
   }): Promise<SecretRecord> {
-    if (this.backendMode) {
-      const updated = await asyncSecretsStore.updateSecret(this.asyncLayer!.db, this.cipher, id, scope, patch);
-      this.emitAudit({ mutationType: "secret:update", scope, secretId: updated.id, key: updated.key });
-      return updated;
-    }
-
-    const existing = await this.getSecretMetadata(id, scope);
-    if (!existing) {
-      throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
-    }
-
-    const updates: string[] = ["updated_at = ?"];
-    const params: Array<string | number | Buffer | null> = [new Date().toISOString()];
-
-    if (patch.key !== undefined) {
-      const key = patch.key.trim();
-      if (!key) {
-        throw new SecretsStoreError({ code: "invalid-key", message: "Secret key is required" });
-      }
-      updates.push("key = ?");
-      params.push(key);
-    }
-
-    if (patch.description !== undefined) {
-      updates.push("description = ?");
-      params.push(patch.description ?? null);
-    }
-
-    if (patch.accessPolicy !== undefined) {
-      if (!isAccessPolicy(patch.accessPolicy)) {
-        throw new SecretsStoreError({ code: "invalid-policy", message: "Invalid access policy" });
-      }
-      updates.push("access_policy = ?");
-      params.push(patch.accessPolicy);
-    }
-
-    if (patch.envExportable !== undefined) {
-      updates.push("env_exportable = ?");
-      params.push(patch.envExportable ? 1 : 0);
-    }
-
-    if (patch.envExportKey !== undefined) {
-      updates.push("env_export_key = ?");
-      params.push(patch.envExportKey ?? null);
-    }
-
-    if (patch.plaintextValue !== undefined) {
-      const encrypted = await this.cipher.encrypt(patch.plaintextValue);
-      updates.push("value_ciphertext = ?", "nonce = ?");
-      params.push(encrypted.ciphertext, encrypted.nonce);
-    }
-
-    const db = this.dbForScope(scope);
-    const table = tableForScope(scope);
-
-    try {
-      params.push(id);
-      db.prepare(`UPDATE ${table} SET ${updates.join(", ")} WHERE id = ?`).run(...params);
-      db.bumpLastModified();
-    } catch (error) {
-      if (isSqliteUniqueError(error)) {
-        throw new SecretsStoreError({ code: "duplicate-key", message: "Secret key already exists" });
-      }
-      throw error;
-    }
-
-    const updated = (await this.getSecretMetadata(id, scope))!;
+        const updated = await asyncSecretsStore.updateSecret(this.asyncLayer!.db, this.cipher, id, scope, patch);
     this.emitAudit({ mutationType: "secret:update", scope, secretId: updated.id, key: updated.key });
     return updated;
-  }
+}
 
   async deleteSecret(id: string, scope: SecretScope): Promise<void> {
-    if (this.backendMode) {
-      const existing = await this.getSecretMetadata(id, scope);
-      if (!existing) {
-        throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
-      }
-      await asyncSecretsStore.deleteSecret(this.asyncLayer!.db, id, scope);
-      this.emitAudit({ mutationType: "secret:delete", scope, secretId: id, key: existing.key });
-      return;
-    }
-
-    const existing = await this.getSecretMetadata(id, scope);
+        const existing = await this.getSecretMetadata(id, scope);
     if (!existing) {
       throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
     }
-
-    const db = this.dbForScope(scope);
-    const table = tableForScope(scope);
-    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
-    db.bumpLastModified();
+    await asyncSecretsStore.deleteSecret(this.asyncLayer!.db, id, scope);
     this.emitAudit({ mutationType: "secret:delete", scope, secretId: id, key: existing.key });
-  }
+    return;
+}
 
   async revealSecret(
     id: string,
     scope: SecretScope,
     reader: { agentId?: string | null; userId?: string | null },
   ): Promise<{ key: string; plaintextValue: string }> {
-    if (this.backendMode) {
-      const revealed = await asyncSecretsStore.revealSecret(this.asyncLayer!.db, this.cipher, id, scope, reader);
-      this.emitAudit({ mutationType: "secret:read", scope, secretId: id, key: revealed.key, actor: reader });
-      return revealed;
-    }
-
-    const db = this.dbForScope(scope);
-    const table = tableForScope(scope);
-    const row = db.prepare(`SELECT id, key, value_ciphertext, nonce, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by FROM ${table} WHERE id = ?`).get(id) as SecretCipherRow | undefined;
-
-    if (!row) {
-      throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
-    }
-
-    let plaintextValue: string;
-    try {
-      plaintextValue = await this.cipher.decrypt({ ciphertext: row.value_ciphertext, nonce: row.nonce });
-    } catch (error) {
-      if (error instanceof SecretCryptoError && error.code === "decryption-failed") {
-        throw new SecretsStoreError({ code: "decrypt-failed", message: "Secret decryption failed" });
-      }
-      throw new SecretsStoreError({ code: "decrypt-failed", message: "Secret decryption failed" });
-    }
-
-    const now = new Date().toISOString();
-    const lastReadBy = reader.userId ?? reader.agentId ?? null;
-    db.prepare(`UPDATE ${table} SET last_read_at = ?, last_read_by = ?, updated_at = ? WHERE id = ?`).run(now, lastReadBy, now, id);
-    db.bumpLastModified();
-
-    this.emitAudit({ mutationType: "secret:read", scope, secretId: id, key: row.key, actor: reader });
-    return { key: row.key, plaintextValue };
-  }
+        const revealed = await asyncSecretsStore.revealSecret(this.asyncLayer!.db, this.cipher, id, scope, reader);
+    this.emitAudit({ mutationType: "secret:read", scope, secretId: id, key: revealed.key, actor: reader });
+    return revealed;
+}
 }

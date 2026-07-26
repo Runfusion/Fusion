@@ -129,26 +129,14 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    * backendMode and use the async helpers instead.
    */
   private get db(): Database {
-    if (this.backendMode) {
-      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
-    }
-    if (!this._db) {
-      const fusionDir = `${this.rootDir}/.fusion`;
-      this._db = new Database(fusionDir);
-      this._db.init();
-    }
-    return this._db;
-  }
+        throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+}
 
   /** Initialize the store (no-op in backend mode, DB is lazily initialized otherwise). */
   async init(): Promise<void> {
     // FNXC:SqliteFinalRemoval 2026-06-26-10:30: No-op in backend mode.
-    if (this.backendMode) {
-      return;
-    }
-    // Trigger lazy init
-    const _ = this.db;
-  }
+        return;
+}
 
   // ── Row Conversion ─────────────────────────────────────────────────
 
@@ -219,63 +207,9 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:35:
      * Backend-mode: delegate to the async Drizzle upsertRoutine helper.
      */
-    if (this.backendMode) {
-      await upsertRoutineAsync(this.asyncLayer!.db, routine);
-      return;
-    }
-
-    const trigger = routine.trigger;
-    let triggerConfig: Record<string, unknown> = {};
-
-    if (isCronTrigger(trigger)) {
-      triggerConfig = {
-        cronExpression: trigger.cronExpression,
-        timezone: trigger.timezone,
-      };
-    } else if (trigger.type === "webhook") {
-      triggerConfig = {
-        webhookPath: trigger.webhookPath,
-        secret: trigger.secret,
-      };
-    } else if (trigger.type === "api") {
-      triggerConfig = {
-        endpoint: trigger.endpoint,
-      };
-    }
-
-    this.db.prepare(`
-      INSERT OR REPLACE INTO routines (
-        id, agentId, name, description, triggerType, triggerConfig,
-        command, steps, timeoutMs,
-        catchUpPolicy, executionPolicy, catchUpLimit, enabled,
-        lastRunAt, lastRunResult, nextRunAt,
-        runCount, runHistory, scope, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      routine.id,
-      routine.agentId,
-      routine.name,
-      routine.description ?? null,
-      trigger.type,
-      JSON.stringify(triggerConfig),
-      routine.command ?? null,
-      routine.steps ? JSON.stringify(routine.steps) : null,
-      routine.timeoutMs ?? null,
-      routine.catchUpPolicy,
-      routine.executionPolicy,
-      routine.catchUpLimit ?? 5,
-      routine.enabled ? 1 : 0,
-      routine.lastRunAt ?? null,
-      routine.lastRunResult ? JSON.stringify(routine.lastRunResult) : null,
-      routine.nextRunAt ?? null,
-      routine.runCount || 0,
-      JSON.stringify(routine.runHistory || []),
-      routine.scope ?? "project",
-      routine.createdAt,
-      routine.updatedAt,
-    );
-    this.db.bumpLastModified();
-  }
+        await upsertRoutineAsync(this.asyncLayer!.db, routine);
+    return;
+}
 
   // ── Locking ───────────────────────────────────────────────────────
 
@@ -389,23 +323,20 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
     one PostgreSQL transaction, so a failed revision insert cannot expose a
     routine with no restore point.
     */
-    if (this.backendMode) {
-      await this.asyncLayer!.transactionImmediate(async (tx) => {
-        await upsertRoutineAsync(tx, routine);
-        const revision = createConfigurationRevision({
-          projectId: this.asyncLayer!.projectId ?? "",
-          ownerScope: "project",
-          configKind: "routine",
-          configTarget: { routineId: routine.id },
-          before: null,
-          after: routine,
-          changedBy,
-        });
-        if (revision) await appendConfigurationRevision(tx, revision);
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+      await upsertRoutineAsync(tx, routine);
+      const revision = createConfigurationRevision({
+        projectId: this.asyncLayer!.projectId ?? "",
+        ownerScope: "project",
+        configKind: "routine",
+        configTarget: { routineId: routine.id },
+        before: null,
+        after: routine,
+        changedBy,
       });
-    } else {
-      await this.upsertRoutine(routine);
-    }
+      if (revision) await appendConfigurationRevision(tx, revision);
+    });
+
     this.emit("routine:created", routine);
     return routine;
   }
@@ -418,15 +349,8 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
      * Backend-mode: delegate to the async Drizzle getRoutine helper.
      */
-    if (this.backendMode) {
-      return getRoutineAsync(this.asyncLayer!.db, id);
-    }
-    const row = this.db.prepare("SELECT * FROM routines WHERE id = ?").get(id) as unknown as RoutineRow | undefined;
-    if (!row) {
-      throw Object.assign(new Error(`Routine '${id}' not found`), { code: "ENOENT" });
-    }
-    return this.rowToRoutine(row);
-  }
+        return getRoutineAsync(this.asyncLayer!.db, id);
+}
 
   /**
    * List all routines.
@@ -436,12 +360,8 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
      * Backend-mode: delegate to the async Drizzle listRoutines helper.
      */
-    if (this.backendMode) {
-      return listRoutinesAsync(this.asyncLayer!.db);
-    }
-    const rows = this.db.prepare("SELECT * FROM routines ORDER BY createdAt ASC").all() as unknown as RoutineRow[];
-    return rows.map((row) => this.rowToRoutine(row));
-  }
+        return listRoutinesAsync(this.asyncLayer!.db);
+}
 
   /**
    * Update an existing routine.
@@ -495,23 +415,20 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       }
 
       routine.updatedAt = new Date().toISOString();
-      if (this.backendMode) {
-        await this.asyncLayer!.transactionImmediate(async (tx) => {
-          await upsertRoutineAsync(tx, routine);
-          const revision = createConfigurationRevision({
-            projectId: this.asyncLayer!.projectId ?? "",
-            ownerScope: "project",
-            configKind: "routine",
-            configTarget: { routineId: routine.id },
-            before,
-            after: routine,
-            changedBy,
-          });
-          if (revision) await appendConfigurationRevision(tx, revision);
+            await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await upsertRoutineAsync(tx, routine);
+        const revision = createConfigurationRevision({
+          projectId: this.asyncLayer!.projectId ?? "",
+          ownerScope: "project",
+          configKind: "routine",
+          configTarget: { routineId: routine.id },
+          before,
+          after: routine,
+          changedBy,
         });
-      } else {
-        await this.upsertRoutine(routine);
-      }
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+
       this.emit("routine:updated", routine);
       return routine;
     });
@@ -551,24 +468,20 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
        * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
        * Backend-mode: delegate to the async Drizzle deleteRoutine helper.
        */
-      if (this.backendMode) {
-        await this.asyncLayer!.transactionImmediate(async (tx) => {
-          await deleteRoutineAsync(tx, id);
-          const revision = createConfigurationRevision({
-            projectId: this.asyncLayer!.projectId ?? "",
-            ownerScope: "project",
-            configKind: "routine",
-            configTarget: { routineId: routine.id },
-            before: routine,
-            after: null,
-            changedBy,
-          });
-          if (revision) await appendConfigurationRevision(tx, revision);
+            await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await deleteRoutineAsync(tx, id);
+        const revision = createConfigurationRevision({
+          projectId: this.asyncLayer!.projectId ?? "",
+          ownerScope: "project",
+          configKind: "routine",
+          configTarget: { routineId: routine.id },
+          before: routine,
+          after: null,
+          changedBy,
         });
-      } else {
-        this.db.prepare("DELETE FROM routines WHERE id = ?").run(id);
-        this.db.bumpLastModified();
-      }
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+
       this.emit("routine:deleted", routine);
       return routine;
     });
@@ -684,14 +597,8 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:45:
      * Backend-mode: delegate to the async Drizzle getDueRoutines helper.
      */
-    if (this.backendMode) {
-      return getDueRoutinesAsync(this.asyncLayer!.db, now, scope);
-    }
-    const rows = this.db.prepare(
-      "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?"
-    ).all(now, scope) as unknown as RoutineRow[];
-    return rows.map((row) => this.rowToRoutine(row));
-  }
+        return getDueRoutinesAsync(this.asyncLayer!.db, now, scope);
+}
 
   /**
    * Get all routines that are due to run (nextRunAt <= now and enabled) for both scopes.
@@ -703,12 +610,6 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:45:
      * Backend-mode: delegate to the async Drizzle getDueRoutines helper (no scope).
      */
-    if (this.backendMode) {
-      return getDueRoutinesAsync(this.asyncLayer!.db, now);
-    }
-    const rows = this.db.prepare(
-      "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?"
-    ).all(now) as unknown as RoutineRow[];
-    return rows.map((row) => this.rowToRoutine(row));
-  }
+        return getDueRoutinesAsync(this.asyncLayer!.db, now);
+}
 }

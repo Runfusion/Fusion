@@ -448,129 +448,42 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
      * Backend-mode: delegate to the async Drizzle registerPlugin helper which
      * inserts the install row + per-project state atomically via a transaction.
      */
-    if (this.backendMode) {
-      const plugin = await registerPluginAsync(this.asyncLayer!, {
-        manifest,
-        path,
-        settings,
-        aiScanOnLoad,
-        projectPath: this.normalizedProjectPath,
-      });
-      this.emit("plugin:registered", plugin);
-      return plugin;
-    }
-
-    const existing = this.centralDb
-      .prepare("SELECT id FROM plugin_installs WHERE id = ?")
-      .get(manifest.id);
-    if (existing) {
-      throw Object.assign(new Error(`Plugin "${manifest.id}" is already registered`), {
-        code: "EEXISTS",
-      });
-    }
-
-    const defaultSettings: Record<string, unknown> = {};
-    if (manifest.settingsSchema) {
-      for (const [key, schema] of Object.entries(manifest.settingsSchema)) {
-        if (schema.defaultValue !== undefined) {
-          defaultSettings[key] = schema.defaultValue;
-        }
-      }
-    }
-    const mergedSettings = { ...defaultSettings, ...settings };
-
-    const now = new Date().toISOString();
-
-    this.centralDb
-      .prepare(`
-      INSERT INTO plugin_installs (
-        id, name, version, description, author, homepage, path,
-        settings, settingsSchema, dependencies, aiScanOnLoad, lastSecurityScan, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-      .run(
-        manifest.id,
-        manifest.name,
-        manifest.version,
-        manifest.description ?? null,
-        manifest.author ?? null,
-        manifest.homepage ?? null,
-        path.trim(),
-        toJson(mergedSettings),
-        manifest.settingsSchema ? toJson(manifest.settingsSchema) : null,
-        toJson(manifest.dependencies || []),
-        aiScanOnLoad ? 1 : 0,
-        null,
-        now,
-        now,
-      );
-
-    this.upsertProjectState(manifest.id, { enabled: true, state: "installed", error: null });
-    this.centralDb.bumpLastModified();
-
-    const plugin = await this.getPlugin(manifest.id);
+        const plugin = await registerPluginAsync(this.asyncLayer!, {
+      manifest,
+      path,
+      settings,
+      aiScanOnLoad,
+      projectPath: this.normalizedProjectPath,
+    });
     this.emit("plugin:registered", plugin);
     return plugin;
-  }
+}
 
   async unregisterPlugin(id: string): Promise<PluginInstallation> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
      * Backend-mode: delegate to the async Drizzle unregisterPlugin helper.
      */
-    if (this.backendMode) {
-      const plugin = await unregisterPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
-      this.emit("plugin:unregistered", plugin);
-      return plugin;
-    }
-    const plugin = await this.getPlugin(id);
-    this.centralDb.prepare("DELETE FROM plugin_installs WHERE id = ?").run(id);
-    this.centralDb.bumpLastModified();
+        const plugin = await unregisterPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
     this.emit("plugin:unregistered", plugin);
     return plugin;
-  }
+}
 
   async getPlugin(id: string): Promise<PluginInstallation> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
      * Backend-mode: delegate to the async Drizzle getPlugin helper.
      */
-    if (this.backendMode) {
-      return getPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
-    }
-    const install = this.centralDb
-      .prepare("SELECT * FROM plugin_installs WHERE id = ?")
-      .get(id) as InstallRow | undefined;
-    if (!install) {
-      throw Object.assign(new Error(`Plugin "${id}" not found`), { code: "ENOENT" });
-    }
-    return this.rowToPlugin(install, this.getProjectState(id));
-  }
+        return getPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
+}
 
   async listPlugins(filter?: { enabled?: boolean; state?: PluginState }): Promise<PluginInstallation[]> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
      * Backend-mode: delegate to the async Drizzle listPlugins helper.
      */
-    if (this.backendMode) {
-      return listPluginsAsync(this.asyncLayer!.db, this.normalizedProjectPath, filter);
-    }
-    const installs = this.centralDb
-      .prepare("SELECT * FROM plugin_installs ORDER BY createdAt ASC")
-      .all() as InstallRow[];
-
-    const results = installs.map((install) => this.rowToPlugin(install, this.getProjectState(install.id)));
-
-    return results.filter((plugin) => {
-      if (filter?.enabled !== undefined && plugin.enabled !== filter.enabled) {
-        return false;
-      }
-      if (filter?.state && plugin.state !== filter.state) {
-        return false;
-      }
-      return true;
-    });
-  }
+        return listPluginsAsync(this.asyncLayer!.db, this.normalizedProjectPath, filter);
+}
 
   async enablePlugin(id: string): Promise<PluginInstallation> {
     /*
@@ -706,22 +619,11 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:25:
      * Backend-mode: delegate settings persistence to the async helper.
      */
-    if (this.backendMode) {
-      await updatePluginSettingsAsync(this.asyncLayer!.db, id, mergedSettings);
-      const updated = await this.getPlugin(id);
-      this.emit("plugin:updated", updated);
-      return updated;
-    }
-
-    this.centralDb
-      .prepare("UPDATE plugin_installs SET settings = ?, updatedAt = ? WHERE id = ?")
-      .run(toJson(mergedSettings), new Date().toISOString(), id);
-    this.centralDb.bumpLastModified();
-
+        await updatePluginSettingsAsync(this.asyncLayer!.db, id, mergedSettings);
     const updated = await this.getPlugin(id);
     this.emit("plugin:updated", updated);
     return updated;
-  }
+}
 
   async updatePlugin(id: string, updates: PluginUpdateInput): Promise<PluginInstallation> {
     await this.getPlugin(id);
@@ -730,80 +632,19 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
      * FNXC:SqliteFinalRemoval 2026-06-26-10:25:
      * Backend-mode: delegate install-field persistence to the async helper.
      */
-    if (this.backendMode) {
-      await updatePluginInstallAsync(this.asyncLayer!.db, id, {
-        name: updates.name,
-        version: updates.version,
-        description: updates.description,
-        author: updates.author,
-        homepage: updates.homepage,
-        path: updates.path,
-        dependencies: updates.dependencies,
-        aiScanOnLoad: updates.aiScanOnLoad,
-        lastSecurityScan: updates.lastSecurityScan,
-      });
-      const updated = await this.getPlugin(id);
-      this.emit("plugin:updated", updated);
-      return updated;
-    }
-
-    const now = new Date().toISOString();
-
-    const setClauses: string[] = ["updatedAt = ?"];
-    const params: (string | null | number)[] = [now];
-
-    if (updates.name !== undefined) {
-      setClauses.push("name = ?");
-      params.push(updates.name);
-    }
-    if (updates.version !== undefined) {
-      setClauses.push("version = ?");
-      params.push(updates.version);
-    }
-    if (updates.description !== undefined) {
-      setClauses.push("description = ?");
-      params.push(updates.description ?? null);
-    }
-    if (updates.author !== undefined) {
-      setClauses.push("author = ?");
-      params.push(updates.author ?? null);
-    }
-    if (updates.homepage !== undefined) {
-      setClauses.push("homepage = ?");
-      params.push(updates.homepage ?? null);
-    }
-    if (updates.path !== undefined) {
-      setClauses.push("path = ?");
-      params.push(updates.path);
-    }
-    if (updates.dependencies !== undefined) {
-      setClauses.push("dependencies = ?");
-      params.push(toJson(updates.dependencies));
-    }
-    /*
-    FNXC:Plugins 2026-07-12-10:59:
-    FN-7855 requires updatePlugin to persist manifest settingsSchema changes independently from per-project setting values so path-registered plugin reloads can refresh dashboard metadata without unregistering the plugin.
-    Undefined means "leave schema unchanged"; null explicitly clears the persisted schema when a rebuilt manifest removes it.
-    */
-    if (updates.settingsSchema !== undefined) {
-      setClauses.push("settingsSchema = ?");
-      params.push(updates.settingsSchema === null ? null : toJson(updates.settingsSchema));
-    }
-    if (updates.aiScanOnLoad !== undefined) {
-      setClauses.push("aiScanOnLoad = ?");
-      params.push(updates.aiScanOnLoad ? 1 : 0);
-    }
-    if (updates.lastSecurityScan !== undefined) {
-      setClauses.push("lastSecurityScan = ?");
-      params.push(toJson(updates.lastSecurityScan));
-    }
-
-    params.push(id);
-    this.centralDb.prepare(`UPDATE plugin_installs SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
-    this.centralDb.bumpLastModified();
-
+        await updatePluginInstallAsync(this.asyncLayer!.db, id, {
+      name: updates.name,
+      version: updates.version,
+      description: updates.description,
+      author: updates.author,
+      homepage: updates.homepage,
+      path: updates.path,
+      dependencies: updates.dependencies,
+      aiScanOnLoad: updates.aiScanOnLoad,
+      lastSecurityScan: updates.lastSecurityScan,
+    });
     const updated = await this.getPlugin(id);
     this.emit("plugin:updated", updated);
     return updated;
-  }
+}
 }

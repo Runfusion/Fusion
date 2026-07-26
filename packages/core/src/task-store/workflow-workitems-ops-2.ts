@@ -92,37 +92,14 @@ function upsertWorkflowWorkItemSyncInTransaction(store: TaskStore, input: Workfl
 }
 
 export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput, tx?: DbTransaction): Promise<WorkflowWorkItem> {
-  if (store.backendMode) {
     return upsertWorkflowWorkItemAsync(store.asyncLayer!, input, tx);
-  }
-  return store.db.transactionImmediate(() => upsertWorkflowWorkItemSyncInTransaction(store, input));
 }
 
 export async function replaceActiveTaskWorkflowContinuationImpl(
   store: TaskStore,
   input: WorkflowWorkItemUpsertInput & { kind: "task" },
 ): Promise<WorkflowWorkItem> {
-  if (store.backendMode) {
     return replaceActiveTaskWorkflowContinuationAsync(store.asyncLayer!, input);
-  }
-
-  // Compatibility path for legacy embedded stores. PostgreSQL is the
-  // authoritative runtime and performs this replacement atomically above.
-  return store.db.transactionImmediate(() => {
-    const active = store.db.prepare(
-      `SELECT id, runId, nodeId, kind FROM workflow_work_items
-       WHERE taskId = ? AND kind = 'task' AND state IN ('runnable', 'running', 'held', 'retrying')`,
-    ).all(input.taskId) as Array<{ id: string; runId: string; nodeId: string; kind: string }>;
-    for (const row of active) {
-      if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
-      store.transitionWorkflowWorkItemSync(row.id, "succeeded", {
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        lastError: null,
-      });
-    }
-    return upsertWorkflowWorkItemImpl(store, input);
-  });
 }
 
 export async function seedStrandedPlanReviewContinuationImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
@@ -168,74 +145,41 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
     }
 
     // No dedicated async helper; use a raw Drizzle UPDATE in backend mode.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
-      /*
-      FNXC:WorkflowSerialization 2026-07-27-00:15:
-      Claiming a due item changes it into the active `running` state, so it is
-      an FN-8592 protected writer too. Resolve its owner and take the shared
-      task lock before the guarded update; otherwise a lease could land between
-      conditional repair's idle check and insert.
-      */
-      const updated = await layer.transactionImmediate(async (tx) => {
-        const owner = await getWorkflowWorkItemAsync(tx, id);
-        if (!owner) return null;
-        return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
-          await tx
-            .update(schema.project.workflowWorkItems)
-            .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
-            .where(and(
-              eq(schema.project.workflowWorkItems.id, id),
-              inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying", "running"]),
-            ));
-          const claimed = await getWorkflowWorkItemAsync(tx, id);
-          return claimed?.leaseOwner === leaseOwner ? claimed : null;
-        });
+        const layer = store.asyncLayer!;
+    const now = opts.now ?? new Date().toISOString();
+    const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
+    /*
+    FNXC:WorkflowSerialization 2026-07-27-00:15:
+    Claiming a due item changes it into the active `running` state, so it is
+    an FN-8592 protected writer too. Resolve its owner and take the shared
+    task lock before the guarded update; otherwise a lease could land between
+    conditional repair's idle check and insert.
+    */
+    const updated = await layer.transactionImmediate(async (tx) => {
+      const owner = await getWorkflowWorkItemAsync(tx, id);
+      if (!owner) return null;
+      return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
+        await tx
+          .update(schema.project.workflowWorkItems)
+          .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
+          .where(and(
+            eq(schema.project.workflowWorkItems.id, id),
+            inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying", "running"]),
+          ));
+        const claimed = await getWorkflowWorkItemAsync(tx, id);
+        return claimed?.leaseOwner === leaseOwner ? claimed : null;
       });
-      if (!updated) return null;
-      // Record the audit event (fire-and-forget).
-      void store.recordRunAuditEvent({
-        taskId: updated.taskId,
-        agentId: "system",
-        runId: updated.runId,
-        domain: "database",
-        mutationType: "workflowWorkItem:lease-acquired",
-        target: updated.id,
-        metadata: { id: updated.id, leaseOwner: updated.leaseOwner, leaseExpiresAt },
-      });
-      return updated;
-    }
-
-    return store.db.transactionImmediate(() => {
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
-      const result = store.db
-        .prepare(
-          `UPDATE workflow_work_items
-              SET state = 'running',
-                  leaseOwner = ?,
-                  leaseExpiresAt = ?,
-                  updatedAt = ?
-            WHERE id = ?
-              AND state IN ('runnable', 'retrying', 'running')
-              AND (retryAfter IS NULL OR retryAfter <= ?)
-              AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?)`,
-        )
-        .run(leaseOwner, leaseExpiresAt, now, id, now, now);
-      if (result.changes === 0) return null;
-
-      const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
-      if (!row) throw new Error(`Workflow work item ${id} disappeared`);
-      store.insertRunAuditEventRow({
-        taskId: row.taskId,
-        runId: row.runId,
-        domain: "database",
-        mutationType: "workflowWorkItem:lease-acquired",
-        target: row.id,
-        metadata: { id: row.id, leaseOwner: row.leaseOwner, leaseExpiresAt: row.leaseExpiresAt },
-      });
-      return store.rowToWorkflowWorkItem(row);
     });
-  }
+    if (!updated) return null;
+    // Record the audit event (fire-and-forget).
+    void store.recordRunAuditEvent({
+      taskId: updated.taskId,
+      agentId: "system",
+      runId: updated.runId,
+      domain: "database",
+      mutationType: "workflowWorkItem:lease-acquired",
+      target: updated.id,
+      metadata: { id: updated.id, leaseOwner: updated.leaseOwner, leaseExpiresAt },
+    });
+    return updated;
+}

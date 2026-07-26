@@ -259,11 +259,7 @@ export function refreshDatabaseHealthImpl(store: TaskStore): ReturnType<TaskStor
     until the first probe completes). Prefer refreshDatabaseHealthAsync from
     async callers (self-healing surfaceDbCorruption).
     */
-    if (store.backendMode) {
-      void refreshDatabaseHealthAsyncImpl(store).catch(() => undefined);
-      return store.getDatabaseHealth();
-    }
-    store.db.refreshIntegrityCheck();
+        void refreshDatabaseHealthAsyncImpl(store).catch(() => undefined);
     return store.getDatabaseHealth();
 }
 
@@ -303,15 +299,11 @@ export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
      * In backend mode, use the async layer to clear the activity log via
      * Drizzle instead of the SQLite-specific db.prepare() path.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
-        .delete(schema.project.activityLog)
-        .where(eq(schema.project.activityLog.projectId, activityProjectPartition(layer.projectId ?? "")));
-      return;
-    }
-    store.db.prepare("DELETE FROM activityLog").run();
-    store.db.bumpLastModified();
+        const layer = store.asyncLayer!;
+    await layer.db
+      .delete(schema.project.activityLog)
+      .where(eq(schema.project.activityLog.projectId, activityProjectPartition(layer.projectId ?? "")));
+    return;
 }
 
 export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsightStore {
@@ -322,15 +314,12 @@ export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsig
       // project_insight_run_events). The sync SQLite InsightStore (store.db) is
       // used only in legacy SQLite mode. Both expose the same method names; the
       // dashboard insights routes await the result so either works.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.insightStore = new AsyncInsightStore(layer);
-      } else {
-        store.insightStore = new InsightStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.insightStore = new AsyncInsightStore(layer);
+
     }
     return store.insightStore;
 }
@@ -345,15 +334,12 @@ export function getResearchStoreImpl(store: TaskStore): ResearchStore | AsyncRes
       // routes await the result so either works. AI research EXECUTION (the engine
       // ResearchOrchestrator/ResearchRunDispatcher) stays degraded in PG mode — those
       // are coupled to the sync EventEmitter ResearchStore and are out of scope here.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("ResearchStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.researchStore = new AsyncResearchStore(layer);
-      } else {
-        store.researchStore = new ResearchStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("ResearchStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.researchStore = new AsyncResearchStore(layer);
+
     }
     return store.researchStore;
 }
@@ -365,15 +351,12 @@ export function getTodoStoreImpl(store: TaskStore): TodoStore | AsyncTodoStore {
       // over project.todo_lists / project.todo_items). The sync SQLite TodoStore
       // (store.db) is used only in legacy SQLite mode. Both expose the same
       // method names; the dashboard todo routes await the result so either works.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("TodoStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.todoStore = new AsyncTodoStore(layer);
-      } else {
-        store.todoStore = new TodoStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("TodoStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.todoStore = new AsyncTodoStore(layer);
+
     }
     return store.todoStore;
 }

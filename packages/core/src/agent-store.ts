@@ -386,23 +386,8 @@ export class AgentStore extends EventEmitter {
   }
 
   private get db(): Database {
-    if (this.backendMode) {
-      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
-    }
-    if (this._db) return this._db;
-
-    const cached = agentStoreDbCache.get(this.rootDir);
-    if (cached) {
-      this._db = cached;
-      return cached;
-    }
-
-    const fresh = new Database(this.rootDir, { inMemory: false });
-    fresh.init();
-    agentStoreDbCache.set(this.rootDir, fresh);
-    this._db = fresh;
-    return fresh;
-  }
+        throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+}
 
   /**
    * Initialize the store by creating necessary directories.
@@ -414,16 +399,9 @@ export class AgentStore extends EventEmitter {
    * covers these migrations. Only create the agents directory.
    */
   async init(): Promise<void> {
-    if (this.backendMode) {
-      await mkdir(this.agentsDir, { recursive: true });
-      return;
-    }
-    void this.db;
-    await mkdir(this.agentsDir, { recursive: true });
-    await this.importLegacyFileDataOnce();
-    await this.migrateTerminatedAgentStateOnce();
-    await this.migrateHeartbeatProcedurePathOnce();
-  }
+        await mkdir(this.agentsDir, { recursive: true });
+    return;
+}
 
   /**
    * One-shot migration that re-points every non-ephemeral agent off the
@@ -699,28 +677,14 @@ export class AgentStore extends EventEmitter {
   async findAgentByName(name: string): Promise<Agent | null> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:45:
     // Backend mode: read via async Drizzle helper, filter ephemeral in-memory.
-    if (this.backendMode) {
-      const agents = await findAgentRowsByNameAsync(this.asyncLayer!.db, name);
-      for (const agent of agents) {
-        if (!isEphemeralAgent(agent)) {
-          return this.parseAgent(agent as unknown as AgentData);
-        }
-      }
-      return null;
-    }
-    const rows = this.db
-      .prepare("SELECT * FROM agents WHERE name = ? ORDER BY createdAt DESC")
-      .all(name) as unknown as AgentRow[];
-
-    for (const row of rows) {
-      const agent = this.mapAgentRow(row);
+        const agents = await findAgentRowsByNameAsync(this.asyncLayer!.db, name);
+    for (const agent of agents) {
       if (!isEphemeralAgent(agent)) {
-        return agent;
+        return this.parseAgent(agent as unknown as AgentData);
       }
     }
-
     return null;
-  }
+}
 
   async hasNonEphemeralAgentWithName(name: string): Promise<boolean> {
     const normalizedName = name.trim();
@@ -976,61 +940,18 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle addRating helper. The score CHECK
      * constraint is enforced by PostgreSQL (VAL-SCHEMA-005).
      */
-    if (this.backendMode) {
-      const saved = await addRatingAsync(this.asyncLayer!.db, rating);
-      this.emit("rating:added", saved);
-      return saved;
-    }
-
-    this.db.prepare(`
-      INSERT INTO agentRatings (id, agentId, raterType, raterId, score, category, comment, runId, taskId, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      rating.id,
-      rating.agentId,
-      rating.raterType,
-      rating.raterId ?? null,
-      rating.score,
-      rating.category ?? null,
-      rating.comment ?? null,
-      rating.runId ?? null,
-      rating.taskId ?? null,
-      rating.createdAt,
-    );
-
-    this.db.bumpLastModified();
-    this.emit("rating:added", rating);
-
-    return rating;
-  }
+        const saved = await addRatingAsync(this.asyncLayer!.db, rating);
+    this.emit("rating:added", saved);
+    return saved;
+}
 
   async getRatings(agentId: string, options?: { limit?: number; category?: string }): Promise<AgentRating[]> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-09:15:
      * Backend-mode: delegate to async Drizzle getRatings helper.
      */
-    if (this.backendMode) {
-      return getRatingsAsync(this.asyncLayer!.db, agentId, options);
-    }
-
-    const params: Array<string | number> = [agentId];
-    let query = "SELECT * FROM agentRatings WHERE agentId = ?";
-
-    if (options?.category !== undefined) {
-      query += " AND category = ?";
-      params.push(options.category);
-    }
-
-    query += " ORDER BY createdAt DESC";
-
-    if (options?.limit !== undefined) {
-      query += " LIMIT ?";
-      params.push(options.limit);
-    }
-
-    const rows = this.db.prepare(query).all(...params) as unknown as AgentRatingRow[];
-    return rows.map((row) => this.mapRatingRow(row));
-  }
+        return getRatingsAsync(this.asyncLayer!.db, agentId, options);
+}
 
   async getRatingSummary(agentId: string): Promise<AgentRatingSummary> {
     const ratings = await this.getRatings(agentId);
@@ -1097,13 +1018,9 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:15:
      * Backend-mode: delegate to async Drizzle deleteRating helper.
      */
-    if (this.backendMode) {
-      await deleteRatingAsync(this.asyncLayer!.db, ratingId);
-      return;
-    }
-    this.db.prepare("DELETE FROM agentRatings WHERE id = ?").run(ratingId);
-    this.db.bumpLastModified();
-  }
+        await deleteRatingAsync(this.asyncLayer!.db, ratingId);
+    return;
+}
 
   /**
    * Get the managed instructions directory path for an agent.
@@ -1982,36 +1899,14 @@ export class AgentStore extends EventEmitter {
   async listAgents(filter?: { state?: AgentState; role?: AgentCapability; includeEphemeral?: boolean }): Promise<Agent[]> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:50:
     // Backend mode: read via async Drizzle helper, apply ephemeral filter in-memory.
-    if (this.backendMode) {
-      const agents = await listAgentRowsAsync(this.asyncLayer!.db, {
-        state: filter?.state,
-        role: filter?.role,
-      });
-      return agents
-        .map((a) => this.parseAgent(a as unknown as AgentData))
-        .filter((agent) => filter?.includeEphemeral === true || !isEphemeralAgent(agent));
-    }
-    const clauses: string[] = [];
-    const params: string[] = [];
-
-    if (filter?.state) {
-      clauses.push("state = ?");
-      params.push(filter.state);
-    }
-    if (filter?.role) {
-      clauses.push("role = ?");
-      params.push(filter.role);
-    }
-
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = this.db
-      .prepare(`SELECT * FROM agents ${where} ORDER BY createdAt DESC`)
-      .all(...params) as unknown as AgentRow[];
-
-    return rows
-      .map((row) => this.mapAgentRow(row))
+        const agents = await listAgentRowsAsync(this.asyncLayer!.db, {
+      state: filter?.state,
+      role: filter?.role,
+    });
+    return agents
+      .map((a) => this.parseAgent(a as unknown as AgentData))
       .filter((agent) => filter?.includeEphemeral === true || !isEphemeralAgent(agent));
-  }
+}
 
   /**
    * Create an API key for an agent.
@@ -2041,15 +1936,7 @@ export class AgentStore extends EventEmitter {
        * FNXC:SqliteFinalRemoval 2026-06-26-09:20:
        * Backend-mode: delegate to async Drizzle insertApiKey helper.
        */
-      if (this.backendMode) {
-        await insertApiKeyAsync(this.asyncLayer!.db, key);
-      } else {
-        this.db.prepare(`
-          INSERT INTO agentApiKeys (id, agentId, data, createdAt, revokedAt)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(key.id, key.agentId, JSON.stringify(key), key.createdAt, key.revokedAt ?? null);
-        this.db.bumpLastModified();
-      }
+            await insertApiKeyAsync(this.asyncLayer!.db, key);
 
       return { key, token };
     });
@@ -2098,14 +1985,7 @@ export class AgentStore extends EventEmitter {
        * FNXC:SqliteFinalRemoval 2026-06-26-09:20:
        * Backend-mode: delegate to async Drizzle revokeApiKeyRow helper.
        */
-      if (this.backendMode) {
-        await revokeApiKeyRowAsync(this.asyncLayer!.db, keyId, agentId, revoked);
-      } else {
-        this.db.prepare(`
-          UPDATE agentApiKeys SET data = ?, revokedAt = ? WHERE id = ? AND agentId = ?
-        `).run(JSON.stringify(revoked), revoked.revokedAt ?? null, keyId, agentId);
-        this.db.bumpLastModified();
-      }
+            await revokeApiKeyRowAsync(this.asyncLayer!.db, keyId, agentId, revoked);
 
       return revoked;
     });
@@ -2140,12 +2020,8 @@ export class AgentStore extends EventEmitter {
       // FNXC:SqliteFinalRemoval 2026-06-25-23:55:
       // Backend mode: delete via async Drizzle helper (cascading FKs handle
       // heartbeats, runs, task sessions, API keys, config revisions, etc.).
-      if (this.backendMode) {
-        await deleteAgentAsync(this.asyncLayer!.db, agentId);
-      } else {
-        this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
-        this.db.bumpLastModified();
-      }
+            await deleteAgentAsync(this.asyncLayer!.db, agentId);
+
       // FN-7723: keep this instance's own change-detection snapshot in sync
       // with its own delete so a later poll never mistakes the row's absence
       // for an external delete (deletes are pruned from the cache, not
@@ -2193,19 +2069,12 @@ export class AgentStore extends EventEmitter {
 
       // FNXC:SqliteFinalRemoval 2026-06-26-00:00:
       // Backend mode: record heartbeat via async Drizzle helper.
-      if (this.backendMode) {
-        await recordHeartbeatAsync(this.asyncLayer!.db, {
-          agentId,
-          timestamp: event.timestamp,
-          status: event.status,
-          runId: event.runId,
-        });
-      } else {
-        this.db.prepare(`
-          INSERT INTO agentHeartbeats (agentId, timestamp, status, runId)
-          VALUES (?, ?, ?, ?)
-        `).run(agentId, event.timestamp, event.status, event.runId);
-      }
+            await recordHeartbeatAsync(this.asyncLayer!.db, {
+        agentId,
+        timestamp: event.timestamp,
+        status: event.status,
+        runId: event.runId,
+      });
 
       // Update agent's lastHeartbeatAt if status is ok
       if (status === "ok") {
@@ -2215,9 +2084,7 @@ export class AgentStore extends EventEmitter {
           updatedAt: event.timestamp,
         };
         await this.writeAgent(updated);
-      } else if (!this.backendMode) {
-        this.db.bumpLastModified();
-      }
+      } else 
 
       this.emit("agent:heartbeat", agentId, event);
 
@@ -2234,24 +2101,9 @@ export class AgentStore extends EventEmitter {
   async getHeartbeatHistory(agentId: string, limit = 50): Promise<AgentHeartbeatEvent[]> {
     // FNXC:SqliteFinalRemoval 2026-06-26-00:05:
     // Backend mode: read via async Drizzle helper.
-    if (this.backendMode) {
-      void this.backendProjectId;
-      return getHeartbeatHistoryAsync(this.asyncLayer!.db, agentId, limit);
-    }
-    const rows = this.db.prepare(`
-      SELECT timestamp, status, runId
-      FROM agentHeartbeats
-      WHERE agentId = ?
-      ORDER BY timestamp DESC
-      LIMIT ?
-    `).all(agentId, limit) as Array<{ timestamp: string; status: AgentHeartbeatEvent["status"]; runId: string }>;
-
-    return rows.map((row) => ({
-      timestamp: row.timestamp,
-      status: row.status,
-      runId: row.runId,
-    }));
-  }
+        void this.backendProjectId;
+    return getHeartbeatHistoryAsync(this.asyncLayer!.db, agentId, limit);
+}
 
   /**
    * Start a new heartbeat run for an agent.
@@ -2296,36 +2148,18 @@ export class AgentStore extends EventEmitter {
      */
     let agentId: string;
     let existingRun: AgentHeartbeatRun;
-    if (this.backendMode) {
-      const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
-      if (!found) {
-        return;
-      }
-      agentId = found.agentId;
-      existingRun = found.run ?? {
-        id: runId,
-        agentId: found.agentId,
-        startedAt: now,
-        endedAt: null,
-        status: "active",
-      };
-    } else {
-      const row = this.db.prepare("SELECT agentId, data FROM agentRuns WHERE id = ?").get(runId) as
-        | { agentId: string; data: string }
-        | undefined;
-
-      if (!row) {
-        return;
-      }
-      agentId = row.agentId;
-      existingRun = this.parseJson<AgentHeartbeatRun>(row.data, {
-        id: runId,
-        agentId: row.agentId,
-        startedAt: now,
-        endedAt: null,
-        status: "active",
-      });
+        const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
+    if (!found) {
+      return;
     }
+    agentId = found.agentId;
+    existingRun = found.run ?? {
+      id: runId,
+      agentId: found.agentId,
+      startedAt: now,
+      endedAt: null,
+      status: "active",
+    };
 
     const updatedRun: AgentHeartbeatRun = {
       ...existingRun,
@@ -2376,18 +2210,8 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:25:
      * Backend-mode: delegate to async Drizzle listActiveHeartbeatRuns helper.
      */
-    if (this.backendMode) {
-      return listActiveHeartbeatRunsAsync(this.asyncLayer!.db, this.backendProjectId);
-    }
-    const rows = this.db.prepare(`
-      SELECT data FROM agentRuns
-      WHERE status = 'active'
-      ORDER BY startedAt ASC
-    `).all() as Array<{ data: string }>;
-    return rows
-      .map((row) => this.parseJson<AgentHeartbeatRun | null>(row.data, null))
-      .filter((run): run is AgentHeartbeatRun => run !== null);
-  }
+        return listActiveHeartbeatRunsAsync(this.asyncLayer!.db, this.backendProjectId);
+}
 
   // ─────────────────────────────────────────────────────────────────────────
   // Task Session Management
@@ -2404,14 +2228,8 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:30:
      * Backend-mode: delegate to async Drizzle getTaskSession helper.
      */
-    if (this.backendMode) {
-      return getTaskSessionAsync(this.asyncLayer!.db, agentId, taskId);
-    }
-    const row = this.db.prepare(`
-      SELECT data FROM agentTaskSessions WHERE agentId = ? AND taskId = ?
-    `).get(agentId, taskId) as { data: string } | undefined;
-    return row ? this.parseJson<AgentTaskSession | null>(row.data, null) : null;
-  }
+        return getTaskSessionAsync(this.asyncLayer!.db, agentId, taskId);
+}
 
   /**
    * Create or update a task session for an agent.
@@ -2432,18 +2250,7 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:30:
      * Backend-mode: delegate to async Drizzle upsertTaskSession helper.
      */
-    if (this.backendMode) {
-      await upsertTaskSessionAsync(this.asyncLayer!.db, saved);
-    } else {
-      this.db.prepare(`
-        INSERT INTO agentTaskSessions (agentId, taskId, data, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(agentId, taskId) DO UPDATE SET
-          data = excluded.data,
-          updatedAt = excluded.updatedAt
-      `).run(session.agentId, session.taskId, JSON.stringify(saved), saved.createdAt, saved.updatedAt);
-      this.db.bumpLastModified();
-    }
+        await upsertTaskSessionAsync(this.asyncLayer!.db, saved);
 
     return saved;
   }
@@ -2458,13 +2265,9 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:30:
      * Backend-mode: delegate to async Drizzle deleteTaskSession helper.
      */
-    if (this.backendMode) {
-      await deleteTaskSessionAsync(this.asyncLayer!.db, agentId, taskId);
-      return;
-    }
-    this.db.prepare("DELETE FROM agentTaskSessions WHERE agentId = ? AND taskId = ?").run(agentId, taskId);
-    this.db.bumpLastModified();
-  }
+        await deleteTaskSessionAsync(this.asyncLayer!.db, agentId, taskId);
+    return;
+}
 
   // ─────────────────────────────────────────────────────────────────────────
   // Org Hierarchy
@@ -2591,22 +2394,9 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:35:
      * Backend-mode: delegate to async Drizzle saveRun helper.
      */
-    if (this.backendMode) {
-      await saveRunAsync(this.asyncLayer!.db, this.backendProjectId, run);
-      return;
-    }
-    this.db.prepare(`
-      INSERT INTO agentRuns (id, agentId, data, startedAt, endedAt, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        agentId = excluded.agentId,
-        data = excluded.data,
-        startedAt = excluded.startedAt,
-        endedAt = excluded.endedAt,
-        status = excluded.status
-    `).run(run.id, run.agentId, JSON.stringify(run), run.startedAt, run.endedAt, run.status);
-    this.db.bumpLastModified();
-  }
+        await saveRunAsync(this.asyncLayer!.db, this.backendProjectId, run);
+    return;
+}
 
   /**
    * Get a specific run by ID.
@@ -2619,14 +2409,8 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:35:
      * Backend-mode: delegate to async Drizzle getRunDetail helper.
      */
-    if (this.backendMode) {
-      return getRunDetailAsync(this.asyncLayer!.db, this.backendProjectId, agentId, runId);
-    }
-    const row = this.db.prepare(`
-      SELECT data FROM agentRuns WHERE agentId = ? AND id = ?
-    `).get(agentId, runId) as { data: string } | undefined;
-    return row ? this.parseJson<AgentHeartbeatRun | null>(row.data, null) : null;
-  }
+        return getRunDetailAsync(this.asyncLayer!.db, this.backendProjectId, agentId, runId);
+}
 
   /**
    * Get recent runs for an agent from structured run storage.
@@ -2639,58 +2423,16 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:35:
      * Backend-mode: delegate to async Drizzle getRecentRuns helper.
      */
-    if (this.backendMode) {
-      return getRecentRunsAsync(this.asyncLayer!.db, this.backendProjectId, agentId, limit);
-    }
-    const rows = this.db.prepare(`
-      SELECT data FROM agentRuns
-      WHERE agentId = ?
-      ORDER BY startedAt DESC
-      LIMIT ?
-    `).all(agentId, limit) as Array<{ data: string }>;
-    return rows
-      .map((row) => this.parseJson<AgentHeartbeatRun | null>(row.data, null))
-      .filter((run): run is AgentHeartbeatRun => run !== null);
-  }
+        return getRecentRunsAsync(this.asyncLayer!.db, this.backendProjectId, agentId, limit);
+}
 
   async getRunStatusCounts(agentIds?: readonly string[]): Promise<{ completedRuns: number; failedRuns: number }> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-09:35:
      * Backend-mode: delegate to async Drizzle getRunStatusCounts helper.
      */
-    if (this.backendMode) {
-      return getRunStatusCountsAsync(this.asyncLayer!.db, this.backendProjectId, agentIds);
-    }
-    let rows: Array<{ status: string; count: number }>;
-
-    if (agentIds && agentIds.length > 0) {
-      const placeholders = agentIds.map(() => "?").join(",");
-      rows = this.db.prepare(`
-        SELECT status, COUNT(*) as count
-        FROM agentRuns
-        WHERE agentId IN (${placeholders})
-        GROUP BY status
-      `).all(...agentIds) as Array<{ status: string; count: number }>;
-    } else {
-      rows = this.db.prepare(`
-        SELECT status, COUNT(*) as count
-        FROM agentRuns
-        GROUP BY status
-      `).all() as Array<{ status: string; count: number }>;
-    }
-
-    let completedRuns = 0;
-    let failedRuns = 0;
-    for (const row of rows) {
-      if (row.status === "completed") {
-        completedRuns += row.count;
-      } else if (row.status === "failed" || row.status === "terminated") {
-        failedRuns += row.count;
-      }
-    }
-
-    return { completedRuns, failedRuns };
-  }
+        return getRunStatusCountsAsync(this.asyncLayer!.db, this.backendProjectId, agentIds);
+}
 
   // ─────────────────────────────────────────────────────────────────────────
   // Run-scoped log storage (JSONL files alongside run JSON in agentsDir)
@@ -2762,14 +2504,8 @@ export class AgentStore extends EventEmitter {
    */
   async getLastBlockedState(agentId: string): Promise<BlockedStateSnapshot | null> {
     // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-    if (this.backendMode) {
-      return getLastBlockedStateAsync(this.asyncLayer!.db, agentId);
-    }
-    const row = this.db.prepare("SELECT data FROM agentBlockedStates WHERE agentId = ?").get(agentId) as
-      | { data: string }
-      | undefined;
-    return row ? this.parseJson<BlockedStateSnapshot | null>(row.data, null) : null;
-  }
+        return getLastBlockedStateAsync(this.asyncLayer!.db, agentId);
+}
 
   /**
    * Persist the latest blocked-task dedup state for an agent.
@@ -2777,20 +2513,9 @@ export class AgentStore extends EventEmitter {
   async setLastBlockedState(agentId: string, state: BlockedStateSnapshot): Promise<void> {
     await this.withLock(agentId, async () => {
       // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-      if (this.backendMode) {
-        await setLastBlockedStateAsync(this.asyncLayer!.db, agentId, state);
-        return;
-      }
-      const updatedAt = new Date().toISOString();
-      this.db.prepare(`
-        INSERT INTO agentBlockedStates (agentId, data, updatedAt)
-        VALUES (?, ?, ?)
-        ON CONFLICT(agentId) DO UPDATE SET
-          data = excluded.data,
-          updatedAt = excluded.updatedAt
-      `).run(agentId, JSON.stringify(state), updatedAt);
-      this.db.bumpLastModified();
-    });
+            await setLastBlockedStateAsync(this.asyncLayer!.db, agentId, state);
+      return;
+});
   }
 
   /**
@@ -2799,18 +2524,10 @@ export class AgentStore extends EventEmitter {
   async clearLastBlockedState(agentId: string): Promise<void> {
     await this.withLock(agentId, async () => {
       // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-      if (this.backendMode) {
-        await clearLastBlockedStateAsync(this.asyncLayer!.db, agentId);
-        return;
-      }
-      this.db.prepare("DELETE FROM agentBlockedStates WHERE agentId = ?").run(agentId);
-      this.db.bumpLastModified();
-    });
+            await clearLastBlockedStateAsync(this.asyncLayer!.db, agentId);
+      return;
+});
   }
-
-
-
-
 
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
@@ -2822,31 +2539,14 @@ export class AgentStore extends EventEmitter {
 
   private async appendConfigRevision(revision: AgentConfigRevision): Promise<void> {
     // FNXC:SqliteFinalRemoval 2026-06-26-00:10: backend mode async delegation.
-    if (this.backendMode) {
-      await appendConfigRevisionAsync(this.asyncLayer!.db, revision);
-      return;
-    }
-    this.db.prepare(`
-      INSERT INTO agentConfigRevisions (id, agentId, data, createdAt)
-      VALUES (?, ?, ?, ?)
-    `).run(revision.id, revision.agentId, JSON.stringify(revision), revision.createdAt);
-    this.db.bumpLastModified();
-  }
+        await appendConfigRevisionAsync(this.asyncLayer!.db, revision);
+    return;
+}
 
   private async readConfigRevisions(agentId: string): Promise<AgentConfigRevision[]> {
     // FNXC:SqliteFinalRemoval 2026-06-26-00:10: backend mode async delegation.
-    if (this.backendMode) {
-      return readConfigRevisionsAsync(this.asyncLayer!.db, agentId);
-    }
-    const rows = this.db.prepare(`
-      SELECT data FROM agentConfigRevisions
-      WHERE agentId = ?
-      ORDER BY createdAt ASC
-    `).all(agentId) as Array<{ data: string }>;
-    return rows
-      .map((row) => this.parseJson<AgentConfigRevision | null>(row.data, null))
-      .filter((revision): revision is AgentConfigRevision => revision !== null);
-  }
+        return readConfigRevisionsAsync(this.asyncLayer!.db, agentId);
+}
 
   private createConfigRevision(params: {
     agentId: string;
@@ -2935,14 +2635,8 @@ export class AgentStore extends EventEmitter {
 
   private async findConfigRevisionAcrossAgents(revisionId: string): Promise<AgentConfigRevision | null> {
     // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-    if (this.backendMode) {
-      return findConfigRevisionByIdAsync(this.asyncLayer!.db, revisionId);
-    }
-    const row = this.db.prepare("SELECT data FROM agentConfigRevisions WHERE id = ?").get(revisionId) as
-      | { data: string }
-      | undefined;
-    return row ? this.parseJson<AgentConfigRevision | null>(row.data, null) : null;
-  }
+        return findConfigRevisionByIdAsync(this.asyncLayer!.db, revisionId);
+}
 
   private computeNextResetAt(period: AgentBudgetConfig["budgetPeriod"], resetDay?: number): string | null {
     if (!period || period === "lifetime") {
@@ -3142,16 +2836,8 @@ export class AgentStore extends EventEmitter {
      * FNXC:SqliteFinalRemoval 2026-06-26-09:20:
      * Backend-mode: delegate to async Drizzle readApiKeys helper.
      */
-    if (this.backendMode) {
-      return readApiKeysAsync(this.asyncLayer!.db, agentId);
-    }
-    const rows = this.db.prepare(`
-      SELECT data FROM agentApiKeys WHERE agentId = ? ORDER BY createdAt ASC
-    `).all(agentId) as Array<{ data: string }>;
-    return rows
-      .map((row) => this.parseJson<AgentApiKey | null>(row.data, null))
-      .filter((key): key is AgentApiKey => key !== null);
-  }
+        return readApiKeysAsync(this.asyncLayer!.db, agentId);
+}
 
   private readAgent(agentId: string): Agent | null {
     // SQLite sync read path. In PG backend mode there is no synchronous DB
@@ -3159,12 +2845,8 @@ export class AgentStore extends EventEmitter {
     // (which delegates to readAgentAsync). The remaining internal sync caller
     // (getInstructionsDir) uses it only for non-critical path computation;
     // resolveCompatibleBundleDir now uses getAgent() directly.
-    if (this.backendMode) {
-      return null;
-    }
-    const row = this.db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | undefined;
-    return row ? this.mapAgentRow(row) : null;
-  }
+        return null;
+}
 
   private mapAgentRow(row: AgentRow): Agent {
     const data = this.parseJson<Partial<AgentData>>(row.data, {});
@@ -3248,80 +2930,9 @@ export class AgentStore extends EventEmitter {
   private async writeAgent(agent: Agent): Promise<void> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:40:
     // Backend mode: delegate to async Drizzle writeAgent helper.
-    if (this.backendMode) {
-      await writeAgentAsync(this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
-      return;
-    }
-    const data: AgentData = {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      state: agent.state,
-      taskId: agent.taskId,
-      createdAt: agent.createdAt,
-      updatedAt: agent.updatedAt,
-      lastHeartbeatAt: agent.lastHeartbeatAt,
-      metadata: agent.metadata,
-      title: agent.title,
-      icon: agent.icon,
-      imageUrl: agent.imageUrl,
-      reportsTo: agent.reportsTo,
-      runtimeConfig: agent.runtimeConfig,
-      pauseReason: agent.pauseReason,
-      permissions: agent.permissions,
-      permissionPolicy: agent.permissionPolicy,
-      totalInputTokens: agent.totalInputTokens,
-      totalOutputTokens: agent.totalOutputTokens,
-      lastError: agent.lastError,
-      instructionsPath: agent.instructionsPath,
-      instructionsText: agent.instructionsText,
-      soul: agent.soul,
-      memory: agent.memory,
-      bundleConfig: agent.bundleConfig,
-      heartbeatProcedurePath: agent.heartbeatProcedurePath,
-    };
-
-    this.db.prepare(`
-      INSERT INTO agents (
-        id, name, role, state, taskId, createdAt, updatedAt, lastHeartbeatAt, metadata, data
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        role = excluded.role,
-        state = excluded.state,
-        taskId = excluded.taskId,
-        updatedAt = excluded.updatedAt,
-        lastHeartbeatAt = excluded.lastHeartbeatAt,
-        metadata = excluded.metadata,
-        data = excluded.data
-    `).run(
-      agent.id,
-      agent.name,
-      agent.role,
-      agent.state,
-      agent.taskId ?? null,
-      agent.createdAt,
-      agent.updatedAt,
-      agent.lastHeartbeatAt ?? null,
-      JSON.stringify(agent.metadata ?? {}),
-      JSON.stringify(data),
-    );
-    this.db.bumpLastModified();
-
-    /*
-     * FNXC:AgentStore 2026-07-09-08:15:
-     * FN-7723 — update this instance's own change-detection snapshot cache
-     * synchronously with every in-process write (createAgent/updateAgent/
-     * updateAgentState/etc. all funnel through writeAgent()). This is the
-     * self-write suppression mechanism: when this instance's own poll tick
-     * later diffs against the cache, its own write is already reflected, so
-     * it is never mistaken for an external change and never double-emitted.
-     * Only meaningful once startWatching() has populated the cache; a no-op
-     * write to a Map before watching starts is negligible cost.
-     */
-    this.agentSnapshotCache.set(agent.id, this.watchSnapshotOf(agent));
-  }
+        await writeAgentAsync(this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
+    return;
+}
 
   /**
    * FN-7723: build the change-detection snapshot for an agent.
@@ -3407,12 +3018,7 @@ export class AgentStore extends EventEmitter {
     if (this.pollingInProgress) return;
     this.pollingInProgress = true;
     try {
-      if (!this.backendMode) {
-        // sqlite-only cheap gate; backend mode diffs every tick (see startWatching).
-        const currentModified = this.db.getLastModified();
-        if (currentModified <= this.lastKnownModified) return;
-        this.lastKnownModified = currentModified;
-      }
+      
 
       const agents = await this.listAgents({ includeEphemeral: true });
       const seenIds = new Set<string>();
