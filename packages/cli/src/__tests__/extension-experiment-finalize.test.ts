@@ -62,6 +62,11 @@ vi.mock("@fusion/core", () => ({
   resolveAgentProvisioningPolicy: vi.fn(() => ({ approvalMode: "auto" })),
   TASK_PRIORITIES: ["low", "normal", "high", "urgent"],
   getProjectRootFromWorktree: vi.fn(() => null),
+  // FNXC:ToolPermissionGates 2026-07-26-14:55: fn_experiment_finalize is now withheld from agent
+  // principals; the guard resolves the caller principal via the session-identity registry.
+  // These tests call the tool as an operator, so the mock reports an operator principal.
+  resolveFusionSessionPrincipal: vi.fn(() => ({ kind: "operator" })),
+  resolveEffectiveAgentPermissionPolicy: vi.fn(() => ({ presetId: "unrestricted", rules: {} })),
 }));
 
 vi.mock("@fusion/dashboard", () => ({
@@ -77,6 +82,9 @@ vi.mock("@fusion/dashboard", () => ({
 vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   ...workflowAuthoringEngineMock,
+  // FNXC:ToolPermissionGates 2026-07-26-14:55: extension.ts now imports the agent action gate; mock completeness gate requires these names.
+  evaluateAgentActionGate: vi.fn(() => ({ disposition: "allow", category: "exempt", toolName: "", operation: "", summary: "", resourceType: "other", approvalDedupeKey: "", metadata: {} })),
+  resolveGateOutcome: vi.fn(() => ({ outcome: "allow" })),
   createFnAgent: vi.fn(),
   createAgentTask: vi.fn(),
   fetchWebContent: vi.fn(),

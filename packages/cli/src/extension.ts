@@ -34,6 +34,11 @@ import {
   getProjectRootFromWorktree,
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
+  resolveFusionSessionPrincipal,
+  resolveEffectiveAgentPermissionPolicy,
+  type FusionSessionPrincipal,
+  type AgentPermissionPolicy,
+  type ApprovalRequestActorSnapshot,
   type SecretScope,
   declaresAnyLifecycleTrait,
   resolveTaskLifecycleColumns,
@@ -76,6 +81,8 @@ import {
   normalizeAgentLogPaging,
   renderAgentLogEntries,
   createAgentTask,
+  evaluateAgentActionGate,
+  resolveGateOutcome,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -744,14 +751,20 @@ ephemeral so the project policy still applies. An absent id keeps the human pass
 resolved permanent agent is still never gated.
 
 FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
-KNOWN LIMITATION — this gate does not currently fire in production, and must not be counted as
-enforcement of the Deny policy. pi's `ExtensionContext` (pi-coding-agent, core/extensions/types)
-carries no `agentId`; the read at the fn_task_create execute site is a speculative cast, and only
-tests ever supply one. Every real call therefore short-circuits at `!callerAgentId` and passes
-through as a human caller. The fail-closed direction above is correct for the day an identity
-signal exists, but making this lane genuinely enforce Deny needs the engine to thread the session's
-agent/task identity into the extension context (env or an augmented context) — a plumbing decision,
-not a local fix. Enforcement today lives in the engine lanes, which withhold the tool outright.
+KNOWN LIMITATION (superseded 2026-07-26, see below) — pi's `ExtensionContext` (pi-coding-agent,
+core/extensions/types) carries no `agentId`; the read at the fn_task_create execute site is a
+speculative cast, and only tests ever supply one. Without another identity signal every real call
+short-circuited at `!callerAgentId` and passed through as a human caller.
+
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+The identity signal now exists: the engine registers agent sessions by cwd in @fusion/core's
+session-identity registry (resolveFusionSessionPrincipal). fn_task_create's ephemeral gate uses
+the registry-resolved agentId as a fallback when ctx.agentId is absent (see
+resolveExtensionCallerPrincipal below), so the Deny policy is enforceable for engine-spawned
+sessions even though pi's ExtensionContext still carries no identity of its own. The fail-closed
+lookup semantics above are unchanged: a caller id that is present but unresolvable is classified
+ephemeral, an ambiguous registry entry is treated as an agent with unknown identity, and an
+unregistered cwd remains a human operator CLI pass-through.
 */
 async function isEphemeralCallerAgent(cwd: string, callerAgentId: string | undefined): Promise<boolean> {
   if (!callerAgentId) return false;
@@ -764,6 +777,351 @@ async function isEphemeralCallerAgent(cwd: string, callerAgentId: string | undef
     return isEphemeralAgent(agent);
   } catch {
     return true;
+  }
+}
+
+// ── Caller principal + agent tool gates ────────────────────────────
+
+/** Minimal caller-context shape read from the pi ExtensionContext (augmented fields are optional). */
+type ExtensionCallerContext = {
+  cwd?: string;
+  agentId?: unknown;
+  agentName?: unknown;
+  taskId?: unknown;
+  runId?: unknown;
+};
+
+/** Stand-in agent id when the principal is ambiguous (multiple live sessions in one cwd). */
+const AMBIGUOUS_AGENT_PRINCIPAL_ID = "unknown-agent";
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+Security incident root cause: all fn_* host-extension tools are delivered to engine agent
+sessions via pi's extension loader and NEVER pass through the engine's per-session gate
+wrappers, so destructive tools (fn_task_delete etc.) ran ungated for agents — an agent
+autonomously deleted a live task. The engine now registers agent sessions by cwd in
+@fusion/core's session-identity registry; this resolver is the extension-side principal
+channel. Precedence:
+1. An explicit ctx.agentId (engine-augmented contexts and tests) is an agent principal.
+2. Otherwise the registry decides: no registration = human operator CLI, exactly one live
+   registration = that agent, multiple = ambiguous.
+"ambiguous" MUST be treated as an agent with unknown identity (fail closed), never as an
+operator. Operator (human CLI) behavior is unchanged by every gate built on this resolver.
+*/
+export function resolveExtensionCallerPrincipal(ctx: ExtensionCallerContext): FusionSessionPrincipal {
+  const explicitAgentId =
+    typeof ctx.agentId === "string" && ctx.agentId.trim().length > 0 ? ctx.agentId.trim() : undefined;
+  if (explicitAgentId) {
+    return {
+      kind: "agent",
+      identity: {
+        agentId: explicitAgentId,
+        ...(typeof ctx.agentName === "string" && ctx.agentName ? { agentName: ctx.agentName } : {}),
+        ...(typeof ctx.taskId === "string" && ctx.taskId ? { taskId: ctx.taskId } : {}),
+        registeredAt: Date.now(),
+      },
+    };
+  }
+  return resolveFusionSessionPrincipal(typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd());
+}
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+INTENDED BEHAVIOR CHANGE for agents: these destructive/irreversible tools are hard-withheld
+from agent and ambiguous principals at execute time, regardless of permission policy or
+preset. Human operator CLI sessions (no registry entry, no ctx.agentId) are unaffected.
+The guard runs FIRST in each tool's execute, before any store access or param validation.
+*/
+const WITHHELD_FROM_AGENT_EXTENSION_TOOLS: ReadonlySet<string> = new Set([
+  "fn_task_delete",
+  "fn_task_bypass_review",
+  "fn_mission_delete",
+  "fn_milestone_delete",
+  "fn_slice_delete",
+  "fn_feature_delete",
+  "fn_workflow_delete",
+  "fn_experiment_finalize",
+  "fn_skills_install",
+]);
+
+interface AgentGateDenyResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+  details: Record<string, unknown>;
+}
+
+/**
+ * FNXC:ToolPermissionGates 2026-07-26-14:40:
+ * Dedupe-key lookup that works in PostgreSQL backend mode.
+ * ApprovalRequestStore.findLatestByDedupeKey's backend branch parses the jsonb
+ * `targetContext` (already an object from drizzle) through the string-only fromJson
+ * helper, so it never matches and every retry minted a duplicate request. Until that
+ * core defect is fixed, fall back to list() — whose backend row mapping returns the
+ * parsed context verbatim — and match `context.approvalDedupeKey` newest-first, the
+ * same contract chat.ts uses.
+ */
+async function findLatestApprovalRequestByDedupeKey(
+  approvalStore: ApprovalRequestStore,
+  input: { requesterActorId: string; taskId?: string; dedupeKey: string },
+): Promise<Awaited<ReturnType<ApprovalRequestStore["findLatestByDedupeKey"]>>> {
+  const direct = await approvalStore.findLatestByDedupeKey(input);
+  if (direct) return direct;
+  const rows = await approvalStore.list({ requesterActorId: input.requesterActorId, ...(input.taskId ? { taskId: input.taskId } : {}) });
+  return (
+    rows.find((row) => row.targetAction.context?.approvalDedupeKey === input.dedupeKey) ?? null
+  );
+}
+
+/**
+ * FNXC:ToolPermissionGates 2026-07-26-13:55:
+ * Shared hard-deny for the withheld list above. Returns null for operator principals
+ * (tool proceeds unchanged) and a structured error result for agent/ambiguous principals.
+ */
+function denyWithheldToolForAgentPrincipal(
+  toolName: string,
+  ctx: ExtensionCallerContext,
+): AgentGateDenyResult | null {
+  if (!WITHHELD_FROM_AGENT_EXTENSION_TOOLS.has(toolName)) return null;
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "operator") return null;
+  const agentId = principal.kind === "agent" ? principal.identity.agentId : undefined;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `${toolName} is withheld from agent sessions: this destructive operation is reserved for the human operator. ` +
+          "Do not retry it; ask the operator to run it from the dashboard or CLI if it is genuinely needed.",
+      },
+    ],
+    isError: true as const,
+    details: {
+      deniedFor: "agent-principal",
+      tool: toolName,
+      ...(agentId ? { agentId } : {}),
+    },
+  };
+}
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+Policy gate for sensitive-but-policy-governed extension tools called by agent/ambiguous
+principals. Resolves the caller's effective permission policy (agent row policy layered over
+the project default; the shipped default preset is `unrestricted`) and evaluates the SAME
+engine action gate used in engine lanes. Contract:
+- Operator principals: never gated, behavior unchanged.
+- disposition "allow" (the DEFAULT PRESET path): proceed friction-free — no approval row is
+  ever created on this path.
+- "block": structured deny.
+- "require-approval": reuse the latest request for the dedupe key (pending → still waiting,
+  denied → deny, approved → consume the grant via markCompleted and proceed once); otherwise
+  mint one approval request with the agent's REAL requester snapshot.
+- Ambiguous principals resolve the project default policy only (unknown agent, fail closed on
+  identity but still policy-governed).
+- Any resolution failure (store/asyncLayer unavailable, policy read error) fails CLOSED with a
+  structured deny.
+*/
+async function applyAgentPolicyGateForExtensionTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  ctx: ExtensionCallerContext,
+): Promise<
+  | AgentGateDenyResult
+  | { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }
+  | null
+> {
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "operator") return null;
+  const callerAgentId = principal.kind === "agent" ? principal.identity.agentId : undefined;
+  const cwd = typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd();
+  const taskId = typeof ctx.taskId === "string" && ctx.taskId ? ctx.taskId : undefined;
+  const runId = typeof ctx.runId === "string" && ctx.runId ? ctx.runId : undefined;
+
+  try {
+    const store = await getStore(cwd);
+    const settings = await store.getSettings();
+
+    let agentRow: { name?: string; permissionPolicy?: AgentPermissionPolicy } | null = null;
+    if (callerAgentId) {
+      try {
+        const agentStore = await getAgentStore(cwd);
+        await agentStore.init();
+        agentRow = await agentStore.resolveAgent(callerAgentId);
+      } catch {
+        // Unknown/unreadable agent row: fall through to the project default policy (still an
+        // agent principal — never an operator).
+        agentRow = null;
+      }
+    }
+
+    const policy = resolveEffectiveAgentPermissionPolicy(
+      agentRow?.permissionPolicy,
+      settings.defaultAgentPermissionPolicy,
+    );
+    const gateAgentId = callerAgentId ?? AMBIGUOUS_AGENT_PRINCIPAL_ID;
+    let decision = evaluateAgentActionGate({
+      agentId: gateAgentId,
+      ...(taskId ? { taskId } : {}),
+      toolName,
+      args,
+      permissionPolicy: policy,
+    });
+    if (decision.category === "exempt") {
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      A policy-gated extension tool that the engine's static classification does not know
+      (today: fn_agent_set_instructions) must not fall through the gate's exempt default to
+      an unconditional allow. Treat it as task_agent_mutation, honoring exact toolRules first
+      — under the default `unrestricted` preset this still resolves to "allow", so default
+      agent behavior is unchanged.
+      */
+      const fallbackDisposition = policy.toolRules?.[toolName] ?? policy.rules.task_agent_mutation;
+      decision = {
+        ...decision,
+        disposition: fallbackDisposition,
+        category: "task_agent_mutation",
+        resourceType: "agent",
+      };
+    }
+
+    if (decision.disposition === "allow") {
+      // DEFAULT PRESET PATH: friction-free, no approval row.
+      return null;
+    }
+
+    if (decision.disposition === "block") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} is blocked by this agent's permission policy (category ${decision.category}). Ask the operator to run it or adjust the agent's permission policy.`,
+          },
+        ],
+        isError: true as const,
+        details: {
+          deniedFor: "agent-permission-policy",
+          tool: toolName,
+          disposition: "block",
+          category: decision.category,
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    // require-approval
+    const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("approval request store unavailable (no project async layer)");
+    }
+    const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
+    const requester: ApprovalRequestActorSnapshot = {
+      actorId: gateAgentId,
+      actorType: "agent",
+      actorName:
+        agentRow?.name ??
+        (principal.kind === "agent" ? principal.identity.agentName ?? gateAgentId : gateAgentId),
+    };
+    const latest = await findLatestApprovalRequestByDedupeKey(approvalStore, {
+      requesterActorId: gateAgentId,
+      ...(taskId ? { taskId } : {}),
+      dedupeKey: decision.approvalDedupeKey,
+    });
+    const outcome = resolveGateOutcome(decision, latest ? { id: latest.id, status: latest.status } : null);
+
+    if (outcome.outcome === "execute-once-then-complete" && outcome.approvalRequestId) {
+      // Consume the operator's grant so it cannot be replayed; then proceed once.
+      await approvalStore.markCompleted(outcome.approvalRequestId, {
+        actor: requester,
+        note: `Approval consumed by ${toolName}`,
+        expectedRequesterActorId: gateAgentId,
+      });
+      return null;
+    }
+
+    if (outcome.outcome === "block") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} was denied by the operator (approval request ${outcome.approvalRequestId ?? "unknown"}).`,
+          },
+        ],
+        isError: true as const,
+        details: {
+          deniedFor: "agent-approval-denied",
+          tool: toolName,
+          ...(outcome.approvalRequestId ? { approvalRequestId: outcome.approvalRequestId } : {}),
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    if (latest && latest.status === "pending") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} requires operator approval. Request ${latest.id} is still pending — do not retry until it is decided.`,
+          },
+        ],
+        details: {
+          outcome: "pending_approval",
+          approvalRequestId: latest.id,
+          tool: toolName,
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    const request = await approvalStore.create({
+      requester,
+      targetAction: {
+        category: decision.category === "exempt" ? "task_agent_mutation" : decision.category,
+        action: decision.operation,
+        summary: decision.summary,
+        resourceType: decision.resourceType,
+        resourceId: decision.resourceId ?? "",
+        context: {
+          approvalDedupeKey: decision.approvalDedupeKey,
+          toolName,
+          toolArgs: args,
+          source: "pi-extension-agent-gating",
+        },
+      },
+      ...(taskId ? { taskId } : {}),
+      ...(runId ? { runId } : {}),
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${toolName} requires operator approval. Request ${request.id} created and pending — approve via POST /api/approvals/:id/decision.`,
+        },
+      ],
+      details: {
+        outcome: "pending_approval",
+        approvalRequestId: request.id,
+        tool: toolName,
+        ...(callerAgentId ? { agentId: callerAgentId } : {}),
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${toolName} denied: the agent permission policy could not be resolved (${message}). Failing closed — ask the operator to run this tool.`,
+        },
+      ],
+      isError: true as const,
+      details: {
+        deniedFor: "agent-permission-policy-unavailable",
+        tool: toolName,
+        error: message,
+        ...(callerAgentId ? { agentId: callerAgentId } : {}),
+      },
+    };
   }
 }
 
@@ -1120,7 +1478,22 @@ export default function kbExtension(pi: ExtensionAPI) {
 
         FNXC:WorkflowAuthoringTools 2026-06-29-23:06:
         fn_workflow_select may default only in task-bound extension contexts; no-task published API calls must pass task_id explicitly so an empty ambient task cannot accidentally route the wrong card.
+
+        FNXC:ToolPermissionGates 2026-07-26-13:55:
+        fn_workflow_delete is hard-withheld from agent principals; fn_workflow_update is
+        policy-gated per the caller agent's effective permission policy. Operator CLI calls
+        are unaffected by both.
         */
+        const withheldDenied = denyWithheldToolForAgentPrincipal(spec.name, ctx as ExtensionCallerContext);
+        if (withheldDenied) return withheldDenied;
+        if (spec.name === "fn_workflow_update") {
+          const gated = await applyAgentPolicyGateForExtensionTool(
+            spec.name,
+            params as Record<string, unknown>,
+            ctx as ExtensionCallerContext,
+          );
+          if (gated) return gated;
+        }
         const store = await getStore(ctx.cwd);
         const extensionContext = ctx as typeof ctx & { taskId?: string };
         const currentTaskId = typeof extensionContext.taskId === "string" ? extensionContext.taskId : "";
@@ -1198,7 +1571,21 @@ export default function kbExtension(pi: ExtensionAPI) {
       */
       const fnCtx = ctx as typeof ctx & { agentId?: string; taskId?: string };
       const projectSettingsForGate = await store.getSettings();
-      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId);
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      Fall back to the session-identity registry when pi's context carries no agentId so the
+      ephemeral-task-creation policy actually fires for engine-spawned sessions. An ambiguous
+      principal uses a sentinel id that never resolves to an agent row, which the fail-closed
+      lookup classifies as ephemeral.
+      */
+      const createPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      const registryAgentId =
+        createPrincipal.kind === "agent"
+          ? createPrincipal.identity.agentId
+          : createPrincipal.kind === "ambiguous"
+            ? AMBIGUOUS_AGENT_PRINCIPAL_ID
+            : undefined;
+      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId ?? registryAgentId);
       if (callerIsEphemeral) {
         const policy = fusionCore.resolveEphemeralTaskCreationPolicy(projectSettingsForGate);
         if (policy === "deny") {
@@ -1812,6 +2199,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_pause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
       const task = await store.pauseTask(params.id, true, undefined, { userPaused: true });
 
@@ -1835,6 +2225,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_unpause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
       const task = await store.pauseTask(params.id, false);
 
@@ -1865,8 +2258,11 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_retry", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
-      
+
       // Validate task exists
       let task;
       try {
@@ -1952,7 +2348,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. This is an OPERATOR-triggered Retry: on a board that does not declare `todo` the move is REJECTED and the retry fails in the operator's face. The reply text below uses the SAME resolved value so it cannot name a lane the card did not go to. */
         const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
-        await store.moveTask(params.id, retryTarget, { preserveProgress: true });
+        /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
+        await store.moveTask(params.id, retryTarget, { preserveProgress: true, moveSource: "user" });
         return {
           content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (unusable worktree session metadata cleared)` }],
           details: { taskId: params.id, newColumn: 'todo' },
@@ -1976,7 +2373,8 @@ export default function kbExtension(pi: ExtensionAPI) {
           );
           /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — same operator Retry path as above. */
           const executionRetryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
-          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true });
+          /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
+          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true, moveSource: "user" });
           return {
             content: [{ type: "text", text: `Retried ${params.id} → ${executionRetryTarget} (execution failure, preserving step progress)` }],
             details: { taskId: params.id, newColumn: 'todo' },
@@ -2005,7 +2403,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
       
       // Move to todo column
-      await store.moveTask(params.id, 'todo');
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: user-facing retry move carries the user/hard-cancel source (Move-Task contract).
+      await store.moveTask(params.id, 'todo', { moveSource: "user" });
       
       // Log the retry action
       await store.logEntry(params.id, "Retry requested via Fusion extension", "Task reset to todo for retry");
@@ -2028,9 +2427,14 @@ export default function kbExtension(pi: ExtensionAPI) {
    * surface — deliberately NOT wired into packages/engine/src/executor.ts or
    * packages/engine/src/agent-heartbeat.ts autonomous per-role tool lists, and
    * NOT part of packages/dashboard/src/planning-board-tools.ts read-only
-   * planning tools — so headless executor/reviewer/triage agent runs never
-   * gain the bypass. Requires a mandatory reason; audit-logged via
+   * planning tools. Requires a mandatory reason; audit-logged via
    * store.bypassFailedPreMergeReviewStep's run-audit event.
+   *
+   * FNXC:ToolPermissionGates 2026-07-26-13:55:
+   * Registration-surface separation alone was NOT sufficient: pi's host-extension
+   * loader delivers this tool into engine agent sessions too. Operator-only access
+   * is now enforced by construction — the withheld-from-agents principal guard runs
+   * first in execute and hard-denies agent/ambiguous principals.
    */
   pi.registerTool({
     name: "fn_task_bypass_review",
@@ -2052,6 +2456,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_task_bypass_review", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const fnCtx = ctx as typeof ctx & { agentId?: string };
       const actor = fnCtx.agentId ?? "cli-operator";
@@ -2174,6 +2580,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_archive", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
       const task = await store.archiveTask(params.id, {
         removeLineageReferences: params.removeLineageReferences === true,
@@ -2244,6 +2653,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals (root cause of the live-task deletion incident); operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_task_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const callerTaskId = (ctx as { taskId?: string }).taskId;
       const task = await store.deleteTask(params.id, {
@@ -2833,26 +3245,74 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (decision.policy === "prompt") {
-        
+        /*
+        FNXC:SecretsApproval 2026-07-26-14:10:
+        BEHAVIOR CHANGES (broken approval control, both intentional):
+        (a) An `approved` row previously fell through and minted a BRAND-NEW pending request,
+            so operator approval never granted anything — the loop was unwinnable. The status
+            ladder is now: pending → still-awaiting message (no re-mint); denied → denied
+            message (no re-mint); approved → REDEEM: reveal the secret, then markCompleted so
+            the grant is consumed execute-once; completed (already redeemed) → mint a fresh
+            request.
+        (b) The approval row's category was "task_mutation" (normalized to
+            task_agent_mutation), so the dashboard's emitSecretsAccessDecisionAudit — which
+            fires only for category "secrets_access" — never ran. The category is now
+            "secrets_access" (accepted verbatim by normalizeApprovalRequestActionCategory).
+        */
         const cliLayer = requireProjectLayer(store, "CLI secret approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
-        const existing = await approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
-        const request = existing && existing.status === "pending"
-          ? existing
-          : await approvalStore.create({
-            requester: { actorId: fnCtx.agentId ?? "user", actorType: "agent", actorName: fnCtx.agentName ?? fnCtx.agentId ?? "Agent" },
-            targetAction: {
-              category: "task_mutation",
-              action: "read",
-              summary: `Read secret ${params.key}`,
-              resourceType: "secret",
-              resourceId: record.id,
-              context: { approvalDedupeKey: dedupeKey, key: params.key, scope: resolvedScope },
-            },
-            ...(fnCtx.runId ? { runId: fnCtx.runId } : {}),
-            ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}),
+        const requesterActorId = fnCtx.agentId ?? "user";
+        const requesterSnapshot: ApprovalRequestActorSnapshot = {
+          actorId: requesterActorId,
+          actorType: "agent",
+          actorName: fnCtx.agentName ?? fnCtx.agentId ?? "Agent",
+        };
+        const existing = await findLatestApprovalRequestByDedupeKey(approvalStore, { requesterActorId, ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}), dedupeKey });
+
+        if (existing?.status === "pending") {
+          emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
+          return {
+            content: [{ type: "text", text: `Secret access approval request ${existing.id} is still pending. Approve via POST /api/approvals/:id/decision.` }],
+            details: { outcome: "pending_approval", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
+          };
+        }
+
+        if (existing?.status === "denied") {
+          emitSecretAudit(store, fnCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
+          return {
+            content: [{ type: "text", text: `Secret access request ${existing.id} was denied by the operator. Do not retry without operator direction.` }],
+            details: { outcome: "denied", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
+          };
+        }
+
+        if (existing?.status === "approved") {
+          const revealedAfterApproval = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: fnCtx.agentId ?? null });
+          await approvalStore.markCompleted(existing.id, {
+            actor: requesterSnapshot,
+            note: "Secret revealed after approval",
           });
+          emitSecretAudit(store, fnCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
+          return {
+            content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope (approval ${existing.id} consumed).` }],
+            details: { key: params.key, value: revealedAfterApproval.plaintextValue, scope: resolvedScope, approvalRequestId: existing.id },
+          };
+        }
+
+        // No prior request, or the previous grant was already redeemed (completed) → mint a fresh one.
+        const request = await approvalStore.create({
+          requester: requesterSnapshot,
+          targetAction: {
+            category: "secrets_access",
+            action: "read",
+            summary: `Read secret ${params.key}`,
+            resourceType: "secret",
+            resourceId: record.id,
+            context: { approvalDedupeKey: dedupeKey, key: params.key, scope: resolvedScope },
+          },
+          ...(fnCtx.runId ? { runId: fnCtx.runId } : {}),
+          ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}),
+        });
 
         emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
         return {
@@ -2887,6 +3347,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       summary: Type.Optional(Type.String({ description: "Optional finalize summary" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_experiment_finalize", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       try {
         const store = await getStore(ctx.cwd);
         const sessionStore = store.getExperimentSessionStore();
@@ -3901,6 +4364,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_mission_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4146,6 +4612,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_feature_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4180,6 +4649,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_slice_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4214,6 +4686,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_milestone_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4531,7 +5006,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_stop", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
 
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
@@ -4596,7 +5073,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_start", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
 
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
@@ -4668,11 +5147,42 @@ export default function kbExtension(pi: ExtensionAPI) {
       message_response_mode: Type.Optional(Type.Union([Type.Literal("immediate"), Type.Literal("on-heartbeat")])),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
       const store = await getStore(ctx.cwd);
-      const caller = { id: "user", role: "user", isPrivileged: true } as const;
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      BEHAVIOR CHANGE (honest provisioning caller): this site previously hardcoded
+      `{ id: "user", role: "user", isPrivileged: true }`, so an agent session calling this
+      tool through the host extension was treated as a privileged human and bypassed the
+      provisioning policy entirely. The caller is now principal-derived: operator CLI stays
+      privileged (unchanged); agent principals use their real id/role and are NOT privileged;
+      ambiguous principals are an unknown, unprivileged agent. Approval requests carry the
+      REAL requester snapshot instead of the hardcoded CLI User.
+      */
+      const provisionPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      let caller: { id: string; role: string; isPrivileged: boolean };
+      let provisionRequester: ApprovalRequestActorSnapshot;
+      if (provisionPrincipal.kind === "operator") {
+        caller = { id: "user", role: "user", isPrivileged: true };
+        provisionRequester = { actorId: "user", actorType: "user", actorName: "CLI User" };
+      } else {
+        const callerAgentId = provisionPrincipal.kind === "agent" ? provisionPrincipal.identity.agentId : AMBIGUOUS_AGENT_PRINCIPAL_ID;
+        let callerRow: { name?: string; role?: string } | null = null;
+        if (provisionPrincipal.kind === "agent") {
+          try {
+            callerRow = await agentStore.resolveAgent(callerAgentId);
+          } catch {
+            callerRow = null;
+          }
+        }
+        const fallbackName = provisionPrincipal.kind === "agent"
+          ? provisionPrincipal.identity.agentName ?? callerAgentId
+          : callerAgentId;
+        caller = { id: callerAgentId, role: callerRow?.role ?? "custom", isPrivileged: false };
+        provisionRequester = { actorId: callerAgentId, actorType: "agent", actorName: callerRow?.name ?? fallbackName };
+      }
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_create",
         caller,
@@ -4690,10 +5200,17 @@ export default function kbExtension(pi: ExtensionAPI) {
         const cliLayer2 = requireProjectLayer(store, "CLI agent-create approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer2 });
         const request = await approvalStore.create({
-          requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
+          requester: provisionRequester,
           targetAction: { category: "agent_provisioning", action: "create", summary: `Create agent ${params.name} (${params.role})`, resourceType: "agent", resourceId: "", context: { tool: "fn_agent_create", params } },
         });
         return { content: [{ type: "text" as const, text: `Approval required. Request ${request.id} created.` }], details: { outcome: "pending_approval", approvalRequestId: request.id, matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode } };
+      }
+
+      if (policy.decision === "deny") {
+        return {
+          content: [{ type: "text" as const, text: `DENIED: agent create blocked by policy (${policy.matchedRule})` }],
+          details: { outcome: "denied", matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode },
+        };
       }
 
       const runtimeConfig: Record<string, unknown> = {
@@ -4979,7 +5496,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals (classified as task_agent_mutation via the extension gate's exempt fallback); operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_set_instructions", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
 
@@ -5055,11 +5574,38 @@ export default function kbExtension(pi: ExtensionAPI) {
       reassign_to: Type.Optional(Type.String({ description: "Optional replacement agent for assigned tasks" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
       const store = await getStore(ctx.cwd);
-      const caller = { id: "user", role: "user", isPrivileged: true } as const;
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      BEHAVIOR CHANGE (honest provisioning caller) — see the matching comment on
+      fn_agent_create: the caller is principal-derived instead of a hardcoded privileged
+      CLI User, and approval requests carry the real agent requester snapshot.
+      */
+      const provisionPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      let caller: { id: string; role: string; isPrivileged: boolean };
+      let provisionRequester: ApprovalRequestActorSnapshot;
+      if (provisionPrincipal.kind === "operator") {
+        caller = { id: "user", role: "user", isPrivileged: true };
+        provisionRequester = { actorId: "user", actorType: "user", actorName: "CLI User" };
+      } else {
+        const callerAgentId = provisionPrincipal.kind === "agent" ? provisionPrincipal.identity.agentId : AMBIGUOUS_AGENT_PRINCIPAL_ID;
+        let callerRow: { name?: string; role?: string } | null = null;
+        if (provisionPrincipal.kind === "agent") {
+          try {
+            callerRow = await agentStore.resolveAgent(callerAgentId);
+          } catch {
+            callerRow = null;
+          }
+        }
+        const fallbackName = provisionPrincipal.kind === "agent"
+          ? provisionPrincipal.identity.agentName ?? callerAgentId
+          : callerAgentId;
+        caller = { id: callerAgentId, role: callerRow?.role ?? "custom", isPrivileged: false };
+        provisionRequester = { actorId: callerAgentId, actorType: "agent", actorName: callerRow?.name ?? fallbackName };
+      }
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_delete",
         caller,
@@ -5070,7 +5616,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const cliLayer3 = requireProjectLayer(store, "CLI agent-delete approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer3 });
         const request = await approvalStore.create({
-          requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
+          requester: provisionRequester,
           targetAction: { category: "agent_provisioning", action: "delete", summary: `Delete agent ${params.agent_id}`, resourceType: "agent", resourceId: params.agent_id, context: { tool: "fn_agent_delete", params } },
         });
         return { content: [{ type: "text" as const, text: `Approval required. Request ${request.id} created.` }], details: { outcome: "pending_approval", approvalRequestId: request.id, matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode, agentId: params.agent_id } };
@@ -5221,6 +5767,16 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      Ordinary delegation stays ungated (coordination primitive), but the executor-role
+      policy override is a sensitive escalation: policy-gate it for agent principals when
+      override=true. Operators unaffected.
+      */
+      if (params.override === true) {
+        const gated = await applyAgentPolicyGateForExtensionTool("fn_delegate_task", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+        if (gated) return gated;
+      }
       // Validate target agent exists and is not ephemeral
       const delegateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "todo" };
       const agentError = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), params.agent_id, delegateTask, params.override === true);
@@ -5820,6 +6376,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     Kill npx on abort/timeout so outer tool budgets cannot leave orphan install processes after the agent turn fails closed.
     */
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals (installs third-party code into the project); operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_skills_install", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       // Validate source format
       if (!/^[^/]+\/[^/]+$/.test(params.source)) {
         return {

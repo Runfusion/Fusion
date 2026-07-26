@@ -58,6 +58,15 @@ pgTest("task delete allowResurrection plumbing", () => {
     expect(deleted.allowResurrection).toBeUndefined();
   });
 
+  /*
+  FNXC:ToolPermissionGates 2026-07-26-14:55:
+  INTENDED BEHAVIOR CHANGE: fn_task_delete is now hard-withheld from agent principals
+  (a ctx.agentId caller is denied before the store is touched — covered in
+  extension-permission-gates.test.ts). The two task-bound-caller tests below therefore
+  exercise the store-level self-delete guard and cross-task delete as OPERATOR contexts
+  (taskId/runId without agentId), which is the only principal that can still reach
+  store.deleteTask through this tool.
+  */
   it("fn_task_delete rejects deleting the caller task and leaves it live", async () => {
     const store = h.store();
     const task = await store.createTask({ title: "self", description: "current task", column: "in-progress" });
@@ -69,7 +78,6 @@ pgTest("task delete allowResurrection plumbing", () => {
     const result = await tool.execute("call-self", { id: task.id }, undefined, undefined, {
       cwd: h.rootDir(),
       taskId: task.id,
-      agentId: "agent-test",
       runId: "run-test",
     });
     expect(result.isError).toBe(true);
@@ -90,7 +98,6 @@ pgTest("task delete allowResurrection plumbing", () => {
     const result = await tool.execute("call-other", { id: target.id }, undefined, undefined, {
       cwd: h.rootDir(),
       taskId: caller.id,
-      agentId: "agent-test",
       runId: "run-test",
     });
 
