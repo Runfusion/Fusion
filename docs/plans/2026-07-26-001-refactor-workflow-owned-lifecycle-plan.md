@@ -26,7 +26,7 @@ This is a program, not a PR. It is phased so every phase lands green on its own 
 
 The workflow describes the lifecycle; the engine decides it. Wherever they disagree, the engine wins silently.
 
-**Columns are decided by string literals, not by the workflow.** ~207 production sites compare `task.column` against hardcoded ids. A guard that stops matching does not fail — it disables a recovery path invisibly. Measured against a clean baseline this session:
+**Columns are decided by string literals, not by the workflow.** **535** production code lines reference a lifecycle column literal (comments excluded), measured per-file during Phase B. The `~207` figure below counts only the guard/write/dashboard categories from the original session measurement — the *full* literal surface is 2.5x that, which is why Phase B is sliced rather than run as one unit. A guard that stops matching does not fail — it disables a recovery path invisibly. Measured against a clean baseline this session:
 
 | Category | Count | Failure mode when the column moves underneath it |
 |---|---:|---|
@@ -34,6 +34,17 @@ The workflow describes the lifecycle; the engine decides it. Wherever they disag
 | Writes (`moveTask(id, "todo", …)`) | 43 | Move a card into a column no workflow declares |
 | Dashboard literals | 59 | Phantom column, illegal move menus, cards rendered nowhere |
 | Other reads / typing | ~23 | Mixed |
+
+Per-file census taken during Phase B (code lines only), which is the number to plan slices against:
+
+| Unit | Files | Sites |
+|---|---|---:|
+| U4 | `self-healing.ts` | 203 |
+| U5 | `executor.ts` 171, `scheduler.ts` 55, `replan-target.ts` 20, `merger-ai.ts` 5, `hold-release.ts` 4, `mesh-lease-manager.ts` 4, `task-agent-sync.ts` 3 | 262 |
+| U6 | `moves.ts` 34, `default-workflow-hooks.ts` 13, `board-config.ts` 9, `blocker-fanout.ts` 6, `task-priority.ts` 5, `dependency-blocked-todo-report.ts` 2, `stale-paused-todo.ts` 1 | 70 |
+| | **Total** | **535** |
+
+At even 40% true-guard density that is ~200 red-green cycles, each needing a test that fails before conversion. Phase B therefore lands as slices — B1 policy modules, B2 small movers, B3 self-healing (sub-split per sweep), B4 executor + scheduler — with `moves.ts` and `default-workflow-hooks.ts` held back behind the move-path convergence decision.
 
 **Every lane has two owners.** Triage runs specification while the graph declares `plan`/`plan-review` nodes for the same work. The executor holds implementation, retry, completion, and merge-boundary policy in imperative branches while the graph declares nodes for those seams. The merger owns merge policy, retry, and recovery routing that the IR also expresses. This dual ownership is what produced the FN-8504 race (a store-open sweep clearing a live planner's status), the done-laundering incident, and the compensating sweeps written to paper over both.
 
