@@ -194,8 +194,8 @@ INVARIANTS:
 flowchart TD
     subgraph A["Phase A — Foundation"]
         U1[U1 Lifecycle-column seam] --> U2[U2 Delete parity cruft]
-        U2 --> U2b[U2b Converge move paths<br/>blocks Phase B]
         U2 --> U3[U3 Event bus seam]
+        U3 --> U2b[U2b Converge move paths]
     end
     subgraph B["Phase B — Vocabulary"]
         U4[U4 self-healing] & U5[U5 executor/scheduler/release] & U6[U6 core store + policy]
@@ -206,6 +206,7 @@ flowchart TD
     subgraph D["Phase D — Shape"]
         U10[U10 Dashboard] --> U11[U11 Merge Todo into Planning]
     end
+    U2b -->|gates| B
     A --> B --> C --> D --> U12[U12 Migration + ratchet + docs]
 ```
 
@@ -267,9 +268,11 @@ flowchart TD
 
 **Goal:** One authoritative move-side-effect implementation, chosen deliberately and proven equivalent — not deleted on an assumption.
 
-**Requirements:** R6, R9, R12 · **Dependencies:** U2
+**Requirements:** R6, R9, R12 · **Dependencies:** U2, **U3**
 
 **Files:** `packages/core/src/task-store/moves.ts`, `packages/core/src/default-workflow-hooks.ts`, `packages/core/src/store.ts` (`isWorkflowColumnsCompatibilityFlagEnabled`), `packages/core/src/__tests__/moves.test.ts`, `packages/core/src/__tests__/default-workflow-hooks.test.ts`
+
+**Ordering with U3.** *(PR #2466 review — greptile P1.)* U3 attaches the event emit point to the LIVE inline path, and this unit replaces or deletes one of the two implementations — so a naive convergence would silently carry the emit point away with it, leaving no transition events and nothing failing. U3 therefore lands FIRST and this unit inherits a hard obligation: **the emit point survives convergence, on the surviving path, emitting the same events in the same order.** That is a named test scenario below, not a review checkbox.
 
 **Approach:** Two implementations of the same side effects coexist: the inline branch in `moves.ts` (LIVE — the compat flag reads false because nothing writes it) and the trait hooks in `default-workflow-hooks.ts` (DEAD in practice). Characterize the live path first, prove equivalence behavior by behavior, then make one authoritative and delete the other along with the compat flag.
 
@@ -277,8 +280,11 @@ Behaviors to pin before anything moves: timing / `cumulativeActiveMs` accounting
 
 **Execution note:** Characterization-first, and equivalence is a *proof obligation*, not a code review. If any behavior cannot be shown equivalent, stop and escalate with the specific divergence — do not reconcile it silently. This is the unit where "the tests pass" is least trustworthy, because both paths have tests and only one of them runs.
 
+**Exercising both paths.** *(PR #2466 review.)* Only one implementation runs in production, so equivalence cannot be observed by running the suite normally. Tests must force each path explicitly: drive the inline branch with the compatibility flag absent (production shape) and the hooks path with `experimentalFeatures.workflowColumns: true`, through a single shared fixture so both run the same behavior cases. If forcing the flag is not sufficient to reach both implementations, add a test-only selector rather than asserting equivalence from reading the code.
+
 **Test scenarios:**
-- Each characterized behavior produces identical observable results on both paths, asserted against the same fixture.
+- Each characterized behavior produces identical observable results on **both** paths — same fixture, flag forced each way — not merely on whichever path the suite happens to take.
+- The U3 emit point still fires after convergence: same events, same order, same payloads, on the surviving path.
 - A legacy-column rejection still throws the legacy bare `Error`, not `TransitionRejectionError`.
 - A move out of a non-legacy source column resolves targets from the task's own workflow adjacency and is permitted.
 - `userPaused` is cleared on a user-source move and preserved on an engine-source move.
