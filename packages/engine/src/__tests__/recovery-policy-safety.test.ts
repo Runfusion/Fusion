@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-14:20 (U4 — RATIFIED SAFETY INVARIANT):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-14:20 (U4 — RATIFIED SAFETY INVARIANT):
 
 The single most important rule in the U4 policy design, encoded as a test.
 

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-14:05 (U4 vertical slice):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-14:05 (U4 vertical slice):
 
 THE recovery reconciler — one engine that walks live cards, resolves each card's
 `recovery` policy from ITS OWN workflow, and applies the matching rule. It
@@ -32,7 +32,6 @@ an oversight: wiring an unreachable guard now would be untestable code, and the
 safety test asserts the boundary rather than a guard count.
 */
 import {
-  resolveLifecycleColumns,
   resolveWorkflowIrForTask,
   type Task,
   type TaskStore,
@@ -43,7 +42,7 @@ import {
 } from "@fusion/core";
 
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-15:35 (PR #2478 review, P2):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-15:35 (PR #2478 review, P2):
 THE TYPE-DRIVEN SAFETY RATCHET. Every key `WorkflowColumnRecovery` accepts,
 reified as a value.
 
@@ -70,7 +69,7 @@ export const RECOVERY_POLICY_KEYS: Record<keyof WorkflowColumnRecovery, true> = 
 };
 
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-19:05 (U4 — the OVERRIDE LAYER):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-19:05 (U4 — the OVERRIDE LAYER):
 Compose a workflow's DECLARED policy over the operator's settings.
 
   declared explicitly -> workflow policy WINS
@@ -100,13 +99,44 @@ Consequence that makes migration safe: retiring a sweep no longer requires
 builtin:coding to declare anything. Unset defers to the existing setting, so
 behavior cannot silently vanish on upgrade and no project needs touching.
 */
+/**
+ * A policy that RESOLVED — both halves present. Distinct from
+ * `WorkflowColumnRecovery`, whose fields are optional because an author may
+ * declare either half. Encoding the guarantee in the TYPE is what lets the
+ * consumer check presence alone; a comment promising it would let the two layers
+ * drift apart again.
+ */
+export interface ResolvedRecoveryPolicy {
+  stalenessMs: number;
+  onStale: WorkflowColumnOnStale;
+}
+
 export function resolveEffectiveRecovery(
   declared: WorkflowColumnRecovery | undefined,
   inherited: InheritedRecovery,
-): WorkflowColumnRecovery | undefined {
+): ResolvedRecoveryPolicy | undefined {
   const stalenessMs = declared?.stalenessMs ?? inherited.stalenessMs;
   const onStale = declared?.onStale ?? inherited.onStale;
-  if (stalenessMs === undefined || onStale === undefined) return undefined;
+  if (onStale === undefined) return undefined;
+  /*
+  FNXC:WorkflowRecoveryPolicy 2026-07-27-21:40 (PR #2482 review, P1):
+  A NON-POSITIVE threshold is ABSENT, not "always stale".
+
+  The review found the resolver and its consumer disagreeing about 0: the
+  resolver returned it, the consumer's truthiness check dropped it as
+  "no-policy". Two layers disagreeing is the real bug and it is fixed — but they
+  are reconciled toward ABSENT rather than toward always-stale, deliberately:
+
+    - `parseWorkflowIr` already REJECTS a declared `stalenessMs <= 0`, so a
+      workflow cannot author "always stale" in the first place;
+    - the only path that can supply 0 is the INHERITED operator setting, where
+      `stalePausedTodoThresholdMs <= 0` means DISABLED today
+      (`surfaceStalePausedTodos` returns early on it).
+
+  Treating an inherited 0 as always-stale would invert an operator's DISABLE into
+  surface-everything — the loudest possible misreading of an explicit off switch.
+  */
+  if (stalenessMs === undefined || !Number.isFinite(stalenessMs) || stalenessMs <= 0) return undefined;
   return { stalenessMs, onStale };
 }
 
@@ -155,7 +185,7 @@ export function resolveColumnRecovery(ir: WorkflowIr, columnId: string): Workflo
 }
 
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-14:05 (U4):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-14:05 (U4):
 THE safeguard chokepoint. Every safeguard suppression flows through here so there
 is exactly one place to audit, and so the safety test has a single seam to assert
 against. Returns the suppressing safeguard, or `undefined` when none applies.
@@ -187,7 +217,10 @@ export function decideRecovery(
 ): { decision: RecoveryDecision } | { suppressed: RecoverySuppression } {
   /* Declared policy overrides; absence defers to the operator setting. */
   const policy = resolveEffectiveRecovery(resolveColumnRecovery(ir, task.column), deps.inherited ?? {});
-  if (!policy?.stalenessMs || !policy.onStale) return { suppressed: "no-policy" };
+  // `resolveEffectiveRecovery` guarantees BOTH fields or `undefined`, so the
+  // presence check is the only one needed — a truthiness check here would
+  // re-introduce the layer disagreement it was written to fix.
+  if (!policy) return { suppressed: "no-policy" };
 
   const suppressed = isSuppressedBySafeguard(task, policy.onStale.action);
   if (suppressed) return { suppressed };
@@ -236,22 +269,4 @@ export async function reconcileRecovery(
   }
 
   return decisions;
-}
-
-/*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-14:05 (U4):
-Role-addressed policy lookup. A workflow may express a policy against the column
-it names, but the MIGRATED sweeps are written against lifecycle ROLES ("the hold
-column"), so this resolves a role to the column carrying it and reads the policy
-there. Returns undefined for a v1/column-less IR.
-*/
-export function resolveRoleRecovery(
-  ir: WorkflowIr,
-  role: "intake" | "hold" | "wip" | "review" | "complete" | "archived",
-): { columnId: string; policy: WorkflowColumnRecovery } | undefined {
-  const lifecycle = resolveLifecycleColumns(ir);
-  const columnId = lifecycle?.[role];
-  if (!columnId) return undefined;
-  const policy = resolveColumnRecovery(ir, columnId);
-  return policy ? { columnId, policy } : undefined;
 }

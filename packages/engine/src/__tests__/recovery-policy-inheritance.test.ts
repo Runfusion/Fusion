@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-28-17:10 (U4 — the OVERRIDE LAYER rule):
+FNXC:WorkflowRecoveryPolicy 2026-07-27-17:10 (U4 — the OVERRIDE LAYER rule):
 
 Recovery policy is an OVERRIDE LAYER over the operator's settings, not a
 replacement for them. Ratified precedence:
@@ -155,6 +155,65 @@ describe("recovery policy is an OVERRIDE LAYER over operator settings", () => {
         { stalenessMs: CUSTOMIZED_MS, onStale: SIGNAL },
       );
       expect(effective).toEqual({ stalenessMs: 5_000, onStale: SIGNAL });
+    });
+  });
+
+  describe("onStale precedence (P2: previously untested)", () => {
+    /*
+    FNXC:WorkflowRecoveryPolicy 2026-07-27-21:55 (PR #2482 review, P2):
+    The override tests proved only that `stalenessMs` wins, so an `onStale`
+    precedence bug passed. Distinct codes on each side make the winner
+    observable — with the same code on both, any precedence order looks correct.
+    */
+    const DECLARED_SIGNAL = { action: "surface", code: "declared-code" } as const;
+    const INHERITED_SIGNAL = { action: "surface", code: "inherited-code" } as const;
+
+    it("a declared onStale overrides the inherited one", () => {
+      const effective = resolveEffectiveRecovery(
+        { stalenessMs: 5_000, onStale: DECLARED_SIGNAL },
+        { stalenessMs: CUSTOMIZED_MS, onStale: INHERITED_SIGNAL },
+      );
+      expect(effective?.onStale.code).toBe("declared-code");
+    });
+
+    it("carries the DECLARED code through to the decision, not just the resolver", () => {
+      const outcome = decideRecovery(task(), ir({ stalenessMs: 5_000, onStale: DECLARED_SIGNAL }), {
+        ...TWO_HOURS_LATER,
+        inherited: { stalenessMs: CUSTOMIZED_MS, onStale: INHERITED_SIGNAL },
+      });
+      expect(outcome).toEqual({ decision: expect.objectContaining({ code: "declared-code" }) });
+    });
+
+    it("inherits the code when only the threshold is declared", () => {
+      const outcome = decideRecovery(task(), ir({ stalenessMs: 5_000 }), {
+        ...TWO_HOURS_LATER,
+        inherited: { stalenessMs: CUSTOMIZED_MS, onStale: INHERITED_SIGNAL },
+      });
+      expect(outcome).toEqual({ decision: expect.objectContaining({ code: "inherited-code" }) });
+    });
+  });
+
+  describe("a non-positive threshold is ABSENT, never 'always stale'", () => {
+    /*
+    FNXC:WorkflowRecoveryPolicy 2026-07-27-21:55 (PR #2482 review, P1):
+    The resolver and its consumer disagreed about 0. Reconciled toward ABSENT,
+    because the only path that can supply 0 is the inherited operator setting,
+    where `<= 0` means DISABLED today — reading it as always-stale would invert an
+    explicit off switch into surface-everything.
+    */
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+      "treats an inherited threshold of %s as no policy",
+      (value) => {
+        expect(resolveEffectiveRecovery(undefined, { stalenessMs: value, onStale: SIGNAL })).toBeUndefined();
+      },
+    );
+
+    it("suppresses rather than surfacing everything when the operator disabled the sweep", () => {
+      const outcome = decideRecovery(task(), ir(), {
+        ...TWO_HOURS_LATER,
+        inherited: { stalenessMs: 0, onStale: SIGNAL },
+      });
+      expect(outcome).toEqual({ suppressed: "no-policy" });
     });
   });
 
