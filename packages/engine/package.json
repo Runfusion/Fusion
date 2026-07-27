@@ -55,7 +55,7 @@
     "@types/proper-lockfile": "^4.1.4",
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   },
   "private": true
 }
