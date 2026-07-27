@@ -7623,10 +7623,12 @@ export class TaskExecutor {
     */
     const targetColumn = await this.resolveMergeBoundaryColumn(task.id, metadata.nodeId);
 
-    // Already at the merge column, or in the terminal (done/complete) column:
-    // nothing to do. builtin:coding's targetColumn is `in-review`, so this stays
-    // byte-identical to the pre-cutover `in-review || done` guard.
-    if (live.column === targetColumn || live.column === "done") return live;
+    // A prior review-handoff can move graph-native workflows into the merge
+    // column before this boundary projects their node results onto the legacy
+    // checklist. Preserve the no-move behavior, but do not return until that
+    // projection has had a chance to run.
+    const alreadyAtMergeColumn = live.column === targetColumn;
+    if (live.column === "done") return live;
     if (live.paused || live.userPaused) return live;
 
     /*
@@ -7669,6 +7671,7 @@ export class TaskExecutor {
         this.getRunContextFor(live.id),
       );
     }
+    if (alreadyAtMergeColumn) return live;
     const moveOptions = {
       preserveProgress: true,
       moveSource: "engine" as const,
