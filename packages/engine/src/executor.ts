@@ -7623,10 +7623,10 @@ export class TaskExecutor {
     */
     const targetColumn = await this.resolveMergeBoundaryColumn(task.id, metadata.nodeId);
 
-    // A prior review-handoff can move graph-native workflows into the merge
-    // column before this boundary projects their node results onto the legacy
-    // checklist. Preserve the no-move behavior, but do not return until that
-    // projection has had a chance to run.
+    /*
+    FNXC:WorkflowMerge 2026-07-26-22:59:
+    A prior review handoff can move a graph-native workflow into its merge column before this boundary projects successful node results onto the legacy checklist. Preserve the no-move behavior, but do not return until the projection has run.
+    */
     const alreadyAtMergeColumn = live.column === targetColumn;
     if (live.column === "done") return live;
     if (live.paused || live.userPaused) return live;

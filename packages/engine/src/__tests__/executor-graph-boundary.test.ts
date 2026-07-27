@@ -140,6 +140,10 @@ describe("U5a — IR-driven merge boundary (scenario 1)", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:WorkflowLifecycle 2026-07-26-22:59:
+  Successful pre-merge proof must still project graph-native results onto legacy steps after review handoff has already moved the card into the merge column; the projection must not trigger a redundant move.
+  */
   it("projects graph-native completion after review handoff already moved the card to the merge column", async () => {
     const pendingSteps = [
       { id: "0", title: "Preflight", status: "pending" as const },
