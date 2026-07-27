@@ -27,7 +27,6 @@ import { extractEffectiveWriteScopeFromPrompt } from "../file-scope-classificati
 import { ArtifactRow, WorkflowWorkItemRow } from "./row-types.js";
 import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunAuditEvent, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
 import type { UsageEventInput } from "../usage-events.js";
-import { DUAL_ACCEPT_PARITY_MUTATIONS, type WorkflowColumnsGraduationReport, computeWorkflowColumnsGraduationReport } from "../workflow-parity.js";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -77,29 +76,6 @@ export async function getCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
 export async function recordPluginActivationImpl(store: TaskStore, input: PluginActivationInput): Promise<PluginActivation> {
         const layer = store.asyncLayer!;
     return recordPluginActivationAsync(layer.db, input);
-}
-
-export async function computeWorkflowColumnsGraduationReportImpl(store: TaskStore,
-    options: { since?: string; limit?: number } = {},
-  ): Promise<WorkflowColumnsGraduationReport> {
-    const limit = options.limit ?? 1000;
-    const parity = await store.getWorkflowParitySummary(options);
-    const dualAcceptEvents: RunAuditEvent[] = [];
-    for (const mutationType of DUAL_ACCEPT_PARITY_MUTATIONS) {
-      dualAcceptEvents.push(
-        ...await store.getRunAuditEventsAsync({
-          domain: "database",
-          mutationType: mutationType as unknown as RunAuditEvent["mutationType"],
-          startTime: options.since,
-          limit,
-        }),
-      );
-    }
-    return computeWorkflowColumnsGraduationReport({
-      parity,
-      defaultWorkflowIr: BUILTIN_CODING_WORKFLOW_IR,
-      dualAcceptEvents,
-    });
 }
 
 export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions = {}): Promise<MergeQueueEntry> {
