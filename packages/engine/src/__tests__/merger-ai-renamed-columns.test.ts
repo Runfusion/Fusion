@@ -172,6 +172,68 @@ describe("merger-ai under a renamed column vocabulary", () => {
 
       expect(result.reason).toBe("already-finalized");
     });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-28-02:10 (PR #2471 review, P1):
+    PARTIAL role declaration. The first cut of `isAlreadyFinalizedColumn`
+    swapped the legacy pair for the resolved set WHOLESALE — `if
+    (resolved.length > 0) terminal = resolved`. A workflow declaring `complete`
+    but not `archived` therefore resolved to a ONE-element set and silently
+    dropped the archived short-circuit: an archived card fell through to
+    `getTaskMergeBlocker` and threw "must be in 'in-review'".
+
+    The fallback has to be PER-ROLE, not per-set — `complete` falls back to
+    `done` and `archived` falls back to `archived` independently — so a
+    partially-declared workflow keeps both halves of the guard. Both directions
+    are covered below because the two roles fail independently and a per-set fix
+    would pass whichever one happened to be declared.
+    */
+    function partialIr(columns: Array<Record<string, unknown>>): WorkflowIr {
+      return {
+        version: "v2",
+        id: WF,
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "reviewing", label: "Reviewing", traits: [{ trait: "mergeOrchestration" }] },
+          ...columns,
+        ],
+      } as unknown as WorkflowIr;
+    }
+
+    it("keeps the legacy archived fallback when the workflow declares complete but NOT archived", async () => {
+      const ir = partialIr([{ id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] }]);
+
+      // The declared role still works…
+      const shipped = storeWith(task({ column: "shipped" }), ir);
+      expect((await runAiMerge(shipped, "/tmp/root", "FN-1")).reason).toBe("already-finalized");
+
+      // …and the UNdeclared one must not be lost with it.
+      const archived = storeWith(task({ column: "archived" }), ir);
+      expect((await runAiMerge(archived, "/tmp/root", "FN-1")).reason).toBe("already-finalized");
+    });
+
+    it("keeps the legacy done fallback when the workflow declares archived but NOT complete", async () => {
+      const ir = partialIr([{ id: "retired", label: "Retired", traits: [{ trait: "archived" }] }]);
+
+      const retired = storeWith(task({ column: "retired" }), ir);
+      expect((await runAiMerge(retired, "/tmp/root", "FN-1")).reason).toBe("already-finalized");
+
+      const done = storeWith(task({ column: "done" }), ir);
+      expect((await runAiMerge(done, "/tmp/root", "FN-1")).reason).toBe("already-finalized");
+    });
+
+    it("does not treat a non-terminal column as finalized under a partial workflow", async () => {
+      /* The negative half: a per-role fallback must not widen the guard into
+         "anything not explicitly non-terminal is finalized". */
+      const ir = partialIr([{ id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] }]);
+      const store = storeWith(task({ column: "reviewing" }), ir);
+
+      const result = await runAiMerge(store, "/tmp/root", "FN-1").catch((e: unknown) => e);
+
+      expect((result as { reason?: string })?.reason).not.toBe("already-finalized");
+    });
   });
 
   describe("finalize-blocked rebound target", () => {

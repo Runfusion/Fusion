@@ -994,7 +994,11 @@ Legacy ids for the roles this module decides by: the builtin coding workflow's
 when the task's workflow resolves to no column vocabulary, where preserving
 today's behavior exactly beats guessing.
 */
-const LEGACY_TERMINAL_COLUMNS: readonly string[] = ["done", "archived"];
+const LEGACY_COMPLETE_COLUMN = "done";
+const LEGACY_ARCHIVED_COLUMN = "archived";
+/* The pair, for the no-vocabulary-at-all case. Derived from the per-role ids so
+   the set and the individual fallbacks cannot drift apart. */
+const LEGACY_TERMINAL_COLUMNS: readonly string[] = [LEGACY_COMPLETE_COLUMN, LEGACY_ARCHIVED_COLUMN];
 const LEGACY_REBOUND_COLUMN = "todo";
 
 /**
@@ -1033,12 +1037,25 @@ async function isAlreadyFinalizedColumn(store: TaskStore, task: Task): Promise<b
   let terminal: readonly string[] = LEGACY_TERMINAL_COLUMNS;
   try {
     const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, task.id));
-    const resolved = lifecycle
-      ? [lifecycle.complete, lifecycle.archived].filter((c): c is string => typeof c === "string")
-      : [];
-    // A workflow declaring NEITHER terminal role would otherwise yield an empty
-    // set and silently disable the guard; keep the legacy pair instead.
-    if (resolved.length > 0) terminal = resolved;
+    if (lifecycle) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-02:10 (PR #2471 review, P1):
+      The fallback is PER-ROLE, not per-set. The first cut replaced the whole
+      legacy pair whenever ANY terminal role resolved, so a workflow declaring
+      `complete` but no `archived` collapsed to a one-element set and silently
+      lost the archived short-circuit — an archived card then fell through to
+      `getTaskMergeBlocker` and threw "must be in 'in-review'".
+
+      Resolving each role against its OWN legacy id keeps both halves of the
+      guard for a partially-declared workflow. The two roles are independent:
+      a per-set rule passes for whichever role happens to be declared and fails
+      for the other, which is why both directions are tested.
+      */
+      terminal = [
+        lifecycle.complete ?? LEGACY_COMPLETE_COLUMN,
+        lifecycle.archived ?? LEGACY_ARCHIVED_COLUMN,
+      ];
+    }
   } catch {
     terminal = LEGACY_TERMINAL_COLUMNS;
   }
