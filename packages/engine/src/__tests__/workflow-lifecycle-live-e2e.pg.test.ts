@@ -50,7 +50,7 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 import { WorkflowGraphTaskRunner, type WorkflowColumnBoundaryHooks } from "../workflow-graph-task-runner.js";
-import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "../workflow-column-boundary.js";
+import { createExecutorColumnBoundaryHooks } from "../workflow-column-boundary-hooks.js";
 import { runHoldReleaseSweep } from "../hold-release.js";
 import { SelfHealingManager } from "../self-healing.js";
 
@@ -215,67 +215,32 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       .map((r) => (typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata) as Record<string, unknown>);
   }
 
-  /** Wire the PRODUCTION boundary hooks (same shape as executor.buildColumnBoundaryHooks) to the
-   *  real store: real moveTask with the workflow-graph move source, real audit write, real
-   *  durable IR pin, real capacity-suspension continuation row. */
-  function boundaryHooks(taskId: string, runId: string): WorkflowColumnBoundaryHooks {
+  /*
+  FNXC:WorkflowColumnBoundary 2026-07-27-16:40 (PR #2475 review, P2):
+  The PRODUCTION wiring, not a copy of it. An earlier revision of this file rebuilt the hooks by
+  hand and the copy had ALREADY diverged from `Executor.buildColumnBoundaryHooks` in three places
+  (see the PR thread): a broader active-continuation filter, a missing graph-owned-move marker, and
+  a different audit run id. A test that rebuilds the wiring proves the copy works. The factory was
+  therefore lifted out of the Executor's private method into
+  `createExecutorColumnBoundaryHooks`, which BOTH the Executor and this file now call — so a future
+  divergence is impossible by construction rather than by review vigilance.
+
+  `markMoveInFlight`/`clearMoveInFlight` are genuine Executor state (`workflowLifecycleMovesInFlight`,
+  read together with `graphRouting` in the executor's requeue path). There is no Executor here, so
+  they are recorded instead of dropped — that keeps the call observable rather than silently absent.
+  */
+  function boundaryHooks(taskId: string, runId: string, moveMarks: string[]): WorkflowColumnBoundaryHooks {
     const store = h.store();
-    const pin = createStoreIrPinPersistence(store as unknown as WorkflowIrPinStoreSurface, taskId);
-    return {
-      pinNodeEntry: pin.pinNodeEntry,
-      loadPriorPin: pin.loadPriorPin,
-      clearPin: pin.clearPin,
-      moveTask: async (toColumn, ctx) => {
-        await store.moveTask(taskId, toColumn, {
-          moveSource: "engine",
-          workflowMoveSource: "workflow-graph",
-          bypassGuards: true,
-          preserveProgress: true,
-          workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
-        } as never);
-      },
-      emitAudit: async (event) => {
-        await store.recordRunAuditEvent?.({
-          taskId: event.taskId,
-          agentId: "executor",
-          runId,
-          domain: "database",
-          mutationType: event.type,
-          target: event.taskId,
-          metadata:
-            event.type === "task:column-transition"
-              ? {
-                  taskId: event.taskId,
-                  workflowId: event.workflowId,
-                  fromColumn: event.fromColumn,
-                  toColumn: event.toColumn,
-                  nodeId: event.nodeId,
-                  irHash: event.irHash,
-                }
-              : { taskId: event.taskId, workflowId: event.workflowId, pinnedNodeId: event.pinnedNodeId, reason: event.reason },
-        } as never);
-      },
-      onSuspend: async (suspension) => {
-        const items = await store.listWorkflowWorkItemsForTask(taskId, { kinds: ["task"] });
-        if (items.some((i) => i.nodeId === suspension.nodeId && i.state !== "succeeded" && i.state !== "failed")) return;
-        await store.replaceActiveTaskWorkflowContinuation({
-          runId: `${runId}:continuation:${suspension.nodeId}:${items.length}`,
-          taskId,
-          nodeId: suspension.nodeId,
-          kind: "task",
-          state: "held",
-          stableWorkflowRunId: runId,
-          continuationSequence: items.length,
-          waitReason: "capacity",
-          sourceColumn: suspension.fromColumn,
-          targetColumn: suspension.toColumn,
-          irHash: suspension.irHash,
-        } as never);
-      },
-    };
+    return createExecutorColumnBoundaryHooks({
+      store,
+      task: { id: taskId },
+      workflowRunId: runId,
+      markMoveInFlight: (id) => moveMarks.push(`+${id}`),
+      clearMoveInFlight: (id) => moveMarks.push(`-${id}`),
+    });
   }
 
-  function makeRunner(taskId: string, workflowId: string, log: SeamLog) {
+  function makeRunner(taskId: string, workflowId: string, log: SeamLog, moveMarks: string[] = []) {
     const store = h.store();
     const runId = `${taskId}:workflow`;
     return new WorkflowGraphTaskRunner({
@@ -290,7 +255,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       runCustomNode: async () => {
         throw new Error("no custom node should run in this lifecycle shape");
       },
-      columnBoundaryHooks: boundaryHooks(taskId, runId),
+      columnBoundaryHooks: boundaryHooks(taskId, runId, moveMarks),
     } as never);
   }
 
@@ -316,13 +281,14 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     }, { name: "e2e-observer" });
 
     const log: SeamLog = { calls: [] };
+    const moveMarks: string[] = [];
     const columnsObserved: Record<string, string> = {};
 
     columnsObserved.atCreate = await persistedColumn(taskId);
 
     // ── Leg 1: graph run from the hold column. The planning seam runs in place; the card must
     //    PARK at the hold→wip boundary because the scheduler — not the graph — owns that move.
-    const leg1 = await makeRunner(taskId, workflowId, log).run(await detail(taskId), settings);
+    const leg1 = await makeRunner(taskId, workflowId, log, moveMarks).run(await detail(taskId), settings);
     columnsObserved.afterPlanning = await persistedColumn(taskId);
 
     // ── Leg 2: the REAL scheduler release sweep grants capacity and issues the hold→wip move.
@@ -332,7 +298,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     // ── Leg 3: resume the graph at the recorded continuation node and run to the terminal.
     const items = await h.store().listWorkflowWorkItemsForTask(taskId, { kinds: ["task"] });
     const resumeNode = items.find((i) => i.state === "held" || i.state === "runnable" || i.state === "running")?.nodeId;
-    const leg3 = await makeRunner(taskId, workflowId, log).run(await detail(taskId), settings, resumeNode);
+    const leg3 = await makeRunner(taskId, workflowId, log, moveMarks).run(await detail(taskId), settings, resumeNode);
     columnsObserved.afterRun = await persistedColumn(taskId);
 
     await bus.drain();
@@ -344,6 +310,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       sweep,
       resumeNode,
       columnsObserved,
+      moveMarks,
       seamCalls: log.calls,
       events,
       audit: await columnTransitionAudit(taskId),
@@ -365,6 +332,10 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       expect(r.columnsObserved.afterRun).toBe(DEFAULT_VOCAB.complete);
       expect(r.seamCalls).toEqual(["planning", "execute", "review", "merge"]);
       expect(r.leg3.disposition).toBe("completed");
+      /* The graph-owned-move marker the Executor uses to tell "the graph moved this card" from
+         "someone else moved it". Two graph-owned crossings (→review, →complete), each marked and
+         cleared in a balanced pair. */
+      expect(r.moveMarks).toEqual(["+FN-E2E-1", "-FN-E2E-1", "+FN-E2E-1", "-FN-E2E-1"]);
     });
   });
 
@@ -385,6 +356,8 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       for (const col of Object.values(r.columnsObserved)) {
         expect(legacy.has(col)).toBe(false);
       }
+      // The renamed run marks its graph-owned moves exactly as the default one does.
+      expect(r.moveMarks).toEqual(["+FN-E2E-2", "-FN-E2E-2", "+FN-E2E-2", "-FN-E2E-2"]);
     });
 
     it("writes the same column-transition audit trail as the default vocabulary", async () => {
