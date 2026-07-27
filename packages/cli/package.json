@@ -104,7 +104,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.5.0",
-    "@vitest/coverage-v8": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "cross-env": "^7.0.0",
     "esbuild": "^0.25.12",
     "ink-testing-library": "^4.0.0",
