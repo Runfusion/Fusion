@@ -147,10 +147,16 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
             if (column === "id") continue;
             setValues[column as string] = allValues[column as string];
           }
+          /*
+          FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+          Project-scope changed-column updates (parity with other multi-project task writes).
+          */
+          const updateConds = [eq(schema.project.tasks.id, id)];
+          if (layer.projectId) updateConds.push(eq(schema.project.tasks.projectId, layer.projectId));
           await tx
             .update(schema.project.tasks)
             .set(setValues as never)
-            .where(eq(schema.project.tasks.id, id));
+            .where(and(...updateConds));
         }
       } else {
         // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.

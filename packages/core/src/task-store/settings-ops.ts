@@ -179,9 +179,8 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
      * In backend mode, read config via async helper instead of store.readConfigFast()
      * which uses store.db (SQLite).
      */
-    let config: BoardConfig;
-        const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
-    config = {
+    const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
+    const config: BoardConfig = {
       nextId: projectConfig.nextId ?? 1,
       settings: (projectConfig.settings ?? {}) as Settings,
     };

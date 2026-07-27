@@ -178,11 +178,18 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * Replace with async store.getTask() calls.
        */
       const assertTaskExists = async (dependencyId: string) => {
-        /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: dependency existence checks use PostgreSQL getTask only. */
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Map only not-found/deleted errors to "Dependency task not found"; rethrow transport and other PostgreSQL failures.
+        */
         try {
           await store.getTask(dependencyId);
-        } catch {
-          throw new Error(`Dependency task ${dependencyId} not found`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/not found|TaskDeleted|deleted/i.test(msg)) {
+            throw new Error(`Dependency task ${dependencyId} not found`);
+          }
+          throw err;
         }
       };
       const assertUnique = (dependencies: readonly string[]) => {
@@ -282,8 +289,17 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * to resolve unresolved dependency and current blocker columns.
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
-        /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: dependency reads use PostgreSQL getTask only. */
-        try { return await store.getTask(depId); } catch { return null; }
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Treat not-found as null; rethrow unexpected PostgreSQL failures.
+        */
+        try {
+          return await store.getTask(depId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/not found|TaskDeleted|deleted/i.test(msg)) return null;
+          throw err;
+        }
       };
 
       const allDepTasks = await Promise.all(nextDependencies.map(readDepTask));

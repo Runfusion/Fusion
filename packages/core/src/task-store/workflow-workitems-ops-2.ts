@@ -9,7 +9,7 @@
 import {TaskStore} from "../store.js";
 import * as schema from "../postgres/schema/index.js";
 import {randomUUID} from "node:crypto";
-import {and, eq, inArray} from "drizzle-orm";
+import {and, eq, inArray, isNull, lt, or} from "drizzle-orm";
 import type {WorkflowWorkItem, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -138,12 +138,25 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
       const owner = await getWorkflowWorkItemAsync(tx, id);
       if (!owner) return null;
       return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Atomic lease claim: only transition runnable/retrying, or running rows whose lease has already expired — never steal a live lease.
+        */
         await tx
           .update(schema.project.workflowWorkItems)
           .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
           .where(and(
             eq(schema.project.workflowWorkItems.id, id),
-            inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying", "running"]),
+            or(
+              inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying"]),
+              and(
+                eq(schema.project.workflowWorkItems.state, "running"),
+                or(
+                  isNull(schema.project.workflowWorkItems.leaseExpiresAt),
+                  lt(schema.project.workflowWorkItems.leaseExpiresAt, now),
+                ),
+              ),
+            ),
           ));
         const claimed = await getWorkflowWorkItemAsync(tx, id);
         return claimed?.leaseOwner === leaseOwner ? claimed : null;

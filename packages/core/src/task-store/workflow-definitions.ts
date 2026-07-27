@@ -547,9 +547,14 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
     Backend-mode upsert of the task_workflow_selection row via async Drizzle (taskId is the primary key). stepIds is stored as a JSONB array.
     */
         const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Selection upsert must include projectId — PK is (projectId, taskId) and the authoritative read pins projectId.
+    */
+    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
     await layer.db
       .insert(schema.project.taskWorkflowSelection)
-      .values({ taskId, workflowId, stepIds, updatedAt })
+      .values({ projectId, taskId, workflowId, stepIds, updatedAt })
       .onConflictDoUpdate({
         target: [
           schema.project.taskWorkflowSelection.projectId,

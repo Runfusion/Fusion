@@ -221,9 +221,14 @@ export async function listTasksForGithubTrackingReconcileImpl(store: TaskStore, 
     through the sync archiveDb, so it is skipped in backend mode.
     */
         const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Project-scope GitHub-tracking reconcile so soft-deleted rows from other projects are not scanned.
+    */
     const trackedDeletedFilter = and(
       isNotNull(schema.project.tasks.deletedAt),
       isNotNull(schema.project.tasks.githubTracking),
+      taskProjectScope(layer),
     );
     const countRows = await layer.db
       .select({ count: sql<number>`count(*)` })
@@ -266,9 +271,14 @@ export async function listTasksForGitlabTrackingReconcileImpl(store: TaskStore, 
     GitLab tracking reconcile is PostgreSQL-only; the non-backend throw arm is deleted.
     */
     const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Project-scope GitLab-tracking reconcile.
+    */
     const trackedDeletedFilter = and(
       isNotNull(schema.project.tasks.gitlabTracking),
       isNotNull(schema.project.tasks.deletedAt),
+      taskProjectScope(layer),
     );
     const countRows = await layer.db
       .select({ count: sql<number>`count(*)` })
@@ -580,6 +590,11 @@ export async function setCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
       mutationType: "task:completion-handoff-accepted",
       target: taskId,
       metadata: { taskId, acceptedAt: marker.acceptedAt, source: marker.source },
+    }).catch((err) => {
+      storeLog.warn("completion-handoff audit write failed", {
+        taskId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
     return marker as CompletionHandoffMarker;
 }

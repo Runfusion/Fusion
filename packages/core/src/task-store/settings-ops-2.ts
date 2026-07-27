@@ -99,11 +99,17 @@ export async function getSettingsByScopeImpl(store: TaskStore): Promise<{ global
       store.globalSettingsStore.getSettings(),
       readProjectConfigAsync(layer),
     ]);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Do not mutate GlobalSettingsStore's cached object; compute passphrase flag on a shallow copy.
+    */
+    let secretsSyncPassphraseConfigured = false;
     try {
-      globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
+      secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
     } catch {
-      globalSettings.secretsSyncPassphraseConfigured = false;
+      secretsSyncPassphraseConfigured = false;
     }
+    const global = { ...globalSettings, secretsSyncPassphraseConfigured };
     const projectSettings: Partial<ProjectSettings> = {};
     if (projectConfig.settings) {
       for (const key of Object.keys(projectConfig.settings)) {
@@ -116,22 +122,28 @@ export async function getSettingsByScopeImpl(store: TaskStore): Promise<{ global
     if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
       canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
     }
-    return { global: globalSettings, project: canonicalizedProject };
+    return { global, project: canonicalizedProject };
   }
 
 export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
     // FNXC:RuntimePersistenceAsync 2026-06-24-10:24:
     // Backend-mode fast scoped read: delegate to async settings helper.
-        const layer = store.asyncLayer!;
+    const layer = store.asyncLayer!;
     const [globalSettings, projectSettingsRaw] = await Promise.all([
       store.globalSettingsStore.getSettings(),
       readProjectSettingsAsync(layer),
     ]);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Do not mutate GlobalSettingsStore cache; return a shallow copy with the request-time passphrase flag.
+    */
+    let secretsSyncPassphraseConfigured = false;
     try {
-      globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
+      secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await store.getSecretsStore());
     } catch {
-      globalSettings.secretsSyncPassphraseConfigured = false;
+      secretsSyncPassphraseConfigured = false;
     }
+    const global = { ...globalSettings, secretsSyncPassphraseConfigured };
     const projectSettings = projectSettingsRaw ?? undefined;
     const projectScoped: Partial<ProjectSettings> = {};
     if (projectSettings) {
@@ -145,6 +157,6 @@ export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ gl
     if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
       canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
     }
-    return { global: globalSettings, project: canonicalizedProject };
+    return { global, project: canonicalizedProject };
 }
 

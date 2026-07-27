@@ -20,7 +20,7 @@ import {fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import * as schema from "../postgres/schema/index.js";
 import {readProjectConfig, writeProjectConfig} from "../task-store/async-settings.js";
-import {eq, inArray} from "drizzle-orm";
+import {and, eq, inArray} from "drizzle-orm";
 import type {AsyncDataLayer} from "../postgres/data-layer.js";
 
 export async function createWorkflowStepImpl(store: TaskStore, input: import("../types.js").WorkflowStepInput): Promise<import("../types.js").WorkflowStep> {
@@ -90,7 +90,11 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
         createdAt: step.createdAt,
         updatedAt: step.updatedAt,
       });
-      await writeProjectConfig(layer, {}, { nextWorkflowStepId: nextWsId + 1 });
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      writeProjectConfig replaces the settings jsonb wholesale — pass the existing settings so bumping nextWorkflowStepId cannot wipe project config to {}.
+      */
+      await writeProjectConfig(layer, (configRow.settings ?? {}) as Record<string, unknown>, { nextWorkflowStepId: nextWsId + 1 });
       store.workflowStepsCache = null;
       return step;
 });
@@ -197,16 +201,16 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         // the IR save commits, so the cards land in a column the new IR defines.
         const removedSet = new Set(removed.map((r) => r.columnId));
         const allOccupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
-        let occupantTaskIds: string[];
-        
         // FNXC:PostgresCutover 2026-06-28: async read for column check
-        const taskRows = await layer.db.select({id: schema.project.tasks.id, column: schema.project.tasks.column}).from(schema.project.tasks).where(inArray(schema.project.tasks.id, allOccupantTaskIds));
+        // FNXC:SqliteDualPathCleanup 2026-07-26-15:00: prefer-const after dual-path collapse; project-scope occupant column lookup.
+        const occupantConds = [inArray(schema.project.tasks.id, allOccupantTaskIds)];
+        if (layer.projectId) occupantConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+        const taskRows = await layer.db.select({id: schema.project.tasks.id, column: schema.project.tasks.column}).from(schema.project.tasks).where(and(...occupantConds));
         const colMap = new Map(taskRows.map(r => [r.id, r.column]));
-        occupantTaskIds = allOccupantTaskIds.filter(tid => {
+        const occupantTaskIds = allOccupantTaskIds.filter(tid => {
           const col = colMap.get(tid);
           return col ? removedSet.has(col) : false;
         });
-      
         pendingRehome = { rehomeTo: updates.rehomeTo, occupantTaskIds };
       }
     }

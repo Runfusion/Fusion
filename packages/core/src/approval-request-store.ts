@@ -84,6 +84,20 @@ export class ApprovalRequestStore {
     return this.db;
   }
 
+  /*
+  FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+  PostgreSQL jsonb columns arrive already parsed as objects. fromJson(JSON.parse) only accepts strings and would turn objects into undefined/{} — accept object values directly.
+  */
+  private parseJsonbObject(value: unknown): Record<string, unknown> | undefined {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value === "string") {
+      return fromJson<Record<string, unknown>>(value);
+    }
+    return undefined;
+  }
+
   private rowToRequest(row: ApprovalRequestRow): ApprovalRequest {
     return {
       id: row.id,
@@ -101,7 +115,7 @@ export class ApprovalRequestStore {
         summary: row.targetActionSummary,
         resourceType: row.targetResourceType,
         resourceId: row.targetResourceId,
-        context: fromJson<Record<string, unknown>>(row.targetContext),
+        context: this.parseJsonbObject(row.targetContext),
       },
       taskId: row.taskId ?? undefined,
       runId: row.runId ?? undefined,
@@ -215,7 +229,7 @@ export class ApprovalRequestStore {
       .where(and(...conditions))
       .orderBy(desc(table.createdAt), desc(table.id));
     for (const row of rows as ApprovalRequestRow[]) {
-      const context = fromJson<Record<string, unknown>>(row.targetContext);
+      const context = this.parseJsonbObject(row.targetContext);
       if (context?.approvalDedupeKey === input.dedupeKey) {
         return this.rowToRequest(row);
       }

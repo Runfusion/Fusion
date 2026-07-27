@@ -118,10 +118,16 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
         if (column === "id") continue;
         setValues[column as string] = allValues[column as string];
       }
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Project-scope the changed-column update so a matching task id in another project cannot be rewritten.
+      */
+      const updateConds = [eq(schema.project.tasks.id, id)];
+      if (layer.projectId) updateConds.push(eq(schema.project.tasks.projectId, layer.projectId));
       await tx
         .update(schema.project.tasks)
         .set(setValues as never)
-        .where(eq(schema.project.tasks.id, id));
+        .where(and(...updateConds));
       };
       /*
       FNXC:WorkflowSerialization 2026-07-26-15:30:
@@ -309,10 +315,16 @@ export async function getTaskColumnsImpl(store: TaskStore, ids: string[]): Promi
     live columns from project.tasks, then archive membership for the misses.
     */
         const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Project-scope getTaskColumns so a shared task id from another project cannot populate the map.
+    */
+    const colConds = [inArray(schema.project.tasks.id, uniqueIds), isNull(schema.project.tasks.deletedAt)];
+    if (layer.projectId) colConds.push(eq(schema.project.tasks.projectId, layer.projectId));
     const rows = await layer.db
       .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
       .from(schema.project.tasks)
-      .where(and(inArray(schema.project.tasks.id, uniqueIds), isNull(schema.project.tasks.deletedAt)));
+      .where(and(...colConds));
     const activeByIdPg = new Map<string, Column>();
     for (const row of rows) {
       activeByIdPg.set(row.id, row.column as Column);

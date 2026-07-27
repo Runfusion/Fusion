@@ -2075,14 +2075,12 @@ export class AgentStore extends EventEmitter {
      * this.db.prepare(). The saveRun + recordHeartbeat calls below already
      * have backend-mode branches.
      */
-    let agentId: string;
-    let existingRun: AgentHeartbeatRun;
-        const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
+    const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
     if (!found) {
       return;
     }
-    agentId = found.agentId;
-    existingRun = found.run ?? {
+    const agentId = found.agentId;
+    const existingRun: AgentHeartbeatRun = found.run ?? {
       id: runId,
       agentId: found.agentId,
       startedAt: now,

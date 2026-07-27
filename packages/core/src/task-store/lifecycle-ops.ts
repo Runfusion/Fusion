@@ -8,7 +8,7 @@
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
 import {planLegacyAdoption} from "../legacy-adoption.js";
-import {sql} from "drizzle-orm";
+import {and, eq, sql} from "drizzle-orm";
 import {
   MIGRATION_BOOKKEEPING_TABLE,
   LEGACY_ADOPTION_DRAINED_MARKER,
@@ -35,8 +35,9 @@ import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
-import {ACTIVE_TASK_FILTER, insertTaskRow, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
+import {ACTIVE_TASK_FILTER, insertTaskRow, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "./async-audit.js";
+import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 
 export async function initImpl(store: TaskStore): Promise<void> {
@@ -408,10 +409,16 @@ export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ig
     let dbHasLiveTasks = true;
     try {
             const layer = store.asyncLayer!;
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Empty-board probe must be project-scoped; another project's live rows must not keep this project's recency window closed.
+      */
+      const probeConds = [ACTIVE_TASK_FILTER];
+      if (layer.projectId) probeConds.push(eq(schema.project.tasks.projectId, layer.projectId));
       const rows = await layer.db
         .select({ id: schema.project.tasks.id })
         .from(schema.project.tasks)
-        .where(ACTIVE_TASK_FILTER)
+        .where(and(...probeConds))
         .limit(1);
       dbHasLiveTasks = rows.length > 0;
 
@@ -510,21 +517,28 @@ export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ig
           skipReason = "id-exists-anywhere";
         } else {
           try {
+            /*
+            FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+            Orphan recovery insert + audit share one transaction (parity with the removed SQLite transactionImmediate wrap) so a failed audit cannot leave an unaudited recovered row.
+            */
+            const layer = store.asyncLayer!;
             const context = store.createTaskPersistSerializationContext(task);
-            await insertTaskRow(store.asyncLayer!, task as unknown as Record<string, unknown>, context);
-            await recordRunAuditEventAsync(store.asyncLayer!, {
-              taskId: id,
-              agentId: "system",
-              runId: "unknown",
-              domain: "database",
-              mutationType: "task:reconcile-orphaned-task-dir",
-              target: id,
-              metadata: {
-                id,
-                column: task.column,
-                status: task.status ?? null,
-                taskJsonPath,
-              },
+            await layer.transactionImmediate(async (tx) => {
+              await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+              await recordRunAuditEventWithinTransaction(tx, {
+                taskId: id,
+                agentId: "system",
+                runId: "unknown",
+                domain: "database",
+                mutationType: "task:reconcile-orphaned-task-dir",
+                target: id,
+                metadata: {
+                  id,
+                  column: task.column,
+                  status: task.status ?? null,
+                  taskJsonPath,
+                },
+              });
             });
             recovered = true;
           } catch (error) {

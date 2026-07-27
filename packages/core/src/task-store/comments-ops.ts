@@ -259,7 +259,9 @@ export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, i
         document.updatedAt,
       );
       if (citationInputs.length > 0) {
-        void store.recordGoalCitations(citationInputs);
+        void store.recordGoalCitations(citationInputs).catch((err) => {
+          severityAuditLog.warn("[fusion] Failed to record goal citations from task document:", err);
+        });
       }
     } catch (err) {
       severityAuditLog.warn("[fusion] Failed to scan/record goal citations from task document:", err);

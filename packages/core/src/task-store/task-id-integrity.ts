@@ -383,7 +383,14 @@ export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
       // Use the async purge variant in backend mode so workflow_steps children
       // are deleted before the parent task row is hard-deleted.
             await purgeTaskWorkflowSelectionRowsAsyncImpl(store, id);
-      await store.asyncLayer!.db.delete(schema.project.tasks).where(eq(schema.project.tasks.id, id));
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Project-scope hard-delete after tombstone resurrection so another project's matching id is untouched.
+      */
+      const layer = store.asyncLayer!;
+      const delConds = [eq(schema.project.tasks.id, id)];
+      if (layer.projectId) delConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+      await layer.db.delete(schema.project.tasks).where(and(...delConds));
 
       return;
     }

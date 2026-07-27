@@ -1065,15 +1065,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null> {
     const trimmedId = sourceTaskId.trim();
     if (trimmedId.length === 0) return null;
-        const layer = this.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    PostgreSQL jsonb uses `->>` for text extraction; the former SQLite json_extract wrapper was invalid on PG.
+    Scope by asyncLayer.projectId so a revert task from another project cannot match.
+    */
+    const layer = this.asyncLayer!;
+    const conditions = [
+      isNull(schema.project.tasks.deletedAt),
+      ne(schema.project.tasks.column, "archived"),
+      ne(schema.project.tasks.column, "done"),
+      sql`${schema.project.tasks.sourceMetadata}->>'revertOf' = ${trimmedId}`,
+    ];
+    if (layer.projectId) {
+      conditions.push(eq(schema.project.tasks.projectId, layer.projectId));
+    }
     const rows = await layer.db.select()
       .from(schema.project.tasks)
-      .where(and(
-        isNull(schema.project.tasks.deletedAt),
-        ne(schema.project.tasks.column, "archived"),
-        ne(schema.project.tasks.column, "done"),
-        eq(sql`json_extract(${schema.project.tasks.sourceMetadata}->>'revertOf')`, trimmedId),
-      ))
+      .where(and(...conditions))
       .orderBy(schema.project.tasks.createdAt)
       .limit(1);
     if (rows.length === 0) return null;

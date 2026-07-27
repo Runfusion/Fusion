@@ -1339,8 +1339,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     this.ensureInitialized();
     const now = new Date().toISOString();
     const id = `mq_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-        await asyncCentralCore.enqueueMeshWriteRow(this.backendHandle, id, input, now);
-    return (await this.listPendingMeshWrites({ targetNodeId: input.targetNodeId })).find((entry) => entry.id === id)!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Fetch the just-inserted mesh queue row by id (same path as markMeshWrite*) instead of re-listing pending writes and force-unwrapping.
+    */
+    await asyncCentralCore.enqueueMeshWriteRow(this.backendHandle, id, input, now);
+    return asyncCentralCore.getMeshWriteQueueEntryById(this.backendHandle, id);
 }
 
   async listPendingMeshWrites(filter: MeshWriteQueueFilter = {}): Promise<MeshWriteQueueEntry[]> {

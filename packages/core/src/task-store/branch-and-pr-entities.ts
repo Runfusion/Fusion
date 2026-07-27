@@ -413,6 +413,13 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     if (!includeArchived) {
       conditions.push(ne(schema.project.tasks.column, "archived"));
     }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Scope fingerprint duplicate-guard to the bound project so another project's matching fingerprint cannot block create.
+    */
+    if (layer.projectId) {
+      conditions.push(eq(schema.project.tasks.projectId, layer.projectId));
+    }
     const rows = await layer.db
       .select()
       .from(schema.project.tasks)

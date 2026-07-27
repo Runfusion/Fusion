@@ -335,12 +335,21 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
-      task.ageStaleness = getTaskAgeStalenessSignal(task, {
-        now,
-        thresholds: staleThresholds,
-        engineActiveSinceMs: settings.engineActiveSinceMs,
-        engineActivationGraceMs: settings.engineActivationGraceMs,
-      });
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Guard age-staleness: invalid threshold pairs throw RangeError — swallow so one bad setting cannot 500 the whole board list.
+      */
+      try {
+        task.ageStaleness = getTaskAgeStalenessSignal(task, {
+          now,
+          thresholds: staleThresholds,
+          engineActiveSinceMs: settings.engineActiveSinceMs,
+          engineActivationGraceMs: settings.engineActivationGraceMs,
+        });
+      } catch (err) {
+        if (!(err instanceof RangeError)) throw err;
+        task.ageStaleness = undefined;
+      }
       task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
       task.retrySummary = computeRetrySummary(task);
       if (slim) {
