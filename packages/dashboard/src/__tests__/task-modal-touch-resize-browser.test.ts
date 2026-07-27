@@ -189,7 +189,16 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(newTaskAfterResize.height).toBeGreaterThan(newTaskBeforeResize.height);
       expect(newTaskAfterResize.width).toBeLessThanOrEqual(width - 32);
       expect(newTaskAfterResize.height).toBeLessThanOrEqual(height - 32);
-      expect(await page.evaluate(() => localStorage.getItem("fusion:new-task-modal-geometry"))).not.toBeNull();
+      /*
+      FNXC:ModalTouchGeometry 2026-07-26-19:51:
+      The browser regression must prove FloatingWindow persisted usable resized geometry, not merely created the storage key.
+      */
+      const persistedNewTaskGeometry = await page.evaluate(() => {
+        const raw = localStorage.getItem("fusion:new-task-modal-geometry");
+        return raw ? JSON.parse(raw) : null;
+      });
+      expect(persistedNewTaskGeometry?.size.width).toBeCloseTo(newTaskAfterResize.width);
+      expect(persistedNewTaskGeometry?.size.height).toBeCloseTo(newTaskAfterResize.height);
       if (width === 820) await page.screenshot({ path: path.join(screenshots, "tablet-after.png") });
       await page.close();
     }, 30_000);
