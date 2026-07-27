@@ -45,6 +45,16 @@ export interface ComputeBlockerFanoutOptions {
    *  waiting for capacity, which is the hold role — `todo` is only the id the
    *  built-in coding workflow gives it. Defaults to `"todo"`. */
   holdColumn?: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-28-03:05 (PR #2470 review, P1):
+  PLURAL form, for callers computing over a board that spans MORE THAN ONE
+  workflow. `holdColumn` assumes a single vocabulary, which is wrong for the
+  board-wide backlog-health reporter: a project running two workflows has two
+  hold columns, and collapsing them to one silently drops every card held by the
+  other. Takes precedence over `holdColumn` when supplied; when neither is given
+  the legacy `"todo"` applies, so existing callers are byte-identical.
+  */
+  holdColumns?: ReadonlySet<string>;
 }
 
 export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress", "in-review"]);
@@ -91,7 +101,10 @@ export function computeBlockerFanoutMap(
     options.staleHighFanoutAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS;
 
   const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
-  const holdColumn = options.holdColumn ?? "todo";
+  /* Plural wins; else the singular; else the legacy id. One resolved set so the
+     two spellings cannot disagree downstream. */
+  const holdColumns: ReadonlySet<string> =
+    options.holdColumns ?? new Set([options.holdColumn ?? "todo"]);
 
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const fanout = new Map<string, MutableEntry>();
@@ -116,7 +129,7 @@ export function computeBlockerFanoutMap(
   for (const task of tasks) {
     // Active by EXCLUSION (see terminalColumns above), not by enumeration.
     const active = !terminalColumns.has(task.column);
-    const isTodo = task.column === holdColumn;
+    const isTodo = holdColumns.has(task.column);
 
     for (const depId of task.dependencies ?? []) {
       if (!depId) continue;
