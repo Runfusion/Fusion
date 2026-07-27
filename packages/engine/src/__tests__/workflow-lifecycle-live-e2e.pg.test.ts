@@ -36,7 +36,7 @@ throwaway per-file database; never port 4040; no temp-root walk.
 */
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it, describe } from "vitest";
 import "@fusion/core"; // registers the built-in column traits into the shared registry
-import type { Settings, Task, TaskDetail, WorkflowIr } from "@fusion/core";
+import type { Settings, Task, TaskDetail, TaskStore, WorkflowIr } from "@fusion/core";
 import {
   getWorkflowEventBus,
   resetWorkflowEventBusForTesting,
@@ -455,99 +455,216 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
   });
 
   /*
-  The one converted lifecycle-mutating sweep on this tip (slice B3.1 — U4) run against a REAL
-  store and a REAL renamed workflow. Its conversion claim is that the sweep now resolves the hold
-  column from the card's own workflow instead of the `todo` literal in BOTH halves (query and
-  guard). Nothing so far has run it against a workflow that has no `todo` column at all.
+  FNXC:WorkflowLifecycleColumns 2026-07-27-18:30 (converted-sweep table):
 
-  The recovery callback performs a REAL `moveTask`, so the assertion is on the card's persisted
-  column afterwards — not on whether the callback was invoked.
+  A TABLE, not a scenario per sweep. The U4 conversion keeps ADDING callers of the lifecycle-role
+  resolution — the count went from one to two while PR #2475 was in review — so a suite with a
+  bespoke `describe` per sweep is a coverage claim that quietly goes stale. Adding a converted
+  sweep here is one entry.
+
+  Each entry declares four things and the shared driver derives four assertions from them:
+
+    seed   — put a card in a given column in whatever state the sweep keys on
+    run    — invoke the REAL sweep on a REAL store
+    acted  — did the sweep act on this card? READ FROM THE PERSISTED ROW, never from a callback
+    roles  — the lifecycle ROLE it must act on, and one it must stay inert in
+
+  Derived per entry: {default vocabulary, renamed vocabulary} x {positive, negative}. The default
+  half is the regression floor; the renamed half is the claim the conversion exists for; the
+  negative half is what stops "resolve the column per task" from degrading into "act on everything".
+
+  DELIBERATELY ROLE-TYPED. `actsOnRole`/`inertRole` are keys of `Vocabulary`, not column strings, so
+  an entry cannot accidentally hardcode `todo` and pass for the wrong reason.
+
+  IF A SWEEP DOES NOT FIT. Report it rather than hand-rolling a one-off beside the table — a sweep
+  whose outcome cannot be observed on the persisted row is itself a finding about that sweep. See
+  the UNPROVEN SITES ledger at the foot of this file for what is not covered and why.
   */
-  describe("converted self-healing sweep — recoverStrandedCompletedTodoTasks", () => {
-    async function seedStrandedTask(taskId: string, v: Vocabulary, workflowId: string, column: string) {
+  interface SweepCaseContext {
+    readonly store: TaskStore;
+    readonly taskId: string;
+    readonly vocab: Vocabulary;
+    readonly column: string;
+    readonly workflowId: string;
+  }
+
+  interface ConvertedSweepCase {
+    /** The sweep method under test. */
+    readonly sweep: string;
+    /** Where the converted lifecycle-role resolution lives, for the ledger. */
+    readonly site: string;
+    /** Put a card in `ctx.column` in whatever state this sweep keys on. */
+    readonly seed: (ctx: SweepCaseContext) => Promise<void>;
+    /** Project settings this sweep needs in order to run at all. */
+    readonly settings?: Record<string, unknown>;
+    /** Invoke the REAL sweep. */
+    readonly run: (store: TaskStore, vocab: Vocabulary) => Promise<void>;
+    /** Did the sweep act? Persisted row only — no callbacks, no spies. */
+    readonly acted: (task: TaskDetail, vocab: Vocabulary) => boolean;
+    /** The lifecycle role the sweep must act on. */
+    readonly actsOnRole: keyof Vocabulary;
+    /** A role of the SAME workflow the sweep must leave alone. */
+    readonly inertRole: keyof Vocabulary;
+  }
+
+  /** Promote through the store's real transition policy: hold → wip → review.
+   *  A DIRECT hold → review move is refused ("Invalid transition: 'backlog' → 'checking'. Valid
+   *  targets: building") and that refusal is itself workflow-resolved — the renamed board's only
+   *  legal target is its own `building` — so it is honored rather than bypassed. */
+  async function promoteThroughPolicy(store: TaskStore, taskId: string, v: Vocabulary): Promise<boolean> {
+    for (const target of [v.wip, v.review]) {
+      await store.moveTask(taskId, target, {
+        moveSource: "engine",
+        bypassGuards: true,
+        preserveProgress: true,
+        allowDirectInReviewMove: true,
+        skipMergeBlocker: true,
+      } as never);
+    }
+    return true;
+  }
+
+  const STALE_PAUSED_THRESHOLD_MS = 24 * 60 * 60_000;
+  const STALE_PAUSED_MARKER = "Stale paused todo surfaced [";
+
+  const CONVERTED_SWEEPS: ConvertedSweepCase[] = [
+    {
+      sweep: "recoverStrandedCompletedTodoTasks",
+      site: "self-healing.ts — resolveLifecycleColumns(...).hold (slice B3.1, U4)",
+      actsOnRole: "hold",
+      inertRole: "wip",
+      seed: async ({ store, taskId }) => {
+        // Fully-complete implementation steps are this sweep's entry condition.
+        await store.updateTask(taskId, { steps: [{ name: "only step", status: "done" }] } as never);
+      },
+      run: async (store, vocab) => {
+        const manager = new SelfHealingManager(store, {
+          recoverCompletedTask: async (task: Task) => promoteThroughPolicy(store, task.id, vocab),
+        } as never);
+        await manager.recoverStrandedCompletedTodoTasks();
+      },
+      // Acted iff the card actually left the hold column for the review column.
+      acted: (task, vocab) => task.column === vocab.review,
+    },
+    {
+      sweep: "surfaceStalePausedTodos",
+      site: "self-healing.ts — resolveLifecycleColumns(...).hold (PR #2470 review, P1)",
+      actsOnRole: "hold",
+      inertRole: "wip",
+      settings: { stalePausedTodoThresholdMs: STALE_PAUSED_THRESHOLD_MS },
+      seed: async ({ store, taskId }) => {
+        /* The store STAMPS `updatedAt`/`columnMovedAt` on every write, so `updateTask` cannot
+           express an aged row at all — the patch is accepted and the value silently replaced with
+           `now`, and the sweep then correctly finds nothing. Discovered by this case failing on
+           BOTH vocabularies, which is what distinguishes a broken fixture from a broken guard.
+           The age is therefore written through the harness's raw admin client. Seeding only: the
+           assertion still reads back through the real `getTask` path. */
+        await store.updateTask(taskId, { paused: true, pausedReason: "e2e-hold" } as never);
+        const aged = new Date(Date.now() - STALE_PAUSED_THRESHOLD_MS * 3).toISOString();
+        await h.adminSql()`
+          UPDATE project.tasks
+          SET column_moved_at = ${aged}, updated_at = ${aged}
+          WHERE id = ${taskId}
+        `;
+        store.taskCache.delete(taskId);
+      },
+      run: async (store) => {
+        await new SelfHealingManager(store, {} as never).surfaceStalePausedTodos();
+      },
+      /* This sweep does not move the card — it writes an operator-facing log entry. That entry IS
+         persisted state (`task.log`), so it is still an observed-outcome assertion rather than a
+         spy; a sweep whose only effect were in-memory would not belong in this table at all. */
+      acted: (task) => (task.log ?? []).some((e) => (e.action ?? "").startsWith(STALE_PAUSED_MARKER)),
+    },
+  ];
+
+  describe.each(CONVERTED_SWEEPS)("converted sweep — $sweep", (testCase) => {
+    /** Seed one card under `vocab` resting in `column`, then run the real sweep and report the
+     *  PERSISTED outcome. */
+    async function driveCase(taskId: string, vocab: Vocabulary, roleKey: keyof Vocabulary, key: string) {
       const store = h.store();
+      if (testCase.settings) await store.updateSettings(testCase.settings as never);
+      const { workflowId } = await seedWorkflow(vocab, key);
+      const column = vocab[roleKey];
       await store.createTaskWithReservedId(
-        { description: `stranded ${taskId}`, column } as never,
+        { description: `${testCase.sweep} ${taskId}`, column } as never,
         { taskId, applyDefaultWorkflowSteps: false } as never,
       );
       await store.writeTaskWorkflowSelection(taskId, workflowId, []);
-      // Fully-complete implementation steps are the sweep's entry condition.
-      await store.updateTask(taskId, {
-        steps: [{ name: "only step", status: "done" }],
-      } as never);
+      await testCase.seed({ store, taskId, vocab, column, workflowId });
       store.taskCache.delete(taskId);
+
+      await testCase.run(store, vocab);
+
+      store.taskCache.delete(taskId);
+      const persisted = (await store.getTask(taskId)) as TaskDetail;
+      return { persisted, acted: testCase.acted(persisted, vocab) };
     }
 
-    /** Run the real sweep with a recovery callback that performs REAL column moves.
-     *  The move goes hold → wip → review because the store's transition policy REFUSES a direct
-     *  hold → review move ("Invalid transition: 'backlog' → 'checking'. Valid targets: building").
-     *  That refusal is itself workflow-resolved — the renamed board's only legal target is its own
-     *  `building`, not `in-progress` — so it is left in place rather than bypassed. */
-    async function runSweep(v: Vocabulary): Promise<{ recovered: number; promoted: string[]; moveErrors: string[] }> {
-      const store = h.store();
-      const promoted: string[] = [];
-      const moveErrors: string[] = [];
-      const manager = new SelfHealingManager(store, {
-        recoverCompletedTask: async (task: Task) => {
-          promoted.push(task.id);
-          try {
-            for (const target of [v.wip, v.review]) {
-              await store.moveTask(task.id, target, {
-                moveSource: "engine",
-                bypassGuards: true,
-                preserveProgress: true,
-                allowDirectInReviewMove: true,
-                skipMergeBlocker: true,
-              } as never);
-            }
-          } catch (e) {
-            moveErrors.push(e instanceof Error ? e.message : String(e));
-            return false;
-          }
-          return true;
-        },
-      } as never);
-      const recovered = await manager.recoverStrandedCompletedTodoTasks();
-      return { recovered, promoted, moveErrors };
-    }
-
-    it("promotes a completed card stranded in a RENAMED hold column", async () => {
-      const v = RENAMED_VOCAB;
-      const { workflowId } = await seedWorkflow(v, "stranded-renamed");
-      await seedStrandedTask("FN-E2E-8", v, workflowId, v.hold);
-
-      const { recovered, promoted, moveErrors } = await runSweep(v);
-
-      expect(moveErrors).toEqual([]);
-      expect(promoted).toContain("FN-E2E-8");
-      expect(recovered).toBe(1);
-      // Observed state, not the callback: the card actually left the hold column.
-      expect(await persistedColumn("FN-E2E-8")).toBe(v.review);
+    it("acts on a card in the RENAMED lifecycle column", async () => {
+      const r = await driveCase("FN-SW-1", RENAMED_VOCAB, testCase.actsOnRole, "sweep-renamed");
+      expect(r.acted).toBe(true);
     });
 
-    it("does NOT promote a completed card resting in a non-hold column of the same renamed workflow", async () => {
-      /* The negative half. Dropping the column filter without a correct per-task hold resolution
-         turns this sweep into "promote every completed card anywhere", which is a louder failure
-         than the silence it replaces. */
-      const v = RENAMED_VOCAB;
-      const { workflowId } = await seedWorkflow(v, "stranded-renamed-neg");
-      await seedStrandedTask("FN-E2E-9", v, workflowId, v.wip);
-
-      const { promoted } = await runSweep(v);
-
-      expect(promoted).not.toContain("FN-E2E-9");
-      expect(await persistedColumn("FN-E2E-9")).toBe(v.wip);
+    it("stays INERT for a card in a non-target column of the same renamed workflow", async () => {
+      const r = await driveCase("FN-SW-2", RENAMED_VOCAB, testCase.inertRole, "sweep-renamed-neg");
+      expect(r.acted).toBe(false);
+      // and the card is untouched where it stands
+      expect(r.persisted.column).toBe(RENAMED_VOCAB[testCase.inertRole]);
     });
 
-    it("still promotes a default-vocabulary card in `todo` (regression floor)", async () => {
-      const v = DEFAULT_VOCAB;
-      const { workflowId } = await seedWorkflow(v, "stranded-default");
-      await seedStrandedTask("FN-E2E-10", v, workflowId, v.hold);
+    it("still acts on a DEFAULT-vocabulary card (regression floor)", async () => {
+      const r = await driveCase("FN-SW-3", DEFAULT_VOCAB, testCase.actsOnRole, "sweep-default");
+      expect(r.acted).toBe(true);
+    });
 
-      const { promoted } = await runSweep(v);
-
-      expect(promoted).toContain("FN-E2E-10");
-      expect(await persistedColumn("FN-E2E-10")).toBe(v.review);
+    it("stays INERT for a default-vocabulary card in a non-target column", async () => {
+      const r = await driveCase("FN-SW-4", DEFAULT_VOCAB, testCase.inertRole, "sweep-default-neg");
+      expect(r.acted).toBe(false);
     });
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-19:20 — UNPROVEN SITES LEDGER.
+
+Kept deliberately, and kept HONEST: the difference between "the E2E covers the conversion" and
+"the E2E covers 2 of N sites" is this list. Census taken against main at 710d56b2db by grepping
+every caller of the lifecycle-role resolvers (`resolveLifecycleColumns`, `resolveCompleteColumn`,
+`resolveMergeOrchestrationColumn`, `resolveReboundTarget`, `resolveTaskLifecycleColumns`,
+`columnHasFlag`, `columnsWithFlag`) outside tests and the barrel re-exports.
+
+PROVEN end to end against a live renamed workflow by this file:
+  - self-healing.ts  recoverStrandedCompletedTodoTasks   (table row; per-site mutation-verified)
+  - self-healing.ts  surfaceStalePausedTodos             (table row; per-site mutation-verified)
+  - hold-release.ts  isHeldTask / the capacity release   (spine; mutation-verified)
+  - the graph column boundary + store.moveTask + the post-commit bus (spine; mutation-verified)
+
+NOT PROVEN end to end — each is a real caller that this suite does not reach:
+  - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
+  - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
+  - auto-merge-finalization.ts:20-22  completeColumn / mergeColumn / isCompleteColumn
+  - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
+  - self-healing.ts:713,6732 resolveReboundTarget (two distinct rebound paths)
+  - mesh-lease-manager.ts:61 resolveReboundTarget
+  - task-agent-sync.ts:59    resolveTaskLifecycleColumns
+  - core/task-store/reads.ts:130      listTasks hydration
+  - core/live-agent-count.ts:63-75    five columnHasFlag classifications
+  - dashboard register-task-workflow-routes.ts:151,166,175,1797
+
+WHY THEY ARE NOT COVERED, and what it would take:
+  - The merge/rebound family (merger, merger-ai, auto-merge-finalization, the executor rebound path,
+    mesh-lease-manager) needs a REAL git worktree, branch, and squash. This suite deliberately has
+    none — `merge-gate` is pure policy and the `merge` seam is scripted. Covering them means an
+    engine-slow, real-git lane, not another row in this table.
+  - The dashboard sites need an HTTP route test with a live store; reachable, but a different lane.
+  - `reads.ts:130` and `live-agent-count.ts` are read/hydration paths already covered at store level
+    by core's `store-stale-paused-renamed-hold.pg.test.ts`; what is missing is the end-to-end claim,
+    not the unit one.
+
+TABLE FIT. Both current rows fit the (seed, run, acted-on-persisted-state, roles) shape. The
+merge/rebound family does NOT fit — not because the table is too rigid, but because those sweeps
+have no observable persisted effect without a real repository, so `acted` cannot be written against
+the row. That is a finding about the lane those sweeps need, not a reason to hand-roll a scenario
+here.
+*/
