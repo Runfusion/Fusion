@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -6,8 +6,6 @@ import "./styles.css";
 import "./components/TaskDetailModal.css";
 import "./components/FloatingWindow.css";
 import { FloatingWindow } from "./components/FloatingWindow";
-import { useModalResizePersist } from "./hooks/useModalResizePersist";
-import { isTabletTouchViewport, useViewportMode } from "./hooks/useViewportMode";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { AgentListModal } from "./components/AgentListModal";
 import { SetupWizardModal } from "./components/SetupWizardModal";
@@ -18,16 +16,15 @@ const surface = params.get("surface") ?? "new-task";
 if (params.has("reset")) localStorage.clear();
 
 /*
-FNXC:TaskModalResize 2026-07-26-16:00:
-The browser fixture seeds the production persistence path only for resize gestures that need
-headroom. It never supplies inline panel geometry, so density assertions continue to exercise
-TaskDetailModal.css's real tablet overlay and width rules.
+FNXC:ModalTouchGeometry 2026-07-26-20:08:
+Task Detail now uses FloatingWindow geometry in production. Seed its shared size-and-position payload
+only for resize gestures that need headroom; density assertions continue to use the default geometry.
 */
 const detailSize = params.get("detailSize");
 if (detailSize) {
   const [width, height] = detailSize.split("x").map(Number);
   if (Number.isFinite(width) && Number.isFinite(height)) {
-    localStorage.setItem("task-detail-modal-size", JSON.stringify({ width, height }));
+    localStorage.setItem("floating-window:task-detail", JSON.stringify({ size: { width, height }, position: { x: 64, y: 64 } }));
   }
 }
 
@@ -57,15 +54,25 @@ window.fetch = async (input) => {
 };
 
 function TaskDetailResizeHarness() {
-  const ref = useRef<HTMLDivElement>(null);
-  const viewportMode = useViewportMode();
-  const touchTargets = isTabletTouchViewport(viewportMode);
-  useModalResizePersist(ref, true, "task-detail-modal-size", { touchTargets });
-  return <div className="modal-overlay open">
-    <div ref={ref} className={`modal modal-lg task-detail-modal${viewportMode === "tablet" ? " task-modal--tablet" : ""}${touchTargets ? " task-modal--touch-resize" : ""}`} data-testid="task-detail-modal">
-      <div className="task-detail-content"><div className="modal-header">Task detail</div><div className="modal-body">Task detail body</div></div>
+  return <FloatingWindow
+    windowKey="task-detail-fixture"
+    title="Task detail"
+    onClose={() => undefined}
+    hideHeader
+    dragHandleSelector=".task-detail-content--embedded > .modal-header"
+    className="floating-window--task-detail"
+    defaultSize={{ width: 560, height: 480 }}
+    minSize={{ width: 320, height: 240 }}
+    persistGeometryKey="floating-window:task-detail"
+    suspendGeometryPersistenceOnMobile
+    layer="task-detail"
+    testId="task-detail-modal-overlay"
+  >
+    <div className="task-detail-content task-detail-content--embedded">
+      <div className="modal-header">Task detail</div>
+      <div className="modal-body">Task detail body</div>
     </div>
-  </div>;
+  </FloatingWindow>;
 }
 
 function FloatingWindowHarness() {
