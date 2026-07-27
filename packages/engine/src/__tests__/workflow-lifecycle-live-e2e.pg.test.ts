@@ -53,6 +53,7 @@ import { WorkflowGraphTaskRunner, type WorkflowColumnBoundaryHooks } from "../wo
 import { createExecutorColumnBoundaryHooks } from "../workflow-column-boundary-hooks.js";
 import { runHoldReleaseSweep } from "../hold-release.js";
 import { SelfHealingManager } from "../self-healing.js";
+import { reconcileRecovery } from "../recovery-reconciler.js";
 
 /** The four lifecycle roles this program's guards are supposed to resolve by TRAIT, not by id. */
 interface Vocabulary {
@@ -95,6 +96,10 @@ function lifecycleIr(v: Vocabulary, id: string): WorkflowIr {
         id: v.hold,
         name: "Hold",
         traits: [{ trait: "hold", config: { release: "capacity" } }],
+        /* U4 workflow-declared recovery policy (#2478). Declared on the HOLD column of both
+           vocabularies from the one builder, so the reconciler's role resolution is exercised
+           against a renamed column with nothing else differing. */
+        recovery: { stalenessMs: HOLD_STALENESS_MS, onStale: { action: "surface", code: "e2e-stale-hold" } },
       },
       {
         id: v.wip,
@@ -130,6 +135,8 @@ function lifecycleIr(v: Vocabulary, id: string): WorkflowIr {
     ],
   } as WorkflowIr;
 }
+
+const HOLD_STALENESS_MS = 60 * 60_000;
 
 const OK = { outcome: "success" as const };
 
@@ -497,10 +504,18 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     readonly seed: (ctx: SweepCaseContext) => Promise<void>;
     /** Project settings this sweep needs in order to run at all. */
     readonly settings?: Record<string, unknown>;
-    /** Invoke the REAL sweep. */
-    readonly run: (store: TaskStore, vocab: Vocabulary) => Promise<void>;
-    /** Did the sweep act? Persisted row only — no callbacks, no spies. */
-    readonly acted: (task: TaskDetail, vocab: Vocabulary) => boolean;
+    /** Invoke the REAL sweep. Returns whatever it produces, for decision-only entries. */
+    readonly run: (store: TaskStore, vocab: Vocabulary) => Promise<unknown>;
+    /*
+    WHERE THE OUTCOME IS OBSERVED. `persisted-row` is the strong form and the default expectation:
+    the sweep changed the row, and `acted` reads it back through `getTask`. `returned-decision` is
+    WEAKER EVIDENCE and is recorded as such — the sweep produces a decision it does not apply, so
+    there is no row to read. An entry must not silently use the weak form: naming it here is what
+    keeps the ledger at the foot of this file truthful about what "covered" means per site.
+    */
+    readonly observability: "persisted-row" | "returned-decision";
+    /** Did the sweep act? For `persisted-row` entries, read the row and ignore `runResult`. */
+    readonly acted: (task: TaskDetail, vocab: Vocabulary, runResult: unknown) => boolean;
     /** The lifecycle role the sweep must act on. */
     readonly actsOnRole: keyof Vocabulary;
     /** A role of the SAME workflow the sweep must leave alone. */
@@ -530,6 +545,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
   const CONVERTED_SWEEPS: ConvertedSweepCase[] = [
     {
       sweep: "recoverStrandedCompletedTodoTasks",
+      observability: "persisted-row",
       site: "self-healing.ts — resolveLifecycleColumns(...).hold (slice B3.1, U4)",
       actsOnRole: "hold",
       inertRole: "wip",
@@ -548,6 +564,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     },
     {
       sweep: "surfaceStalePausedTodos",
+      observability: "persisted-row",
       site: "self-healing.ts — resolveLifecycleColumns(...).hold (PR #2470 review, P1)",
       actsOnRole: "hold",
       inertRole: "wip",
@@ -576,6 +593,52 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
          spy; a sweep whose only effect were in-memory would not belong in this table at all. */
       acted: (task) => (task.log ?? []).some((e) => (e.action ?? "").startsWith(STALE_PAUSED_MARKER)),
     },
+    {
+      /*
+      Landed in #2478 AFTER the ledger below was first written — which is precisely the drift a
+      table exists to absorb: covering it was one entry, not a new describe block.
+
+      WHAT THIS ROW ACTUALLY PROVES, established by mutation rather than by reading the code. The
+      census flagged `recovery-reconciler.ts:198` as a `resolveLifecycleColumns` call site, so the
+      row was first labelled as covering it. It does not: destroying the role resolution in
+      `resolveRoleRecovery` leaves all 18 tests GREEN, because `decideRecovery` looks the policy up
+      by COLUMN ID (`resolveColumnRecovery(ir, task.column)`) and never consults a role.
+      `resolveRoleRecovery` turns out to have NO production caller at all — see the ledger.
+
+      What the row does prove, and what it is mutation-verified against: the reconciler resolves and
+      matches a column-declared recovery policy on a REAL renamed board — real store, real persisted
+      workflow definition, real `resolveWorkflowIrForTask`. Keying that lookup on the `todo` literal
+      fails exactly this row's renamed test.
+
+      OBSERVABILITY CAVEAT, stated rather than hidden: `reconcileRecovery` DECIDES and does not
+      APPLY. The slice deliberately stops before the writer, so there is no persisted effect to read
+      and `acted` must inspect the returned decision. That is weaker evidence than every other row
+      here. Switch this to `persisted-row` the moment the applier lands.
+      */
+      sweep: "reconcileRecovery (recovery-reconciler.ts)",
+      observability: "returned-decision",
+      site: "recovery-reconciler.ts — resolveColumnRecovery policy lookup on a renamed board (U4, #2478)",
+      actsOnRole: "hold",
+      inertRole: "wip",
+      seed: async ({ store, taskId }) => {
+        // Rest the card in its column long enough to pass the policy's stalenessMs.
+        const aged = new Date(Date.now() - HOLD_STALENESS_MS * 3).toISOString();
+        await h.adminSql()`
+          UPDATE project.tasks
+          SET column_moved_at = ${aged}, updated_at = ${aged}
+          WHERE id = ${taskId}
+        `;
+        store.taskCache.delete(taskId);
+      },
+      run: async (store) => {
+        const tasks = await store.listTasks({ includeArchived: false });
+        return reconcileRecovery(store, tasks, { now: () => Date.now() });
+      },
+      acted: (task, _vocab, runResult) =>
+        (runResult as Array<{ taskId: string; code: string }>).some(
+          (d) => d.taskId === task.id && d.code === "e2e-stale-hold",
+        ),
+    },
   ];
 
   describe.each(CONVERTED_SWEEPS)("converted sweep — $sweep", (testCase) => {
@@ -594,11 +657,11 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       await testCase.seed({ store, taskId, vocab, column, workflowId });
       store.taskCache.delete(taskId);
 
-      await testCase.run(store, vocab);
+      const runResult = await testCase.run(store, vocab);
 
       store.taskCache.delete(taskId);
       const persisted = (await store.getTask(taskId)) as TaskDetail;
-      return { persisted, acted: testCase.acted(persisted, vocab) };
+      return { persisted, acted: testCase.acted(persisted, vocab, runResult) };
     }
 
     it("acts on a card in the RENAMED lifecycle column", async () => {
@@ -626,21 +689,34 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-27-19:20 — UNPROVEN SITES LEDGER.
+FNXC:WorkflowLifecycleColumns 2026-07-28-16:10 — UNPROVEN SITES LEDGER.
 
 Kept deliberately, and kept HONEST: the difference between "the E2E covers the conversion" and
-"the E2E covers 2 of N sites" is this list. Census taken against main at 710d56b2db by grepping
-every caller of the lifecycle-role resolvers (`resolveLifecycleColumns`, `resolveCompleteColumn`,
+"the E2E covers N of M sites" is this list. Census re-taken against main at b133d521c4 (it had
+already drifted once — #2478 landed a new site between the first census and this one, which is why
+the coverage above is a table).
+
+Census method: every caller of `resolveLifecycleColumns`, `resolveCompleteColumn`,
 `resolveMergeOrchestrationColumn`, `resolveReboundTarget`, `resolveTaskLifecycleColumns`,
-`columnHasFlag`, `columnsWithFlag`) outside tests and the barrel re-exports.
+`columnHasFlag`, `columnsWithFlag` outside tests and the barrel re-exports.
 
-PROVEN end to end against a live renamed workflow by this file:
-  - self-healing.ts  recoverStrandedCompletedTodoTasks   (table row; per-site mutation-verified)
-  - self-healing.ts  surfaceStalePausedTodos             (table row; per-site mutation-verified)
-  - hold-release.ts  isHeldTask / the capacity release   (spine; mutation-verified)
-  - the graph column boundary + store.moveTask + the post-commit bus (spine; mutation-verified)
+PROVEN end to end against a live renamed workflow by this file (each mutation-verified, and for the
+two self-healing sweeps verified PER SITE — reverting one fails exactly its own row):
+  - self-healing.ts        recoverStrandedCompletedTodoTasks   (table row, persisted-row)
+  - self-healing.ts        surfaceStalePausedTodos             (table row, persisted-row)
+  - recovery-reconciler.ts column-declared policy lookup       (table row, returned-decision — WEAKER)
+  - hold-release.ts        isHeldTask / the capacity release   (spine)
+  - the graph column boundary + store.moveTask + the post-commit bus (spine)
 
-NOT PROVEN end to end — each is a real caller that this suite does not reach:
+FINDING — AN UNREACHABLE EXPORT. `resolveRoleRecovery` (recovery-reconciler.ts:194) is the ONLY
+use of `resolveLifecycleColumns` in that file, and it has NO production caller: `decideRecovery`
+looks policy up by column id. Established by mutation — destroying the role resolution leaves all
+18 tests here green, and a repo-wide grep finds no caller outside this file. So that census line is
+not a live converted site; it is an exported helper written ahead of its consumer. Either its
+consumer is still to land, or it should be deleted. Not resolved here: it is production code owned
+by the U4 slice, and guessing which is a decision for its author.
+
+NOT PROVEN end to end — real callers this suite does not reach:
   - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
   - auto-merge-finalization.ts:20-22  completeColumn / mergeColumn / isCompleteColumn
@@ -652,19 +728,18 @@ NOT PROVEN end to end — each is a real caller that this suite does not reach:
   - core/live-agent-count.ts:63-75    five columnHasFlag classifications
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
 
-WHY THEY ARE NOT COVERED, and what it would take:
+WHY, and what each would take:
   - The merge/rebound family (merger, merger-ai, auto-merge-finalization, the executor rebound path,
     mesh-lease-manager) needs a REAL git worktree, branch, and squash. This suite deliberately has
-    none — `merge-gate` is pure policy and the `merge` seam is scripted. Covering them means an
-    engine-slow, real-git lane, not another row in this table.
-  - The dashboard sites need an HTTP route test with a live store; reachable, but a different lane.
+    none — `merge-gate` is pure policy and the `merge` seam is scripted. They need an engine-slow
+    real-git lane, not another table row.
+  - The dashboard sites need an HTTP route test with a live store: reachable, different lane.
   - `reads.ts:130` and `live-agent-count.ts` are read/hydration paths already covered at store level
     by core's `store-stale-paused-renamed-hold.pg.test.ts`; what is missing is the end-to-end claim,
     not the unit one.
 
-TABLE FIT. Both current rows fit the (seed, run, acted-on-persisted-state, roles) shape. The
-merge/rebound family does NOT fit — not because the table is too rigid, but because those sweeps
-have no observable persisted effect without a real repository, so `acted` cannot be written against
-the row. That is a finding about the lane those sweeps need, not a reason to hand-roll a scenario
-here.
+TABLE FIT. Three rows fit. The merge/rebound family does NOT — not because the table is too rigid,
+but because those sweeps have no observable persisted effect without a real repository, so `acted`
+cannot be written against the row at all. That is a finding about the lane they need, not a reason
+to hand-roll a scenario beside the table.
 */
