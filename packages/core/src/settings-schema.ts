@@ -628,8 +628,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   inReviewStalledThresholdMs: 24 * 60 * 60_000,
   stalePausedTodoThresholdMs: 24 * 60 * 60_000,
   pausedScopeDecayMs: 30 * 60_000,
-  metaTaskStallAutoCloseMs: 2 * 60 * 60_000,
-  metaTaskActiveExecutionGraceMs: 30 * 60_000,
   boardStallSweepWindowMs: 2 * 60 * 60_000,
   boardStallBlockedGrowthThreshold: 3,
   // Capacity risk warning default: only warn once todo is meaningfully backlogged.

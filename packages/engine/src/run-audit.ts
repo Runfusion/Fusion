@@ -504,10 +504,18 @@ export type DatabaseMutationType =
   | "task:auto-merge-skipped-already-done"
   /** Metadata: { taskId, commitSha, failedCommand, exitCode, errorTail } */
   | "task:post-finalize-verification-no-op"
-  /** Metadata: { kind, parentTaskId, existingTaskId, signature, rateLimited } */
-  | "verification:followup-deduped"
-  /** Metadata: { kind, parentTaskId, newTaskId, signature, supersedesTaskId } */
-  | "verification:followup-created"
+  /*
+  FNXC:RunAudit 2026-07-26-00:00:
+  Replaces the deleted `verification:followup-created`/`verification:followup-deduped` pair. Those
+  two existed only for the automated recovery follow-up engine (verification-followup-dedup.ts) and
+  had no other emitters or readers once it was removed. The autostash-orphan path is the one caller
+  whose signal had to survive: a `live`-classified orphan is a merger stash holding REAL UNCOMMITTED
+  WORK, and its parent task may already be `done` and merged, so nothing else on the board would
+  mention the stash. This event gets a truthful name rather than a borrowed "followup" one.
+  Metadata: { taskId, sha, stashLabel, detectedByTaskId, sourcePhase } — ids/outcomes only; the
+  stash label is an opaque recovery identifier, never description prose.
+  */
+  | "task:autostash-orphan-live-detected"
   | "mission:stranded-feature-triaged"
   | "task:auto-recover-branch-misbound"
   | "task:auto-recover-misrouted-foreign-commit"
@@ -647,14 +655,13 @@ export type DatabaseMutationType =
   | "task:worktree-contamination-detected"
   /** Metadata: { taskId, pausedAgeMs, blockedFollowerIds: string[], previousPausedReason: string | null } */
   | "task:auto-rebound-paused-scope-decay"
-  /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number } */
-  | "task:auto-archived-meta-resolved"
-  /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number, blockedBy: string[] } */
-  | "task:auto-archive-meta-resolved-skipped"
-  /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number } */
-  | "task:auto-archived-meta-stalled"
-  /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number, blockedBy: string[] } */
-  | "task:auto-archive-meta-stalled-skipped"
+  /*
+   * FNXC:RunAudit 2026-07-26-16:50:
+   * The four `task:auto-archive*-meta-*` event types were removed with the meta-task auto-archive
+   * sweeps that emitted them (title-regex classification archived live cards). Historic rows may
+   * still exist in old databases; readers must tolerate unknown stored types rather than have these
+   * names reinstated in the union.
+   */
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, blockedGrowth: number } */
   | "task:auto-board-stall-broken"
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, ntfyDispatched: boolean } */

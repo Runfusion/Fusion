@@ -82,8 +82,6 @@ const BATCH2_METHODS = [
   "recoverDriftedAgentTaskLinks",
   "clearStaleBlockedBy",
   "autoReboundPausedScopeDecay",
-  "autoArchiveResolvedMetaTasks",
-  "autoArchiveStalledMetaTasks",
   "runBoardStallAutoRecoverySweep",
   "reconcileSelfDefeatingDependencies",
   "reclaimPrConflicts",

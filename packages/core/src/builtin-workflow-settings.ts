@@ -542,9 +542,7 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
  * into bounded `inject_guidance` recovery. Default 2 hours (7,200,000ms): long
  * enough that a healthy, actively-working step (the vast majority of which finish
  * well under 2h) is never nagged, short enough to actually recover a task that has
- * gone dark for "hours" (the FN-7732 symptom) — mirrors the existing 2-hour
- * convention `metaTaskStallAutoCloseMs` already uses for a comparable stall
- * judgment call elsewhere in this codebase.
+ * gone dark for "hours" (the FN-7732 symptom).
  */
 /*
 FNXC:WorkflowOptionalStepCycle 2026-07-26-19:38:

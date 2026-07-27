@@ -487,8 +487,6 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   inReviewStalledThresholdMs: "internal reliability tuning constant, no UI field",
   stalePausedTodoThresholdMs: "internal reliability tuning constant, no UI field",
   pausedScopeDecayMs: "internal reliability tuning constant, no UI field",
-  metaTaskStallAutoCloseMs: "internal reliability tuning constant, no UI field",
-  metaTaskActiveExecutionGraceMs: "internal reliability tuning constant, no UI field",
   boardStallSweepWindowMs: "internal reliability tuning constant, no UI field",
   boardStallBlockedGrowthThreshold: "internal reliability tuning constant, no UI field",
   backlogPressureAlertEnabled: "internal reliability tuning constant, no UI field",

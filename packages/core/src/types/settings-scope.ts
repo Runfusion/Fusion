@@ -1787,14 +1787,13 @@ export interface ProjectSettings {
    *  Self-healing rebounds qualifying holders to todo when this threshold is met.
    *  Default: 1800000 (30 minutes). Set to 0 to disable. */
   pausedScopeDecayMs?: number;
-  /** Maximum age in milliseconds a meta-task may remain blocked without its target
-   *  advancing before self-healing auto-archives it as superseded.
-   *  Default: 7200000 (2 hours). Set to 0 to disable. */
-  metaTaskStallAutoCloseMs?: number;
-  /** Grace period in milliseconds used by meta-task auto-archive guards to treat
-   *  recent executor activity as in-flight and skip destructive auto-archive.
-   *  Default: 1800000 (30 minutes). Set to 0 to disable this guard. */
-  metaTaskActiveExecutionGraceMs?: number;
+  /*
+   * FNXC:Settings 2026-07-26-16:45:
+   * `metaTaskStallAutoCloseMs` / `metaTaskActiveExecutionGraceMs` are GONE with the meta-task
+   * auto-archive sweeps they tuned. The sweeps classified meta-tasks by title/description regex and
+   * archived live work bound to the wrong target, so the whole feature was deleted rather than
+   * retuned. Keys left in an existing settings row are inert and simply ignored; do not re-add them.
+   */
   /** Rolling window in milliseconds for board-stall auto-recovery evaluation.
    *  Default: 7200000 (2 hours). */
   boardStallSweepWindowMs?: number;

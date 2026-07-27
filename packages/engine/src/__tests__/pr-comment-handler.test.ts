@@ -317,12 +317,11 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
+      // FNXC:PullRequestReview 2026-07-26-00:00: the "[verification recurrence]" logEntry
+      // assertion here belonged to the deleted shared follow-up dedup engine (which wrote a
+      // rate-limited recurrence note onto the reused card). The inlined dedup only has to
+      // prove no duplicate card is filed for the same parent/prNumber, which is asserted above.
       expect(mockStore.createTask).not.toHaveBeenCalled();
-      expect(mockStore.logEntry).toHaveBeenCalledWith(
-        "FN-existing",
-        expect.stringContaining("[verification recurrence] signature=none"),
-        expect.stringContaining("kind=pr-comment; parentTaskId=FN-001"),
-      );
     });
   });
 });
