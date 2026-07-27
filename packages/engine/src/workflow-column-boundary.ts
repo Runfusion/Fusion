@@ -277,6 +277,29 @@ export function createWorkflowColumnBoundary(
 
     async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
+
+      /*
+      FNXC:WorkflowEvents 2026-07-27-15:20 (U3 / R5, PR #2467 review):
+      Announce the NODE ENTRY, not the column crossing — so this fires BEFORE the
+      columnless short-circuit and before the same-column no-op below. Traversal
+      genuinely entered the node in all three cases, and a subscriber tracking
+      graph progress must see rework loops and terminal `end` arrivals, which a
+      crossing-only signal hides. `column` is omitted for a columnless node,
+      which is exactly why `NodeEnteredEvent.column` is optional.
+
+      The paired `TaskTransitioned` comes from the store's own post-commit point,
+      so a real crossing produces both and every other entry produces only this
+      one. Neither is authoritative for any lifecycle decision.
+      */
+      emitWorkflowLifecycleEvent({
+        type: "NodeEntered",
+        taskId: deps.taskId,
+        at: new Date().toISOString(),
+        workflowId: deps.workflowId,
+        nodeId: node.id,
+        ...(toColumn ? { column: toColumn } : {}),
+      });
+
       // KTD-1: a columnless node (e.g. `end`) never moves the card.
       if (!toColumn) return { kind: "entered" };
 
@@ -286,25 +309,6 @@ export function createWorkflowColumnBoundary(
       } catch (err) {
         warn("ir pin write failed", { nodeId: node.id, error: err instanceof Error ? err.message : String(err) });
       }
-
-      /*
-      FNXC:WorkflowEvents 2026-07-27-12:00 (U3 / R5):
-      Announce the NODE ENTRY, not the column crossing. This fires even when the
-      entry is a same-column no-op below, because traversal genuinely entered the
-      node — a subscriber tracking graph progress must see rework loops, which a
-      crossing-only signal hides. The paired `TaskTransitioned` is emitted by the
-      store's own post-commit point, so a crossing produces both and a
-      same-column entry produces only this one; neither is authoritative for any
-      lifecycle decision.
-      */
-      emitWorkflowLifecycleEvent({
-        type: "NodeEntered",
-        taskId: deps.taskId,
-        at: new Date().toISOString(),
-        workflowId: deps.workflowId,
-        nodeId: node.id,
-        column: toColumn,
-      });
 
       // Idempotent: a re-entered/rework node or a same-column node chain no-ops.
       if (toColumn === column) return { kind: "entered" };

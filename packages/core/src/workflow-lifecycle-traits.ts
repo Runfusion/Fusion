@@ -152,8 +152,16 @@ export function resolveLifecycleColumns(ir: WorkflowIr): LifecycleColumns | unde
   const columns = columnsOf(ir);
   if (columns.length === 0) return undefined;
   const registry = getTraitRegistry();
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-15:40 (U1, PR #2467 review):
+  Resolve each column's flags ONCE. A per-role `columns.find(...)` re-resolved
+  every column's traits per role — up to 6N resolutions — and this function is
+  not memoized, so a Phase B sweep sharing an IR cache across 400 cards would
+  still pay it per card (the cache holds the IR, not the resolved struct).
+  */
+  const resolved = columns.map((c) => ({ id: c.id, flags: registry.resolveColumnFlags(c) }));
   const first = (flag: keyof TraitFlags): string | undefined =>
-    columns.find((c) => registry.resolveColumnFlags(c)[flag] === true)?.id;
+    resolved.find((c) => c.flags[flag] === true)?.id;
   return {
     intake: first(LIFECYCLE_ROLE_FLAGS.intake),
     hold: first(LIFECYCLE_ROLE_FLAGS.hold),

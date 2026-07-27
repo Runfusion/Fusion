@@ -1240,7 +1240,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         to: toColumn,
         moveSource,
         ...(internal.runContext?.runId ? { runId: internal.runContext.runId } : {}),
-        ...(effectiveWorkflowIdForMove ? { workflowId: effectiveWorkflowIdForMove } : {}),
+        /*
+        FNXC:WorkflowEvents 2026-07-27-15:10 (U3, PR #2467 review):
+        OMIT rather than guess. `effectiveWorkflowIdForMove` reads the task's real
+        selection only when `useWorkflow` is true; otherwise it is hardcoded to
+        `builtin:coding`. That compat flag is off for effectively every real
+        project (see the note at the flag-OFF adjacency branch above), so
+        emitting it unconditionally would stamp `builtin:coding` onto moves of
+        tasks on a custom workflow — a wrong value baked into a brand-new wire
+        field, latent only because no subscriber reads it yet. An absent
+        `workflowId` means "not resolved here"; a subscriber that needs it reads
+        the selection itself.
+        */
+        ...(useWorkflow ? { workflowId: effectiveWorkflowIdForMove } : {}),
       });
     }
     if (toColumn === "done") {

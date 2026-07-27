@@ -106,19 +106,42 @@ lives only in prose and has been violated repeatedly (each violation caught in
 review, if at all). These payloads reach plugin subscribers, so the rule is
 mechanised here and asserted by `workflow-events.test.ts`.
 
-The rule, stated so a violation is unambiguous: every value is a scalar
-(string / number / boolean) or an array of scalars; a string is at most
-MAX_ID_VALUE_LENGTH characters and contains no newline. That admits every id,
-column name, enum outcome, and timestamp we emit, and rejects the three things
-that actually go wrong — an error message, a prompt or summary body, and a
-spread task/row object.
+The rule has TWO halves, and the second is the one that matters (PR #2467 review
+— CodeRabbit, major):
+
+  a. VALUE shape. Every value is a scalar (string / number / boolean) or an array
+     of scalars; a string is at most MAX_ID_VALUE_LENGTH characters and contains
+     no newline. This catches a spread task row and a multi-line stack trace.
+
+  b. KEY allow-list, per event type. Value shape ALONE is not enough: a short
+     `error: "auth failed"`, a `prompt: "summarize"`, or a `modelId` is a
+     perfectly good scalar and would sail through. Since these payloads reach
+     plugin subscribers, an unknown key is refused outright — the declared
+     interfaces above are the whole permitted surface, so adding a field means
+     adding it here, deliberately, rather than discovering it in a log.
+
+An unknown TYPE is itself a violation: a caller inventing an event out of band
+gets no implicit permission to invent its payload either.
 */
 export const MAX_ID_VALUE_LENGTH = 200;
+
+/** Keys every lifecycle event may carry. */
+const COMMON_EVENT_KEYS = ["type", "taskId", "at", "runId", "workflowId"] as const;
+
+/** The per-type permitted key surface — the declared interfaces above, encoded.
+ *  A key absent from its type's list is refused, not merely value-checked. */
+const ALLOWED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]> = {
+  TaskTransitioned: [...COMMON_EVENT_KEYS, "from", "to", "nodeId", "moveSource"],
+  NodeEntered: [...COMMON_EVENT_KEYS, "nodeId", "column"],
+  NodeCompleted: [...COMMON_EVENT_KEYS, "nodeId", "outcome"],
+  RunSuspended: [...COMMON_EVENT_KEYS, "nodeId", "reason", "fromColumn", "toColumn"],
+  RunResumed: [...COMMON_EVENT_KEYS, "nodeId", "releasedBy"],
+};
 
 /** A single ids-only rule violation. `path` locates it for the failure message. */
 export interface WorkflowEventShapeViolation {
   path: string;
-  reason: "object-body" | "prose-string" | "unsupported-type";
+  reason: "object-body" | "prose-string" | "unsupported-type" | "unknown-key" | "unknown-type";
 }
 
 function checkScalar(path: string, value: unknown, out: WorkflowEventShapeViolation[]): void {
@@ -146,7 +169,21 @@ export function findWorkflowEventShapeViolations(event: unknown): WorkflowEventS
   if (event === null || typeof event !== "object" || Array.isArray(event)) {
     return [{ path: "<root>", reason: "unsupported-type" }];
   }
-  for (const [key, value] of Object.entries(event as Record<string, unknown>)) {
+  const record = event as Record<string, unknown>;
+  const allowed = ALLOWED_EVENT_KEYS[record.type as WorkflowLifecycleEventType];
+  if (!allowed) {
+    // An unrecognised type has no declared payload, so nothing about it can be
+    // validated — refuse it rather than fall through to value-shape checks that
+    // would wave through any scalar field it carries.
+    return [{ path: "type", reason: "unknown-type" }];
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (!allowed.includes(key)) {
+      // The half that actually protects subscribers: `error`, `prompt`, and
+      // `modelId` are all valid scalars and are all refused here.
+      violations.push({ path: key, reason: "unknown-key" });
+      continue;
+    }
     if (Array.isArray(value)) {
       value.forEach((entry, i) => checkScalar(`${key}[${i}]`, entry, violations));
       continue;

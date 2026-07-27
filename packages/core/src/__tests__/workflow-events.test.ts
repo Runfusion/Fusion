@@ -118,27 +118,65 @@ describe("workflow event payloads — ids/outcomes only (R5)", () => {
     })).toBe(true);
   });
 
-  it("rejects an object BODY — the spread-a-task-row mistake", () => {
+  /* The VALUE-shape half. Asserted on DECLARED keys on purpose: an undeclared
+     key is refused by the allow-list first, which would mask a value-rule
+     regression behind an `unknown-key` verdict. */
+  it("rejects an object BODY on a declared key — the spread-a-row mistake", () => {
     const violations = findWorkflowEventShapeViolations({
       ...transitioned(),
-      task: { id: "FN-1", title: "Fix the thing", description: "…" },
+      to: { id: "in-review", name: "In review" },
     });
-    expect(violations).toEqual([{ path: "task", reason: "object-body" }]);
+    expect(violations).toEqual([{ path: "to", reason: "object-body" }]);
   });
 
-  it("rejects PROSE — the attach-the-error-message mistake", () => {
+  it("rejects PROSE on a declared key — the attach-the-message mistake", () => {
     const long = "x".repeat(MAX_ID_VALUE_LENGTH + 1);
-    expect(findWorkflowEventShapeViolations({ ...transitioned(), error: long }))
-      .toEqual([{ path: "error", reason: "prose-string" }]);
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), moveSource: long }))
+      .toEqual([{ path: "moveSource", reason: "prose-string" }]);
     // A multi-line value is prose regardless of length — stack traces are short lines.
-    expect(findWorkflowEventShapeViolations({ ...transitioned(), error: "line one\nline two" }))
-      .toEqual([{ path: "error", reason: "prose-string" }]);
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), moveSource: "line one\nline two" }))
+      .toEqual([{ path: "moveSource", reason: "prose-string" }]);
+  });
+
+  /*
+  FNXC:WorkflowEvents 2026-07-27-15:50 (U3, PR #2467 review):
+  The half that value-shape checking alone MISSES. `error: "auth failed"`,
+  `prompt: "summarize"`, and `modelId` are all short single-line scalars — they
+  pass every value rule and would still reach a plugin subscriber. The per-type
+  key allow-list is what stops them, so it gets its own cases.
+  */
+  it("rejects an unknown KEY even when its value is a perfectly good scalar", () => {
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), error: "auth failed" }))
+      .toEqual([{ path: "error", reason: "unknown-key" }]);
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), modelId: "claude-opus-5" }))
+      .toEqual([{ path: "modelId", reason: "unknown-key" }]);
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), prompt: "summarize" }))
+      .toEqual([{ path: "prompt", reason: "unknown-key" }]);
+  });
+
+  it("scopes the allow-list PER TYPE — a valid key on one event is unknown on another", () => {
+    // `outcome` belongs to NodeCompleted, not to TaskTransitioned.
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), outcome: "success" }))
+      .toEqual([{ path: "outcome", reason: "unknown-key" }]);
+    expect(findWorkflowEventShapeViolations({
+      type: "NodeCompleted", taskId: "FN-3", at: "2026-07-27T00:00:00.000Z",
+      nodeId: "execute", outcome: "success",
+    })).toEqual([]);
+  });
+
+  it("rejects an unrecognised event TYPE outright rather than validating its fields", () => {
+    // An out-of-band type has no declared payload, so it gets no implicit
+    // permission to invent one.
+    expect(findWorkflowEventShapeViolations({ type: "TaskExploded", taskId: "FN-4", at: "x" }))
+      .toEqual([{ path: "type", reason: "unknown-type" }]);
   });
 
   it("allows an array of ids but rejects an array of objects", () => {
-    expect(findWorkflowEventShapeViolations({ ...transitioned(), blockedBy: ["FN-2", "FN-3"] })).toEqual([]);
+    // Arrays are validated element-wise for any key the type declares; an
+    // UNDECLARED array key is refused by the allow-list before that runs, which
+    // is why both halves are asserted here.
     expect(findWorkflowEventShapeViolations({ ...transitioned(), diffs: [{ field: "column" }] }))
-      .toEqual([{ path: "diffs[0]", reason: "object-body" }]);
+      .toEqual([{ path: "diffs", reason: "unknown-key" }]);
   });
 
   it("REFUSES a violating payload at the emit boundary so it never reaches a subscriber", async () => {
@@ -146,7 +184,7 @@ describe("workflow event payloads — ids/outcomes only (R5)", () => {
     const subscriber = vi.fn();
     bus.subscribe(subscriber, { name: "plugin" });
 
-    bus.emit({ ...transitioned(), task: { id: "FN-1" } } as unknown as WorkflowLifecycleEvent);
+    bus.emit({ ...transitioned(), to: { id: "in-review" } } as unknown as WorkflowLifecycleEvent);
     await bus.drain();
 
     // Degrades rather than throws: the emitter is post-commit, so a shape bug

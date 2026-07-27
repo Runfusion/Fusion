@@ -61,13 +61,21 @@ let active: Array<() => void> = [];
  *
  * Returns an unsubscribe function for symmetry with the bus API; callers that
  * hold the engine for a process lifetime can ignore it.
+ *
+ * FNXC:WorkflowEvents 2026-07-27-15:30 (U3, PR #2467 review):
+ * The returned cleanup is scoped to THIS registration, not to the module. It
+ * previously returned `unregisterWorkflowEventSubscribers`, so a stale handle
+ * from an earlier call would silently unsubscribe a LATER registration's set —
+ * an engine restart followed by a deferred cleanup would leave the process with
+ * no reactions and no error. A per-call closure makes a stale cleanup a no-op
+ * instead.
  */
 export function registerWorkflowEventSubscribers(
   registrations: readonly WorkflowEventSubscriberRegistration[] = ENGINE_WORKFLOW_EVENT_SUBSCRIBERS,
 ): () => void {
   unregisterWorkflowEventSubscribers();
   const bus = getWorkflowEventBus();
-  active = registrations.map((registration) => {
+  const mine = registrations.map((registration) => {
     const subscriber: WorkflowEventSubscriber = (event) => {
       // Type filtering lives here rather than in the bus so the bus stays a
       // dumb fan-out and a handler's declared interest is visible at its
@@ -77,7 +85,13 @@ export function registerWorkflowEventSubscribers(
     };
     return bus.subscribe(subscriber, { name: registration.name });
   });
-  return unregisterWorkflowEventSubscribers;
+  active = mine;
+  return () => {
+    for (const off of mine) off();
+    // Only clear the module handle when it still points at THIS registration,
+    // so a stale cleanup cannot blank a newer one's bookkeeping.
+    if (active === mine) active = [];
+  };
 }
 
 /** Drop every subscriber this module registered. Safe to call when none are. */
