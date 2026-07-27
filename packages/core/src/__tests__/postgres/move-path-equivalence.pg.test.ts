@@ -64,7 +64,15 @@ interface MoveObservation {
   executionStartedAtSet: boolean;
   executionCompletedAtSet: boolean;
   firstExecutionAtSet: boolean;
-  cumulativeActiveMsIsNumber: boolean;
+  /*
+  FNXC:MovePathEquivalence 2026-07-27-08:20 (PR #2468 review — greptile P2):
+  A boolean "is it a number" stays green when the two paths compute DIFFERENT durations, which is
+  exactly the accounting bug this case exists to catch. The absolute value is wall-clock dependent,
+  so compare a QUANTISED bucket: both paths must land in the same 100ms bucket for the same seeded
+  segment, which is stable against scheduling jitter while still failing when one path drops or
+  double-counts a segment.
+  */
+  cumulativeActiveMsBucket: number | undefined;
   recoveryRetryCount: number | undefined;
   nextRecoveryAtSet: boolean;
   stepStatuses: string[];
@@ -88,9 +96,8 @@ function observe(task: Task): MoveObservation {
     executionStartedAtSet: task.executionStartedAt !== undefined,
     executionCompletedAtSet: task.executionCompletedAt !== undefined,
     firstExecutionAtSet: task.firstExecutionAt !== undefined,
-    // The absolute value is wall-clock dependent; what must match is whether the
-    // segment accounting ran at all.
-    cumulativeActiveMsIsNumber: typeof task.cumulativeActiveMs === "number",
+    cumulativeActiveMsBucket:
+      typeof task.cumulativeActiveMs === "number" ? Math.floor(task.cumulativeActiveMs / 100) : undefined,
     recoveryRetryCount: task.recoveryRetryCount,
     nextRecoveryAtSet: task.nextRecoveryAt !== undefined,
     stepStatuses: (task.steps ?? []).map((s) => s.status),
@@ -246,17 +253,47 @@ pgTest("move-path equivalence — side effects (Phase A2)", () => {
       await store.moveTask(id, "in-progress");
     });
     expect(hooks).toEqual(inline);
-    expect(inline.cumulativeActiveMsIsNumber).toBe(true);
+    // Both paths accounted the SAME segment, not merely "some number".
+    expect(inline.cumulativeActiveMsBucket).toBeTypeOf("number");
+    expect(hooks.cumulativeActiveMsBucket).toBe(inline.cumulativeActiveMsBucket);
     expect(inline.firstExecutionAtSet).toBe(true);
     expect(inline.executionStartedAtSet).toBe(true);
   });
 
+  /*
+  FNXC:MovePathEquivalence 2026-07-27-08:20 (PR #2468 review — greptile P2):
+  Seed NON-DEFAULT progress before the move. With default steps, both paths observe the same empty
+  progress and the case passes without characterising `preserveResumeState` at all — two paths that
+  both wiped progress would agree just as happily. Seeding a mixed done/in-progress/pending shape
+  plus a workflow-step result means equality now asserts that the progress SURVIVED, and the
+  explicit post-conditions fail loudly if either path resets it.
+  */
   it("EQUIVALENCE: preserveProgress/preserveResumeState keep step progress on both paths", async () => {
     const store = h.store();
     const { inline, hooks } = await bothPaths(seedInProgress, async (id) => {
+      await store.updateTask(id, {
+        steps: [
+          { name: "Step 0", status: "done" },
+          { name: "Step 1", status: "in-progress" },
+          { name: "Step 2", status: "pending" },
+        ],
+        currentStep: 1,
+        workflowStepResults: [
+          {
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "passed",
+            source: "node",
+            phase: "pre-merge",
+          },
+        ],
+      } as never);
       await store.moveTask(id, "todo", { moveSource: "engine", preserveResumeState: true });
     });
     expect(hooks).toEqual(inline);
+    // Post-conditions, so "equal" cannot mean "both wiped it".
+    expect(inline.stepStatuses).toEqual(["done", "in-progress", "pending"]);
+    expect(inline.workflowStepResultCount).toBe(1);
   });
 
   it("EQUIVALENCE: preserveWorktree keeps the worktree on both paths", async () => {
