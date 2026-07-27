@@ -185,21 +185,66 @@ export function resolveColumnRecovery(ir: WorkflowIr, columnId: string): Workflo
 }
 
 /*
-FNXC:WorkflowRecoveryPolicy 2026-07-27-14:05 (U4):
-THE safeguard chokepoint. Every safeguard suppression flows through here so there
-is exactly one place to audit, and so the safety test has a single seam to assert
-against. Returns the suppressing safeguard, or `undefined` when none applies.
+FNXC:WorkflowRecoveryPolicy 2026-07-27-21:10 (U4 — RE-RATIFIED, narrowed):
+Every recovery action, whether or not the policy vocabulary can author it yet.
 
-`surface` writes no lifecycle state, so only the user-pause safeguard is
-load-bearing for it — a user-paused card must not have engine-authored signals
-attributed to it. The remaining five gate lifecycle-mutating actions and are
-wired when those actions land.
+Declared beyond the authorable set on purpose. The user-pause safeguard is scoped
+BY ACTION, so the scoping is only testable if the mutating actions exist as
+values — and a rule that cannot be tested is a rule that erodes. `parseWorkflowIr`
+keeps a CLOSED action list, so nothing here becomes authorable by being named.
+*/
+export type RecoveryActionKind = "surface" | "rebound" | "archive" | "requeue" | "resume";
+
+/**
+ * OBSERVATIONAL actions: they read state and report it. They write no lifecycle
+ * field, move no card, and change nothing an operator would have to undo.
+ */
+const OBSERVATIONAL_ACTIONS: ReadonlySet<RecoveryActionKind> = new Set<RecoveryActionKind>(["surface"]);
+
+/** True when an action changes lifecycle state rather than merely reporting it. */
+export function isLifecycleMutatingAction(action: RecoveryActionKind): boolean {
+  return !OBSERVATIONAL_ACTIONS.has(action);
+}
+
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-27-21:10 (U4 — THE safeguard chokepoint):
+Every safeguard suppression flows through here, so there is exactly one place to
+audit and the safety test has a single seam to assert against.
+
+THE INVARIANT, in the words that make the distinction survive a future reader:
+
+  The user-pause safeguard means NEVER MUTATE LIFECYCLE STATE of a user-paused
+  card. It does NOT mean never observe one.
+
+The purpose of respecting a pause is to stop the engine acting on a card BEHIND
+the operator who paused it — moving it, rebounding it, archiving it, resuming it.
+A read-only diagnostic does the opposite: it tells that same operator what their
+paused card is doing. Blinding them to their own paused work is not safety; it is
+the engine deciding they should not be told.
+
+This was ratified BROADLY first (suppress every action on a user-paused card) and
+re-ratified narrowly after that reading was caught suppressing the very sweeps it
+was meant to protect: `surfaceStalePausedTodos` exists to report cards that have
+sat paused too long, so the broad rule turned a diagnostic into one that silently
+reported nothing. Scoping is therefore BY ACTION, never by sweep — a sweep cannot
+opt itself out, and a new mutating action is suppressed by default because
+`OBSERVATIONAL_ACTIONS` is an allow-list.
+
+WHICH FIELD, chosen deliberately rather than inherited from whatever was nearest:
+this gate reads `userPaused` — the explicit operator park — NOT `paused`. The two
+diverge (see `branch-group-ops.ts:128`: "userPaused remains true but legacy
+`paused` is false"). `paused` also covers automation pauses such as
+dispatch-storm, which are engine-authored and carry no operator intent to respect,
+so gating lifecycle mutation on `paused` would suppress recovery from the engine's
+own throttles. The safeguard exists to defer to a HUMAN decision, so it keys on
+the field that records one.
 */
 export function isSuppressedBySafeguard(
   task: Pick<Task, "userPaused">,
-  action: RecoveryDecision["action"],
+  action: RecoveryActionKind,
 ): "user-paused" | undefined {
-  if (action === "surface" && task.userPaused === true) return "user-paused";
+  if (!isLifecycleMutatingAction(action)) return undefined;
+  if (task.userPaused === true) return "user-paused";
   return undefined;
 }
 
