@@ -39,6 +39,7 @@ import {
   type WorkflowIr,
   type WorkflowIrColumn,
   type WorkflowColumnRecovery,
+  type WorkflowColumnOnStale,
 } from "@fusion/core";
 
 /*
@@ -68,6 +69,47 @@ export const RECOVERY_POLICY_KEYS: Record<keyof WorkflowColumnRecovery, true> = 
   onStale: true,
 };
 
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-28-19:05 (U4 — the OVERRIDE LAYER):
+Compose a workflow's DECLARED policy over the operator's settings.
+
+  declared explicitly -> workflow policy WINS
+  left unset          -> DEFER to the project/global setting, exactly as today
+
+This mirrors the two-tier merge `effective-settings.ts` already implements for
+workflow settings (a stored value overrides the base; a declaration default only
+fills an absent key) rather than inventing a fourth precedence system beside
+model selection, project settings, and workflow settings.
+
+ABSENCE STAYS ABSENT. `??` treats an explicitly-`undefined` field as unset, so a
+policy is never normalized into a built-in default. The distinction that matters:
+**equal-to-default is not the same as unset.** A declaration whose value happens
+to equal the legacy literal is a deliberate CHOICE and must still override a
+customized operator setting; only true absence defers. This is the same discipline
+`workflow-settings-resolver.ts` documents for keys whose declaration omits a
+default — they are absent from the map, never `undefined`, so the merge cannot
+clobber a real project value.
+
+Composition is PER FIELD, so a workflow may declare a threshold while inheriting
+the action. Returns `undefined` unless BOTH halves resolve: a threshold with no
+action never fires, and an action with no threshold has nothing to fire on — an
+effective policy that is present but inert is the failure mode this program keeps
+finding.
+
+Consequence that makes migration safe: retiring a sweep no longer requires
+builtin:coding to declare anything. Unset defers to the existing setting, so
+behavior cannot silently vanish on upgrade and no project needs touching.
+*/
+export function resolveEffectiveRecovery(
+  declared: WorkflowColumnRecovery | undefined,
+  inherited: InheritedRecovery,
+): WorkflowColumnRecovery | undefined {
+  const stalenessMs = declared?.stalenessMs ?? inherited.stalenessMs;
+  const onStale = declared?.onStale ?? inherited.onStale;
+  if (stalenessMs === undefined || onStale === undefined) return undefined;
+  return { stalenessMs, onStale };
+}
+
 /** One card's resolved recovery decision. */
 export interface RecoveryDecision {
   taskId: string;
@@ -82,8 +124,19 @@ export interface RecoveryDecision {
 /** Why a card that otherwise matched a policy was NOT acted on. */
 export type RecoverySuppression = "user-paused" | "not-stale" | "no-policy" | "unresolvable-workflow";
 
+/**
+ * The operator-settings values a policy key DEFERS to when left undeclared.
+ * Supplied by the caller from the resolved project/global settings.
+ */
+export interface InheritedRecovery {
+  stalenessMs?: number;
+  onStale?: WorkflowColumnOnStale;
+}
+
 export interface ReconcilerDeps {
   now: () => number;
+  /** What an UNSET policy inherits. Absent = the sweep is simply off. */
+  inherited?: InheritedRecovery;
   /** Caller-owned IR cache so one pass reads one IR per workflow, not per card. */
   irCache?: Map<string, WorkflowIr>;
 }
@@ -132,7 +185,8 @@ export function decideRecovery(
   ir: WorkflowIr,
   deps: ReconcilerDeps,
 ): { decision: RecoveryDecision } | { suppressed: RecoverySuppression } {
-  const policy = resolveColumnRecovery(ir, task.column);
+  /* Declared policy overrides; absence defers to the operator setting. */
+  const policy = resolveEffectiveRecovery(resolveColumnRecovery(ir, task.column), deps.inherited ?? {});
   if (!policy?.stalenessMs || !policy.onStale) return { suppressed: "no-policy" };
 
   const suppressed = isSuppressedBySafeguard(task, policy.onStale.action);
