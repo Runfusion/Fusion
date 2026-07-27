@@ -1986,58 +1986,6 @@ export class SelfHealingManager {
     }
   }
 
-  // ── Lost work detection ────────────────────────────────────────────
-
-  /**
-   * Check whether a task's branch has any unique commits compared to main.
-   * If the branch has no unique commits and the task has steps marked done,
-   * those steps represent lost uncommitted work — reset them to "pending"
-   * so the next execution doesn't skip them.
-   */
-  private async resetStepsIfWorkLost(task: Task): Promise<void> {
-    const completedSteps = task.steps.filter(
-      (s) => s.status === "done" || s.status === "in-progress",
-    );
-    if (completedSteps.length === 0) return;
-
-    const branchName = resolveTaskWorkingBranch(task);
-
-    try {
-      const { stdout: mergeBaseOut } = await execAsync(
-        `git merge-base "${branchName}" HEAD`,
-        { cwd: this.options.rootDir, encoding: "utf-8", timeout: 30_000 },
-      );
-      const mergeBase = mergeBaseOut.trim();
-      const { stdout: branchHeadOut } = await execAsync(
-        `git rev-parse "${branchName}"`,
-        { cwd: this.options.rootDir, encoding: "utf-8", timeout: 30_000 },
-      );
-      const branchHead = branchHeadOut.trim();
-
-      if (mergeBase === branchHead) {
-        log.warn(
-          `${task.id} branch has no unique commits — resetting ${completedSteps.length} step(s) to pending`,
-        );
-
-        for (let i = 0; i < task.steps.length; i++) {
-          if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
-            await this.store.updateStep(task.id, i, "pending");
-          }
-        }
-
-        await this.store.logEntry(
-          task.id,
-          `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost with worktree)`,
-        );
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.warn(
-        `Failed to reset steps for ${task.id} after branch/worktree loss (${branchName}): ${errorMessage} — non-fatal`,
-      );
-    }
-  }
-
   // ── Periodic maintenance ──────────────────────────────────────────
 
   private async startMaintenance(): Promise<void> {
