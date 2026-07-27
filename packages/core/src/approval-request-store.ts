@@ -180,23 +180,13 @@ export class ApprovalRequestStore {
   }
 
   async create(input: ApprovalRequestCreateInput): Promise<ApprovalRequest> {
-    const now = new Date().toISOString();
-    const _request: ApprovalRequest = {
-      id: `apr-${randomUUID().slice(0, 8)}`,
-      status: "pending",
-      requester: input.requester,
-      targetAction: {
-        ...input.targetAction,
-        category: normalizeApprovalRequestActionCategory(input.targetAction.category),
-      },
-      taskId: input.taskId,
-      runId: input.runId,
-      requestedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-        const id = `apr-${randomUUID().slice(0, 8)}`;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+    Dual-path collapse left a local ApprovalRequest construction that was discarded
+    while a second random id was generated for the PG insert. Use one id and let
+    createApprovalRequest materialize the full row.
+    */
+    const id = `apr-${randomUUID().slice(0, 8)}`;
     return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
 }
 

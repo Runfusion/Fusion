@@ -2013,8 +2013,14 @@ export class AgentStore extends EventEmitter {
           updatedAt: event.timestamp,
         };
         await this.writeAgent(updated);
-      } else 
+      }
 
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+      Dual-path collapse left a bare `else` that made this emit the else-body, so
+      status==="ok" heartbeats never fired agent:heartbeat after a successful write.
+      Emit for every persisted heartbeat (ok and non-ok).
+      */
       this.emit("agent:heartbeat", agentId, event);
 
       return event;

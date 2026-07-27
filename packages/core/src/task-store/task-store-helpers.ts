@@ -304,8 +304,15 @@ export function refreshDatabaseHealthImpl(store: TaskStore): ReturnType<TaskStor
     a layer is present, then return the last snapshot (or optimistic healthy
     until the first probe completes). Prefer refreshDatabaseHealthAsync from
     async callers (self-healing surfaceDbCorruption).
+
+    FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+    Only schedule the async probe when asyncLayer exists. Without a layer,
+    refreshDatabaseHealthAsyncImpl used to call back into this sync entry and
+    re-schedule forever (unbounded health-refresh microtask recursion).
     */
-        void refreshDatabaseHealthAsyncImpl(store).catch(() => undefined);
+    if (store.asyncLayer) {
+      void refreshDatabaseHealthAsyncImpl(store).catch(() => undefined);
+    }
     return store.getDatabaseHealth();
 }
 
@@ -317,8 +324,12 @@ healthCheck readers.
 */
 export async function refreshDatabaseHealthAsyncImpl(store: TaskStore): Promise<ReturnType<TaskStore["getDatabaseHealth"]>> {
     if (!store.asyncLayer) {
-      /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: without AsyncDataLayer, return safe incomplete-PG health snapshot path. */
-      return refreshDatabaseHealthImpl(store);
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+      No AsyncDataLayer: return the cached/safe incomplete-PG snapshot. Do not call
+      refreshDatabaseHealthImpl here — that path re-schedules this function and would recurse.
+      */
+      return store.getDatabaseHealth();
     }
     store.postgresHealthSnapshot = {
       healthy: store.postgresHealthSnapshot?.healthy ?? true,
