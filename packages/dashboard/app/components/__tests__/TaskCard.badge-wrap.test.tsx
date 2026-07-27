@@ -577,7 +577,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
     expect(pausedContainer.querySelectorAll(".card-status-badge")).toHaveLength(1);
     expect(reviewingContainer.querySelectorAll(".card-status-badge")).toHaveLength(2);
-    expect(reviewingContainer.querySelector('[data-testid="card-reviewing-FN-8599-REVIEWING"]')).toHaveTextContent("Reviewing");
+    expect(reviewingContainer.querySelector('[data-testid="card-reviewing-FN-8599-REVIEWING"]')).toHaveTextContent("Plan Review");
     expectSizeBadgeAfterTaskId(pausedContainer, true);
     expectSizeBadgeAfterTaskId(reviewingContainer, true);
   });

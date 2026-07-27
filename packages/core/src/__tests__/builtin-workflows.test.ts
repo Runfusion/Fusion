@@ -589,9 +589,16 @@ describe("built-in workflows", () => {
     ]);
 
     const byId = new Map(ir.nodes.map((node) => [node.id, node]));
-    expect(byId.get("plan")?.column).toBe("in-progress");
+    /*
+    FNXC:PlanReviewStep 2026-07-26-17:10:
+    PLAN-IN-PLACE: the whole specification phase — plan, plan review, and the replan loop — runs in the
+    planning lane (`todo`), so a card under specification never holds an implementation slot. The card
+    crosses into `in-progress` exactly once, at `parse`, and the scheduler owns that crossing.
+    */
+    expect(byId.get("plan")?.column).toBe("todo");
     expect(byId.get("plan-review")?.kind).toBe("optional-group");
-    expect(byId.get("plan-review")?.column).toBe("in-progress");
+    expect(byId.get("plan-review")?.column).toBe("todo");
+    expect(byId.get("plan-replan")?.column).toBe("todo");
     expect(byId.get("plan-review")?.config?.maxRevisions).toBe("unbounded");
     expect(planReviewInnerConfig(ir)).toMatchObject({
       toolMode: "readonly",

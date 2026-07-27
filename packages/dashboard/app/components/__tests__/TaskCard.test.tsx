@@ -2337,7 +2337,7 @@ describe("TaskCard", () => {
       />,
     );
 
-    const badge = screen.getByText("planning");
+    const badge = screen.getByText("Planning");
     expect(badge).toHaveClass("card-status-badge");
     expect(container.querySelector(".card-header-badges")).toContainElement(badge);
   });
@@ -2350,7 +2350,7 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(screen.getByText("planning")).toBeDefined();
+    expect(screen.getByText("Planning")).toBeDefined();
 
     rerender(
       <TaskCard
@@ -2425,11 +2425,15 @@ describe("TaskCard", () => {
     const badge = container.querySelector('[data-testid="card-reviewing-FN-7831"]');
     expect(Boolean(badge)).toBe(shouldRender);
     if (shouldRender) {
-      expect(badge).toHaveTextContent("Reviewing");
-      // FNXC:StatusBadge 2026-07-19-04:30: U12 — the status badge prefers the running
-      // workflow step's IR-declared name ("Plan Review") over the raw engine token
-      // ("planning"); this expectation tracks that intentional cutover behavior.
-      expect(screen.getByText("Plan Review")).toBeDefined();
+      expect(badge).toHaveTextContent("Plan Review");
+      /*
+      FNXC:StatusBadge 2026-07-26-14:05:
+      Exactly ONE badge names the gate. U12 let the status badge borrow the running step's IR name,
+      which now collides with the gate badge's own "Plan Review" copy, so the override yields and the
+      status badge states the card's status instead — as "Planning", not the raw engine token.
+      */
+      expect(screen.getAllByText("Plan Review")).toHaveLength(1);
+      expect(screen.getByText("Planning")).toBeDefined();
     }
   });
 
@@ -2601,7 +2605,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector('[data-testid="card-ready-FN-READY-REVIEW"]')).toBeNull();
-    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Reviewing");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Plan Review");
   });
 
   it("does not render Ready while Plan Review is running even when the queue gate hides Reviewing", () => {

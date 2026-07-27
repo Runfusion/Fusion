@@ -604,6 +604,8 @@ export type DatabaseMutationType =
   reason }, where `reason` is a fixed adoption-table note — never row prose.
   */
   | "task:reconcile-legacy-adoption"
+  // FNXC:WorkflowColumns 2026-07-26-18:30: a row re-homed out of a column its workflow no longer declares.
+  | "task:reconcile-undeclared-column"
   /**
    * An UNMAPPABLE legacy status: the row is parked `paused` for a human with its status
    * deliberately left in place so the operator can see what it carried. Same metadata shape.

@@ -3097,6 +3097,26 @@ function TaskCardComponent({
   const showStatusBadge = !isPaused
     && (hasTaskStatusBadge(visualStatus) || isTransientPlannerActive)
     && visualStatus !== "queued";
+  /*
+  FNXC:TaskStatusBadge 2026-07-26-14:05:
+  The status badge's resolved copy, hoisted out of the JSX. U12 lets this badge borrow the running
+  workflow step's IR name ("Plan Review"), but the optional-gate badge now uses that same name
+  instead of the generic "Reviewing" — applying both printed "Plan Review" twice on one card. The
+  gate badge owns the gate's identity, so the override is dropped while it renders and this badge
+  states the card's own status ("Planning"). The two badges stay orthogonal: what the card IS, and
+  which gate is RUNNING.
+  */
+  const statusBadgeLabel = isStuck
+    ? t("tasks.stuck", "Stuck")
+    : isPlanReviewReplanCapApproval
+      ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+      : isAwaitingApproval
+        ? t("tasks.awaitingApproval", "Awaiting Approval")
+        : isAwaitingInput
+          ? t("tasks.needsInput", "Needs input")
+          : isTransientPlannerActive
+            ? t("tasks.statusPlanning", "Planning")
+            : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
@@ -3260,17 +3280,7 @@ function TaskCardComponent({
             data-testid={isAwaitingApproval ? `card-awaiting-approval-${task.id}` : undefined}
             data-awaiting-approval-reason={isAwaitingApproval ? (task.awaitingApprovalReason ?? "manual") : undefined}
           >
-            {isStuck
-              ? t("tasks.stuck", "Stuck")
-              : isPlanReviewReplanCapApproval
-                ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                : isAwaitingApproval
-                  ? t("tasks.awaitingApproval", "Awaiting Approval")
-                  : isAwaitingInput
-                    ? t("tasks.needsInput", "Needs input")
-                    : isTransientPlannerActive
-                      ? t("tasks.statusPlanning", "Planning")
-                      : getTaskStatusLabel(visualStatus!, t, getRunningWorkflowStepLabel(task))}
+            {statusBadgeLabel}
           </span>
         )}
         {showOptionalGateBadge && optionalGateBadge && (
@@ -3279,7 +3289,10 @@ function TaskCardComponent({
           The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/stuck/status affordances.
 
           FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
-          Same additive pattern for Code Review / Browser Verification in In-review. Label is the gate's own name (Plan Review keeps the short "Reviewing" copy). These gates stay out of the WIP bullet list.
+          Same additive pattern for Code Review / Browser Verification in In-review. Label is the gate's own name. These gates stay out of the WIP bullet list.
+
+          FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
+          Plan Review (and its replan loop) now badges as "Plan Review" instead of the ambiguous "Reviewing", and the gate itself runs in the planning column, so the badge is visible on the Planning card rather than being lane-suppressed while the card sat in In progress.
           */
           <span
             className="card-status-badge card-status-badge--reviewing pulsing"
@@ -3292,7 +3305,7 @@ function TaskCardComponent({
             }
           >
             {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
-              ? t("tasks.reviewing", "Reviewing")
+              ? t("tasks.planReviewBadge", "Plan Review")
               : optionalGateBadge.label}
           </span>
         )}

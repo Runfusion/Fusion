@@ -58,8 +58,15 @@ describe("getRunningOptionalGateBadge", () => {
     startedAt: "2026-07-11T12:00:00.000Z",
   };
 
-  it("badges Plan Review on triage and todo only", () => {
-    for (const column of ["triage", "todo"] as const) {
+  /*
+  FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
+  Plan Review badges in EVERY column it can run in — the enumeration matters because the default
+  Coding workflow runs its plan-review node in `in-progress` (the executor drives the graph there),
+  while the plan-in-place presets run it in `todo`/`triage`. The old triage/todo lane gate meant the
+  default workflow never showed the badge at all.
+  */
+  it("badges Plan Review in every column the gate can run in", () => {
+    for (const column of ["triage", "todo", "in-progress"] as const) {
       const badge = getRunningOptionalGateBadge({
         ...makeTask({
           enabledWorkflowSteps: ["plan-review"],
@@ -67,16 +74,17 @@ describe("getRunningOptionalGateBadge", () => {
         }),
         column,
       } as Task);
-      expect(badge?.label).toBe("Reviewing");
+      expect(badge?.label).toBe("Plan Review");
       expect(badge?.testId).toBe("reviewing");
     }
+    // The replan half of the loop badges the same way, wherever the remediation node lives.
     expect(getRunningOptionalGateBadge({
       ...makeTask({
-        enabledWorkflowSteps: ["plan-review"],
-        workflowStepResults: [runningPlanReview],
+        enabledWorkflowSteps: ["plan-replan"],
+        workflowStepResults: [{ ...runningPlanReview, workflowStepId: "plan-replan", workflowStepName: "Plan Replan" }],
       }),
-      column: "in-progress",
-    } as Task)).toBeUndefined();
+      column: "triage",
+    } as Task)).toMatchObject({ label: "Plan Review", testId: "reviewing" });
   });
 
   it("badges Code Review and Browser Verification on in-review only", () => {

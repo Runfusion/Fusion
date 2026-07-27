@@ -2803,6 +2803,17 @@ export function ListView({
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const optionalGateBadge = getRunningOptionalGateBadge(task);
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                          /*
+                          FNXC:TaskStatusBadge 2026-07-26-14:05:
+                          Same rule as TaskCard: the gate badge owns the gate's name ("Plan Review"), so the
+                          status badge drops U12's workflow-step-name override while that badge renders and
+                          states the row's own status instead — never the same words twice on one row.
+                          */
+                          const statusBadgeLabel = isReviewBudgetExhausted
+                            ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                            : isTransientPlannerActive
+                              ? t("tasks.statusPlanning", "Planning")
+                              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
                           const hasProgress = taskProgress.hasProgress;
@@ -2863,11 +2874,7 @@ export function ListView({
                                     aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                   >
-                                    {isReviewBudgetExhausted
-                                      ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                      : isTransientPlannerActive
-                                        ? t("tasks.statusPlanning", "Planning")
-                                        : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
+                                    {statusBadgeLabel}
                                   </span>
                                 ) : null}
                                 {showOptionalGateBadge && optionalGateBadge && (
@@ -2889,7 +2896,7 @@ export function ListView({
                                     }
                                   >
                                     {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
-                                      ? t("listView.reviewing", "Reviewing")
+                                      ? t("listView.planReviewBadge", "Plan Review")
                                       : optionalGateBadge.label}
                                   </span>
                                 )}
@@ -3058,6 +3065,13 @@ export function ListView({
                               || isTransientPlannerActive;
                             const optionalGateBadge = getRunningOptionalGateBadge(task);
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                            // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
+                            // gate badge — see the grouped-card render path above.
+                            const statusBadgeLabel = isReviewBudgetExhausted
+                              ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                              : isTransientPlannerActive
+                                ? t("tasks.statusPlanning", "Planning")
+                                : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                             const isDragging = draggingTaskId === task.id;
 
                             return (
@@ -3130,11 +3144,7 @@ export function ListView({
                                         aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                         data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >
-                                        {isReviewBudgetExhausted
-                                          ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                          : isTransientPlannerActive
-                                            ? t("tasks.statusPlanning", "Planning")
-                                            : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
+                                        {statusBadgeLabel}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>
@@ -3158,7 +3168,7 @@ export function ListView({
                                         }
                                       >
                                         {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
-                                          ? t("listView.reviewing", "Reviewing")
+                                          ? t("listView.planReviewBadge", "Plan Review")
                                           : optionalGateBadge.label}
                                       </span>
                                     )}

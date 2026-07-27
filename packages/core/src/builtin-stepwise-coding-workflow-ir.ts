@@ -69,7 +69,18 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     {
       id: "in-progress",
       name: "In progress",
-      traits: [{ trait: "wip" }, { trait: "abort-on-exit" }, { trait: "timing" }],
+      /*
+      FNXC:WorkflowColumns 2026-07-26-18:30:
+      `limitSetting` is now DECLARED rather than inferred. It used to be implicit: a 6-column IR whose
+      ids matched the legacy enum was detected as "the default workflow" and read `maxConcurrent`
+      through a special case. Merging Todo into Planning changes the column set, so the capacity policy
+      has to say what it means — which is what every custom workflow already has to do.
+      */
+      traits: [
+        { trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } },
+        { trait: "abort-on-exit" },
+        { trait: "timing" },
+      ],
     },
     {
       id: "in-review",
@@ -84,10 +95,27 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   artifacts: [{ key: "PROMPT.md", title: "Plan", producedBy: "planning", role: "step-source" }],
   nodes: [
     { id: "start", kind: "start", column: "triage" },
-    // Planning seam: produces PROMPT.md (the declared step-source artifact).
-    { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
-    planReviewOptionalGroupNode("in-progress", { requireExternalIntegrationEvidence: true }),
-    planReplanNode("triage"),
+    /*
+    FNXC:PlanReviewStep 2026-07-26-17:10:
+    PLAN-IN-PLACE: the whole specification phase — `plan`, `plan-review`, `plan-replan` — runs in the
+    planning lane (`todo`), before the card ever takes an implementation slot. The card crosses into
+    `in-progress` exactly once, at `parse`, and the scheduler owns that crossing.
+
+    `todo` is the planning-lane column the card actually rests in: triage writes PROMPT.md and its
+    finalize moves the card `triage -> todo`, then `onSpecifyComplete` seeds a plan-review continuation
+    (only when the plan-review node's column equals the card's column) and the continuation drain
+    resumes the graph AT plan-review. On success the boundary suspends at the `in-progress` crossing
+    with a `capacity` continuation, the hold sweep releases, and the executor resumes at `parse`.
+    `triage` cannot host this: it is an intake column with no releaser, so a card parked there waits
+    for a human.
+
+    This placement depends on the graph ENTRY CONTRACT (`resolveColumnResumeNode`): a run with no
+    continuation resumes at the card's own column, so a card already in `in-progress` re-enters at
+    `parse` instead of replaying the planning prologue and dragging itself backward out of wip.
+    */
+    { id: "plan", kind: "prompt", column: "todo", config: builtinPromptConfig("planning", "Plan") },
+    planReviewOptionalGroupNode("todo", { requireExternalIntegrationEvidence: true }),
+    planReplanNode("todo"),
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {

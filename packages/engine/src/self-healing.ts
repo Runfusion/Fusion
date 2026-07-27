@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -1525,6 +1525,10 @@ export class SelfHealingManager {
       // legacy `planning`/`needs-replan` row is judged by recovery rules that no longer
       // have a writer for that status.
       { name: "adopt-legacy-task-rows", fn: () => this.adoptLegacyTaskRows().then(() => undefined) },
+      // FNXC:WorkflowColumns 2026-07-26-18:30: immediately after status adoption and before every
+      // column-reasoning step below — a row in an undeclared column carries NO trait flags, so each
+      // of those steps would silently classify it as "not my case" and leave it stranded.
+      { name: "reconcile-undeclared-task-columns", fn: () => this.reconcileUndeclaredTaskColumns().then(() => undefined) },
       // FNXC:OrphanedPendingSteps 2026-07-22-16:20 (FN-8492 incident): runs right after
       // adoption and BEFORE every in-review recovery step below — those reason about
       // step-result completeness, and an orphaned `pending` result reads as "work in
@@ -6929,6 +6933,77 @@ export class SelfHealingManager {
       return adopted;
     } catch (error) {
       log.error(`adoptLegacyTaskRows failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /**
+   * FNXC:WorkflowColumns 2026-07-26-18:30:
+   * Re-home a card whose column its workflow no longer declares.
+   *
+   * A workflow's column set is editable, and the built-in coding workflows just merged Todo into
+   * Planning — so a live board can hold rows pointing at a column that is gone. Such a row is
+   * invisible to every trait-driven sweep (`findColumn` returns undefined, so it carries no hold, wip,
+   * or intake flags), which means nothing schedules it, nothing releases it, and it renders in a
+   * column the board no longer draws. It is stranded in the most literal sense.
+   *
+   * The repair is the same one KTD-10 already defines for a recovered card: `resolveReboundTarget`
+   * (the workflow's hold column, else its intake column, else its first). Deliberately conservative —
+   * it only ever touches a row whose column is UNDECLARED, never one the operator merely disagrees
+   * with, and it leaves operator parks (`userPaused`) alone.
+   */
+  async reconcileUndeclaredTaskColumns(): Promise<number> {
+    try {
+      const pageSize = 500;
+      let offset = 0;
+      let rehomed = 0;
+
+      for (;;) {
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        for (const task of tasks) {
+          if (task.userPaused === true) continue;
+          let ir;
+          try {
+            ir = await resolveWorkflowIrForTask(this.store, task.id);
+          } catch {
+            continue; // An unresolvable workflow is its own fault path; do not guess a column.
+          }
+          if (!ir || workflowHasColumn(ir, task.column)) continue;
+          const target = resolveReboundTarget(ir);
+          if (!target || target === task.column) continue;
+
+          try {
+            await this.store.moveTask(task.id, target as Task["column"], {
+              moveSource: "engine",
+              bypassGuards: true,
+              preserveProgress: true,
+            });
+            rehomed += 1;
+            await createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("reconcile-undeclared-column", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reconcile-undeclared-column",
+            }).database({
+              type: "task:reconcile-undeclared-column",
+              target: task.id,
+              // ids/outcomes only.
+              metadata: { taskId: task.id, priorColumn: task.column, toColumn: target },
+            }).catch(() => undefined);
+          } catch (error) {
+            log.warn(
+              `reconcileUndeclaredTaskColumns: failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        if (tasks.length < pageSize) break;
+        offset += tasks.length;
+      }
+      if (rehomed > 0) log.log(`Re-homed ${rehomed} task(s) out of a column their workflow no longer declares`);
+      return rehomed;
+    } catch (error) {
+      log.error(`reconcileUndeclaredTaskColumns failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
   }

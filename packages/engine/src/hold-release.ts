@@ -47,6 +47,7 @@ import {
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
+  isWorkflowOptionalGroupEnabled,
   resolveEffectiveAutoMerge,
   type TaskStore,
   type Task,
@@ -178,8 +179,33 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   capacity boundary. Releasing first would skip the gate. This does not fire
   when Plan Review already lives in a WIP column.
   */
+  /*
+  FNXC:PlanReview 2026-07-26-14:05:
+  The gate is PLAN-IN-PLACE only: it applies when Plan Review runs in the very column the card is
+  held in (Coding (Ideas) / the benchmark's Plan Review in Todo), which is the same condition the
+  other two consumers of this resolver already require (`seedPreReleasePlanReviewContinuation`,
+  `evaluateStrandedHoldContinuation`). Without the column check, moving the default workflow's Plan
+  Review out of the wip column into the planning column turned "non-wip" into "pre-release" for every
+  card in Todo — including cards whose graph never routes through Todo at all — and the capacity
+  sweep stopped releasing them (no continuation for a boundary they never reach). A review node in an
+  upstream column the card has already left is not something this sweep gates on.
+  */
+  /*
+  FNXC:PlanReview 2026-07-26-17:10:
+  The gate also requires Plan Review to be ENABLED for this task. It exists to stop a card entering
+  implementation before its plan gate ran; a task whose plan-review group is toggled OFF has no such
+  gate, and holding it produced a deadlock — nothing would ever record the evidence the hold was
+  waiting for.
+  */
   const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
-  if (preReleaseReview) {
+  const preReleaseReviewEnabled = preReleaseReview
+    ? isWorkflowOptionalGroupEnabled(
+      task.enabledWorkflowSteps,
+      preReleaseReview.id,
+      (preReleaseReview.config as { defaultOn?: boolean } | undefined)?.defaultOn ?? false,
+    )
+    : false;
+  if (preReleaseReview && preReleaseReviewEnabled && preReleaseReview.column === task.column) {
     // Compatibility for tasks planned before durable continuations existed and
     // for narrow store adapters that expose only the legacy review result.
     const legacyPassed = task.workflowStepResults?.some(

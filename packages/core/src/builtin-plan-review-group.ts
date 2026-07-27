@@ -38,9 +38,23 @@ Be specific: cite the plan section or file path for every finding and explain th
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
+/*
+FNXC:PlanReviewStep 2026-07-26-14:05:
+Plan Review is a PLANNING-lane gate, so it belongs in the planning column (the `triage` column,
+displayed as "Planning") next to `plan` and `plan-replan` — not in the implementation column. Two
+reasons: (1) the column IS the badge switch — the dashboard only renders the Plan Review card badge
+when `task.column` is in the planning lane (triage / todo) in `taskProgress.getRunningOptionalGateBadge`,
+so an in-progress placement silently suppressed the badge; (2) a card whose plan is still under review
+has not started implementation and should not hold a `wip` slot. This mirrors the FN review-gate rule
+that put Code Review / Browser Verification in `in-review`.
+
+`column` is optional: linear built-ins (`builtin-workflows.ts`) resolve node columns by inheritance,
+where planning happens in the hold column (`todo`, also a planning-lane column), so those call sites
+omit it and let `assignLinearNodeColumns` keep the card wherever planning already is.
+*/
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(
-  column: string,
+  column?: string,
   options: { defaultOn?: boolean; maxRevisions?: number | "unbounded"; requireExternalIntegrationEvidence?: boolean } = {},
 ): WorkflowIrNode {
   const promptConfig: Record<string, unknown> = {
@@ -61,7 +75,7 @@ export function planReviewOptionalGroupNode(
   return {
     id: PLAN_REVIEW_GROUP_ID,
     kind: "optional-group",
-    column,
+    ...(column ? { column } : {}),
     config: {
       name: PLAN_REVIEW_NAME,
       defaultOn: options.defaultOn ?? true,
