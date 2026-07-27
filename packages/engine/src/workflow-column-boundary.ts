@@ -40,6 +40,7 @@ import {
   isHoldToWipBoundary,
   resolveColumnFlags,
   TransitionRejectionError,
+  emitWorkflowLifecycleEvent,
 } from "@fusion/core";
 
 /** Run-audit event emitted by the boundary controller (KTD-12, ids/counts only). */
@@ -286,6 +287,25 @@ export function createWorkflowColumnBoundary(
         warn("ir pin write failed", { nodeId: node.id, error: err instanceof Error ? err.message : String(err) });
       }
 
+      /*
+      FNXC:WorkflowEvents 2026-07-27-12:00 (U3 / R5):
+      Announce the NODE ENTRY, not the column crossing. This fires even when the
+      entry is a same-column no-op below, because traversal genuinely entered the
+      node — a subscriber tracking graph progress must see rework loops, which a
+      crossing-only signal hides. The paired `TaskTransitioned` is emitted by the
+      store's own post-commit point, so a crossing produces both and a
+      same-column entry produces only this one; neither is authoritative for any
+      lifecycle decision.
+      */
+      emitWorkflowLifecycleEvent({
+        type: "NodeEntered",
+        taskId: deps.taskId,
+        at: new Date().toISOString(),
+        workflowId: deps.workflowId,
+        nodeId: node.id,
+        column: toColumn,
+      });
+
       // Idempotent: a re-entered/rework node or a same-column node chain no-ops.
       if (toColumn === column) return { kind: "entered" };
 
@@ -310,6 +330,23 @@ export function createWorkflowColumnBoundary(
           irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
         } as const;
         await deps.onSuspend?.(suspension);
+        /*
+        FNXC:WorkflowEvents 2026-07-27-12:05 (U3 / R5):
+        Emitted AFTER `onSuspend` has persisted the durable continuation, so an
+        observed `RunSuspended` implies the continuation exists. The continuation
+        — not this event — is what the scheduler resumes from; dropping the event
+        costs a notification, never a stranded run.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "RunSuspended",
+          taskId: deps.taskId,
+          at: new Date().toISOString(),
+          workflowId: deps.workflowId,
+          nodeId: node.id,
+          reason: "capacity",
+          fromColumn,
+          toColumn,
+        });
         return suspension;
       }
 
@@ -348,6 +385,17 @@ export function createWorkflowColumnBoundary(
               irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
             } as const;
             await deps.onSuspend?.(suspension);
+            // FNXC:WorkflowEvents 2026-07-27-12:06 (U3): see the hold→wip seam above.
+            emitWorkflowLifecycleEvent({
+              type: "RunSuspended",
+              taskId: deps.taskId,
+              at: new Date().toISOString(),
+              workflowId: deps.workflowId,
+              nodeId: node.id,
+              reason: "capacity",
+              fromColumn,
+              toColumn,
+            });
             return suspension;
           }
           // A rejected move (invariant) leaves the card in its current column;

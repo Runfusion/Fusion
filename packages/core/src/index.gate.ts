@@ -2244,6 +2244,10 @@ Cutover (IR-driven lifecycle) barrel sync — same failure class as the classify
 */
 export { resolveCreationColumn } from "./workflow-ir.js";
 export { resolveWipBudgetColumns } from "./workflow-capacity.js";
+export { createWorkflowEventBus, getWorkflowEventBus, emitWorkflowLifecycleEvent, resetWorkflowEventBusForTesting } from "./workflow-events.js";
+export type { WorkflowEventBus, WorkflowEventSubscriber, WorkflowEventSubscription } from "./workflow-events.js";
+export { findWorkflowEventShapeViolations, isIdsOnlyWorkflowEvent, MAX_ID_VALUE_LENGTH } from "./types/workflow-events.js";
+export type { WorkflowLifecycleEvent, WorkflowLifecycleEventType, WorkflowLifecycleEventBase, TaskTransitionedEvent, NodeEnteredEvent, NodeCompletedEvent, RunSuspendedEvent, RunResumedEvent, WorkflowEventShapeViolation } from "./types/workflow-events.js";
 export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns } from "./workflow-lifecycle-traits.js";
 export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";

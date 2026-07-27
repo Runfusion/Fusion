@@ -11,7 +11,6 @@
 
 import { TaskStore } from "../store.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { toJsonNullable } from "../db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
@@ -25,7 +24,7 @@ import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMerg
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async-workflow-workitems.js";
 import { extractEffectiveWriteScopeFromPrompt } from "../file-scope-classification.js";
 import { ArtifactRow, WorkflowWorkItemRow } from "./row-types.js";
-import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunAuditEvent, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
+import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
 import type { UsageEventInput } from "../usage-events.js";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
