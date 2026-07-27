@@ -325,8 +325,11 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       overlay: await boxMetrics(tablet, "[data-testid='task-detail-modal-overlay']"),
       handle: await boxMetrics(tablet, "[data-testid='floating-window-task-detail-fixture'] [data-testid='floating-window-resize-se']"),
     };
-    // Task Detail and New Task now share FloatingWindow's zero-inset tablet geometry while
-    // preserving their desktop content density and 44px touch handles.
+    /*
+    FNXC:ModalTouchGeometry 2026-07-26-20:08:
+    Task Detail and New Task share FloatingWindow's zero-inset tablet geometry while preserving
+    desktop content density and 44px touch handles.
+    */
     expect(tabletTaskDetail.overlay.paddingBlockStart).toBe(desktopTaskDetail.overlay.paddingBlockStart);
     expect(tabletTaskDetail.panel.width).toBe(desktopTaskDetail.panel.width);
     expect(tabletTaskDetail.panel.x).toBeGreaterThanOrEqual(0);
