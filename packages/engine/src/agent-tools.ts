@@ -4621,9 +4621,34 @@ settings.agentProvisioning.trustedAgentIds/trustedRoles, not org position. Top-l
 non-ceo agents now flow through the normal approval policy (default mode "trusted-only"
 => require-approval).
 */
-function isCallerPrivileged(caller: { id: string; role: string; reportsTo?: string | null } | null): boolean {
+/*
+FNXC:AgentProvisioning 2026-07-26-18:20:
+Provisioning privilege comes from OPERATOR CONFIGURATION only — `agentProvisioning.trustedAgentIds`
+and `agentProvisioning.trustedRoles` — never from a hardcoded role name and never from org-chart
+position.
+
+Two earlier shapes were both wrong. `caller.reportsTo == null` made EVERY top-level agent privileged,
+so an agent that created a manager-less agent escalated permanently. Replacing it with
+`caller.role === "ceo"` swapped one implicit rule for a magic string: it silently grants a role that
+any agent config can claim, while an operator who genuinely wants a privileged agent has no supported
+way to say so other than naming it "ceo".
+
+Fails CLOSED: with no resolvable settings there is no privileged caller. This governs ONLY the
+org-chart escape hatch (creating/deleting agents outside your own direct reports). It is deliberately
+NOT fed to `resolveAgentProvisioningPolicy` as `isPrivileged`, because that flag short-circuits the
+policy before `alwaysApproveDelete` — a trusted caller should still route a delete through approval.
+The policy applies the same trusted-id/trusted-role rules itself, in the right order.
+*/
+function isCallerPrivileged(
+  caller: { id: string; role: string; reportsTo?: string | null } | null,
+  settings: ProjectSettings | undefined,
+): boolean {
   if (!caller) return false;
-  return caller.role === "ceo";
+  const provisioning = settings?.agentProvisioning;
+  if (!provisioning) return false;
+  if ((provisioning.trustedAgentIds ?? []).includes(caller.id)) return true;
+  const trustedRoles = (provisioning.trustedRoles ?? []).map((role) => role.toLowerCase());
+  return Boolean(caller.role) && trustedRoles.includes(caller.role.toLowerCase());
 }
 
 export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
@@ -4752,7 +4777,9 @@ export function createAgentCreateTool(
     parameters: createAgentParams,
     execute: async (_id: string, params: Static<typeof createAgentParams>) => {
       const caller = await agentStore.getAgent(callingAgentId);
-      const privileged = isCallerPrivileged(caller);
+      // FNXC:AgentProvisioning 2026-07-26-18:20: settings resolve BEFORE the org-chart check because privilege is now operator-configured rather than role-derived.
+      const settings = await options?.settingsProvider?.();
+      const privileged = isCallerPrivileged(caller, settings);
       const reportsTo = params.reportsTo ?? callingAgentId;
 
       if (!privileged && reportsTo !== callingAgentId) {
@@ -4771,10 +4798,10 @@ export function createAgentCreateTool(
       (normalizeMode default "trusted-only"); a require-approval decision with no
       approvalRequestStore fails CLOSED below — never silently allows.
       */
-      const settings = await options?.settingsProvider?.();
+      // FNXC:AgentProvisioning 2026-07-26-18:20: `isPrivileged` is deliberately NOT forwarded — it short-circuits the policy ahead of `alwaysApproveDelete`. The policy re-applies trusted-id/trusted-role itself, in the correct order.
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_create",
-        caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
+        caller: caller ? { id: caller.id, role: caller.role } : undefined,
         settings,
       });
       await options?.runAuditor?.database({ type: "agent:create:requested", target: callingAgentId, metadata: { policy } });
@@ -4876,7 +4903,9 @@ export function createAgentDeleteTool(
         };
       }
 
-      const privileged = isCallerPrivileged(caller);
+      // FNXC:AgentProvisioning 2026-07-26-18:20: operator-configured privilege; see isCallerPrivileged.
+      const deleteSettings = await options?.settingsProvider?.();
+      const privileged = isCallerPrivileged(caller, deleteSettings);
       if (!privileged && target.reportsTo !== callingAgentId) {
         return {
           content: [{ type: "text" as const, text: "ERROR: You can only delete agents that report to you" }],
@@ -4894,10 +4923,11 @@ export function createAgentDeleteTool(
       are absent; settings undefined resolves to the "trusted-only" default and a
       require-approval decision with no approvalRequestStore is DENIED below.
       */
-      const settings = await options?.settingsProvider?.();
+      // FNXC:AgentProvisioning 2026-07-26-18:20: reuse the already-resolved settings; `isPrivileged` is not forwarded so `alwaysApproveDelete` still applies to trusted callers.
+      const settings = deleteSettings;
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_delete",
-        caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
+        caller: caller ? { id: caller.id, role: caller.role } : undefined,
         settings,
       });
       await options?.runAuditor?.database({ type: "agent:delete:requested", target: target.id, metadata: { policy } });

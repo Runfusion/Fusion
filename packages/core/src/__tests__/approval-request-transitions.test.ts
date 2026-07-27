@@ -6,9 +6,11 @@
  * expectations: same-status replay (from===to) must be invalid because a replayed decision re-stamps
  * decidedAt and forges duplicate audit history.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   APPROVAL_REQUEST_GRANT_TTL_MS,
+  getApprovalRequestGrantTtlMs,
+  configureApprovalRequestTtls,
   APPROVAL_REQUEST_PENDING_TTL_MS,
   isApprovalRequestExpired,
   isValidApprovalRequestTransition,
@@ -74,7 +76,7 @@ describe("isApprovalRequestExpired", () => {
     ).toBe(true);
   });
 
-  it("approved grant is redeemable within 15min of decidedAt", () => {
+  it("approved grant is redeemable within the grant TTL of decidedAt", () => {
     expect(
       isApprovalRequestExpired(
         {
@@ -82,12 +84,12 @@ describe("isApprovalRequestExpired", () => {
           requestedAt: new Date(T0 - 60_000).toISOString(),
           decidedAt: new Date(T0).toISOString(),
         },
-        T0 + APPROVAL_REQUEST_GRANT_TTL_MS - 1,
+        T0 + getApprovalRequestGrantTtlMs() - 1,
       ),
     ).toBe(false);
   });
 
-  it("approved grant is expired past 15min of decidedAt", () => {
+  it("approved grant is expired past the grant TTL of decidedAt", () => {
     expect(
       isApprovalRequestExpired(
         {
@@ -95,7 +97,7 @@ describe("isApprovalRequestExpired", () => {
           requestedAt: new Date(T0 - 60_000).toISOString(),
           decidedAt: new Date(T0).toISOString(),
         },
-        T0 + APPROVAL_REQUEST_GRANT_TTL_MS + 1,
+        T0 + getApprovalRequestGrantTtlMs() + 1,
       ),
     ).toBe(true);
   });
@@ -138,8 +140,51 @@ describe("isApprovalRequestExpired", () => {
     ).toBe(false);
   });
 
-  it("TTL constants encode 24h pending / 15min grant windows", () => {
+  it("TTL defaults encode a 24h pending window and a 1h grant window", () => {
     expect(APPROVAL_REQUEST_PENDING_TTL_MS).toBe(24 * 60 * 60 * 1000);
-    expect(APPROVAL_REQUEST_GRANT_TTL_MS).toBe(15 * 60 * 1000);
+    expect(getApprovalRequestGrantTtlMs()).toBe(60 * 60 * 1000);
+    expect(APPROVAL_REQUEST_GRANT_TTL_MS).toBe(60 * 60 * 1000);
+  });
+
+  /*
+  FNXC:ApprovalLifecycleSecurity 2026-07-26-18:20:
+  The grant window is a tradeoff an operator must be able to tune (a 15-minute hardcode expired
+  grants during ordinary restarts and queue backlogs). These assert the override is honored by the
+  expiry decision itself — not merely stored — and that a nonsense override cannot widen the window
+  to infinity or collapse it to zero, which would silently re-open the unbounded-grant hazard.
+  */
+  describe("grant TTL is operator-configurable", () => {
+    const approvedAtT0 = {
+      status: "approved" as const,
+      requestedAt: new Date(T0 - 60_000).toISOString(),
+      decidedAt: new Date(T0).toISOString(),
+    };
+
+    afterEach(() => {
+      configureApprovalRequestTtls({ grantTtlMs: undefined });
+    });
+
+    it("honors a configured override in the expiry decision", () => {
+      configureApprovalRequestTtls({ grantTtlMs: 5 * 60 * 1000 });
+      expect(getApprovalRequestGrantTtlMs()).toBe(5 * 60 * 1000);
+      // Still inside the default hour, but past the configured five minutes.
+      expect(isApprovalRequestExpired(approvedAtT0, T0 + 10 * 60 * 1000)).toBe(true);
+      expect(isApprovalRequestExpired(approvedAtT0, T0 + 60_000)).toBe(false);
+    });
+
+    it("resets to the default when the override is cleared", () => {
+      configureApprovalRequestTtls({ grantTtlMs: 5 * 60 * 1000 });
+      configureApprovalRequestTtls({ grantTtlMs: undefined });
+      expect(getApprovalRequestGrantTtlMs()).toBe(60 * 60 * 1000);
+      expect(isApprovalRequestExpired(approvedAtT0, T0 + 10 * 60 * 1000)).toBe(false);
+    });
+
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+      "ignores the invalid override %p and keeps the default",
+      (bad) => {
+        configureApprovalRequestTtls({ grantTtlMs: bad });
+        expect(getApprovalRequestGrantTtlMs()).toBe(60 * 60 * 1000);
+      },
+    );
   });
 });

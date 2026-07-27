@@ -142,8 +142,9 @@ describe("agent provisioning approval tools", () => {
 
 /*
 FNXC:AgentProvisioningGate 2026-07-26-13:35:
-Hardcoded privilege and fail-closed expectations. Trust comes only from role === "ceo" or
-settings.agentProvisioning trusted lists — never from top-level org position — and a
+Hardcoded privilege and fail-closed expectations. Trust comes ONLY from the operator-configured
+settings.agentProvisioning trusted lists — never from top-level org position, and never from a
+hardcoded role name (see FNXC:AgentProvisioning 2026-07-26-18:20) — and a
 require-approval decision with no approval store must DENY, never silently allow.
 Expected outcomes are hardcoded strings, never derived from the policy module.
 */
@@ -168,15 +169,76 @@ describe("agent provisioning privilege and fail-closed gating", () => {
     } as unknown as ApprovalRequestStore;
   });
 
-  it("ceo caller is privileged: allowed under trusted-only with no trusted lists", async () => {
+  /*
+  FNXC:AgentProvisioning 2026-07-26-18:20:
+  Privilege is OPERATOR-CONFIGURED, never a magic role name. "ceo" is an ordinary role string that any
+  agent config can claim, so on its own it must grant nothing; the operator opts a role or id into
+  trust via agentProvisioning.trustedRoles / trustedAgentIds. These three cases pin that contract from
+  both directions so a future hardcode reintroduces a failure rather than silent privilege.
+  */
+  it("a 'ceo' role alone is NOT privileged when no trusted lists are configured", async () => {
     setCaller({ role: "ceo", reportsTo: "board" });
     const tool = createAgentCreateTool(agentStore, "agent-caller", {
       approvalRequestStore,
       settingsProvider: async () => withProvisioning({ approvalMode: "trusted-only" }),
     });
     const result = await tool.execute("s", { name: "N", role: "executor" } as any, undefined as any, undefined as any, undefined as any);
+    expect((result.details as any).outcome).toBe("pending_approval");
+    expect((result.details as any).matchedRule).toBe("approval-mode-trusted-only");
+    expect(agentStore.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("an operator-configured trusted role is allowed without an approval", async () => {
+    setCaller({ role: "ceo", reportsTo: "board" });
+    const tool = createAgentCreateTool(agentStore, "agent-caller", {
+      approvalRequestStore,
+      settingsProvider: async () => withProvisioning({ approvalMode: "trusted-only", trustedRoles: ["ceo"] }),
+    });
+    const result = await tool.execute("s", { name: "N", role: "executor" } as any, undefined as any, undefined as any, undefined as any);
     expect((result.details as any).outcome).toBe("created");
-    expect((result.details as any).matchedRule).toBe("privileged-caller");
+    expect((result.details as any).matchedRule).toBe("trusted-role");
+    expect(approvalRequestStore.create).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:AgentProvisioning 2026-07-26-18:20:
+  These two exercise the ORG-CHART escape hatch — the only thing isCallerPrivileged still governs —
+  by creating an agent that reports to somebody ELSE. The policy-path tests above cannot see this
+  function at all (isPrivileged is deliberately no longer forwarded to the policy), so without these
+  a reintroduced role hardcode would pass the whole suite. Verified by mutation: restoring
+  `caller.role === "ceo"` fails the first case here and nothing else.
+  */
+  it("a 'ceo' role alone cannot create an agent reporting to someone else", async () => {
+    setCaller({ role: "ceo", reportsTo: "board" });
+    const tool = createAgentCreateTool(agentStore, "agent-caller", {
+      approvalRequestStore,
+      settingsProvider: async () => withProvisioning({ approvalMode: "trusted-only" }),
+    });
+    const result = await tool.execute("s", { name: "N", role: "executor", reportsTo: "someone-else" } as any, undefined as any, undefined as any, undefined as any);
+    expect((result.content as any)[0].text).toContain("You can only create agents that report to you");
+    expect(agentStore.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("an operator-configured trusted role can create an agent reporting to someone else", async () => {
+    setCaller({ role: "ceo", reportsTo: "board" });
+    const tool = createAgentCreateTool(agentStore, "agent-caller", {
+      approvalRequestStore,
+      settingsProvider: async () => withProvisioning({ approvalMode: "trusted-only", trustedRoles: ["ceo"] }),
+    });
+    const result = await tool.execute("s", { name: "N", role: "executor", reportsTo: "someone-else" } as any, undefined as any, undefined as any, undefined as any);
+    expect((result.content as any)[0].text).not.toContain("You can only create agents that report to you");
+    expect((result.details as any).outcome).toBe("created");
+  });
+
+  it("an operator-configured trusted agent id is allowed without an approval", async () => {
+    setCaller({ role: "custom", reportsTo: "board" });
+    const tool = createAgentCreateTool(agentStore, "agent-caller", {
+      approvalRequestStore,
+      settingsProvider: async () => withProvisioning({ approvalMode: "trusted-only", trustedAgentIds: ["agent-caller"] }),
+    });
+    const result = await tool.execute("s", { name: "N", role: "executor" } as any, undefined as any, undefined as any, undefined as any);
+    expect((result.details as any).outcome).toBe("created");
+    expect((result.details as any).matchedRule).toBe("trusted-agent-id");
     expect(approvalRequestStore.create).not.toHaveBeenCalled();
   });
 

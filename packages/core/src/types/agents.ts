@@ -461,8 +461,49 @@ expired approved row); redemption-side enforcement also lands in the engine gate
 /** Pending approval requests are decidable for 24 hours after requestedAt. */
 export const APPROVAL_REQUEST_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Approved grants are redeemable for 15 minutes after decidedAt. */
-export const APPROVAL_REQUEST_GRANT_TTL_MS = 15 * 60 * 1000;
+/*
+FNXC:ApprovalLifecycleSecurity 2026-07-26-18:20:
+The grant TTL bounds how long an approved-but-unredeemed grant stays replayable. It is a tradeoff,
+not a constant: too long re-opens the "17 approved / 0 completed, redeemable forever" hazard; too
+short breaks legitimate work, because approval->redemption is NOT instantaneous. The gap covers an
+operator approving from their phone, an engine restart, a queued lane, or a paused task waiting on a
+worktree — 15 minutes lost those routinely and the agent would silently re-request.
+
+Default is 1 hour: comfortably longer than a restart or queue backlog, far shorter than "forever".
+Operators who need a different window override it with FUSION_APPROVAL_GRANT_TTL_MS (milliseconds),
+or programmatically via configureApprovalRequestTtls() at runtime boot.
+*/
+const DEFAULT_APPROVAL_REQUEST_GRANT_TTL_MS = 60 * 60 * 1000;
+
+/** @deprecated Read {@link getApprovalRequestGrantTtlMs} instead — the value is configurable. */
+export const APPROVAL_REQUEST_GRANT_TTL_MS = DEFAULT_APPROVAL_REQUEST_GRANT_TTL_MS;
+
+function parsePositiveIntEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+let configuredGrantTtlMs: number | undefined;
+
+/**
+ * Override the approval-grant TTL at runtime (milliseconds). Pass `undefined` to reset to the
+ * env/default resolution. Non-positive or non-finite values are ignored rather than throwing —
+ * a bad override must never widen the window to Infinity or collapse it to zero.
+ */
+export function configureApprovalRequestTtls(options: { grantTtlMs?: number | undefined }): void {
+  const next = options.grantTtlMs;
+  configuredGrantTtlMs = typeof next === "number" && Number.isFinite(next) && next > 0 ? Math.floor(next) : undefined;
+}
+
+/** Resolved grant TTL: explicit runtime override, else FUSION_APPROVAL_GRANT_TTL_MS, else 1 hour. */
+export function getApprovalRequestGrantTtlMs(): number {
+  return (
+    configuredGrantTtlMs
+    ?? parsePositiveIntEnv(typeof process !== "undefined" ? process.env?.FUSION_APPROVAL_GRANT_TTL_MS : undefined)
+    ?? DEFAULT_APPROVAL_REQUEST_GRANT_TTL_MS
+  );
+}
 
 /**
  * True when an approval request is past its lazy TTL.
@@ -492,7 +533,8 @@ export function isApprovalRequestExpired(
     if (Number.isNaN(decidedAtMs)) {
       return true;
     }
-    return nowMs > decidedAtMs + APPROVAL_REQUEST_GRANT_TTL_MS;
+    // FNXC:ApprovalLifecycleSecurity 2026-07-26-18:20: read the resolved (configurable) TTL, not the frozen constant.
+    return nowMs > decidedAtMs + getApprovalRequestGrantTtlMs();
   }
   return false;
 }
