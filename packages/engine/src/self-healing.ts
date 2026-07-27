@@ -96,7 +96,6 @@ import {
   type NtfyNotifier,
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
-import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
 import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
@@ -895,7 +894,6 @@ export class SelfHealingManager {
   private preservedQueuedOverlapLogged = new Map<string, string>();
   private maintenanceTickCounter = 0;
   private readonly processBootStartedAt = Date.now();
-  private dependencyBlockedTodoReporter: DependencyBlockedTodoReporter | null = null;
   private lastDbCorruptionNotifiedAt: number | null = null;
 
   private boardStallWindow: {
@@ -8025,39 +8023,6 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`In-review stall surfacing failed: ${errorMessage}`);
-      return 0;
-    }
-  }
-
-  private getDependencyBlockedTodoReporter(): DependencyBlockedTodoReporter | null {
-    if (this.dependencyBlockedTodoReporter) {
-      return this.dependencyBlockedTodoReporter;
-    }
-    const projectId = this.options.getProjectId?.();
-    if (!projectId) {
-      return null;
-    }
-    this.dependencyBlockedTodoReporter = new DependencyBlockedTodoReporter({
-      store: this.store,
-      projectId,
-      now: () => Date.now(),
-    });
-    return this.dependencyBlockedTodoReporter;
-  }
-
-  async surfaceDependencyBlockedTodos(): Promise<number> {
-    try {
-      const settings = await this.store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return 0;
-      if (settings.dependencyBlockedTodoReportEnabled === false) return 0;
-
-      const reporter = this.getDependencyBlockedTodoReporter();
-      if (!reporter) return 0;
-      const result = await reporter.report();
-      return result.groupCount ?? 0;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`Dependency-blocked todo surfacing failed: ${errorMessage}`);
       return 0;
     }
   }

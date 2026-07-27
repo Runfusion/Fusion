@@ -46,16 +46,6 @@ export interface ComputeBlockerFanoutOptions {
    *  built-in coding workflow gives it. Defaults to `"todo"`. */
   holdColumn?: string;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-28-03:05 (PR #2470 review, P1):
-  PLURAL form, for callers computing over a board that spans MORE THAN ONE
-  workflow. `holdColumn` assumes a single vocabulary, which is wrong for the
-  board-wide backlog-health reporter: a project running two workflows has two
-  hold columns, and collapsing them to one silently drops every card held by the
-  other. Takes precedence over `holdColumn` when supplied; when neither is given
-  the legacy `"todo"` applies, so existing callers are byte-identical.
-  */
-  holdColumns?: ReadonlySet<string>;
-  /*
   FNXC:WorkflowLifecycleColumns 2026-07-28-17:50 (PR #2479 review, P1):
   PER-TASK classification, and the only correct option on a multi-workflow board.
 
@@ -68,7 +58,7 @@ export interface ComputeBlockerFanoutOptions {
 
   Supplying `classify` resolves each task against its own workflow, which makes
   that misclassification impossible by construction. It takes precedence over
-  `terminalColumns`/`holdColumn(s)`; those remain for single-vocabulary callers
+  `terminalColumns`/`holdColumn`; those remain for single-vocabulary callers
   (task-priority's unblock weighting) and as the legacy default.
   */
   classify?: (task: Task) => { isHold: boolean; isTerminal: boolean };
@@ -118,10 +108,7 @@ export function computeBlockerFanoutMap(
     options.staleHighFanoutAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS;
 
   const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
-  /* Plural wins; else the singular; else the legacy id. One resolved set so the
-     two spellings cannot disagree downstream. */
-  const holdColumns: ReadonlySet<string> =
-    options.holdColumns ?? new Set([options.holdColumn ?? "todo"]);
+  const holdColumn = options.holdColumn ?? "todo";
 
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const fanout = new Map<string, MutableEntry>();
@@ -146,12 +133,12 @@ export function computeBlockerFanoutMap(
   for (const task of tasks) {
     /*
     Per-task classification wins when supplied (PR #2479 P1); otherwise fall back
-    to the board-wide sets. Active is by EXCLUSION — not terminal — never by
-    enumeration.
+    to the board-wide set / single hold column. Active is by EXCLUSION — not
+    terminal — never by enumeration.
     */
     const roles = options.classify?.(task);
     const active = roles ? !roles.isTerminal : !terminalColumns.has(task.column);
-    const isTodo = roles ? roles.isHold : holdColumns.has(task.column);
+    const isTodo = roles ? roles.isHold : task.column === holdColumn;
 
     for (const depId of task.dependencies ?? []) {
       if (!depId) continue;
