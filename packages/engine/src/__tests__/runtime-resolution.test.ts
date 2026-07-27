@@ -22,6 +22,7 @@ import type { PluginRuntimeRegistration } from "@fusion/core";
 // Mock the logger to suppress output during tests
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn(() => ({
+    debug: vi.fn(),
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
