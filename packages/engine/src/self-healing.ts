@@ -6975,6 +6975,15 @@ export class SelfHealingManager {
           try {
             await this.store.moveTask(task.id, target as Task["column"], {
               moveSource: "engine",
+              /*
+              FNXC:WorkflowColumns 2026-07-27-06:10 (PR #2462 review):
+              `recoveryRehome`, not just `bypassGuards`. Adjacency is checked SEPARATELY from the
+              guards (moves.ts: only `recoveryRehome` skips `resolveAllowedColumns`), and this card's
+              SOURCE column is undeclared too — so `resolveAllowedColumns(ir, fromColumn)` returns []
+              and every target is rejected. Without this flag the sweep threw on every candidate and
+              left the card exactly where it was stranded: a repair that never repaired anything.
+              */
+              recoveryRehome: true,
               bypassGuards: true,
               preserveProgress: true,
             });

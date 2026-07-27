@@ -39,18 +39,18 @@ Be specific: cite the plan section or file path for every finding and explain th
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
 /*
-FNXC:PlanReviewStep 2026-07-26-14:05:
-Plan Review is a PLANNING-lane gate, so it belongs in the planning column (the `triage` column,
-displayed as "Planning") next to `plan` and `plan-replan` — not in the implementation column. Two
-reasons: (1) the column IS the badge switch — the dashboard only renders the Plan Review card badge
-when `task.column` is in the planning lane (triage / todo) in `taskProgress.getRunningOptionalGateBadge`,
-so an in-progress placement silently suppressed the badge; (2) a card whose plan is still under review
-has not started implementation and should not hold a `wip` slot. This mirrors the FN review-gate rule
-that put Code Review / Browser Verification in `in-review`.
+FNXC:PlanReviewStep 2026-07-27-06:10:
+Plan Review is a PLANNING-lane gate and runs in the column the card actually rests in after
+specification: `todo`. Not `triage` — that is the intake lane, and an intake column has no releaser
+(the capacity sweep only releases from a `hold` column), so a card parked there waits for a human.
+Two reasons the column is load-bearing rather than cosmetic: the plan-in-place chain only seeds a
+plan-review continuation when the node's column EQUALS the card's column
+(`seedPreReleasePlanReviewContinuation`), and a card whose plan is still under review must not hold
+a wip slot.
 
 `column` is optional: linear built-ins (`builtin-workflows.ts`) resolve node columns by inheritance,
-where planning happens in the hold column (`todo`, also a planning-lane column), so those call sites
-omit it and let `assignLinearNodeColumns` keep the card wherever planning already is.
+so those call sites omit it and `assignLinearNodeColumns` places the group in whatever planning
+column the preceding node established — `todo` in practice, the same lane by a different route.
 */
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(

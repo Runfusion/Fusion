@@ -246,7 +246,13 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
   const hasCodeReview = workflowNodes.some((node) => node.id === "code-review");
   const remediationNodes = hasPlanReview || hasBrowserVerification || hasCodeReview
     ? [
-        ...(hasPlanReview ? [planReplanNode("triage")] : []),
+        /*
+         * FNXC:PlanReviewStep 2026-07-27-06:10 (PR #2462 review):
+         * Replan lands in the PLANNING column ("todo" for linear built-ins, where `plan` and the
+         * column-inherited `plan-review` both sit), not in intake. Routing a Plan Review failure to
+         * `triage` moved the card backward out of the planning lane for a loop that never leaves it.
+         */
+        ...(hasPlanReview ? [planReplanNode("todo")] : []),
         ...(hasBrowserVerification ? [browserVerificationRemediationNode("in-progress")] : []),
         ...(hasCodeReview ? [codeReviewRemediationNode("in-progress")] : []),
       ]

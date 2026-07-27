@@ -204,8 +204,8 @@ export function getRunningWorkflowStepLabel(
 FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
 Lane-owned optional gates are header badges, not progress bullet-list rows. Code Review and Browser Verification (and post-merge verification) badge on in-review. Each badge reuses the same startedAt-without-completedAt "running" semantics as the progress list.
 
-FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
-Plan Review's planning-lane restriction is GONE (see getRunningOptionalGateBadge) — it badges wherever it runs, because its node sits in the implementation column in the default Coding workflow.
+FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
+Plan Review's planning-lane restriction is GONE (see getRunningOptionalGateBadge) — it badges wherever it runs. The badge is keyed on the RUNNING gate rather than the card's column, so it stays correct across every workflow regardless of where that workflow places the node.
 */
 const REVIEW_LANE_COLUMNS = new Set(["in-review"]);
 
@@ -236,13 +236,13 @@ export function getRunningOptionalGateBadge(
 
   if (workflowStepId === "plan-review" || workflowStepId === "plan-replan") {
     /*
-    FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
-    Plan Review badges wherever it RUNS. The lane gate (triage / todo) silently suppressed the badge
-    on the default Coding workflow, whose plan-review node sits in the implementation column — so the
-    one gate operators most want to see running was invisible on every card that actually ran it, and
-    only the plan-in-place presets ever showed it. The gate's own running state is the signal; the
-    card's column is not a second opinion on it. Code Review / Browser Verification keep their
-    in-review lane gate below: those DO move the card into the review column when they run.
+    FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
+    Plan Review badges wherever it RUNS. A workflow places this node where its own lane shape calls
+    for it — the built-in coding workflows run it in the planning column, a custom workflow may not —
+    and a lane gate here silently suppressed the badge for every placement it did not anticipate. The
+    gate's own running state is the signal; the card's column is not a second opinion on it. Code
+    Review / Browser Verification keep their in-review lane gate below, because those genuinely DO
+    move the card into the review column when they run.
     */
     return {
       workflowStepId,

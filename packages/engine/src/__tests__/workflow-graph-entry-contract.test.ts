@@ -6,7 +6,9 @@ import {
   parseWorkflowIr,
   type WorkflowIr,
 } from "@fusion/core";
-import { resolveColumnResumeNode } from "../workflow-graph-executor.js";
+import { resolveColumnResumeNode, WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
+import type { TaskDetail, TaskStep } from "@fusion/core";
 
 /*
 FNXC:WorkflowGraphEntry 2026-07-26-17:10:
@@ -91,5 +93,80 @@ describe("workflow graph entry contract — resume at the card's own column", ()
     expect(resolveColumnResumeNode(codingIr, undefined)).toBeUndefined();
     expect(resolveColumnResumeNode({ version: "v1", name: "legacy", nodes: [], edges: [] } as never, "todo"))
       .toBeUndefined();
+  });
+});
+
+/*
+FNXC:WorkflowGraphEntry 2026-07-27-06:10 (PR #2462 review):
+The resolver tests above prove the DECISION; this one proves the executor actually asks. A run that
+reached `run()` and ignored the resolver — or that reintroduced the backward `columnBoundary` move —
+would satisfy every assertion above and still strand the card, which is exactly the regression the
+entry contract exists to prevent. Assert on the real traversal, not on the helper.
+*/
+describe("workflow graph entry contract — the executor honors it", () => {
+  const promptWithOneStep = "# Task\n\n## Steps\n\n### Step 0: Implement\n- [ ] do it\n";
+
+  function silentPrimitives(calls: string[]): WorkflowRuntimePrimitives {
+    const ok = { outcome: "success" as const };
+    return {
+      prepareWorktree: async () => ({ outcome: "success", data: { worktreePath: "/memory/worktree" } }),
+      readArtifact: async (_c, _t, key) => (key === "PROMPT.md" ? promptWithOneStep : undefined),
+      writeArtifact: async (_c, _t, key) => ({ outcome: "success", data: { key } }),
+      runPlanningSession: async () => {
+        calls.push("planning-session");
+        return { outcome: "success", data: { approved: true, artifactKeys: ["PROMPT.md"] } };
+      },
+      runCodingSession: async () => ({ outcome: "success", data: { taskDone: true, modifiedFiles: [] } }),
+      runTaskStep: async () => ({ outcome: "success", baselineSha: "b", checkpointId: "c" }),
+      resetTaskStep: async () => ({ ok: true }),
+      runReview: async () => ({ outcome: "success", data: { verdict: "APPROVE" } }),
+      runVerification: async () => ({ outcome: "success", data: { verdict: "skipped" } }),
+      updateSteps: async (_c, target: TaskDetail, steps: TaskStep[]) => {
+        target.steps = steps;
+        return { outcome: "success", data: { count: steps.length } };
+      },
+      transitionTask: async () => ok,
+      requestMerge: async () => ({ outcome: "success", value: "merged", data: { status: "merged" } }),
+      abortRun: async () => ok,
+      audit: () => undefined,
+    } as unknown as WorkflowRuntimePrimitives;
+  }
+
+  it("resumes an in-progress card at `parse` and never re-enters a planning node", async () => {
+    const calls: string[] = [];
+    const task = {
+      id: "FN-ENTRY",
+      title: "Entry contract",
+      description: "",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: promptWithOneStep,
+      workflowStepResults: [],
+      createdAt: "2026-07-27T00:00:00.000Z",
+      updatedAt: "2026-07-27T00:00:00.000Z",
+    } as unknown as TaskDetail;
+
+    const executor = new WorkflowGraphExecutor({
+      primitives: silentPrimitives(calls),
+      parseStepsDeps: {
+        readArtifact: async (_target, key) => (key === "PROMPT.md" ? promptWithOneStep : undefined),
+        writeSteps: async (target: TaskDetail, steps: TaskStep[]) => {
+          target.steps = steps;
+        },
+      },
+    } as never);
+
+    // No continuation node id — the "replay from start" path the contract governs.
+    const result = await executor.run(task, { experimentalFeatures: {} } as never, codingIr);
+
+    expect(result.visitedNodeIds[0]).toBe("parse");
+    for (const planningNode of ["start", "plan", "plan-review", "plan-replan"]) {
+      expect(result.visitedNodeIds, `must not re-enter ${planningNode}`).not.toContain(planningNode);
+    }
+    // The planning primitive is the loudest possible proof: a re-planned card would call it.
+    expect(calls).not.toContain("planning-session");
   });
 });

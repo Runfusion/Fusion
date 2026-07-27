@@ -59,11 +59,11 @@ describe("getRunningOptionalGateBadge", () => {
   };
 
   /*
-  FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
-  Plan Review badges in EVERY column it can run in — the enumeration matters because the default
-  Coding workflow runs its plan-review node in `in-progress` (the executor drives the graph there),
-  while the plan-in-place presets run it in `todo`/`triage`. The old triage/todo lane gate meant the
-  default workflow never showed the badge at all.
+  FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
+  Plan Review badges in EVERY column it can run in. The enumeration is the point: placement is the
+  WORKFLOW's call — the built-in coding workflows run this node in the planning column, a custom or
+  future workflow may place it elsewhere — so the badge must key on the running gate, not on a lane
+  allowlist that silently hides every placement it did not anticipate.
   */
   it("badges Plan Review in every column the gate can run in", () => {
     for (const column of ["triage", "todo", "in-progress"] as const) {
