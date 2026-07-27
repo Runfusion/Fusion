@@ -20,6 +20,10 @@ import {getAgentLogFilePath} from "../agent-log-file-store.js";
 import {getInReviewStalledSignal} from "../in-review-stalled.js";
 import {getStalePausedReviewSignal} from "../stale-paused-review.js";
 import {getStalePausedTodoSignal} from "../stale-paused-todo.js";
+import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import type {WorkflowIr} from "../workflow-ir-types.js";
+
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../task-age-staleness.js";
 import {detectStalledReview} from "../stalled-review-detector.js";
 import {computeRetrySummary} from "../retry-summary.js";
@@ -105,6 +109,30 @@ import {
   listArchivedTasksByCreatedOrder,
   searchArchivedTasks,
 } from "../async-archive-db.js";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-04:00 (PR #2470 review, P1):
+Resolve a task's HOLD column for the stalePausedTodo badge. B1 gave
+`getStalePausedTodoSignal` a `holdColumn` parameter, but both hydration sites
+here omitted it — so the guard still compared against the literal "todo" and the
+dashboard badge was silent for a paused card in a renamed hold column.
+
+Fail-soft to "todo": this is read-path badge hydration, so a workflow lookup
+failure must degrade to today's behavior, never break a board list. The cache is
+caller-owned so a list hydration reads one IR per workflow rather than per card.
+*/
+async function resolveHoldColumnForTask(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<string> {
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
+    return lifecycle?.hold ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
 
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {
@@ -331,6 +359,9 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
         thresholdMs: settings.stalePausedTodoThresholdMs,
+        // Single task: resolve directly (no cache to share). Paused-only, since
+        // the signal is a no-op otherwise and this is a detail-read hot path.
+        holdColumn: task.paused === true ? await resolveHoldColumnForTask(store, task.id) : undefined,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
@@ -450,7 +481,30 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
       .limit(resolvedLimit + 1);
     const hasMore = pgRows.length > resolvedLimit;
     const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
-    const tasks = pgRows.slice(0, resolvedLimit).map((pgRow) => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-28-04:00 (PR #2470 review, P1):
+    Pre-resolve hold columns for the PAUSED rows only, before the synchronous
+    hydration map below.
+
+    Two constraints shape this. The map is sync, so an await cannot go inside it
+    without converting a hot board-list path to Promise.all — a restructure this
+    fix does not need. And `getStalePausedTodoSignal` is a no-op for a card that
+    is not paused, so resolving for every row would buy nothing at real cost:
+    paused cards are a small minority of a board, and the shared `irCache` means
+    those few resolve one IR per workflow. A board with no paused cards does zero
+    extra work.
+    */
+    const pageRows = pgRows.slice(0, resolvedLimit);
+    const holdColumnByTaskId = new Map<string, string>();
+    {
+      const irCache = new Map<string, WorkflowIr>();
+      for (const pgRow of pageRows) {
+        const row = store.pgRowToTaskRow(pgRow);
+        if (store.rowToTask(row).paused !== true) continue;
+        holdColumnByTaskId.set(row.id, await resolveHoldColumnForTask(store, row.id, irCache));
+      }
+    }
+    const tasks = pageRows.map((pgRow) => {
       const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
       const isMergeQueued = mergeQueuedTaskIds.has(task.id);
       /*
@@ -488,6 +542,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
         thresholdMs: settings.stalePausedTodoThresholdMs,
+        holdColumn: holdColumnByTaskId.get(task.id),
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
