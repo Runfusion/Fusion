@@ -173,5 +173,6 @@ describe("U5a — IR-driven merge boundary (scenario 1)", () => {
       },
       undefined,
     );
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 });
