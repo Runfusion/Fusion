@@ -28,11 +28,30 @@ export interface ComputeBlockerFanoutOptions {
   nowMs?: number;
   highFanoutTodoThreshold?: number;
   staleHighFanoutAgeThresholdMs?: number;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-21:50 (Phase B / U6):
+  The workflow's TERMINAL columns (complete + archived). "Active" is defined by
+  exclusion — not complete, not archived — which is what the concept always
+  meant; the old `ACTIVE_COLUMNS` enumeration was a default-workflow-shaped
+  stand-in that silently scored 0 active dependents for every column a custom
+  workflow adds. Under-counting, not erroring: a blocker with real blocked
+  dependents looked unblocking, and no test failed.
+  Defaults to the legacy `{done, archived}` so existing callers are unchanged.
+  Callers resolving the IR pass `[complete, archived]` from
+  `resolveLifecycleColumns`.
+  */
+  terminalColumns?: ReadonlySet<string>;
+  /** The workflow's HOLD (capacity-wait) column. The fan-out metric counts cards
+   *  waiting for capacity, which is the hold role — `todo` is only the id the
+   *  built-in coding workflow gives it. Defaults to `"todo"`. */
+  holdColumn?: string;
 }
 
 export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress", "in-review"]);
 
-const ACTIVE_COLUMNS = new Set<Task["column"]>(["triage", "todo", "in-progress", "in-review"]);
+/** Legacy default: the built-in coding workflow's terminal columns. Retained as
+ *  the fallback so an un-resolved caller keeps byte-identical behavior (R11). */
+const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 interface MutableEntry {
   dependentIds: string[];
@@ -71,6 +90,9 @@ export function computeBlockerFanoutMap(
   const staleHighFanoutAgeThresholdMs =
     options.staleHighFanoutAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS;
 
+  const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
+  const holdColumn = options.holdColumn ?? "todo";
+
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const fanout = new Map<string, MutableEntry>();
 
@@ -92,8 +114,9 @@ export function computeBlockerFanoutMap(
   };
 
   for (const task of tasks) {
-    const active = ACTIVE_COLUMNS.has(task.column);
-    const isTodo = task.column === "todo";
+    // Active by EXCLUSION (see terminalColumns above), not by enumeration.
+    const active = !terminalColumns.has(task.column);
+    const isTodo = task.column === holdColumn;
 
     for (const depId of task.dependencies ?? []) {
       if (!depId) continue;
