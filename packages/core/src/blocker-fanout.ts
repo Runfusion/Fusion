@@ -55,6 +55,23 @@ export interface ComputeBlockerFanoutOptions {
   the legacy `"todo"` applies, so existing callers are byte-identical.
   */
   holdColumns?: ReadonlySet<string>;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-28-17:50 (PR #2479 review, P1):
+  PER-TASK classification, and the only correct option on a multi-workflow board.
+
+  The set-shaped options above are board-wide, which silently assumes a column id
+  means the same thing everywhere. It does not: an id is meaningful only RELATIVE
+  TO ITS OWN WORKFLOW. When two workflows reuse an id for different roles — one
+  calling `done` its hold column, another calling `done` terminal — any union of
+  those sets marks that column BOTH held and terminal, and every card in it is
+  misclassified regardless of which workflow it belongs to.
+
+  Supplying `classify` resolves each task against its own workflow, which makes
+  that misclassification impossible by construction. It takes precedence over
+  `terminalColumns`/`holdColumn(s)`; those remain for single-vocabulary callers
+  (task-priority's unblock weighting) and as the legacy default.
+  */
+  classify?: (task: Task) => { isHold: boolean; isTerminal: boolean };
 }
 
 export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress", "in-review"]);
@@ -127,9 +144,14 @@ export function computeBlockerFanoutMap(
   };
 
   for (const task of tasks) {
-    // Active by EXCLUSION (see terminalColumns above), not by enumeration.
-    const active = !terminalColumns.has(task.column);
-    const isTodo = holdColumns.has(task.column);
+    /*
+    Per-task classification wins when supplied (PR #2479 P1); otherwise fall back
+    to the board-wide sets. Active is by EXCLUSION — not terminal — never by
+    enumeration.
+    */
+    const roles = options.classify?.(task);
+    const active = roles ? !roles.isTerminal : !terminalColumns.has(task.column);
+    const isTodo = roles ? roles.isHold : holdColumns.has(task.column);
 
     for (const depId of task.dependencies ?? []) {
       if (!depId) continue;

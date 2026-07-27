@@ -308,6 +308,15 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
     const settings = await store.getSettingsFast();
     const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
     /*
+    FNXC:WorkflowLifecycleColumns 2026-07-28-18:05 (PR #2479 review, P2):
+    ONE IR cache for the whole list pass. Without it, every paused row resolved
+    its workflow independently, repeating workflow-definition and prompt-override
+    reads for a board with many paused cards on the same workflow. Caller-owned by
+    design (U1's `resolveTaskLifecycleColumns` takes the cache for exactly this),
+    so reads scale with the number of WORKFLOWS, not the number of cards.
+    */
+    const listPassIrCache = new Map<string, WorkflowIr>();
+    /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
      * Compute staleness thresholds once for the whole list pass, mirroring
      * the SQLite path. The ageStaleness/stalePausedReview/stalePausedTodo
@@ -359,9 +368,10 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
         thresholdMs: settings.stalePausedTodoThresholdMs,
-        // Single task: resolve directly (no cache to share). Paused-only, since
-        // the signal is a no-op otherwise and this is a detail-read hot path.
-        holdColumn: task.paused === true ? await resolveHoldColumnForTask(store, task.id) : undefined,
+        // Paused-only (the signal is a no-op otherwise), sharing the list-pass
+        // IR cache so one workflow is read once per pass, not once per card.
+        holdColumn:
+          task.paused === true ? await resolveHoldColumnForTask(store, task.id, listPassIrCache) : undefined,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });

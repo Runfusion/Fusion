@@ -56,6 +56,16 @@ export interface DependencyBlockedTodoReportContext {
   passes the union across the workflows actually present on the board.
   */
   holdColumns?: readonly string[];
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-28-17:50 (PR #2479 review, P1):
+  PER-TASK classification against each task's OWN workflow — the only correct
+  option for this report, which is board-wide and therefore multi-workflow.
+  Board-wide sets assume a column id means the same thing in every workflow; when
+  two workflows reuse an id for different roles, a union marks that column both
+  held and terminal and misclassifies every card in it. Takes precedence over the
+  set-shaped options, which remain as the single-vocabulary/legacy fallback.
+  */
+  classifyTask?: (task: Task) => { isHold: boolean; isTerminal: boolean };
 }
 
 /* Legacy role ids — the builtin coding workflow's names, used when a caller
@@ -112,12 +122,20 @@ export function computeDependencyBlockedTodoReport(
   );
   const terminalColumnSet = new Set(terminalColumns);
 
+  const classify = context.classifyTask;
   const blockerFanout = computeBlockerFanoutMap(tasks, maxAutoMergeRetries, {
     nowMs: now,
     terminalColumns: terminalColumnSet,
     holdColumns,
+    classify,
   });
-  const todoTaskIds = new Set(tasks.filter((task) => holdColumns.has(task.column)).map((task) => task.id));
+  /* Held-ness is per task when a classifier is supplied; the set is the legacy
+     single-vocabulary fallback. */
+  const isHold = (task: Task): boolean =>
+    classify ? classify(task).isHold : holdColumns.has(task.column);
+  const isTerminal = (task: Task): boolean =>
+    classify ? classify(task).isTerminal : terminalColumnSet.has(task.column);
+  const todoTaskIds = new Set(tasks.filter(isHold).map((task) => task.id));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
 
   const groups: DependencyBlockedTodoGroup[] = [];
@@ -128,8 +146,8 @@ export function computeDependencyBlockedTodoReport(
     }
 
     const blocker = taskById.get(blockerId);
-    // Terminal by the workflow's OWN roles, not the legacy done/archived pair.
-    if (!blocker || terminalColumnSet.has(blocker.column)) {
+    // Terminal by the blocker's OWN workflow, never by a board-wide union.
+    if (!blocker || isTerminal(blocker)) {
       continue;
     }
 
