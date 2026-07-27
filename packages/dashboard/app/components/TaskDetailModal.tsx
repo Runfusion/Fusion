@@ -3,10 +3,10 @@ import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, Paperclip, Eye, EyeOff } from "lucide-react";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
-import { isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
+import { useViewportMode } from "../hooks/useViewportMode";
+import { FloatingWindow } from "./FloatingWindow";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -4074,7 +4074,7 @@ export function TaskDetailContent({
     >
       <div className="modal-header">
           <div className="detail-title-row">
-            <span className="detail-id">{task.id}</span>
+            <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
             <span className={`detail-column-badge badge-${task.column}`}>
               {columnLabel(task.column)}
             </span>
@@ -6577,6 +6577,7 @@ export function TaskDetailContent({
               projectId={projectId}
               onClose={() => setSelectedSourceAgentId(null)}
               addToast={addToast}
+              floatingWindowKey="agent-detail-task"
             />
           </Suspense>
         )}
@@ -6585,12 +6586,9 @@ export function TaskDetailContent({
 }
 
 export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const viewportMode = useViewportMode();
-  const isTabletTouchResize = isTabletTouchViewport(viewportMode);
-  useModalResizePersist(modalRef, true, "task-detail-modal-size", { touchTargets: isTabletTouchResize });
   useMobileScrollLock(true);
-  const overlayDismissProps = useOverlayDismiss(onClose);
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
   FNXC:TaskDetailSwipeBack 2026-08-07-00:00:
   Gate predictive-back animation through useViewportMode, the same physical-screen-aware
@@ -6599,30 +6597,30 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
   */
   const isMobileTransition = viewportMode === "mobile";
 
-  /*
-  FNXC:TaskModalResize 2026-08-07-00:00:
-  Known touch tablets at the 768px CSS boundary resolve to `tablet` through
-  useViewportMode. Carry that single classification into the modal class so CSS
-  can override phone-sheet rules without a second breakpoint or gesture system.
-  */
-  const isTabletTaskModal = viewportMode === "tablet";
-
   return (
-    <div
-      className="modal-overlay open"
-      {...overlayDismissProps}
-      role="dialog"
-      aria-modal="true"
+    <FloatingWindow
+      windowKey="task-detail"
+      title="Task detail"
+      ariaLabelledBy="task-detail-modal-title"
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".task-detail-content > .modal-header"
+      className="floating-window--task-detail"
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Task Detail shares its layer with Quick Chat and pop-outs so interaction order remains coordinated by floatingWindowStack. */
+      layer="task-detail"
+      defaultSize={{ width: 800, height: 680 }}
+      minSize={{ width: 480, height: 480 }}
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
+      persistGeometryKey="floating-window:task-detail"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
-      <div
-        className={`modal modal-lg task-detail-modal${isTabletTaskModal ? " task-modal--tablet" : ""}${isTabletTouchResize ? " task-modal--touch-resize" : ""}${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}
-        ref={modalRef}
-      >
-        <TaskDetailContent
-          {...props}
-          onRequestClose={onClose}
-        />
+      <div className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}>
+        <TaskDetailContent {...props} onRequestClose={onClose} />
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

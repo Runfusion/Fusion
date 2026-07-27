@@ -1,14 +1,22 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, FloatingWindow } from "../FloatingWindow";
 import { readAppFile } from "../../test/cssFixture";
+import { dragWithTouch, expectFloatingWindowStructure, resizeWithTouch } from "./floatingWindowMigration.test-helpers";
 
 const floatingWindowCss = readAppFile("components/FloatingWindow.css");
 const chatViewCss = readAppFile("components/ChatView.css");
 const allAppCss = loadAllAppCss();
 const stylesCss = loadStylesCss();
+
+const FN_8606_WINDOW_IDENTITIES = [
+  ["ActivityLogModal.tsx", "activity-log"], ["ScriptsModal.tsx", "scripts"], ["ScheduledTasksModal.tsx", "automation"],
+  ["SettingsModal.tsx", "settings"], ["GitManagerModal.tsx", "git-manager"], ["PlanningModeModal.tsx", "planning-mode"],
+  ["ChangesDiffModal.tsx", "changes-diff"], ["ModelOnboardingModal.tsx", "model-onboarding"], ["AddNodeModal.tsx", "add-node"],
+  ["ConnectNodeModal.tsx", "connect-node"], ["NodeDetailModal.tsx", "node-detail"], ["WorkflowAddStepModal.tsx", "workflow-add-step"],
+  ["GroupTaskModal.tsx", "group-task"],
+] as const;
 
 const QUICK_CHAT_PORTALED_MENU_CLASSES = [
   "model-combobox-dropdown--portal",
@@ -17,6 +25,7 @@ const QUICK_CHAT_PORTALED_MENU_CLASSES = [
   "node-picker-dropdown--portal",
   "agent-picker-dropdown--portal",
   "priority-picker-dropdown--portal",
+  "activity-view-menu",
 ] as const;
 
 function cssRuleFor(css: string, selector: string): string {
@@ -137,10 +146,7 @@ describe("FloatingWindow", () => {
       </FloatingWindow>
     );
     expect(screen.getByTestId("floating-window-drag-handle-beta")).toBeTruthy();
-    // 8 edge/corner resize handles.
-    for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
-      expect(screen.getByTestId(`floating-window-resize-${dir}`)).toBeTruthy();
-    }
+    expectFloatingWindowStructure("beta");
   });
 
   it("keeps every shared floating-window scrollbar inboard of the right resize hot zones", () => {
@@ -285,14 +291,25 @@ describe("FloatingWindow", () => {
     expect(allAppCss).toContain("* {");
     expect(allAppCss).toContain("#root {");
 
-    const movableFloatingWindowSelector = ".floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail):not(.floating-window--task-detail):not(.floating-window--workflow-editor):not(.floating-window--automation):not(.floating-window--mission-interview):not(.floating-window--file-browser):not(.floating-window--pr-create):not(.artifacts-gallery-window) .floating-window__header";
+    const movableFloatingWindowSelector = ".floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail):not(.floating-window--task-detail):not(.floating-window--workflow-editor):not(.floating-window--automation):not(.floating-window--mission-interview):not(.floating-window--file-browser):not(.floating-window--pr-create):not(.floating-window--activity-log):not(.floating-window--scripts):not(.floating-window--add-node):not(.floating-window--connect-node):not(.floating-window--node-detail):not(.floating-window--workflow-add-step):not(.floating-window--group-task):not(.floating-window--changes-diff):not(.floating-window--model-onboarding):not(.floating-window--git-manager):not(.floating-window--settings):not(.floating-window--planning-mode):not(.artifacts-gallery-window) .floating-window__header";
     expect(cssRuleFor(floatingWindowCss, movableFloatingWindowSelector)).toContain("touch-action: none;");
 
     for (const selector of [
       ".right-dock-expand-modal__header--draggable",
-      ".terminal-header--draggable",
     ]) {
       expect(cssRuleFor(allAppCss, selector)).toContain("touch-action: none;");
+    }
+  });
+
+  it("maps every FN-8606 modal to the required shared window identity and sheet suspension", () => {
+    for (const [file, windowKey] of FN_8606_WINDOW_IDENTITIES) {
+      const source = readAppFile(`components/${file}`);
+      expect(source, file).toContain(`<FloatingWindow`);
+      expect(source, file).toContain(`windowKey=\"${windowKey}\"`);
+      expect(source, file).toContain(`className=\"floating-window--${windowKey}\"`);
+      expect(source, file).toContain(`persistGeometryKey=\"floating-window:${windowKey}\"`);
+      expect(source, file).toContain("suspendGeometryPersistenceOnMobile");
+      expect(source, file).toContain("suspendGeometryPersistenceOnShortViewport");
     }
   });
 
@@ -335,7 +352,6 @@ describe("FloatingWindow", () => {
       ".floating-window--pr-create .pr-create-modal__drag-handle",
       ".file-browser-modal-header",
       ".artifacts-gallery-viewer-header",
-      ".terminal-header--draggable",
       ".right-dock-expand-modal__header--draggable",
       ".new-task-modal__header--draggable",
       ".quick-chat-fab",
@@ -728,6 +744,31 @@ describe("FloatingWindow", () => {
     expect(Number.parseFloat(panel.style.left)).toBeLessThan(window.innerWidth);
   });
 
+  it("reloads persisted geometry when a mounted host changes its project-scoped identity", () => {
+    const firstKey = "floating-window:project-one";
+    const secondKey = "floating-window:project-two";
+    const firstGeometry = { size: { width: 610, height: 430 }, position: { x: 80, y: 90 } };
+    const secondGeometry = { size: { width: 700, height: 500 }, position: { x: 120, y: 110 } };
+    localStorage.setItem(firstKey, JSON.stringify(firstGeometry));
+    localStorage.setItem(secondKey, JSON.stringify(secondGeometry));
+
+    const { rerender } = render(
+      <FloatingWindow windowKey="terminal-project-one" title="Terminal" onClose={() => {}} persistGeometryKey={firstKey}>
+        <div>terminal body</div>
+      </FloatingWindow>,
+    );
+    expect(screen.getByTestId("floating-window-terminal-project-one")).toHaveStyle({ width: "610px", height: "430px" });
+
+    rerender(
+      <FloatingWindow windowKey="terminal-project-two" title="Terminal" onClose={() => {}} persistGeometryKey={secondKey}>
+        <div>terminal body</div>
+      </FloatingWindow>,
+    );
+
+    expect(screen.getByTestId("floating-window-terminal-project-two")).toHaveStyle({ width: "700px", height: "500px" });
+    expect(JSON.parse(localStorage.getItem(firstKey) ?? "{}")).toEqual(firstGeometry);
+  });
+
   it("falls back to default geometry when persisted geometry is malformed", () => {
     localStorage.setItem("floating-window:malformed", "not-json");
 
@@ -833,6 +874,34 @@ describe("FloatingWindow", () => {
     expect(panel.style.width).toBe("620px");
     expect(panel.style.left).toBe("100px");
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual({ size: { width: 620, height: 450 }, position: { x: 100, y: 80 } });
+  });
+
+  it("suppresses header drag and persistence in an opt-in short sheet", () => {
+    const key = "floating-window:short-sheet-gesture";
+    setSheetViewport(false);
+    render(
+      <FloatingWindow
+        windowKey="short-sheet-gesture"
+        title="Short sheet"
+        onClose={() => {}}
+        persistGeometryKey={key}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        defaultPosition={{ x: 80, y: 90 }}
+      >
+        <div>short sheet body</div>
+      </FloatingWindow>,
+    );
+
+    const panel = screen.getByTestId("floating-window-short-sheet-gesture");
+    const header = screen.getByTestId("floating-window-drag-handle-short-sheet-gesture");
+    fireEvent.pointerDown(header, { pointerId: 91, pointerType: "touch", clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(header, { pointerId: 91, pointerType: "touch", clientX: 160, clientY: 150 });
+    fireEvent.pointerUp(header, { pointerId: 91, pointerType: "touch", clientX: 160, clientY: 150 });
+
+    expect(panel.style.left).toBe("80px");
+    expect(panel.style.top).toBe("90px");
+    expect(localStorage.getItem(key)).toBeNull();
   });
 
   it("continues persistence at sheet width when suspension is not opted in", () => {
@@ -1000,8 +1069,122 @@ describe("FloatingWindow", () => {
     window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
   });
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-14:15:
+  FN-8606 has thirteen modal identities but one geometry owner. Exercise every production class/key
+  through the shared primitive so touch drag/resize, corrupt/off-screen restoration, persistence,
+  and both sheet suspension breakpoints cannot silently diverge by caller identity.
+  */
+  it.each(FN_8606_WINDOW_IDENTITIES)("keeps %s touch-moveable, resizable, clamped, and persisted", (_component, windowKey) => {
+    const geometryKey = `floating-window:${windowKey}`;
+    localStorage.setItem(geometryKey, JSON.stringify({
+      size: { width: 99999, height: 99999 },
+      position: { x: 99999, y: -99999 },
+    }));
+
+    const { unmount } = render(
+      <FloatingWindow
+        windowKey={windowKey}
+        title={windowKey}
+        ariaLabel={`${windowKey} dialog`}
+        onClose={() => {}}
+        hideHeader
+        dragHandleSelector=".migration-drag-handle"
+        className={`floating-window--${windowKey}`}
+        defaultSize={{ width: 500, height: 400 }}
+        minSize={{ width: 360, height: 280 }}
+        persistGeometryKey={geometryKey}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+      >
+        <div className="migration-drag-handle">Drag {windowKey}</div>
+      </FloatingWindow>,
+    );
+
+    const panel = expectFloatingWindowStructure(windowKey);
+    expect(screen.getByTestId(`floating-window-overlay-${windowKey}`)).toHaveAttribute("aria-label", `${windowKey} dialog`);
+    expect(Number.parseInt(panel.style.left, 10)).toBeGreaterThanOrEqual(16);
+    expect(Number.parseInt(panel.style.top, 10)).toBeGreaterThanOrEqual(16);
+
+    dragWithTouch(screen.getByText(`Drag ${windowKey}`));
+    resizeWithTouch(screen.getByTestId("floating-window-resize-se"));
+    const persisted = JSON.parse(localStorage.getItem(geometryKey) ?? "{}");
+    expect(persisted.position.x).toBeGreaterThanOrEqual(16);
+    expect(persisted.position.y).toBeGreaterThanOrEqual(16);
+    expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth - 32);
+    expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight - 32);
+    unmount();
+  });
+
+  it.each(FN_8606_WINDOW_IDENTITIES)("rejects corrupt persisted geometry for %s", (_component, windowKey) => {
+    const geometryKey = `floating-window:${windowKey}`;
+    localStorage.setItem(geometryKey, "not-json");
+    render(
+      <FloatingWindow
+        windowKey={windowKey}
+        title={windowKey}
+        onClose={() => {}}
+        defaultSize={{ width: 500, height: 400 }}
+        persistGeometryKey={geometryKey}
+      >
+        <div>corrupt geometry fallback</div>
+      </FloatingWindow>,
+    );
+    const panel = screen.getByTestId(`floating-window-${windowKey}`);
+    expect(Number.parseInt(panel.style.width, 10)).toBe(500);
+  });
+
+  it.each(FN_8606_WINDOW_IDENTITIES)("wires %s to its accessible shared-window identity", (component, windowKey) => {
+    const source = readAppFile(`components/${component}`);
+    expect(source).toContain(`windowKey=\"${windowKey}\"`);
+    expect(source).toContain(`className=\"floating-window--${windowKey}\"`);
+    expect(source).toContain(`persistGeometryKey=\"floating-window:${windowKey}\"`);
+    expect(source).toContain("ariaLabel=");
+    expect(source).toContain("suspendGeometryPersistenceOnMobile");
+    expect(source).toContain("suspendGeometryPersistenceOnShortViewport");
+  });
+
+  it.each(["phone", "short viewport"] as const)("suspends all FN-8606 geometry keys in %s sheet mode", (mode) => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: mode === "phone" ? query === "(max-width: 767.98px)" : query === "(max-height: 480px)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+
+    for (const [, windowKey] of FN_8606_WINDOW_IDENTITIES) {
+      const geometryKey = `floating-window:${windowKey}`;
+      const { unmount } = render(
+        <FloatingWindow
+          windowKey={windowKey}
+          title={windowKey}
+          ariaLabel={`${windowKey} dialog`}
+          onClose={() => {}}
+          hideHeader
+          dragHandleSelector=".migration-drag-handle"
+          className={`floating-window--${windowKey}`}
+          persistGeometryKey={geometryKey}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+        >
+          <div className="migration-drag-handle">Drag {windowKey}</div>
+        </FloatingWindow>,
+      );
+      expect(localStorage.getItem(geometryKey)).toBeNull();
+      expect(screen.getByTestId(`floating-window-${windowKey}`)).toBeInTheDocument();
+      expect(screen.queryByTestId("floating-window-resize-se")).not.toBeInTheDocument();
+      unmount();
+    }
+
+    const sheetBlock = mediaBlockFor(floatingWindowCss, "(max-width: 767.98px), (max-height: 480px)");
+    for (const [, windowKey] of FN_8606_WINDOW_IDENTITIES) {
+      expect(sheetBlock).toContain(`.floating-window--${windowKey}`);
+    }
+  });
+
   it("makes only the mobile chat floating window full-screen", () => {
-    const mobileBlock = floatingWindowCss.match(/@media\s*\(max-width:\s*767\.98px\)\s*\{[\s\S]*?\.floating-window--chat \.chat-view\s*\{[\s\S]*?\n\}/)?.[0];
+    const mobileBlock = floatingWindowCss.match(/@media\s*\(max-width:\s*767\.98px\),\s*\(max-height:\s*480px\)\s*\{[\s\S]*?\.floating-window--chat \.chat-view\s*\{[\s\S]*?\n\}/)?.[0];
 
     expect(mobileBlock).toContain(".floating-window--chat");
     expect(mobileBlock).toContain("width: 100vw !important;");

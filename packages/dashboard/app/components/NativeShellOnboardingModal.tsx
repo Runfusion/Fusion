@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionState } from "../types/native-shell";
 import "./NativeShellOnboardingModal.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | null): string {
   const url = new URL(serverUrl);
@@ -45,7 +46,8 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
   }
 
   return (
-    <div className="modal-overlay open">
+    <FloatingWindow windowKey="native-shell-onboarding" modal title={t("onboarding.welcome", "Welcome to Fusion")} ariaLabel={t("onboarding.welcome", "Welcome to Fusion")} onClose={() => {}} hideHeader dragHandleSelector=".native-shell-onboarding-modal .modal-header" className="floating-window--native-shell-onboarding" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 320 }} persistGeometryKey="floating-window:native-shell-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Connection onboarding is blocking, so its shared geometry deliberately has no outside or Escape dismissal. */}
       <div className="modal native-shell-onboarding-modal">
         <div className="modal-header">
           <h2>{t("onboarding.welcome", "Welcome to Fusion")}</h2>
@@ -133,6 +135,6 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
           </button>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

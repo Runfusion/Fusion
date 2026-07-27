@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal, Sparkles } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
@@ -1412,12 +1412,28 @@ function TaskCardComponent({
   FNXC:CodingIdeasWorkflow 2026-07-21-22:18:
   Ready is the idle capacity-hold signal for Coding (Ideas) Todo cards that already have steps and no task.status. Plan Review (and any other agent-active work) also runs in Todo with status often cleared to null first, so Ready must suppress while plan-review is running or the card is agent-active — otherwise operators see both Ready and Reviewing on the same card.
   */
-  const showReadyBadge = !isPaused
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+  Which cap an idle Todo card is waiting on comes from the server's `awaitingPlanning` (derived from
+  PROMPT.md seed-ness by the SAME `isTaskAwaitingPlanning` predicate triage's todo-discovery uses),
+  because the client cannot read PROMPT.md. The old `steps.length` proxy disagreed with the engine in
+  both directions: a real spec that parsed to zero steps read as "Queued to plan" while the scheduler
+  was already treating it as a WIP-slot candidate, and a re-seeded card still carrying steps from a
+  previous pass read as "Ready" while triage was about to plan it.
+
+  The step-count heuristic remains the FALLBACK, not a second opinion: SSE task payloads are not
+  enriched, so a status-only live update or an older server leaves the field absent, and a card with
+  no steps is unplanned in the overwhelmingly common case. Deriving both badges from this one value
+  makes them strict complements — exactly one shows — instead of relying on the step count to keep
+  two independent conditions disjoint.
+  */
+  const awaitingPlanning = task.awaitingPlanning ?? ((task.steps?.length ?? 0) === 0);
+  const showIdleTodoBadge = !isPaused
     && task.column === "todo"
     && !visualStatus
-    && (task.steps?.length ?? 0) > 0
     && !planReviewRunning
     && !isAgentActive;
+  const showReadyBadge = showIdleTodoBadge && !awaitingPlanning;
   /*
   FNXC:CodingIdeasWorkflow 2026-07-25-12:05:
   "Queued to plan" is the exact complement of Ready: same idle-in-Todo conditions, but the card has
@@ -1428,14 +1444,13 @@ function TaskCardComponent({
 
   Three Todo states are now distinguishable: planning in flight (the "planning" status badge),
   unplanned and waiting for a planning slot (this badge), planned and waiting for a WIP slot
-  (Ready). The conditions are mutually exclusive by the steps count, so no card shows both.
+  (Ready).
+
+  FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+  Both badges now derive from the single `awaitingPlanning` value above, so "exact complement" is
+  structural rather than a property of the step count that two independent conditions had to agree on.
   */
-  const showQueuedToPlanBadge = !isPaused
-    && task.column === "todo"
-    && !visualStatus
-    && (task.steps?.length ?? 0) === 0
-    && !planReviewRunning
-    && !isAgentActive;
+  const showQueuedToPlanBadge = showIdleTodoBadge && awaitingPlanning;
   // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
   // On touch-primary devices the `draggable` attribute still arms the browser's
   // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
@@ -1494,6 +1509,17 @@ function TaskCardComponent({
    */
   const revertOfId = getRevertOfId(task.sourceMetadata, task.sourceParentTaskId, task.sourceType);
   const showUndoOfChip = Boolean(revertOfId);
+  /*
+  FNXC:RefinementTitle 2026-07-26-20:10:
+  A refinement card is now titled by the operator's feedback rather than "Refinement: <parent>",
+  so the title no longer announces what the card IS. This chip carries that provenance instead:
+  an icon plus the parent id, so a stack of ten refinements of one task stays both individually
+  readable (distinct titles) and recognizable as refinements (identical chip, distinct id).
+  Gated on `sourceParentTaskId` because the chip's whole value is naming the parent — a
+  refinement row with no resolvable parent would render a chip that answers nothing.
+  */
+  const refinesParentId = task.sourceType === "task_refine" ? task.sourceParentTaskId : undefined;
+  const showRefinesChip = Boolean(refinesParentId);
   /*
    * FNXC:TaskRevert 2026-07-16-00:00:
    * FN-8066 makes the source-task revert marker visible only in its completed
@@ -2919,6 +2945,7 @@ function TaskCardComponent({
     || timeIndicator
     || showNearDuplicateChip
     || showUndoOfChip
+    || showRefinesChip
     || showRevertedChip
     || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue)
     || (task.retrySummary?.total ?? 0) > 0);
@@ -2939,6 +2966,17 @@ function TaskCardComponent({
           aria-label={t("tasks.undoOfTitle", "Created to undo {{id}}", { id: String(revertOfId) })}
         >
           <span>{t("tasks.undoOf", "Undo of {{id}}", { id: String(revertOfId) })}</span>
+        </span>
+      )}
+      {showRefinesChip && (
+        <span
+          className="card-refine-chip"
+          title={t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
+          aria-label={t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
+        >
+          {/* Decorative: the accessible name is already on the chip via aria-label. */}
+          <Sparkles size={11} aria-hidden="true" />
+          <span>{t("tasks.refinesOf", "Refines {{id}}", { id: String(refinesParentId) })}</span>
         </span>
       )}
       {showRevertedChip && (

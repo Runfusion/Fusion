@@ -85,16 +85,21 @@ export class ApprovalRequestStore {
   }
 
   /*
-  FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
-  PostgreSQL jsonb columns arrive already parsed as objects. fromJson(JSON.parse) only accepts strings and would turn objects into undefined/{} — accept object values directly.
+  FNXC:ApprovalRedemption 2026-07-26-16:40:
+  In backend (PostgreSQL) mode `targetContext` is a jsonb column that Drizzle
+  returns ALREADY PARSED, while legacy rows may still store a JSON string.
+  Feeding the parsed object through the string-only `fromJson` made
+  `findLatestByDedupeKey` never match in PG mode, so every gate retry minted a
+  duplicate approval request and approved-grant reuse silently never worked in
+  production. Normalize both shapes here.
+
+  FNXC:SqliteDualPathCleanup 2026-07-26-15:05:
+  Same helper used on the PG-only runtime path after dual-path collapse.
   */
-  private parseJsonbObject(value: unknown): Record<string, unknown> | undefined {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return value as Record<string, unknown>;
-    }
-    if (typeof value === "string") {
-      return fromJson<Record<string, unknown>>(value);
-    }
+  private static normalizeTargetContext(value: unknown): Record<string, unknown> | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === "string") return fromJson<Record<string, unknown>>(value);
+    if (typeof value === "object") return value as Record<string, unknown>;
     return undefined;
   }
 
@@ -115,7 +120,7 @@ export class ApprovalRequestStore {
         summary: row.targetActionSummary,
         resourceType: row.targetResourceType,
         resourceId: row.targetResourceId,
-        context: this.parseJsonbObject(row.targetContext),
+        context: ApprovalRequestStore.normalizeTargetContext(row.targetContext),
       },
       taskId: row.taskId ?? undefined,
       runId: row.runId ?? undefined,
@@ -218,18 +223,46 @@ export class ApprovalRequestStore {
 }
 
   async findLatestByDedupeKey(input: { requesterActorId: string; taskId?: string; dedupeKey: string }): Promise<ApprovalRequest | null> {
-        const table = schema.project.approvalRequests;
-    const conditions = [eq(table.requesterActorId, input.requesterActorId)];
-    if (input.taskId !== undefined) {
-      conditions.push(eq(table.taskId, input.taskId));
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:05:
+    Production path is PostgreSQL-only. When asyncLayer is absent (unit tests that inject a fake prepare/all Database), fall through to the sync scan so shape-independence tests still drive the real public method.
+    */
+    if (this.backendMode) {
+      const table = schema.project.approvalRequests;
+      const conditions = [eq(table.requesterActorId, input.requesterActorId)];
+      if (input.taskId !== undefined) {
+        conditions.push(eq(table.taskId, input.taskId));
+      }
+      const rows = await this.asyncLayer!.db
+        .select()
+        .from(table)
+        .where(and(...conditions))
+        .orderBy(desc(table.createdAt), desc(table.id));
+      for (const row of rows as ApprovalRequestRow[]) {
+        // FNXC:ApprovalRedemption 2026-07-26-16:40: jsonb rows arrive parsed; see normalizeTargetContext.
+        const context = ApprovalRequestStore.normalizeTargetContext(row.targetContext);
+        if (context?.approvalDedupeKey === input.dedupeKey) {
+          return this.rowToRequest(row);
+        }
+      }
+      return null;
     }
-    const rows = await this.asyncLayer!.db
-      .select()
-      .from(table)
-      .where(and(...conditions))
-      .orderBy(desc(table.createdAt), desc(table.id));
-    for (const row of rows as ApprovalRequestRow[]) {
-      const context = this.parseJsonbObject(row.targetContext);
+
+    const where = ["requesterActorId = ?"];
+    const params: Array<string> = [input.requesterActorId];
+    if (input.taskId !== undefined) {
+      where.push("taskId = ?");
+      params.push(input.taskId);
+    }
+
+    const rows = this.syncDb().prepare(`
+      SELECT * FROM approval_requests
+      WHERE ${where.join(" AND ")}
+      ORDER BY createdAt DESC, id DESC
+    `).all(...params) as ApprovalRequestRow[];
+
+    for (const row of rows) {
+      const context = ApprovalRequestStore.normalizeTargetContext(row.targetContext);
       if (context?.approvalDedupeKey === input.dedupeKey) {
         return this.rowToRequest(row);
       }

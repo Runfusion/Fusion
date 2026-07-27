@@ -6,11 +6,11 @@ import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { getPathBasename } from "../utils/pathDisplay";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { FloatingWindow } from "./FloatingWindow";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import type {
@@ -228,7 +228,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const confirmContext = useConfirm();
   const viewportMode = useViewportMode();
   // FNXC:RightDockEmbedding 2026-06-22-00:00: embedded mode gates modal-only behaviors below (shared hook).
-  const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
+  const { isEmbedded, scrollLockEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: viewportMode === "mobile",
@@ -257,9 +257,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [loading, setLoading] = useState(false);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   // FNXC:RightDockEmbedding 2026-06-22-00:00: skip modal resize persist/restore when embedded inline.
-  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:git-modal-size");
-  const overlayDismissProps = useOverlayDismiss(handleClose);
+  // FNXC:ModalTouchGeometry 2026-07-26-13:35: The modal-only branch below uses FloatingWindow for complete touch geometry; the embedded branch keeps its existing inline presentation.
   const copyToClipboard = useCopyToClipboard(addToast);
 
   // ── Status state
@@ -1380,8 +1380,24 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     );
   }
 
+  /* FNXC:ModalTouchGeometry 2026-07-26-14:25: Preserve Git Manager's pre-migration responsive desktop shell as the FloatingWindow seed so shared persistence does not shrink the surface. */
   return (
-    <div className="modal-overlay open git-manager-modal-overlay" {...overlayDismissProps} role="dialog" aria-modal="true">
+    <FloatingWindow
+      windowKey="git-manager"
+      title={t("git.modalTitle", "Git Manager")}
+      ariaLabel={`${t("git.modalTitle", "Git Manager")} dialog`}
+      onClose={handleClose}
+      hideHeader
+      dragHandleSelector=".modal-header"
+      className="floating-window--git-manager"
+      defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1400), height: window.innerHeight * 0.92 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:git-manager"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Git Manager keeps the global default-off backdrop preference; FloatingWindow's guarded pointer listener preserves drag-safe outside dismissal. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
+    >
       <div className="modal gm-modal" ref={modalRef} style={keyboardStyle}>
         <div className="modal-header">
           <h3>
@@ -1399,7 +1415,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         {gitBody}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }
 

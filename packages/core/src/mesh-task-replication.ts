@@ -68,3 +68,39 @@ export function isUnplannedSeedPrompt(
   return title !== undefined
     && normalized === normalizeSeedText(buildRefinementSeedPrompt(title, description));
 }
+
+/**
+ * Durable statuses that park a plan-in-place card for another planning pass regardless of what its
+ * PROMPT.md currently says. Mirrors triage todo-discovery's `needs-replan` branch — Plan Review
+ * rejected the current spec, so the real (rejected) prompt must not read as "already planned".
+ */
+const AWAITING_PLANNING_STATUSES = new Set(["needs-replan"]);
+
+/*
+FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+Whether a plan-in-place (Todo) card is waiting for a PLANNING slot rather than a WIP slot — the
+question the "Queued to plan" / "Ready" badge pair answers.
+
+Requirement: the badge must not contradict the engine. It used to infer "unplanned" from
+`steps.length === 0`, while every engine lane decides from PROMPT.md seed-ness, so the two disagreed
+in both directions: a card with a real spec but no parsed steps was labelled "Queued to plan" while
+the scheduler was actually treating it as a dispatch candidate (waiting for a WIP slot, i.e. Ready),
+and a re-seeded card still carrying steps from a previous pass was labelled "Ready" while triage was
+about to plan it. The badge exists to make the FN-8600 planning-capacity wait legible, so a wrong
+label sends operators to the wrong cap.
+
+`promptContent === null` means PROMPT.md is missing, which triage treats as unplanned (it
+regenerates the spec) rather than as planned. Kept pure — the fs read belongs to the caller, so
+this stays usable from the API layer, the engine, and tests alike.
+
+Callers: the `GET /api/tasks` board enrichment (`awaitingPlanning`) and triage's todo-discovery
+content branch. Do not re-open-code the status set or the seed check.
+*/
+export function isTaskAwaitingPlanning(
+  task: { id: string; title?: string; description: string; status?: string | null },
+  promptContent: string | null,
+): boolean {
+  if (task.status != null && AWAITING_PLANNING_STATUSES.has(task.status)) return true;
+  if (promptContent === null) return true;
+  return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
+}

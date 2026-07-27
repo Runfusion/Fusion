@@ -1229,7 +1229,17 @@ export default function kbExtension(pi: ExtensionAPI) {
           projectSettingsForGate,
           globalSettings,
         );
-        const workflowId = params.workflow_id?.trim() || undefined;
+        /*
+        FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+        Precedence for the new task's workflow: the caller's explicit `workflow_id`
+        argument wins, then the project `taskCreateWorkflowId` setting (a pinned workflow,
+        else the mirrored Board lane = the "Selected workflow" option), then `undefined`
+        so createTask keeps its existing project-default path unchanged.
+        Note the sibling fn_delegate_task tool deliberately does NOT consult this setting:
+        the setting is scoped to task CREATION origins, not delegation.
+        */
+        const workflowId = params.workflow_id?.trim()
+          || (await store.resolveOriginWorkflowOverrideId("task-create"));
 
         const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description.trim(),

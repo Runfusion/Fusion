@@ -231,6 +231,55 @@ export async function getDefaultWorkflowIdImpl(store: TaskStore): Promise<string
     return id && id.trim() ? id : undefined;
 }
 
+/**
+ * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+ * Resolves the workflow OVERRIDE for a programmatic task origin — `fn task create`
+ * (CLI + `fn_task_create` tool) and refinement tasks.
+ *
+ * Returns `undefined` to mean "no override, inherit the existing default path".
+ * That is deliberate: the callers' existing behavior when no workflow is passed is
+ * already `materializeDefaultWorkflowSteps()`, so falling through to `undefined`
+ * reproduces it exactly rather than re-implementing it. Only a pinned setting or
+ * the mirrored Board lane produces a concrete id.
+ *
+ * Precedence: pinned per-origin setting -> mirrored Board lane -> inherit (undefined).
+ *
+ * A configured id that no longer resolves — deleted workflow, or a fragment, which
+ * is never independently selectable — degrades to inherit rather than throwing.
+ * Task creation must not be breakable by a stale settings value; this mirrors the
+ * same tolerance `aiUndoTaskWorkflowId`'s route applies.
+ */
+export type TaskOriginWorkflowKind = "task-create" | "refinement";
+
+export async function resolveOriginWorkflowOverrideIdImpl(
+  store: TaskStore,
+  origin: TaskOriginWorkflowKind,
+): Promise<string | undefined> {
+  let candidate: string | undefined;
+  try {
+    const settings = (await store.getSettingsFast()) as {
+      taskCreateWorkflowId?: string;
+      refinementTaskWorkflowId?: string;
+      boardSelectedWorkflowId?: string;
+    };
+    const pinned = origin === "refinement"
+      ? settings.refinementTaskWorkflowId
+      : settings.taskCreateWorkflowId;
+    candidate = pinned?.trim() || settings.boardSelectedWorkflowId?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+  if (!candidate) return undefined;
+
+  try {
+    const def = await store.getWorkflowDefinition(candidate);
+    if (!def || def.kind === "fragment") return undefined;
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveTaskCustomFieldDefsSyncImpl(store: TaskStore, taskId: string): WorkflowFieldDefinition[] {
     const ir = store.resolveTaskWorkflowIrSync(taskId);
     return ir.version === "v2" ? (ir.fields ?? []) : [];

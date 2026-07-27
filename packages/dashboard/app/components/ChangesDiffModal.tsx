@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { FloatingWindow } from "./FloatingWindow";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import {
   X,
   FileCode,
@@ -68,11 +68,10 @@ export function ChangesDiffModal({
   onRefresh,
 }: ChangesDiffModalProps) {
   const { t } = useTranslation("app");
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(true);
-  const modalRef = useRef<HTMLDivElement>(null);
-  useModalResizePersist(modalRef, isOpen, "fusion:changes-diff-modal-size");
-  const overlayDismissProps = useOverlayDismiss(onClose);
+  // FNXC:ModalTouchGeometry 2026-07-26-13:30: FloatingWindow supersedes the legacy size-only grip and persists the complete clamped geometry under its stable window key.
 
   // Auto-select first file when files change
   useEffect(() => {
@@ -121,11 +120,23 @@ export function ChangesDiffModal({
   const isDone = column === "done";
 
   return (
-    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
-      <div
-        className="modal changes-diff-modal"
-        ref={modalRef}
-      >
+    <FloatingWindow
+      windowKey="changes-diff"
+      title={t("changes.title", "Changes")}
+      ariaLabel={`${t("changes.title", "Changes")} dialog`}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".changes-diff-modal-header"
+      className="floating-window--changes-diff"
+      defaultSize={{ width: 960, height: 640 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:changes-diff"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Keep Changes' historical preference-gated backdrop dismissal while FloatingWindow ignores active drag and resize gestures. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
+    >
+      <div className="modal changes-diff-modal">
         {/* Header */}
         <div className="modal-header changes-diff-modal-header">
           <div className="changes-diff-header-title">
@@ -270,6 +281,6 @@ export function ChangesDiffModal({
           </div>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

@@ -4,6 +4,7 @@ import { X, Search, Puzzle, ToggleRight } from "lucide-react";
 import type { WorkflowDefinition, WorkflowStepTemplate } from "@fusion/core";
 import type { WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { nodeHelpFor } from "./nodes/node-help";
+import { FloatingWindow } from "./FloatingWindow";
 import "./WorkflowAddStepModal.css";
 
 /*
@@ -127,28 +128,35 @@ export function WorkflowAddStepModal({
     filteredFragments.length > 0 || filteredStepTemplates.length > 0 || filteredPluginTemplates.length > 0;
   const hasAnyResult = categories.length > 0 || hasTemplates;
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
   if (!open) return null;
 
   return (
-    <div
-      className="wf-add-step-overlay"
-      data-testid="wf-add-step-modal"
-      role="presentation"
-      onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          onClose();
-        }
-      }}
+    /* FNXC:ModalTouchGeometry 2026-07-26-13:20: The workflow palette uses the shared touch-actuable geometry primitive instead of its bespoke overlay; the existing header stays the drag handle. */
+    <FloatingWindow
+      windowKey="workflow-add-step"
+      title={t("workflowNodes.addStepTitle", "Add a step")}
+      ariaLabel={`${t("workflowNodes.addStepTitle", "Add a step")} dialog`}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".wf-add-step-header"
+      className="floating-window--workflow-add-step"
+      defaultSize={{ width: 640, height: 560 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:workflow-add-step"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      closeOnOutsidePointerDown
     >
-      <div
-        className="wf-add-step-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("workflowNodes.addStepTitle", "Add a step")}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="wf-add-step-dialog" aria-label={t("workflowNodes.addStepTitle", "Add a step")}>
         <header className="wf-add-step-header">
           <h3>{t("workflowNodes.addStepTitle", "Add a step")}</h3>
           <button
@@ -297,6 +305,6 @@ export function WorkflowAddStepModal({
           )}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

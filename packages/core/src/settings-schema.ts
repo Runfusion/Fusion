@@ -298,6 +298,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
   */
   persistAgentToolOutput: false,
+  /*
+  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  FN-8616 lets operators raise, lower, or disable the FN-8614 per-result tool-output
+  budget. Undefined preserves the finite 16,000-character default; only 0 means no limit.
+  */
+  agentToolOutputMaxChars: undefined,
   // Task chat remains an operator-directed conversation by default. Enable this
   // explicitly to add engine-authored lifecycle narration to the transcript.
   proactiveTaskChatEnabled: false,
@@ -404,6 +410,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // already-shipped code, so default them to the stricter review-heavy
   // workflow; empty/unset means inherit the project default workflow.
   aiUndoTaskWorkflowId: "builtin:review-heavy",
+  // FNXC:OriginWorkflowSelection 2026-07-26-19:40: unset = "Selected workflow"
+  // (board lane mirror, then project default). A concrete id pins the origin.
+  taskCreateWorkflowId: undefined,
+  refinementTaskWorkflowId: undefined,
+  boardSelectedWorkflowId: undefined,
   enabledBuiltinWorkflowIds: undefined,
   approvedWorkflowCliCommands: undefined,
   approvedCliAutonomyAdapters: undefined,
@@ -443,6 +454,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // with this on but auto-merge off, review threads are resolved but the PR is not merged.
   autoResolveReviewComments: true,
   testMode: undefined,
+  /*
+  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  Project settings participate in the existing effective-settings merge, allowing a
+  project-specific tool-output cap or explicit no-limit sentinel to override global policy.
+  */
+  agentToolOutputMaxChars: undefined,
   voiceInput: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
@@ -611,8 +628,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   inReviewStalledThresholdMs: 24 * 60 * 60_000,
   stalePausedTodoThresholdMs: 24 * 60 * 60_000,
   pausedScopeDecayMs: 30 * 60_000,
-  metaTaskStallAutoCloseMs: 2 * 60 * 60_000,
-  metaTaskActiveExecutionGraceMs: 30 * 60_000,
   boardStallSweepWindowMs: 2 * 60 * 60_000,
   boardStallBlockedGrowthThreshold: 3,
   // Capacity risk warning default: only warn once todo is meaningfully backlogged.

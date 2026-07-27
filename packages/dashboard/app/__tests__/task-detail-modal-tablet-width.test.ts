@@ -33,6 +33,14 @@ describe("task detail modal tablet width (FN-5599, FN-6500)", () => {
     expect(modalRuleMatch![0]).toContain("max-width: 98vw;");
   });
 
+  it("keeps the tablet touch resize grip out of task-detail layout padding", () => {
+    const touchSurfaceRule = detailModalCss.match(/\.modal\.task-detail-modal\.task-modal--touch-resize\s*\{[^}]*\}/s)?.[0] ?? "";
+
+    expect(touchSurfaceRule).toContain("overflow: visible;");
+    expect(touchSurfaceRule).not.toMatch(/\bpadding(?:-[\w-]+)?:/);
+    expect(touchSurfaceRule).not.toMatch(/\bmargin(?:-[\w-]+)?:/);
+  });
+
   it("overrides phone-sheet geometry and restores the resize grip for a known 768px tablet", () => {
     const mobileBlockMatch = detailModalCss.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.task-modal--tablet \.modal-resize-grip\s*\{[^}]*\}[\s\S]*?\n\}/);
     expect(mobileBlockMatch).toBeTruthy();

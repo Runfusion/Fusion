@@ -748,6 +748,39 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  /*
+  FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+  PUT /api/project/board-selected-workflow — Body: { workflowId: string | null }
+
+  Mirrors the operator's current Board workflow lane into project settings. The Board's
+  own authoritative copy stays in project-scoped localStorage; this mirror exists solely
+  so NON-BROWSER callers (`fn task create`, the `fn_task_create` tool, refinement invoked
+  outside the dashboard) can resolve the "Selected workflow" option, which they cannot
+  read from a browser store.
+  Write-only by design: nothing reads this back into the Board, so a stale or
+  cross-operator value can only affect which workflow a newly created task inherits —
+  never what the operator sees. `null` clears the mirror.
+  Unlike PUT /project/default-workflow this does NOT 404 an unknown id: the lane mirror
+  is a best-effort UI echo, and the consuming resolver already degrades an unresolvable
+  id to "inherit the project default".
+  */
+  router.put("/project/board-selected-workflow", async (req, res) => {
+    try {
+      const { store } = await getProjectContext(req);
+      const workflowId = (req.body ?? {}).workflowId;
+      if (workflowId !== null && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string or null");
+      }
+      const trimmed = typeof workflowId === "string" ? workflowId.trim() : "";
+      // null-as-delete: the settings layer treats null as an explicit clear.
+      await store.updateSettings({ boardSelectedWorkflowId: trimmed || null } as never);
+      res.json({ workflowId: trimmed || null });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   // FNXC:WorkflowStepCRUD 2026-06-26-14:00: U7c removed POST
   // /api/workflows/migrate-legacy-steps along with the legacy workflow_steps table and its
   // store-level migrator. Workflow steps run graph-native; there is no legacy table to

@@ -43,6 +43,26 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "agentToolOutputMaxChars",
+    labelKey: "settings.globalGeneral.agentToolOutputLimit",
+    labelFallback: " Agent tool-output limit ",
+    helpKey: "settings.globalGeneral.agentToolOutputLimitHint",
+    helpFallback:
+      " Maximum characters returned from each engine-injected tool result. When unset, inherits the 16,000-character engine default. Leave empty to use the default. ",
+    keywords: ["tokens", "context", "truncate", "tool output", "agent"],
+  },
+  {
+    sectionId: "global-general",
+    key: "agentToolOutputMaxCharsNoLimit",
+    labelKey: "settings.globalGeneral.noLimitOnAgentToolOutput",
+    labelFallback: " No limit on agent tool output ",
+    helpKey: "settings.globalGeneral.noLimitOnAgentToolOutputHint",
+    helpFallback:
+      " Disable the shared tool-output clamp. A single tool result can consume the agent context window. Default: disabled; when unset, the budget inherits the 16,000-character engine default. ",
+    keywords: ["unlimited", "tokens", "context", "truncate", "tool output"],
+  },
+  {
+    sectionId: "global-general",
     key: "proactiveTaskChatEnabled",
     labelKey: "settings.globalGeneral.enableProactiveTaskChat",
     labelFallback: " Enable proactive task-chat updates ",

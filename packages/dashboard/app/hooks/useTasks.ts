@@ -168,9 +168,26 @@ function compareTimestamps(a: string | undefined, b: string | undefined): number
   return a.localeCompare(b);
 }
 
+/*
+FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+`awaitingPlanning` is attached by `GET /api/tasks` only — SSE task payloads come straight from the
+store, so a status-only live update would otherwise wipe it and flip TaskCard's badge back to its
+step-count fallback mid-stall. Carry it across same-column updates, but ONLY while the step count is
+unchanged: planning finishing is exactly a step-count change, and a stale `true` surviving that would
+keep claiming "Queued to plan" for a card that is now Ready until the next full board fetch. When it
+is dropped the fallback answers correctly in both directions (steps landed -> Ready, steps cleared ->
+queued), so the degraded state is never the wrong label.
+*/
+function carryAwaitingPlanning(current: Task, incoming: Task): boolean | undefined {
+  if (incoming.awaitingPlanning !== undefined) return incoming.awaitingPlanning;
+  const stepCountUnchanged = (current.steps?.length ?? 0) === (incoming.steps?.length ?? 0);
+  return stepCountUnchanged ? current.awaitingPlanning : undefined;
+}
+
 function mergeSameColumnTask(current: Task, incoming: Task): Task {
   return {
     ...incoming,
+    awaitingPlanning: carryAwaitingPlanning(current, incoming),
     // Preserve stable execution metadata when a same-column live update arrives
     // without the full task payload (common during status/log-only SSE updates).
     columnMovedAt: current.columnMovedAt ?? incoming.columnMovedAt,

@@ -1229,6 +1229,7 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   }
 
   .card-undo-chip,
+  .card-refine-chip,
   .card-reverted-chip {
     max-width: 100%;
   }
@@ -1245,8 +1246,15 @@ FNXC:TaskRevert 2026-07-16-00:00:
 FN-8066's Reverted chip is source-task provenance rather than a warning/error. It
 shares the neutral undo-chip tokens and narrow-screen constraints so completed-card
 footer chips retain their established density in board and list layouts.
+
+FNXC:RefinementTitle 2026-07-26-20:10:
+The "Refines <id>" chip is the same class of neutral provenance, so it JOINS these
+selectors rather than forking a fourth chip variant with its own tokens. It carries a
+Sparkles icon; `gap: var(--space-xs)` on the shared rule already spaces icon from label,
+so the icon needs no rule of its own.
 */
 .card-undo-chip,
+.card-refine-chip,
 .card-reverted-chip {
   display: inline-flex;
   align-items: center;
@@ -1267,6 +1275,7 @@ footer chips retain their established density in board and list layouts.
 }
 
 .card-undo-chip > span,
+.card-refine-chip > span,
 .card-reverted-chip > span {
   display: inline-flex;
   align-items: center;

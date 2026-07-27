@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const viewport = vi.hoisted(() => ({ tabletTouch: false }));
@@ -15,6 +17,7 @@ vi.mock("../../hooks/useViewportMode", async () => {
 import { FloatingWindow } from "../FloatingWindow";
 
 const directions = ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const;
+const floatingWindowCss = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
 
 function renderWindow(key = "touch-geometry") {
   return render(
@@ -60,6 +63,17 @@ describe("FloatingWindow tablet touch geometry", () => {
       expect(screen.getByTestId(`floating-window-resize-${direction}`)).toHaveAttribute("data-resize-hit-target", "true");
     }
     expect(screen.getByTestId("floating-window-drag-handle-touch-geometry")).toHaveAttribute("data-resize-hit-target", "true");
+  });
+
+  it("keeps generic delegated headers at the shared 44px layout target while task detail uses an out-of-flow target", () => {
+    const genericRule = floatingWindowCss.match(/\.floating-window--touch-geometry \.floating-window__delegated-drag-handle\s*\{[^}]*\}/s)?.[0] ?? "";
+    const taskRule = floatingWindowCss.match(/\.floating-window--task-detail\.floating-window--touch-geometry \.floating-window__delegated-drag-handle\s*\{[^}]*\}/s)?.[0] ?? "";
+    const taskTargetRule = floatingWindowCss.match(/\.floating-window--task-detail\.floating-window--touch-geometry \.floating-window__delegated-drag-handle::before\s*\{[^}]*\}/s)?.[0] ?? "";
+
+    expect(genericRule).toContain("min-block-size: var(--modal-resize-touch-target);");
+    expect(taskRule).toContain("min-block-size: 0;");
+    expect(taskTargetRule).toContain("block-size: var(--modal-resize-touch-target);");
+    expect(taskTargetRule).toContain("position: absolute;");
   });
 
   it("applies the touch contract and drag gesture to a headerless delegated handle", () => {

@@ -105,6 +105,15 @@ export type {
   RankAssignedTasksForWakeDeltaResult,
 } from "./assigned-task-ranking.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";
+export {
+  DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+  TOOL_OUTPUT_UNLIMITED_SETTING_VALUE,
+  buildToolOutputTruncationMarker,
+  clampToolOutputText,
+  clampToolOutputBlocks,
+  resolveAgentToolOutputMaxChars,
+  resolveToolOutputBudget,
+} from "./tool-output-budget.js";
 export { MOCK_PROVIDER_ID } from "./mock-provider-constants.js";
 export type { MockProviderId, MockSessionPurpose } from "./mock-provider-constants.js";
 export {

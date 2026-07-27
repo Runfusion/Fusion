@@ -12,6 +12,7 @@ vi.mock("../../api", async (importOriginal) => ({
 }));
 
 vi.mock("../../hooks/useViewportMode", () => ({
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
 }));
 

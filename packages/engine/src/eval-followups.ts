@@ -7,9 +7,13 @@ import {
   type FollowUpDraft,
   type TaskStore,
 } from "@fusion/core";
-import { createAutomatedFollowup } from "./verification-followup-dedup.js";
 
 const OPEN_COLUMNS = new Set(["triage", "todo", "in-progress", "in-review"]);
+/*
+FNXC:Evals 2026-07-26-00:00:
+Eval follow-ups are a real product feature, but they used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature actually needs is inlined here: never create a second card for the same `suggestionId` under the same parent while one is still open. Closed columns (done/archived) are excluded so a re-run after the follow-up is finished can legitimately file a fresh card.
+*/
+const CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"]);
 const GENERIC_TITLE_PATTERNS = [/^follow\s*-?up$/i, /^todo$/i, /^fix\s+issue$/i, /^improve\s+task$/i, /^investigate$/i];
 
 export interface NormalizeEvalFollowUpsInput {
@@ -181,6 +185,29 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   });
 }
 
+/**
+ * FNXC:Evals 2026-07-26-00:00:
+ * Inlined replacement for the deleted shared follow-up dedup engine. Returns the id of an
+ * already-open eval follow-up filed for the same `suggestionId` under the same parent, or
+ * undefined when this suggestion has no live card yet. Fails open (undefined) if the store
+ * listing throws, matching the old engine's fail-open-and-create behavior.
+ */
+async function findOpenEvalFollowUpTaskId(
+  store: TaskStore,
+  parentTaskId: string,
+  suggestionId: string,
+): Promise<string | undefined> {
+  const tasks = await store.listTasks({ slim: true }).catch(() => []);
+  const match = tasks.find(
+    (task) =>
+      task.id !== parentTaskId &&
+      !CLOSED_FOLLOWUP_COLUMNS.has(task.column) &&
+      task.sourceParentTaskId === parentTaskId &&
+      task.sourceMetadata?.suggestionId === suggestionId,
+  );
+  return match?.id;
+}
+
 export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {
   const { parentTaskId, runId, policyMode, overallScore, followUps, store } = input;
   const created: EvalFollowUpSuggestion[] = [];
@@ -191,47 +218,42 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
       continue;
     }
 
-    const result = await createAutomatedFollowup(store, {
-      kind: "eval",
-      parentTaskId,
-      extraMatchKeys: { suggestionId: followUp.suggestionId },
-      createInput: {
-        title: followUp.title,
-        description: [
-          `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
-          "",
-          `Problem summary: ${followUp.description}`,
-          "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
-          `Eval severity/score: ${followUp.severity} (${overallScore})`,
-          `Rationale: ${followUp.rationale}`,
-          `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
-        ].join("\n"),
-        column: "triage",
-        priority: followUp.priority,
-        source: {
-          sourceType: "automation",
-          sourceParentTaskId: parentTaskId,
-          sourceMetadata: {
-            type: "eval_follow_up",
-            runId,
-            suggestionId: followUp.suggestionId,
-            policyMode,
-            dedupeKey: followUp.dedupeKey,
-          },
+    const existingTaskId = await findOpenEvalFollowUpTaskId(store, parentTaskId, followUp.suggestionId);
+    const createdTaskId = existingTaskId ?? (await store.createTask({
+      title: followUp.title,
+      description: [
+        `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
+        "",
+        `Problem summary: ${followUp.description}`,
+        "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
+        `Eval severity/score: ${followUp.severity} (${overallScore})`,
+        `Rationale: ${followUp.rationale}`,
+        `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
+      ].join("\n"),
+      column: "triage",
+      priority: followUp.priority,
+      source: {
+        sourceType: "automation",
+        sourceParentTaskId: parentTaskId,
+        sourceMetadata: {
+          type: "eval_follow_up",
+          runId,
+          suggestionId: followUp.suggestionId,
+          policyMode,
+          dedupeKey: followUp.dedupeKey,
         },
       },
-    });
+    })).id;
 
-    const createdTaskId = result.outcome === "created" ? result.task.id : result.existingTaskId;
     created.push({
       ...followUp,
       state: "created",
       createdTaskId,
       recommendation: {
         ...followUp.recommendation,
-        reason: result.outcome === "created"
-          ? `Created as ${createdTaskId} by follow-up policy`
-          : `Reused existing follow-up ${createdTaskId} by follow-up policy`,
+        reason: existingTaskId
+          ? `Reused existing follow-up ${createdTaskId} by follow-up policy`
+          : `Created as ${createdTaskId} by follow-up policy`,
       },
     });
   }

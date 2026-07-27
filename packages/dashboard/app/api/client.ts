@@ -2,7 +2,8 @@
  * FNXC:CodeOrganization 2026-07-15-16:00:
  * Dashboard API client core (fetch wrapper + ApiRequestError).
  */
-import { FUSION_CLIENT_HEADER, FUSION_DASHBOARD_UI_CLIENT } from "@fusion/core";
+// FNXC:TaskDeleteAttribution 2026-07-26-17:05: import the browser-safe leaf, not the package root — the root alias resolves to `core/src/types.ts` in the client bundle and does not carry these constants.
+import { FUSION_CLIENT_HEADER, FUSION_DASHBOARD_UI_CLIENT } from "@fusion/core/task-delete-attribution";
 import { getAuthToken, withTokenHeader } from "../auth";
 import type { DedupeOptions } from "./dedupe";
 

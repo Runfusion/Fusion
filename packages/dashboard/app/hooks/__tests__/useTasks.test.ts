@@ -1267,6 +1267,88 @@ describe("useTasks", () => {
       expect(result.current.tasks[0].status).toBe("executing");
     });
 
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+    `awaitingPlanning` is attached by GET /api/tasks only, so an SSE update would wipe it and flip
+    TaskCard's badge back to its step-count fallback mid-stall. It is carried across same-column
+    updates, but must be DROPPED when the step count changes — planning finishing is exactly that,
+    and a stale `true` surviving it would keep claiming "Queued to plan" for a now-Ready card.
+    */
+    describe("awaitingPlanning enrichment across SSE updates", () => {
+      const todoTask = (overrides: Record<string, unknown>) => createMockTask({
+        id: "FN-001",
+        column: "todo" as Column,
+        steps: [],
+        updatedAt: "2026-01-01T00:00:00Z",
+        ...overrides,
+      });
+
+      async function mountWith(initial: Record<string, unknown>) {
+        mockFetchTasks.mockResolvedValueOnce([todoTask(initial)]);
+        const { result } = renderHook(() => useTasks());
+        await waitFor(() => {
+          expect(result.current.tasks).toHaveLength(1);
+        });
+        return result;
+      }
+
+      it("survives a status-only update that omits the field", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            status: "planning",
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBe(true);
+      });
+
+      it("is dropped when planning lands steps, so the fallback answers Ready", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            steps: [{ name: "Step 1", status: "pending" }],
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBeUndefined();
+        expect(result.current.tasks[0].steps).toHaveLength(1);
+      });
+
+      it("is dropped when steps are cleared, so the fallback answers queued", async () => {
+        const result = await mountWith({
+          awaitingPlanning: false,
+          steps: [{ name: "Step 1", status: "pending" }],
+        });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            steps: [],
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBeUndefined();
+      });
+
+      it("prefers a server value on the incoming payload over the carried one", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            awaitingPlanning: false,
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBe(false);
+      });
+    });
+
     it("rapid status updates after column move are not rejected", async () => {
       // Task starts in todo
       const initialTask = createMockTask({

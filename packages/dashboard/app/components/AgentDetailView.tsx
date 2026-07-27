@@ -30,7 +30,7 @@ import { DEFAULT_HEARTBEAT_INTERVAL_MS, formatHeartbeatInterval, resolveHeartbea
 import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { FloatingWindow } from "./FloatingWindow";
 import { AgentAvatar } from "./AgentAvatar";
 import { FileEditor } from "./FileEditor";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
@@ -107,6 +107,8 @@ interface AgentDetailViewProps {
   initialRunId?: string | null;
   preferActiveRun?: boolean;
   onMutationSuccess?: (context: { agentId: string; deleted?: boolean }) => void | Promise<void>;
+  /** Distinguishes the task-detail nested modal from the AgentsView window geometry. */
+  floatingWindowKey?: string;
 }
 
 type TabId = "dashboard" | "logs" | "mail" | "config" | "runs" | "tasks" | "employees" | "soul" | "instructions" | "memory" | "reflections";
@@ -255,7 +257,7 @@ function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string
     ?? "";
 }
 
-export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false, showInlineBackButton = false, initialTab, initialRunId, preferActiveRun = false, onMutationSuccess }: AgentDetailViewProps) {
+export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false, showInlineBackButton = false, initialTab, initialRunId, preferActiveRun = false, onMutationSuccess, floatingWindowKey = "agent-detail" }: AgentDetailViewProps) {
   const { t } = useTranslation("app");
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [heartbeatMultiplier, setHeartbeatMultiplier] = useState(1);
@@ -276,10 +278,8 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const [agentMailbox, setAgentMailbox] = useState<AgentMailboxResponse | null>(null);
   const [isLoadingMailbox, setIsLoadingMailbox] = useState(false);
   const [mailboxError, setMailboxError] = useState<string | null>(null);
-  const agentDetailModalRef = useRef<HTMLDivElement>(null);
   const bulkMenuRef = useRef<HTMLDivElement | null>(null);
   const overlayMouseDownRef = useRef(false);
-  useModalResizePersist(agentDetailModalRef, !inline, "fusion:agent-detail-modal-size");
   const onCloseRef = useRef(onClose);
   const addToastRef = useRef(addToast);
   const agentRef = useRef<AgentDetail | null>(null);
@@ -902,23 +902,45 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     }
 
     return (
-      <div
-        className="agent-detail-overlay"
-        onMouseDown={(e) => { if (e.target === e.currentTarget) overlayMouseDownRef.current = true; }}
-        onMouseUp={(e) => {
-          if (overlayMouseDownRef.current && e.target === e.currentTarget) onClose();
-          overlayMouseDownRef.current = false;
+      <FloatingWindow
+        windowKey={floatingWindowKey}
+        title={t("agents.loading", "Loading agent...")}
+        ariaLabel={t("agents.detailLoadingLabel", "Agent detail loading")}
+        onClose={onClose}
+        modal
+        hideHeader
+        dragHandleSelector=".agent-detail-header"
+        className="floating-window--agent-detail"
+        defaultSize={{ width: 608, height: 640 }}
+        minSize={{ width: 400, height: 320 }}
+        /*
+        FNXC:ModalTouchGeometry 2026-07-26-19:05:
+        Legacy Agent Detail stored only size, while FloatingWindow requires size plus position.
+        Use a new key for a deliberate one-time geometry reset rather than restoring an ambiguous partial payload.
+        */
+        persistGeometryKey={`floating-window:${floatingWindowKey}`}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        /*
+        FNXC:ModalTouchGeometry 2026-07-26-19:05:
+        Agent Detail's historical dismiss guard is paired mouse-down/mouse-up on the backdrop.
+        Do not use closeOnOutsidePointerDown: it would dismiss earlier and include touch gestures.
+        */
+        backdropMouseHandlers={{
+          onMouseDown: (e) => { if (e.target === e.currentTarget) overlayMouseDownRef.current = true; },
+          onMouseUp: (e) => {
+            if (overlayMouseDownRef.current && e.target === e.currentTarget) onClose();
+            overlayMouseDownRef.current = false;
+          },
         }}
-        role="dialog"
-        aria-modal="true"
       >
-        <div className="agent-detail-modal" ref={agentDetailModalRef}>
+        <div className="agent-detail-modal">
           <div className="agent-detail-loading">
             <Loader2 className="animate-spin" size={24} />
             <span>{t("agents.loading", "Loading agent...")}</span>
           </div>
         </div>
-      </div>
+      </FloatingWindow>
     );
   }
 
@@ -928,19 +950,19 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
 
   const stateStyle = STATE_COLORS[agent.state];
   const health = getHealthStatus();
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-19:05:
+  Inline Agent Detail is the supported embedded presentation exception. It fills its owner and
+  deliberately bypasses FloatingWindow chrome, persistence, and drag/resize affordances.
+  */
+// FNXC:ModalTouchGeometry 2026-07-26-19:46: Nested Task Detail Agent Detail uses a distinct FloatingWindow identity, so its live dialog title id must also stay unique when both surfaces are open.
+  const agentDetailTitleId = `${floatingWindowKey}-modal-title`;
   const detailShellClassName = inline ? "agent-detail-inline" : "agent-detail-modal";
   const isPauseAllDisabled = isBulkEligibilityLoading || bulkPauseEligibleCount === 0;
   const isResumeAllDisabled = isBulkEligibilityLoading || bulkResumeEligibleCount === 0;
 
-  return (
-    <div
-      className={inline ? "agent-detail-inline-shell" : "agent-detail-overlay"}
-      onClick={(e) => !inline && e.target === e.currentTarget && onClose()}
-      role={inline ? "region" : "dialog"}
-      aria-label={inline ? "Agent detail" : undefined}
-      aria-modal={inline ? undefined : "true"}
-    >
-      <div className={detailShellClassName} ref={agentDetailModalRef}>
+  const detailContent = (
+      <div className={detailShellClassName}>
         {/* Header */}
         <div className="agent-detail-header">
           {/* Identity area: icon + name + badges */}
@@ -960,7 +982,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               <AgentAvatar agent={agent} size={36} />
             </div>
             <div className="agent-detail-info">
-              <h2>{agent.name}</h2>
+              <h2 id={agentDetailTitleId}>{agent.name}</h2>
               <div className="agent-detail-badges">
                 <span 
                   className="badge"
@@ -1299,7 +1321,39 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
           </div>
         )}
       </div>
-    </div>
+  );
+
+  if (inline) {
+    return <div className="agent-detail-inline-shell" role="region" aria-label="Agent detail">{detailContent}</div>;
+  }
+
+  return (
+    <FloatingWindow
+      windowKey={floatingWindowKey}
+      title={agent.name}
+      ariaLabelledBy={agentDetailTitleId}
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".agent-detail-header"
+      className="floating-window--agent-detail"
+      defaultSize={{ width: 608, height: 640 }}
+      minSize={{ width: 400, height: 320 }}
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: The legacy size-only key is deliberately replaced by FloatingWindow geometry, causing one intentional reset per user. */
+      persistGeometryKey={`floating-window:${floatingWindowKey}`}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Preserve Agent Detail's unconditional paired mouse-only dismissal instead of broader pointer-down/touch dismissal. */
+      backdropMouseHandlers={{
+        onMouseDown: (e) => { if (e.target === e.currentTarget) overlayMouseDownRef.current = true; },
+        onMouseUp: (e) => {
+          if (overlayMouseDownRef.current && e.target === e.currentTarget) onClose();
+          overlayMouseDownRef.current = false;
+        },
+      }}
+    >
+      {detailContent}
+    </FloatingWindow>
   );
 }
 

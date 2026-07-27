@@ -1,8 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { MailboxMessageContent } from "../MailboxMessageContent";
+
+const mailboxModalCss = readFileSync(resolve(__dirname, "../MailboxModal.css"), "utf8");
 
 // FNXC:Markdown 2026-06-23-03:15: Mock the heavy `mermaid` library so the mermaid
 // rendering tests do not pull in the real parser/renderer bundle. The component
@@ -61,15 +65,44 @@ describe("MailboxMessageContent", () => {
     expect(pre?.textContent).toContain("npm install");
   });
 
-  it("renders links with target=_blank and noopener noreferrer", () => {
-    render(
-      <MailboxMessageContent content="See [docs](https://example.com/docs)." />,
+  it("themes markdown links consistently across inline, autolink, list, and table content", () => {
+    const content = [
+      "See [inline docs](https://example.com/inline).",
+      "Visit https://example.com/autolink.",
+      "- [list docs](https://example.com/list)",
+      "",
+      "| docs |",
+      "| --- |",
+      "| [table docs](https://example.com/table) |",
+      "",
+      "See packages/dashboard/app/App.tsx for context.",
+    ].join("\n");
+    const { container } = render(
+      <FileBrowserProvider openFile={vi.fn()}>
+        <MailboxMessageContent content={content} />
+      </FileBrowserProvider>,
     );
-    const link = screen.getByRole("link", { name: "docs" });
-    expect(link.getAttribute("href")).toBe("https://example.com/docs");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.getAttribute("rel")).toContain("noopener");
-    expect(link.getAttribute("rel")).toContain("noreferrer");
+
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(4);
+    for (const link of links) {
+      expect(link.closest(".mailbox-markdown")).not.toBeNull();
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+    expect(screen.getByRole("button", { name: "packages/dashboard/app/App.tsx" }))
+      .toHaveClass("file-path-link");
+    expect(container.querySelector("a.file-path-link")).toBeNull();
+  });
+
+  it("defines token-only mailbox markdown anchor styles", () => {
+    const anchorRule = mailboxModalCss.match(/\.mailbox-markdown a\s*\{([^}]*)\}/)?.[1];
+    expect(mailboxModalCss).toMatch(/\.mailbox-markdown a\b/);
+    expect(anchorRule).toBeDefined();
+    expect(anchorRule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba\(/i);
+    expect(mailboxModalCss).toMatch(/\.mailbox-markdown a:visited\s*\{/);
+    expect(mailboxModalCss).toMatch(/\.mailbox-markdown a:hover\s*\{/);
+    expect(mailboxModalCss).toMatch(/\.mailbox-markdown a:focus-visible\s*\{/);
   });
 
   it("renders GFM tables with the mailbox-scoped class", () => {

@@ -1,6 +1,6 @@
 {
   "name": "@fusion/core",
-  "version": "0.74.0-beta.3",
+  "version": "0.74.0-beta.5",
   "license": "MIT",
   "description": "Fusion core: task store, scheduler, settings, and shared domain types backing the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -23,6 +23,11 @@
       "types": "./src/gh-cli.ts",
       "source": "./src/gh-cli.ts",
       "import": "./dist/gh-cli.js"
+    },
+    "./task-delete-attribution": {
+      "types": "./src/task-delete-attribution.ts",
+      "source": "./src/task-delete-attribution.ts",
+      "import": "./dist/task-delete-attribution.js"
     },
     "./detect-content-language": {
       "types": "./src/detect-content-language.ts",

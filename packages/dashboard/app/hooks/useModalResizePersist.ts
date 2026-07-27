@@ -58,6 +58,11 @@ function readPersistableSize(node: HTMLElement): PersistedSize {
  * @param storageKey  localStorage key, must be stable + unique per modal
  * @param options tablet-only touch-target opt-in; other shared modal consumers retain desktop geometry
  */
+/*
+FNXC:ModalTouchGeometry 2026-07-26-19:30:
+FN-8619 migrated every product modal consumer to FloatingWindow. Keep this hook, its grip CSS,
+and tests because the Chromium touch-geometry e2e fixture still exercises the legacy resize seam.
+*/
 export function useModalResizePersist(
   ref: RefObject<HTMLElement | null>,
   isOpen: boolean,

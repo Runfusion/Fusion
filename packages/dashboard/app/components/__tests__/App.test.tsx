@@ -646,6 +646,7 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 const mockUseViewportMode = vi.fn(() => "desktop");
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",

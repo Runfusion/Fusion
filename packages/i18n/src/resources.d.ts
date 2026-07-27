@@ -6035,6 +6035,8 @@ export default interface Resources {
         "workspaceModeHint": "When enabled, the project root is treated as a workspace containing multiple git sub-repos. Tasks run per-sub-repo and no git repo is created at the root. Disable for single-repo projects. No default — unset (disabled)."
       },
       "globalGeneral": {
+        "agentToolOutputLimit": " Agent tool-output limit ",
+        "agentToolOutputLimitHint": " Maximum characters returned from each engine-injected tool result. Default: 16,000 characters per tool result. Leave empty to use the default. ",
         "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
         "autoReloadDashboardOnVersionChange": " Auto-reload dashboard on version change ",
         "cLIBinaryOnPATH": " CLI binary on PATH ",
@@ -6059,6 +6061,8 @@ export default interface Resources {
         "globalDefaultTrackingRepo": "Global default tracking repo",
         "leaveBothThinkingTogglesOffToKeepThe": " Leave both thinking toggles off to keep the original default behavior. This only controls persisted ",
         "manualOnlyNeverAutoCheck": "Manual only — never auto-check",
+        "noLimitOnAgentToolOutput": " No limit on agent tool output ",
+        "noLimitOnAgentToolOutputHint": " Disable the shared tool-output clamp. A single tool result can consume the agent context window. Default: disabled; the default budget is 16,000 characters per tool result. ",
         "onStartupOncePerServerLaunch": "On startup — once per server launch",
         "ownerRepo": "owner/repo",
         "projectsInheritThisValueWhenTheyDoNot": "Projects inherit this value when they do not set a project default tracking repo. No default — unset.",

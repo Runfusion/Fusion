@@ -155,6 +155,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
 }));
 vi.mock("lucide-react", async (importOriginal) => {

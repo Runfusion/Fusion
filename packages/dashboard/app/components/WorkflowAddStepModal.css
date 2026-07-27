@@ -5,17 +5,6 @@ full-width bottom sheet on mobile (mirrors the app's mobile modal pattern) so
 the same dialog serves both breakpoints.
 */
 
-.wf-add-step-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
-  backdrop-filter: blur(2px);
-}
-
 .wf-add-step-dialog {
   display: flex;
   flex-direction: column;
@@ -212,10 +201,6 @@ the same dialog serves both breakpoints.
 }
 
 @media (max-width: 768px), (max-height: 480px) {
-  .wf-add-step-overlay {
-    align-items: flex-end;
-  }
-
   .wf-add-step-dialog {
     width: 100vw;
     max-height: 82dvh;

@@ -797,6 +797,10 @@ export interface GlobalSettings {
    *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
    *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
+  /** Per-result engine-injected tool-output budget. Unset/null uses 16,000 characters;
+   * positive integers set a custom cap; 0 disables the shared clamp; invalid values
+   * fall back to the finite default. */
+  agentToolOutputMaxChars?: number | null;
   /** When true, task chat receives engine-authored progress, failure, and rollback updates. Default: false. */
   proactiveTaskChatEnabled?: boolean;
   /** When true, persist `thinking` log entries from agent reasoning deltas for
@@ -1043,6 +1047,43 @@ export interface ProjectSettings {
    * misconfigured id never breaks AI-undo task creation.
    */
   aiUndoTaskWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Workflow applied to tasks opened programmatically by `fn task create` (CLI)
+   * and the `fn_task_create` agent tool. Blank/unset means "Selected workflow":
+   * the operator's current Board workflow lane (`boardSelectedWorkflowId`), and
+   * failing that the project default workflow — i.e. today's behavior. A concrete
+   * id PINS those tasks to that workflow regardless of the board lane.
+   * An explicit `workflow_id` argument on `fn_task_create` still wins over this.
+   * Resolution tolerates a missing/deleted/fragment id by falling back to inherit,
+   * mirroring `aiUndoTaskWorkflowId`, so a misconfigured id never breaks creation.
+   */
+  taskCreateWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Workflow applied to refinement tasks (`TaskStore.refineTask` — the follow-up
+   * card spawned from a done/in-review task plus operator feedback, including the
+   * auto-refinement a comment on a done task triggers). Same semantics as
+   * `taskCreateWorkflowId`: blank/unset = "Selected workflow" (board lane, then
+   * project default), a concrete id pins. Replaces FN-8188's unconditional
+   * "refinements inherit the project default workflow" with an overridable choice.
+   */
+  refinementTaskWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Server-side mirror of the operator's current Board workflow lane, written
+   * best-effort by the dashboard whenever the lane changes. The authoritative,
+   * instant-restore copy stays in project-scoped localStorage
+   * (`boardWorkflowSelection.ts`); this mirror exists ONLY so non-browser callers
+   * — `fn task create` from a terminal, the `fn_task_create` agent tool, the
+   * refinement path invoked from CLI/engine — can honor the "Selected workflow"
+   * option, which they otherwise could not read.
+   * Consequence to know: this is PROJECT-scoped, so two operators on the same
+   * project share one mirrored lane (last switch wins). The Board itself never
+   * reads it back. The all-workflows sentinel is never persisted here.
+   * Not a user-editable Settings field; there is no picker for it.
+   */
+  boardSelectedWorkflowId?: string;
   /** Built-in workflow ids visible/selectable in project workflow pickers.
    *  Undefined preserves the default of showing every built-in workflow. */
   enabledBuiltinWorkflowIds?: string[];
@@ -1071,6 +1112,10 @@ export interface ProjectSettings {
    * Records the last time the engine process proved it was alive so startup recovery can exclude process-down wall-clock time from active task duration without changing firstExecutionAt.
    */
   engineLastActiveAt?: string;
+  /** Per-result engine-injected tool-output budget. Unset/null uses 16,000 characters;
+   * positive integers set a custom cap; 0 disables the shared clamp; invalid values
+   * fall back to the finite default. */
+  agentToolOutputMaxChars?: number | null;
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
@@ -1742,14 +1787,13 @@ export interface ProjectSettings {
    *  Self-healing rebounds qualifying holders to todo when this threshold is met.
    *  Default: 1800000 (30 minutes). Set to 0 to disable. */
   pausedScopeDecayMs?: number;
-  /** Maximum age in milliseconds a meta-task may remain blocked without its target
-   *  advancing before self-healing auto-archives it as superseded.
-   *  Default: 7200000 (2 hours). Set to 0 to disable. */
-  metaTaskStallAutoCloseMs?: number;
-  /** Grace period in milliseconds used by meta-task auto-archive guards to treat
-   *  recent executor activity as in-flight and skip destructive auto-archive.
-   *  Default: 1800000 (30 minutes). Set to 0 to disable this guard. */
-  metaTaskActiveExecutionGraceMs?: number;
+  /*
+   * FNXC:Settings 2026-07-26-16:45:
+   * `metaTaskStallAutoCloseMs` / `metaTaskActiveExecutionGraceMs` are GONE with the meta-task
+   * auto-archive sweeps they tuned. The sweeps classified meta-tasks by title/description regex and
+   * archived live work bound to the wrong target, so the whole feature was deleted rather than
+   * retuned. Keys left in an existing settings row are inert and simply ignored; do not re-add them.
+   */
   /** Rolling window in milliseconds for board-stall auto-recovery evaluation.
    *  Default: 7200000 (2 hours). */
   boardStallSweepWindowMs?: number;

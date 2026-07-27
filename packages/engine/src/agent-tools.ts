@@ -1605,6 +1605,20 @@ function formatTaskReadLines(lines: string[], emptyStateText: string): string {
   return text.trim().length > 0 ? text : emptyStateText;
 }
 
+/*
+FNXC:ToolOutputBudget 2026-08-06-12:00:
+FN-8614 requires high-volume read tools to preserve their identifying headers while
+providing a useful source-level stop before the universal per-result wrapper runs.
+The hint names the narrowing surface instead of silently tail-cutting an agent's context.
+*/
+const SEMANTIC_TOOL_READ_MAX_CHARS = 12_000;
+
+function trimSemanticToolRead(text: string, hint: string): string {
+  if (text.length <= SEMANTIC_TOOL_READ_MAX_CHARS) return text;
+  const marker = `\n\n[Output truncated; ${hint}]`;
+  return text.slice(0, Math.max(0, SEMANTIC_TOOL_READ_MAX_CHARS - marker.length)) + marker;
+}
+
 function formatTaskSummaryLine(task: { id: string; column: string; title?: string | null; description: string; dependencies: string[] }): string {
   const desc = task.title || task.description.slice(0, 80) || "(no description)";
   const deps = task.dependencies.length ? ` [deps: ${task.dependencies.join(", ")}]` : "";
@@ -1699,7 +1713,13 @@ export function createTaskShowTool(store: TaskStore): ToolDefinition {
           task.prompt || "(not yet specified)",
         ].filter((part): part is string => typeof part === "string");
         return {
-          content: [{ type: "text" as const, text: parts.join("\n") || `Task ${params.id} has no details.` }],
+          content: [{
+            type: "text" as const,
+            text: trimSemanticToolRead(
+              parts.join("\n") || `Task ${params.id} has no details.`,
+              "use fn_task_document_read or a focused task query for more",
+            ),
+          }],
           details: { taskId: task.id },
         };
       } catch {
@@ -1831,7 +1851,11 @@ async function readTaskAgentLogs(
     ]);
     const filter = params.type ? `, type=${params.type}` : "";
     const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
-    return { content: [{ type: "text" as const, text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }], details: { taskId, total, limit, offset, type: params.type } };
+    const text = entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)`;
+    return {
+      content: [{ type: "text" as const, text: trimSemanticToolRead(text, "use a smaller limit, offset, or type filter for more") }],
+      details: { taskId, total, limit, offset, type: params.type },
+    };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     return { content: [{ type: "text" as const, text: `ERROR: Failed to read agent log for task ${taskId}: ${err.message}` }], details: {} };
@@ -2633,7 +2657,10 @@ async function viewArtifactForAgent(store: TaskStore, id: string) {
     if (artifact.content) lines.push("", artifact.content);
 
     return {
-      content: [{ type: "text" as const, text: lines.join("\n") }],
+      content: [{
+        type: "text" as const,
+        text: trimSemanticToolRead(lines.join("\n"), "use artifact metadata or a more focused artifact read for more"),
+      }],
       details: { artifactId: artifact.id },
     };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2662,11 +2689,13 @@ async function readTaskDocuments(store: TaskStore, taskId: string, key?: string)
       return {
         content: [{
           type: "text" as const,
-          text:
+          text: trimSemanticToolRead(
             `Document: ${document.key}\n` +
-            `Revision: ${document.revision}\n` +
-            `Updated: ${document.updatedAt}\n\n` +
-            document.content,
+              `Revision: ${document.revision}\n` +
+              `Updated: ${document.updatedAt}\n\n` +
+              document.content,
+            "read a narrower document or use its revision metadata before requesting more",
+          ),
         }],
         details: {},
       };

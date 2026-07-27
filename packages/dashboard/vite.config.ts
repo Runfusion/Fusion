@@ -134,6 +134,13 @@ export default defineConfig({
       The dashboard core-import scanner enforces this alias boundary for both relative core/src and package-subpath value imports.
       Add a new browser leaf only after its full dependency graph is reviewed and it has a dated entry in scripts/lib/dashboard-browser-safe-core-modules.json.
       */
+      /*
+      FNXC:TaskDeleteAttribution 2026-07-26-17:05:
+      The delete-attribution constants (`x-fusion-client` header name + the dashboard-UI token) are shared by the browser client that STAMPS the header and the route that READS it, so both sides cannot drift apart into two spellings of the same string.
+      `task-delete-attribution.ts` imports nothing at all, so it is a safe browser leaf; alias its subpath rather than widening the `@fusion/core` alias, which would drag the Node-heavy index into the client bundle.
+      Ordered before the `@fusion/core` entry because Vite matches aliases in order and the broader key would otherwise swallow this subpath — the exact failure this line was added to fix (`"FUSION_CLIENT_HEADER" is not exported by ../core/src/types.ts`).
+      */
+      "@fusion/core/task-delete-attribution": resolve(__dirname, "../core/src/task-delete-attribution.ts"),
       "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),

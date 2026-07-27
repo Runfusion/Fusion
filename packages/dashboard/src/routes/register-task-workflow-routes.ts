@@ -1,8 +1,16 @@
 import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
+
+/**
+ * FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+ * Per-request ceiling on `awaitingPlanning` PROMPT.md reads (one per Todo row). Boards this large
+ * are pathological; beyond the cap the remaining cards keep TaskCard's step-count fallback rather
+ * than turning one board load into thousands of file reads. Truncation is logged, never silent.
+ */
+const AWAITING_PLANNING_ENRICH_LIMIT = 200;
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   TaskStore,
@@ -88,7 +96,7 @@ import {
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
-import { computePlanApprovalFingerprint, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
+import { computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
 import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
@@ -1029,6 +1037,60 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       } catch {
         // Planner-overseer-state enrichment is best-effort and must never
         // fail the board load — fall through with the un-enriched task list.
+      }
+
+      /*
+      FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+      Attach `awaitingPlanning` for plan-in-place (Todo) cards so the "Queued to plan" / "Ready"
+      badge pair names the cap the card is actually waiting on. Same additive, best-effort,
+      never-fail-the-board contract as the two enrichments above; the field is omitted (rather than
+      `false`) for every other row, so those payloads stay byte-identical.
+
+      Requirement: the badges must agree with the engine. TaskCard could only infer "unplanned" from
+      `steps.length === 0`, while triage's todo-discovery and the scheduler's dispatch filter both
+      decide from PROMPT.md seed-ness — so a card with a real spec but no parsed steps was labelled
+      "Queued to plan" while the scheduler was already treating it as a WIP-slot candidate, and a
+      re-seeded card still carrying old steps was labelled "Ready" while triage was about to plan it.
+      `isTaskAwaitingPlanning` is the shared predicate, so there is one answer per card.
+
+      Cost: one small file read per Todo row, only on this route (SSE payloads are not enriched —
+      TaskCard falls back to its step-count heuristic when the field is absent). Bounded by
+      AWAITING_PLANNING_ENRICH_LIMIT and logged when it truncates, so a huge Todo column degrades to
+      the heuristic instead of turning a board load into thousands of reads.
+      */
+      try {
+        const todoRows = tasks.filter((task) => task.column === "todo");
+        const enrichable = todoRows.slice(0, AWAITING_PLANNING_ENRICH_LIMIT);
+        if (todoRows.length > enrichable.length) {
+          severityAuditLog.warn(
+            `awaitingPlanning enrichment truncated: ${enrichable.length}/${todoRows.length} todo tasks ` +
+            "annotated (remaining cards fall back to the client step-count heuristic)",
+          );
+        }
+        if (enrichable.length > 0) {
+          const flagByTask = new Map<string, boolean>();
+          await Promise.all(enrichable.map(async (task) => {
+            let promptContent: string | null = null;
+            try {
+              promptContent = await readFile(join(scopedStore.getTaskDir(task.id), "PROMPT.md"), "utf-8");
+            } catch (err: unknown) {
+              // A MISSING spec means unplanned (triage regenerates it), which the predicate encodes
+              // as `null`. Any other read fault is not evidence either way, so omit the field and
+              // let the client fall back rather than assert a wrong label.
+              if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return;
+            }
+            flagByTask.set(task.id, isTaskAwaitingPlanning(task, promptContent));
+          }));
+          if (flagByTask.size > 0) {
+            tasks = tasks.map((task) => {
+              const awaitingPlanning = flagByTask.get(task.id);
+              return awaitingPlanning === undefined ? task : { ...task, awaitingPlanning };
+            });
+          }
+        }
+      } catch {
+        // Awaiting-planning enrichment is best-effort and must never fail the
+        // board load — fall through with the un-enriched task list.
       }
 
       res.json(tasks);

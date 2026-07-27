@@ -2044,8 +2044,14 @@ function AppInner() {
           overlapping surface claims the front on pointer/focus. Other utility FloatingWindows keep
           their higher utility band, so this scoped opt-in cannot change Terminal, Files, or New Task.
           */
-          /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Chat is a full-screen sheet at ≤768px, so preserve its desktop location and size instead of restoring or overwriting them there. */
+          /*
+          FNXC:ModalGeometryPersistence 2026-07-26-21:00:
+          Quick Chat is a full-screen sheet at both the narrow and short-viewport CSS breakpoints.
+          Suspend desktop geometry restoration, writes, drag, and resize controls for both surfaces
+          so a short sheet cannot corrupt the desktop window it restores after rotation.
+          */
           suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
           persistGeometryKey="kb-dashboard-chat-floating-window"
           defaultSize={{ width: 980, height: 680 }}
           /*

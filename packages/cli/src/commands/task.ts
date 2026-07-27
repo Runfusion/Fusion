@@ -456,9 +456,19 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
             ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
             ...(hasIntentSignal(nearDuplicate.signature) ? { intentSignature: nearDuplicate.signature } : {}),
           };
+          /*
+          FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+          `fn task create` honors the project `taskCreateWorkflowId` setting: a pinned
+          workflow, else the operator's mirrored Board lane ("Selected workflow"), else
+          `undefined` — which leaves createTask on its existing project-default path, so
+          an unconfigured project behaves exactly as before. The resolver validates the
+          id, so a stale value can never make CLI create throw.
+          */
+          const originWorkflowId = await store.resolveOriginWorkflowOverrideId("task-create");
           const created = await store.createTask({
             description: trimmedDescription,
             dependencies: depends,
+            ...(originWorkflowId ? { workflowId: originWorkflowId } : {}),
             source: {
               sourceType: "cli",
               sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,

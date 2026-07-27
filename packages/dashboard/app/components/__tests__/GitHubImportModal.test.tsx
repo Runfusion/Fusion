@@ -4,7 +4,13 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import { buildIssuePlanningSeed, GitHubImportModal } from "../GitHubImportModal";
 import { buildIssueChatPrefill } from "../ChatView";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
+import {
+  assertModalGeometryRecoveryAndSheetContracts,
+  assertRenderedModalTouchGeometry,
+  expectFloatingWindowStructure,
+} from "./floatingWindowMigration.test-helpers";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -936,8 +942,60 @@ describe("GitHubImportModal", () => {
   });
 
   it("does not render when isOpen is false", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
     render(<GitHubImportModal isOpen={false} onClose={onClose} onImport={onImport} tasks={[]} />);
     expect(screen.queryByText("Import from GitHub")).toBeNull();
+    expect(setItem).not.toHaveBeenCalledWith("floating-window:github-import", expect.any(String));
+    setItem.mockRestore();
+  });
+
+  it("covers root importer FloatingWindow touch geometry, recovery, and sheet suspension", async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
+    const mountModal = () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      return render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+    };
+    try {
+      const rendered = mountModal();
+      await waitFor(() => expect(rendered.baseElement.querySelector(".github-import-modal__header")).not.toBeNull());
+      expectFloatingWindowStructure("github-import");
+      assertRenderedModalTouchGeometry(
+        "github-import",
+        rendered.baseElement.querySelector(".github-import-modal__header")!,
+      );
+      rendered.unmount();
+
+      assertModalGeometryRecoveryAndSheetContracts("github-import", mountModal);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalHeight });
+    }
+  });
+
+  it("uses the shared FloatingWindow outside-pointer contract only when the preference is enabled", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    const disabled = render(
+      <ModalDismissPreferenceProvider enabled={false}>
+        <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />
+      </ModalDismissPreferenceProvider>,
+    );
+    await waitFor(() => expect(disabled.baseElement.querySelector("[data-testid='floating-window-github-import']")).not.toBeNull());
+    fireEvent.pointerDown(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    disabled.unmount();
+
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    const enabled = render(
+      <ModalDismissPreferenceProvider enabled>
+        <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />
+      </ModalDismissPreferenceProvider>,
+    );
+    await waitFor(() => expect(enabled.baseElement.querySelector("[data-testid='floating-window-github-import']")).not.toBeNull());
+    fireEvent.pointerDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   // FNXC:EmbeddedPresentation 2026-06-22-12:00:
@@ -981,15 +1039,15 @@ describe("GitHubImportModal", () => {
 
     it("keeps the modal overlay and Escape-to-close in modal mode", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
-      const { container } = render(
+      const { baseElement } = render(
         <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />,
       );
 
       await waitFor(() => {
         expect(screen.getByText("Import from GitHub")).toBeTruthy();
       });
-      expect(container.querySelector(".modal-overlay")).not.toBeNull();
-      expect(container.querySelector(".github-import-modal--embedded")).toBeNull();
+      expect(baseElement.querySelector("[data-testid='floating-window-overlay-github-import']")).not.toBeNull();
+      expect(baseElement.querySelector(".github-import-modal--embedded")).toBeNull();
       fireEvent.keyDown(document, { key: "Escape" });
       expect(onClose).toHaveBeenCalled();
     });
@@ -2900,7 +2958,7 @@ describe("GitHubImportModal", () => {
     expect(importSheetRule).toBe(chatSheetRule);
     expect(importSheetRule).toBe(taskSheetRule);
     expect(importSheetRule).toContain("inset: 0 !important;");
-    expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.floating-window--github-import-detail \.floating-window__resize-handle\s*\{\s*display: none;/);
+    expect(source).toMatch(/@media \(max-width: 767\.98px\), \(max-height: 480px\)[\s\S]*\.floating-window--github-import-detail \.floating-window__resize-handle\s*\{\s*display: none;/);
     expect(source).toContain(".floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail)");
   });
 

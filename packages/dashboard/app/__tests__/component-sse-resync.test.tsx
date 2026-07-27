@@ -61,6 +61,7 @@ vi.mock("../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => "desktop",
   isMobileViewport: () => false,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "desktop",
 }));
 

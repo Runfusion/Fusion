@@ -178,6 +178,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => viewportMode,
   isMobileViewport: () => viewportMode === "mobile",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => viewportMode,
 }));
 vi.mock("lucide-react", async (importOriginal) => {
@@ -523,9 +524,15 @@ describe("SettingsModal", () => {
       viewportOffsetTop: 50,
     });
 
-    const { container } = renderModal();
+    renderModal();
     await waitForSettingsModalReady();
-    const modal = container.querySelector(".settings-modal");
+    /*
+    FNXC:SettingsModalTests 2026-07-28-17:00:
+    FN-8606 migrated the modal branch to the shared FloatingWindow, which portals the
+    `.settings-modal` panel to document.body. Container-scoped queries no longer see it, so
+    resolve the keyboard-styled panel from the document root.
+    */
+    const modal = document.querySelector(".settings-modal");
 
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
@@ -730,11 +737,18 @@ describe("SettingsModal", () => {
 
     it("keeps the overlay and Escape-to-close in modal mode", async () => {
       const onClose = vi.fn();
-      const { container } = renderModal({ onClose });
+      renderModal({ onClose });
       await waitForSettingsModalReady();
 
-      expect(container.querySelector(".settings-modal-overlay")).not.toBeNull();
-      expect(container.querySelector(".settings-modal--embedded")).toBeNull();
+      /*
+      FNXC:SettingsModalTests 2026-07-28-17:00:
+      FN-8606 migrated the modal branch to the shared FloatingWindow: the dialog overlay is now
+      `.floating-window-overlay` portaled to document.body (not the legacy `.settings-modal-overlay`).
+      Escape-to-close is still owned by SettingsModal's own keydown handler, so the dismissal
+      contract is unchanged.
+      */
+      expect(document.querySelector(".floating-window-overlay")).not.toBeNull();
+      expect(document.querySelector(".settings-modal--embedded")).toBeNull();
       fireEvent.keyDown(document, { key: "Escape" });
       expect(onClose).toHaveBeenCalled();
     });
@@ -2044,10 +2058,14 @@ describe("SettingsModal", () => {
       ["footer Close", async (container: HTMLElement) => settingsModalUser.click(container.querySelector(".modal-actions-right button") as HTMLButtonElement)],
       ["header close", async (container: HTMLElement) => settingsModalUser.click(container.querySelector(".modal-close") as HTMLButtonElement)],
       ["Escape", async () => { fireEvent.keyDown(document, { key: "Escape" }); }],
-      ["backdrop", async (container: HTMLElement) => {
-        const overlay = container.querySelector(".settings-modal-overlay") as HTMLElement;
-        fireEvent.mouseDown(overlay);
-        fireEvent.mouseUp(overlay);
+      /*
+      FNXC:SettingsModalTests 2026-07-28-17:00:
+      FN-8606's FloatingWindow migration replaced the click-through backdrop element with an
+      opt-in outside-pointerdown dismissal (see FloatingWindow `closeOnOutsidePointerDown`). Dismiss
+      by firing a document-level pointerdown outside the panel instead of clicking a `.settings-modal-overlay`.
+      */
+      ["backdrop", async () => {
+        fireEvent.pointerDown(document.body);
       }],
     ])("flushes the latest edit through %s without a leave warning", async (path, dismiss) => {
       const onClose = vi.fn();

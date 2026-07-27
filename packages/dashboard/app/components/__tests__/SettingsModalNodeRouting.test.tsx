@@ -66,6 +66,25 @@ vi.mock("../../api", () => ({
   loginProvider: vi.fn(),
   logoutProvider: vi.fn(),
   fetchProjects: vi.fn(() => Promise.resolve([])),
+  /*
+  FNXC:DashboardMocks 2026-07-28-17:35:
+  The auto-update / restart-supervision work (system-info probe + update install/restart) added new
+  `../api` runtime exports that SettingsModal reads on mount. This hardcoded api mock must expose them
+  or vitest throws "No <export> is defined on the mock" the moment Settings renders. Type-only exports
+  are erased at runtime and intentionally omitted.
+  */
+  fetchSystemInfo: vi.fn(() => Promise.resolve({ supervised: true, restartSupported: true })),
+  installUpdate: vi.fn(() => Promise.resolve({ ok: true })),
+  requestSystemRestart: vi.fn(() => Promise.resolve({ ok: true })),
+  installCloudflared: vi.fn(() => Promise.resolve({ ok: true })),
+  submitProviderManualCode: vi.fn(() => Promise.resolve({ ok: true })),
+  fetchPlugins: vi.fn(() => Promise.resolve({ plugins: [] })),
+  cancelProviderLogin: vi.fn(() => Promise.resolve(undefined)),
+  saveApiKey: vi.fn(() => Promise.resolve({ ok: true })),
+  clearApiKey: vi.fn(() => Promise.resolve({ ok: true })),
+  testNotification: vi.fn(() => Promise.resolve({ ok: true })),
+  fetchGitRemotes: vi.fn(() => Promise.resolve({ remotes: [] })),
+  fetchGitBranches: vi.fn(() => Promise.resolve({ branches: [] })),
 }));
 
 vi.mock("../../hooks/useNodes", () => ({

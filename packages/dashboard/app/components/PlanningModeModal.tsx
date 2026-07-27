@@ -1,7 +1,7 @@
 import "./PlanningModeModal.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, PlanningQuestion, PlanningSummary, TaskPriority, ThinkingLevel } from "@fusion/core";
@@ -45,7 +45,7 @@ import {
   type PlanningContextualComment,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { FloatingWindow } from "./FloatingWindow";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import {
   savePlanningDescription,
@@ -473,7 +473,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
   // Escape-to-close behavior (the back-stack/onClose path), so escapeEnabled is deliberately not wired below.
-  const { isEmbedded, scrollLockEnabled, resizePersistEnabled } = useEmbeddedPresentation(presentation);
+  const { isEmbedded, scrollLockEnabled } = useEmbeddedPresentation(presentation);
   const [initialPlan, setInitialPlan] = useState("");
   /*
   FNXC:Planning 2026-07-15-00:00:
@@ -699,11 +699,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [mobileShowDetail, setMobileShowDetail] = useState<boolean>(Boolean(resumeSessionId));
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  // Track whether the mousedown that initiated a click came from inside the
-  // modal. Resizing via the bottom-right grip can release the mouse outside
-  // the modal element; without this guard, that release fires a click whose
-  // target is the overlay and would dismiss the modal mid-resize.
-  const overlayMouseDownOnSelfRef = useRef(false);
   const thinkingOutputRef = useRef<HTMLDivElement>(null);
   // Mirrors `streamingOutput` state for reading inside callbacks without
   // stale closure issues (e.g. capturing reasoning before onQuestion clears it).
@@ -717,7 +712,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     thinkingLevel?: ThinkingLevel | "";
   } | null>(null);
 
-  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:planning-modal-size");
+  // FNXC:ModalTouchGeometry 2026-07-26-14:10: FloatingWindow replaces the resize-only grip for the modal branch; embedded Planning keeps its existing inline layout.
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
   /*
@@ -3544,23 +3539,40 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     </section>
   );
 
-  return (
-    <div
-      className={isEmbedded ? "planning-view open" : "modal-overlay open"}
-      data-testid={isEmbedded ? "planning-view" : undefined}
-      onMouseDown={isEmbedded ? undefined : (e: MouseEvent<HTMLDivElement>) => {
-        overlayMouseDownOnSelfRef.current = e.target === e.currentTarget;
-      }}
-      onClick={isEmbedded ? undefined : (e: MouseEvent<HTMLDivElement>) => {
-        if (e.target === e.currentTarget && overlayMouseDownOnSelfRef.current) {
-          handleClose();
-        }
-        overlayMouseDownOnSelfRef.current = false;
-      }}
-      role={isEmbedded ? "region" : "dialog"}
-      aria-label={isEmbedded ? t("planning.title", "Planning Mode") : undefined}
-      aria-modal={isEmbedded ? undefined : "true"}
+  /* FNXC:ModalTouchGeometry 2026-07-26-14:25: Preserve Planning Mode's pre-migration responsive desktop shell as the FloatingWindow seed so shared persistence does not shrink the surface. */
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-19:40:
+  The shell MUST be a plain render function, never a component declared inside this render. A nested component is a
+  brand-new element type on every render, so React unmounts and remounts the entire Planning subtree on each keystroke:
+  the composer textarea is recreated, loses DOM focus, and typing appears dead after the first character. Keep the
+  returned element types (div / FloatingWindow) stable by calling this directly.
+  */
+  const renderModalShell = (children: ReactNode) => isEmbedded ? (
+    <div className="planning-view open" data-testid="planning-view" role="region" aria-label={t("planning.title", "Planning Mode")}>
+      {children}
+    </div>
+  ) : (
+    <FloatingWindow
+      windowKey="planning-mode"
+      title={t("planning.title", "Planning Mode")}
+      ariaLabel={`${t("planning.title", "Planning Mode")} dialog`}
+      onClose={handleClose}
+      hideHeader
+      dragHandleSelector=".planning-modal > .modal-header"
+      className="floating-window--planning-mode"
+      defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1200), height: window.innerHeight * 0.85 }}
+      minSize={{ width: 360, height: 480 }}
+      persistGeometryKey="floating-window:planning-mode"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      closeOnOutsidePointerDown
     >
+      {children}
+    </FloatingWindow>
+  );
+
+  return renderModalShell(
+    (
       <div className={isEmbedded ? "modal modal-lg planning-modal planning-modal--embedded" : "modal modal-lg planning-modal"} ref={modalRef}>
         {/*
         FNXC:PlanningMode 2026-06-22-00:00:
@@ -4245,7 +4257,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
         </div>
       </div>
-    </div>
+    )
   );
 }
 

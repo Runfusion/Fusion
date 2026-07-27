@@ -8,6 +8,13 @@ import {
   readAttachmentContents,
   computeUserCommentFingerprint,
 } from "../triage.js";
+import {
+  AgentSemaphore,
+  clearPreHeldExecutorSlotsForTests,
+  hasPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
+  registerPreHeldExecutorSlot,
+} from "../concurrency.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile, rm, mkdtemp } from "node:fs/promises";
@@ -6761,6 +6768,120 @@ describe("evictStaleProcessing", () => {
 
     expect(evicted).toEqual(new Set());
     expect(processor.getProcessingTaskIds().has("FN-1312")).toBe(true);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-14:20:
+  Original symptom: a Todo card sat on the "Queued to plan" badge indefinitely with free
+  concurrency slots, and NEITHER diagnostic explained it — no "Plan throttled by …" log line and no
+  `task:plan-admission-throttled` run-audit row — because the card was still eligible (so the
+  throttle branch never ran) while `admitOldest`'s refresh filtered it out on a stale
+  `coordinatorAdmittedTaskIds` entry left behind by a hung planner promise that eviction reclaimed.
+
+  Invariant under test (not just the reported repro): eviction releases EVERY admission-side claim
+  the evicted planner held — the coordinator admitted marker AND an untransferred pre-held host slot
+  — and does so on the real production candidate source, while a RETAINED (still-live) stale task
+  keeps both claims so eviction can never strip a running planner's capacity.
+  */
+  describe("releases admission claims on eviction", () => {
+    const EVICT_ROOT = "/tmp/root-admission-claims";
+
+    /** The production candidate closure the coordinator actually calls (triage.ts constructor). */
+    function providerRefresh(processor: TriageProcessor): () => Promise<Array<{ taskId: string }>> {
+      const provider = (projectAdmissionCoordinator as any).providers.get(EVICT_ROOT)?.get(`specify:${EVICT_ROOT}`);
+      expect(provider).toBeDefined();
+      return provider.refresh;
+    }
+
+    function triageCard(id: string): Task {
+      return {
+        id,
+        title: "Hung planner",
+        description: "Test",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as Task;
+    }
+
+    afterEach(() => {
+      clearPreHeldExecutorSlotsForTests();
+    });
+
+    it("re-offers the evicted card to admission instead of hiding it forever", async () => {
+      const store = createMockStore({ listTasks: vi.fn().mockResolvedValue([triageCard("FN-HUNG")]) });
+      const processor = new TriageProcessor(store, EVICT_ROOT);
+      (processor as any).running = true;
+      const refresh = providerRefresh(processor);
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      // Exactly the state a coordinator handoff leaves behind: admitted marker + processing claim,
+      // with a promise that never settles so specifyTask's finally never runs.
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+
+      // While the claim is live the card must NOT be re-offered (no concurrent planner).
+      expect(await refresh()).toEqual([]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-HUNG")).toBe(false);
+      expect((await refresh()).map((candidate) => candidate.taskId)).toEqual(["FN-HUNG"]);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("returns an untransferred pre-held host slot to the semaphore", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-HUNG");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+      expect(semaphore.activeCount).toBe(1);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect(hasPreHeldExecutorSlot("FN-HUNG")).toBe(false);
+      expect(semaphore.activeCount).toBe(0);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("keeps both claims for a retained task whose planning session is still live", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-LIVE");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-LIVE");
+      (processor as any).processing.add("FN-LIVE");
+      (processor as any).processingSince.set("FN-LIVE", Date.now());
+      (processor as any).activeSessions.set("FN-LIVE", { dispose: vi.fn() });
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set());
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-LIVE")).toBe(true);
+      expect(hasPreHeldExecutorSlot("FN-LIVE")).toBe(true);
+      expect(semaphore.activeCount).toBe(1);
+
+      (processor as any).unregisterAdmissionProvider?.();
+      semaphore.release();
+    });
   });
 
   it("includes finalizing and subagent tasks in getProcessingTaskIds even when not in processing", () => {

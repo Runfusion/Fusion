@@ -39,7 +39,13 @@ describe("MCP documentation contract", () => {
     const mcpGuide = readDoc("docs/mcp.md");
     const routeSource = readDoc("packages/dashboard/src/routes/register-config-mcp-pi-settings-routes.ts");
     const cliSource = readDoc("packages/cli/src/commands/mcp.ts");
-    const settingsModalSource = readDoc("packages/dashboard/app/components/SettingsModal.tsx");
+    /*
+    FNXC:UiMetadataApi 2026-07-14-00:00:
+    The MCP Settings sections are declared in the shared settings-sections registry that
+    drives both Settings navigation and GET /api/settings/sections, so this documentation
+    contract reads the registry rather than the modal that now consumes it.
+    */
+    const settingsSectionsSource = readDoc("packages/dashboard/src/shared/settings-sections.ts");
 
     expect(routeSource).toContain('router.post("/mcp/validate"');
     expect(routeSource).toContain("server?: unknown");
@@ -57,8 +63,8 @@ describe("MCP documentation contract", () => {
       expect(mcpGuide).toContain(flag);
     }
 
-    expect(settingsModalSource).toContain('id: "global-mcp"');
-    expect(settingsModalSource).toContain('id: "mcp"');
+    expect(settingsSectionsSource).toContain('id: "global-mcp"');
+    expect(settingsSectionsSource).toContain('id: "mcp"');
     expect(mcpGuide).toContain("Settings → Global → MCP Servers");
     expect(mcpGuide).toContain("Settings → Project → MCP Servers");
   });

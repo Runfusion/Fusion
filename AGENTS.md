@@ -174,6 +174,14 @@ pnpm verify:workspace  # deep opt-in verification (lint -> test:full -> build); 
 - Reuse existing systems, helpers, and hooks after searching for an equivalent before adding a new one. If a new primitive is genuinely necessary, justify it in the change and first check documented patterns in `docs/solutions/`.
 - Authoritative references: [Styling Guide — Design tokens and Component classes](docs/dashboard-guide.md#styling-guide), `packages/dashboard/app/styles.css` (token/primitive source of truth), and `docs/solutions/`.
 
+### Standing Rule: Never Declare a Component Inside Another Component
+
+- A React component declared inside another component's render is a **new element type on every render**, so React unmounts and remounts its whole subtree on each parent update — focused inputs are destroyed mid-typing, expanded/scrolled rows reset, and local state is silently discarded.
+- Hoist it to module scope and pass what it needs as props. If it is only markup, make it a **lowercase render function** (`renderModalShell(children)`): that returns elements without introducing an element type, so the subtree reconciles in place.
+- Enforced by `fusion-react/no-nested-component-definitions` (defined in `eslint.config.mjs`, covered by `packages/dashboard/app/__tests__/eslint-no-nested-components.test.ts`). Escape hatch: a preceding `// nested-component-allowlist: <reason>` comment.
+- Motivating incidents: FN-8606's `ModalShell` made Planning Mode and Settings untypable (each keystroke remounted the composer, so only the first character survived), and `MailboxModal`'s `ReplyContextExpandable` collapsed already-expanded reply rows whenever another row was expanded.
+- Testing note: `fireEvent.change` sets a value without needing the node to stay mounted, so it **cannot** catch this. Assert with real per-character `userEvent.type`, or assert DOM node identity across an unrelated re-render.
+
 ### Standing Rule: Fix the Invariant, Not the Repro (FN-5893)
 
 - When fixing a bug, the regression test must assert the general invariant across ALL known surfaces — not only the single reported reproduction.
