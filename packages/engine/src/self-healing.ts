@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, resolveLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -8210,14 +8210,43 @@ export class SelfHealingManager {
       const thresholdMs = settings.stalePausedTodoThresholdMs;
       if (!thresholdMs || thresholdMs <= 0) return 0;
 
-      const tasks = await this.store.listTasks({ column: "todo", slim: false });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-03:45 (PR #2470 review, P1):
+      This sweep needed TWO fixes, not one. `getStalePausedTodoSignal` gained a
+      `holdColumn` parameter in B1 but every caller omitted it, so the guard still
+      compared against the literal "todo" — and the QUERY was `{ column: "todo" }`,
+      so the sweep never even saw a card resting in a renamed hold column.
+      Threading only the signal would have left a correct guard that never runs.
+
+      The column filter is therefore dropped and the hold column resolved PER TASK
+      (a board can span workflows, each with its own hold column). Cost is
+      contained by ordering: `paused !== true` rejects almost every card before any
+      IR resolution, and the survivors share an `irCache`, so a board of 400 cards
+      with three paused ones resolves at most three times.
+      */
+      const tasks = await this.store.listTasks({ slim: false });
+      const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       let surfaced = 0;
 
       for (const task of tasks) {
         if (task.paused !== true) continue;
+
+        let holdColumn = "todo";
+        try {
+          const lifecycle = resolveLifecycleColumns(
+            await resolveWorkflowIrForTask(this.store, task.id, irCache),
+          );
+          // A workflow declaring no hold column keeps the legacy id rather than
+          // matching nothing (conservative: preserves today's behavior).
+          if (lifecycle?.hold) holdColumn = lifecycle.hold;
+        } catch {
+          holdColumn = "todo";
+        }
+
         const signal = getStalePausedTodoSignal(task, {
           now: cycleStartMs,
           thresholdMs,
+          holdColumn,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
