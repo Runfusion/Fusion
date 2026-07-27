@@ -407,7 +407,6 @@ export {
   workflowHasColumn,
 } from "./workflow-transitions.js";
 export type { ColumnAdjacency } from "./workflow-transitions.js";
-export { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
 // ── U8: pre-evaluated plugin gate verdicts (KTD-2) ───────────────────────────
 export {
   findWorkflowColumn,
@@ -1967,41 +1966,6 @@ export {
   postMergeVerificationOptionalGroupNode,
 } from "./builtin-post-merge-group.js";
 export type { PostMergeOptionalGroupSpec } from "./builtin-post-merge-group.js";
-export {
-  WORKFLOW_COMPARABLE_AUDIT_MUTATIONS,
-  WORKFLOW_PARITY_OBSERVED_MUTATION,
-  WORKFLOW_PARITY_DRIFT_MUTATION,
-  compareWorkflowRunAudits,
-  compareWorkflowRunObservations,
-  extractWorkflowAuditObservations,
-  DEFAULT_WORKFLOW_INVARIANTS,
-  deriveStageTransitions,
-  buildWorkflowObservationFromTask,
-  buildWorkflowObservation,
-  checkTransitionParity,
-  countDualAcceptDisagreements,
-  computeWorkflowColumnsGraduationReport,
-  DUAL_ACCEPT_PARITY_MUTATIONS,
-} from "./workflow-parity.js";
-export type {
-  WorkflowAuditObservation,
-  WorkflowParityDiff,
-  WorkflowParityDiffCategory,
-  WorkflowParityDiffSeverity,
-  WorkflowParityDriftReport,
-  WorkflowReliabilityInvariantSignals,
-  WorkflowRunObservation,
-  WorkflowStage,
-  WorkflowObservationTaskInput,
-  WorkflowObservationBuildOptions,
-  WorkflowObservationParts,
-  WorkflowParitySummary,
-  TransitionParityDiff,
-  TransitionParityReport,
-  DualAcceptDisagreementReport,
-  WorkflowColumnsGraduationReport,
-  GraduationReportInputs,
-} from "./workflow-parity.js";
 export { isResearchExperimentalEnabled, resolveResearchSettings } from "./research-settings.js";
 export type { ResolvedResearchSettings } from "./research-settings.js";
 export { isEvalsExperimentalEnabled, resolveEvalSettings } from "./eval-settings.js";
@@ -2280,7 +2244,8 @@ Cutover (IR-driven lifecycle) barrel sync — same failure class as the classify
 */
 export { resolveCreationColumn } from "./workflow-ir.js";
 export { resolveWipBudgetColumns } from "./workflow-capacity.js";
-export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "./workflow-lifecycle-traits.js";
+export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns } from "./workflow-lifecycle-traits.js";
+export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";
 export { LEGACY_STATUS_ADOPTION, resolveLegacyStatusAdoption, resolveReviewLevelBackfill, planLegacyAdoption, resolveOrphanedPendingStepResults, type LegacyAdoptionPlan, type LegacyAdoptionCandidate, type LegacyAdoptionAction, type LegacyAdoptionKind } from "./legacy-adoption.js";
 export { hashWorkflowIr, computeWorkflowIrPin, detectWorkflowDrift, type WorkflowIrPin } from "./workflow-ir-resolver.js";
