@@ -2766,7 +2766,7 @@ export class AgentStore extends EventEmitter {
         return readApiKeysAsync(this.asyncLayer!.db, agentId);
 }
 
-  private readAgent(agentId: string): Agent | null {
+  private readAgent(_agentId: string): Agent | null {
     // SQLite sync read path. In PG backend mode there is no synchronous DB
     // handle, so this returns null — the async path is wired via getAgent()
     // (which delegates to readAgentAsync). The remaining internal sync caller

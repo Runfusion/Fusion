@@ -96,7 +96,6 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
   return Math.max(0, now - latestAgentLogMs) < DEFAULT_STALE_MERGING_MIN_AGE_MS;
 }
 
-import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow, readLiveTaskRows} from "../task-store/async-persistence.js";
 import {searchTasksTsvector, searchTasksLike} from "../task-store/async-search.js";

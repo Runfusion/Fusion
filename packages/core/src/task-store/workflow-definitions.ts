@@ -13,9 +13,7 @@ import { TaskStore } from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
-import { CentralCore } from "../central-core.js";
-import { fromJson } from "../db.js";
-import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../distributed-task-id.js";
+import { type DistributedTaskIdAllocator } from "../distributed-task-id.js";
 import { ExperimentSessionStore } from "../experiment-session-store.js";
 import { MasterKeyManager } from "../master-key.js";
 import { MissionStore } from "../mission-store.js";
@@ -32,11 +30,10 @@ import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMer
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
-import { ActivityLogRow } from "./row-types.js";
-import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
+import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
+import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
 import { resolveDefaultOnOptionalGroupIds } from "../workflow-optional-steps.js";
@@ -503,7 +500,7 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
     }
 }
 
-export function getTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): { workflowId: string; stepIds: string[] } | undefined {
+export function getTaskWorkflowSelectionImpl(_store: TaskStore, _taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     /*
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.

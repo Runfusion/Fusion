@@ -7,7 +7,7 @@
 
 import { EventEmitter } from "node:events";
 import { join, resolve } from "node:path";
-import { Database, fromJson, toJson } from "./db.js";
+import { Database, fromJson } from "./db.js";
 import { CentralDatabase } from "./central-db.js";
 import type {
   PluginInstallation,

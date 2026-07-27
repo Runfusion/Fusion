@@ -11,12 +11,11 @@
 import {TaskStore, storeLog, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX, WORKFLOW_MOVE_POLICY_TIMEOUT_MS} from "../store.js";
 import {TransitionRejectionError} from "./errors.js";
 import * as schema from "../postgres/schema/index.js";
-import {randomUUID} from "node:crypto";
 import {and, eq, isNull, ne, or, sql} from "drizzle-orm";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import type {Task, ColumnId, CheckoutClaimPrecondition, ActivityLogEntry, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, GoalCitation, GoalCitationFilter} from "../types.js";
-import {parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
+import {parseWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
 import {makeTransitionRejection} from "../transition-types.js";
 import {getWorkflowExtensionRegistry} from "../workflow-extension-registry.js";
 import type {WorkflowMovePolicyInput} from "../workflow-extension-types.js";
@@ -24,7 +23,6 @@ import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput} from "../workflow-definition-types.js";
 import {WORKFLOW_PARITY_OBSERVED_MUTATION, WORKFLOW_PARITY_DRIFT_MUTATION, type WorkflowParityDiff, type WorkflowParitySummary} from "../workflow-parity.js";
 import {normalizeTaskPriority} from "../task-priority.js";
-import {toJsonNullable} from "../db.js";
 import type {AsyncDataLayer, DbTransaction} from "../postgres/data-layer.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {EvalStore} from "../eval-store.js";
@@ -44,7 +42,7 @@ import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-sto
 import {applyOriginalDescription} from "../original-description-policy.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
 import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async-events.js";
-import type {GoalCitationRow, RunAuditEventRow} from "../task-store/row-types.js";
+import type {RunAuditEventRow} from "../task-store/row-types.js";
 
 export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer,): Promise<TaskStore> {
     if (!asyncLayer) {
@@ -256,8 +254,7 @@ export async function listStrandedRefinementsImpl(store: TaskStore, options?: { 
       ? requestedThresholdMs as number
       : defaultFreshnessThresholdMs;
 
-    let rows: TaskRow[];
-        const layer = store.asyncLayer!;
+    const layer = store.asyncLayer!;
     const pgRows = await layer.db.select()
       .from(schema.project.tasks)
       .where(and(
@@ -266,7 +263,7 @@ export async function listStrandedRefinementsImpl(store: TaskStore, options?: { 
         eq(schema.project.tasks.column, 'triage'),
       ))
       .orderBy(schema.project.tasks.createdAt);
-    rows = pgRows.map((r) => store.pgRowToTaskRow(r as Record<string, unknown>)) as unknown as TaskRow[];
+    const rows = pgRows.map((r) => store.pgRowToTaskRow(r as Record<string, unknown>)) as unknown as TaskRow[];
 
     const now = Date.now();
     const stranded: Array<{

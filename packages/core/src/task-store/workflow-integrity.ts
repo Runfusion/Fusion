@@ -319,9 +319,7 @@ export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, o
     to count affected rows accurately regardless of driver rowCount exposure
     (the async-lifecycle.ts precedent).
     */
-    let candidates: CommitAssociationDiffBackfillCandidateRow[];
-    let applyUpdate: (commitSha: string, additions: number, deletions: number) => Promise<number>;
-        const layer = store.asyncLayer!;
+    const layer = store.asyncLayer!;
     const grouped = await layer.db
       .select({
         commitSha: schema.project.taskCommitAssociations.commitSha,
@@ -336,8 +334,8 @@ export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, o
       )
       .groupBy(schema.project.taskCommitAssociations.commitSha)
       .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
-    candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
-    applyUpdate = async (commitSha, additions, deletions) => {
+    const candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
+    const applyUpdate = async (commitSha: string, additions: number, deletions: number) => {
       const updated = await layer.db
         .update(schema.project.taskCommitAssociations)
         .set({ additions, deletions, updatedAt: new Date().toISOString() })

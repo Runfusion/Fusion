@@ -1,10 +1,9 @@
 import { createLogger } from "./logger.js";
 
 const severityAuditLog = createLogger("core-secrets-store");
-import { randomUUID } from "node:crypto";
 import type { Database as ProjectDatabase } from "./db.js";
 import type { CentralDatabase } from "./central-db.js";
-import { createSecretCipher, SecretCryptoError, type MasterKeyProvider } from "./secrets-crypto.js";
+import { createSecretCipher, type MasterKeyProvider } from "./secrets-crypto.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncSecretsStore from "./async-secrets-store.js";
 
@@ -50,10 +49,6 @@ interface SecretRow {
   last_read_by: string | null;
 }
 
-interface SecretCipherRow extends SecretRow {
-  value_ciphertext: Buffer;
-  nonce: Buffer;
-}
 
 type SecretsDb = Pick<ProjectDatabase, "prepare" | "bumpLastModified"> | Pick<CentralDatabase, "prepare" | "bumpLastModified">;
 
@@ -92,13 +87,7 @@ export class SecretsStoreError extends Error {
   }
 }
 
-function tableForScope(scope: SecretScope): "secrets" | "secrets_global" {
-  return scope === "project" ? "secrets" : "secrets_global";
-}
 
-function isSqliteUniqueError(error: unknown): boolean {
-  return error instanceof Error && /UNIQUE constraint failed/u.test(error.message);
-}
 
 function isAccessPolicy(value: string): value is SecretAccessPolicy {
   return value === "auto" || value === "prompt" || value === "deny";

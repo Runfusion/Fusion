@@ -26,7 +26,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
     const batch = store.agentLogBuffer.slice();
     const flushCount = batch.length;
 
-    let validEntries = batch;
+    const validEntries = batch;
     const flushedEntries = new Set<typeof batch[number]>();
     try {
       // FNXC:PostgresBackend 2026-06-27-00:40:
@@ -134,7 +134,7 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
     // PG backend mode: skip the sync SQLite deleted-task pre-filter (store.db
     // throws) — JSONL append below is the backend-independent durable write.
     // See flushAgentLogBufferImpl for the full rationale.
-    let validEntries = normalizedEntries;
+    const validEntries = normalizedEntries;
     
 
     const citationInputs: GoalCitationInput[] = [];

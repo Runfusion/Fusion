@@ -7,11 +7,9 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MissionStore} from "../mission-store.js";
-import {TaskHasDependentsError, TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
-import {isWorkspaceTask, type Task, type Column, type GithubIssueAction} from "../types.js";
-import {buildDeleteCallerAuditFields, type TaskDeleteAuditContext} from "../task-delete-attribution.js";
-import {notifyOperatorOfNonOperatorDelete, type TaskDeleteNoticeSnapshot} from "../task-delete-notice.js";
+import {TaskSelfDeleteError} from "./errors.js";
+import {isWorkspaceTask, type Task, type GithubIssueAction} from "../types.js";
+import {type TaskDeleteAuditContext} from "../task-delete-attribution.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {toJson} from "../db-helpers.js";
@@ -154,7 +152,7 @@ export async function disposeArchivedWorktree(store: TaskStore, task: Task): Pro
   } finally { if (reservation.state === "held") await reservation.release(); }
 }
 
-function scheduleDeleteBranchCleanup(store: TaskStore, task: Task): void {
+function _scheduleDeleteBranchCleanup(store: TaskStore, task: Task): void {
     /*
     FNXC:TaskDeletion 2026-07-15-09:45:
     Soft-delete latency must be bounded by the database mutation, audit, and event emission; branch cleanup can spawn serialized git subprocesses and must not hold withTaskLock or the returned deleteTask Promise. Schedule the cleanup after the task is already soft-deleted, but keep the existing cleanup guarantees by still clearing stale execution-start branch references and persisting the cleaned-branch log entry on the deleted row.

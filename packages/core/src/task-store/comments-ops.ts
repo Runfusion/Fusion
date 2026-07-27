@@ -10,18 +10,15 @@ const severityAuditLog = createLogger("core-comments-ops");
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, Task, Column, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, Task, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateDocumentKey} from "../types.js";
 import {ArchivedTaskDocumentPublicationRejectedError, validateArchivedTaskDocumentAddition, validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
-import {toJsonNullable} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
 import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
-import type {TaskDocumentRow} from "../task-store/row-types.js";
 
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
     {

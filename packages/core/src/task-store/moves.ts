@@ -26,7 +26,6 @@ import {
 } from "../workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../default-workflow-hooks.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
-import {writeTransitionPending, clearTransitionPending} from "../transition-pending.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";

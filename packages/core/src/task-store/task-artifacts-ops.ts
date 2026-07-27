@@ -24,9 +24,9 @@ import { emitUsageEvent as emitUsageEventAsync, recordPluginActivation as record
 import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMergeQueueAsync, peekMergeQueueHead as peekMergeQueueHeadAsync } from "./async-merge-coordination.js";
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async-workflow-workitems.js";
 import { extractEffectiveWriteScopeFromPrompt } from "../file-scope-classification.js";
-import { ArtifactRow, CompletionHandoffMarkerRow, MergeQueueRow, TaskDocumentRevisionRow, TaskDocumentRow, WorkflowWorkItemRow } from "./row-types.js";
+import { ArtifactRow, WorkflowWorkItemRow } from "./row-types.js";
 import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunAuditEvent, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
-import { type UsageEventInput, emitUsageEvent as emitUsageEventToDb } from "../usage-events.js";
+import type { UsageEventInput } from "../usage-events.js";
 import { DUAL_ACCEPT_PARITY_MUTATIONS, type WorkflowColumnsGraduationReport, computeWorkflowColumnsGraduationReport } from "../workflow-parity.js";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";

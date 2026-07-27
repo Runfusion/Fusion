@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError, MergeQueueLeaseOwnershipError} from "./errors.js";
+import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError} from "./errors.js";
 import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";

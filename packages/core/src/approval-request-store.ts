@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { count, eq, desc, and } from "drizzle-orm";
 import type { Database } from "./db.js";
-import { fromJson, toJsonNullable } from "./db.js";
+import { fromJson } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncApprovalRequestStore from "./async-approval-request-store.js";
 import * as schema from "./postgres/schema/index.js";
 import {
-  isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
   type ApprovalRequest,
   type ApprovalRequestActorSnapshot,
@@ -182,7 +181,7 @@ export class ApprovalRequestStore {
 
   async create(input: ApprovalRequestCreateInput): Promise<ApprovalRequest> {
     const now = new Date().toISOString();
-    const request: ApprovalRequest = {
+    const _request: ApprovalRequest = {
       id: `apr-${randomUUID().slice(0, 8)}`,
       status: "pending",
       requester: input.requester,

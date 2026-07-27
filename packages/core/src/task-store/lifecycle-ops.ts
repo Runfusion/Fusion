@@ -14,11 +14,10 @@ import {
   LEGACY_ADOPTION_DRAINED_MARKER,
   LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION,
 } from "../postgres/schema-applier.js";
-import {mkdir, readdir, readFile, stat, writeFile} from "node:fs/promises";
+import {mkdir, readdir, readFile, stat} from "node:fs/promises";
 import {join} from "node:path";
-import {existsSync, watch, type Dirent} from "node:fs";
-import type {Task, AgentLogEntry, Column, Settings, GlobalSettings} from "../types.js";
-import {DEFAULT_SETTINGS} from "../types.js";
+import {existsSync, type Dirent} from "node:fs";
+import type {Task, AgentLogEntry, Column, GlobalSettings} from "../types.js";
 import {MOVED_SETTINGS_KEYS, SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_MARKER_KEY} from "../moved-settings.js";
 import {stepsToWorkflowIr, stepToFragmentIr, layoutForIr} from "../workflow-steps-to-ir.js";
 import {getTraitRegistry} from "../trait-registry.js";
@@ -28,8 +27,6 @@ import {clearTransitionPendingAsync, listTransitionPendingTaskIdsAsync, readTran
 import type {WorkflowSettingDefinition} from "../workflow-ir-types.js";
 import {validateSettingValuePatch} from "../workflow-settings.js";
 import "../builtin-traits.js";
-import {Database, SCHEMA_VERSION} from "../db.js";
-import {ensureMemoryFileWithBackend} from "../project-memory.js";
 import {appendAgentLogEntriesSync} from "../agent-log-file-store.js";
 import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";

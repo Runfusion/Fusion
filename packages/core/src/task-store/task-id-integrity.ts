@@ -13,7 +13,6 @@ import { TaskStore } from "../store.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { ArchiveDatabase } from "../archive-db.js";
-import { validateBranchGroupBranchName } from "../branch-assignment.js";
 import { CentralCore } from "../central-core.js";
 import { Database, fromJson, toJsonNullable } from "../db.js";
 import { reconcileTaskIdState, resolveLocalNodeId } from "../distributed-task-id.js";
@@ -31,7 +30,7 @@ import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } f
 import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.js";
 import { ConfigRow } from "./row-types.js";
 import { ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT } from "./serialization.js";
-import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, Column, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
+import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
 import { resolveAllOptionalGroupIds } from "../workflow-optional-steps.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -56,13 +55,13 @@ Backend mode intentionally has no synchronous SQLite escape hatch. Name the
 AsyncDataLayer route and authoring guide in this failure so plugin authors fix
 the durable-data boundary rather than adding a backend-specific fallback.
 */
-export function dbImpl(store: TaskStore): Database {
+export function dbImpl(_store: TaskStore): Database {
         throw new Error(
       "TaskStore.db: SQLite Database is not available in backend mode (PostgreSQL/AsyncDataLayer injected). Use ctx.taskStore.getAsyncLayer() / an async store — see docs/PLUGIN_AUTHORING.md",
     );
 }
 
-export function archiveDbImpl(store: TaskStore): ArchiveDatabase {
+export function archiveDbImpl(_store: TaskStore): ArchiveDatabase {
         throw new Error(
       "TaskStore.archiveDb: SQLite ArchiveDatabase is not available in backend mode (AsyncDataLayer injected)",
     );
@@ -303,7 +302,7 @@ export async function getMergeQueuedTaskIdsAsyncImpl(store: TaskStore): Promise<
     return new Set(rows.map((row) => row.taskId));
 }
 
-export function isTaskIdPresentInArchivedTasksTableImpl(store: TaskStore, id: string): boolean {
+export function isTaskIdPresentInArchivedTasksTableImpl(_store: TaskStore, _id: string): boolean {
     /*
     FNXC:IncompletePgPorts 2026-07-26-20:30:
     Sync archive-table probe remains SQLite-only. PostgreSQL callers must use
@@ -366,9 +365,8 @@ export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
      * sync readTaskFromDb, and hard-delete via the layer. This unblocks
      * createTaskWithReservedId in backend mode (VAL-DATA-005/006).
      */
-    let existing: { deletedAt?: string | null; allowResurrection?: boolean | number | null } | undefined;
-        const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
-    existing = row
+    const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
+    const existing: { deletedAt?: string | null; allowResurrection?: boolean | number | null } | undefined = row
       ? {
           deletedAt: row.deletedAt as string | null | undefined,
           allowResurrection: row.allowResurrection as boolean | number | null | undefined,
@@ -740,7 +738,7 @@ export function toBuiltInWorkflowStepImpl(store: TaskStore, template: import("..
     };
 }
 
-export function getLegacyWorkflowStepSnapshotImpl(store: TaskStore, id: string, templateId?: string): Record<string, unknown> | undefined {
+export function getLegacyWorkflowStepSnapshotImpl(_store: TaskStore, _id: string, _templateId?: string): Record<string, unknown> | undefined {
     // FNXC:PostgresOnlyDataAccess 2026-07-16-12:55: the legacy snapshot lives
     // only in the pre-migration SQLite config.workflowSteps JSON blob; a
     // PostgreSQL deployment has no legacy snapshot, so overrides never apply.

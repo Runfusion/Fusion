@@ -18,13 +18,12 @@ import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, Column, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate} from "../types.js";
+import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate} from "../types.js";
 import {COLUMNS} from "../types.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflow-settings.js";
 import "../builtin-traits.js";
-import {validateBranchGroupBranchName} from "../branch-assignment.js";
 import {toJson} from "../db.js";
 import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
@@ -41,8 +40,6 @@ import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHa
 import { taskProjectScope } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async-comments-attachments.js";
-import type { ArtifactRow } from "./row-types.js";
-import type {MergeQueueRow, CompletionHandoffMarkerRow, ActivityLogRow} from "../task-store/row-types.js";
 import {appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration} from "../async-configuration-revision-store.js";
 import {readProjectConfig, writeProjectConfig} from "./async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
@@ -378,7 +375,7 @@ export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater
     });
   }
 
-export function getWorkflowPromptOverridesImpl(store: TaskStore, workflowId: string, projectId: string): Record<string, string> {
+export function getWorkflowPromptOverridesImpl(_store: TaskStore, _workflowId: string, _projectId: string): Record<string, string> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26:
      * P1 fix: no backendMode branch existed, so this threw in PG mode. In
@@ -883,7 +880,7 @@ export async function deleteAttachmentImpl(store: TaskStore, id: string, filenam
 
 export async function registerArtifactImpl(store: TaskStore, input: ArtifactCreateInput): Promise<Artifact> {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const _now = new Date().toISOString();
 
     /*
     FNXC:SqliteDualPathCleanup 2026-07-26-14:30:

@@ -105,7 +105,7 @@ params: {
     return params.moveSource === "user" && params.fromColumn === "in-progress" && params.toColumn === "todo";
 }
 
-export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): MergeRequestRecord | null {
+export function getMergeRequestRecordImpl(_store: TaskStore, _taskId: string): MergeRequestRecord | null {
     /*
     FNXC:PostgresCutover 2026-07-04:
     Synchronous read of merge_requests cannot run against PostgreSQL (Drizzle

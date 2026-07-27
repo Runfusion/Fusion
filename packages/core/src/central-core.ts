@@ -34,7 +34,7 @@ import { EventEmitter } from "node:events";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { isAbsolute, join, basename, resolve } from "node:path";
+import { isAbsolute, basename, resolve } from "node:path";
 import type {
   RegisteredProject,
   ProjectHealth,
@@ -84,7 +84,7 @@ import type {
 } from "./types.js";
 import { getAppVersion, parseSemver } from "./app-version.js";
 import { validateDockerNodeConfig } from "./types.js";
-import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
+import { CentralDatabase, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
 import { stripMovedSettingsKeys } from "./moved-settings.js";
 import { NodeConnection } from "./node-connection.js";
@@ -425,7 +425,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
   }
 
-  private insertProjectRow(project: RegisteredProject, now: string): void {
+  private insertProjectRow(_project: RegisteredProject, _now: string): void {
         // FNXC:CentralCore 2026-06-26-12:30: Backend mode delegates to the async
     // helper. Callers route through the backend-mode branches of
     // registerProject/reattachProject which await this via insertProjectRowAsync.
@@ -1397,7 +1397,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     return { replayed: pending.length, applied: 0, failed: 0, queuedWriteIds: pending.map((entry) => entry.id) };
   }
 
-  private getMeshWriteQueueEntryById(id: string): MeshWriteQueueEntry {
+  private getMeshWriteQueueEntryById(_id: string): MeshWriteQueueEntry {
         throw new Error("getMeshWriteQueueEntryById(sync) must not be called in backend mode");
 }
 

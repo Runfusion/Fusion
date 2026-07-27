@@ -7,7 +7,6 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {InvalidMergeQueueLeaseDurationError} from "./errors.js";
 import {existsSync} from "node:fs";
 import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from "../types.js";
 import {assertNotWorkspaceTaskMerge} from "../types.js";
@@ -16,7 +15,6 @@ import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 

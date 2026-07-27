@@ -7,15 +7,13 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
-import type {Task, TaskDetail, Column, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {Task, TaskDetail, TaskLogEntry, RunMutationContext} from "../types.js";
 import {findWorkflowColumn} from "../plugin-gate-verdict.js";
 import {getTraitRegistry} from "../trait-registry.js";
 import {makeTransitionPending} from "../transition-types.js";
-import {writeTransitionPending} from "../transition-pending.js";
 import {writeTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
-import {toJson, fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
 import { getLiveTaskColumn } from "./async-comments-attachments.js";
@@ -67,9 +65,8 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     // runs inside `withTaskLock`, so `getTask` (which re-acquires the lock)
     // would deadlock. `readTaskFromDb` is the in-lock-safe read (backend mode:
     // raw readTaskRow + row conversion, same non-locking property).
-    let taskDetail: TaskDetail | undefined;
-        const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
-    taskDetail = pgRow
+    const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
+    const taskDetail: TaskDetail | undefined = pgRow
       ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
       : undefined;
 

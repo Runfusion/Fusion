@@ -8,7 +8,7 @@
  */
 import {TaskStore} from "../store.js";
 import type {Settings} from "../types.js";
-import {parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
+import {parseWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflow-reconciliation.js";
 import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
 import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
@@ -38,7 +38,7 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
       */
       const layer = store.asyncLayer!;
       const configRow = await readProjectConfig(layer);
-      let nextWsId = configRow.nextWorkflowStepId ?? 1;
+      const nextWsId = configRow.nextWorkflowStepId ?? 1;
 
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
 
@@ -364,11 +364,9 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
 
     // Cascade: drop selections referencing this workflow, their materialized
     // step rows, and reset the affected tasks' enabled steps.
-    let selections: Array<{ taskId: string; stepIds: string }>;
-    
     const selRows = await layer.db.select().from(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.workflowId, id));
-    selections = selRows.map(r => ({ taskId: r.taskId, stepIds: typeof r.stepIds === "string" ? r.stepIds : JSON.stringify(r.stepIds ?? []) }));
-  
+    const selections = selRows.map(r => ({ taskId: r.taskId, stepIds: typeof r.stepIds === "string" ? r.stepIds : JSON.stringify(r.stepIds ?? []) }));
+
     for (const row of selections) {
       try {
         const stepIds = JSON.parse(row.stepIds) as unknown;

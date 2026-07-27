@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import type {

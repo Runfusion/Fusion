@@ -7,9 +7,6 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
-import {rm} from "node:fs/promises";
-import {join} from "node:path";
-import {detectWorkspaceRepos, saveWorkspaceConfig, loadWorkspaceConfig} from "../git-repository.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../moved-settings.js";
