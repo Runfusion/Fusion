@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  configureApprovalRequestTtls,
   normalizeAgentPermissionPolicyFromPreset,
 } from "@fusion/core";
 import { evaluateAgentActionGate, resolveGateOutcome } from "../agent-action-gate.js";
@@ -106,13 +107,24 @@ describe("resolveGateOutcome — approval-grant TTL at redemption", () => {
     expect(outcome.approvalRequestId).toBe("apr-1");
   });
 
-  it("stale approved grant (decided 16 minutes ago) is treated as absent", () => {
-    const outcome = resolveGateOutcome(decision, {
-      id: "apr-1",
-      status: "approved",
-      decidedAt: new Date(Date.now() - 16 * 60 * 1000).toISOString(),
-    });
-    expect(outcome).toEqual({ outcome: "wait-for-approval" });
+  it("stale approved grant (past the configured grant TTL) is treated as absent", () => {
+    /*
+    FNXC:ApprovalRedemption 2026-07-26-19:05:
+    The grant TTL is operator-configurable (configureApprovalRequestTtls /
+    FUSION_APPROVAL_GRANT_TTL_MS, default 1h). Pin it explicitly for this test so
+    the expectation cannot silently drift with the default.
+    */
+    configureApprovalRequestTtls({ grantTtlMs: 15 * 60 * 1000 });
+    try {
+      const outcome = resolveGateOutcome(decision, {
+        id: "apr-1",
+        status: "approved",
+        decidedAt: new Date(Date.now() - 16 * 60 * 1000).toISOString(),
+      });
+      expect(outcome).toEqual({ outcome: "wait-for-approval" });
+    } finally {
+      configureApprovalRequestTtls({ grantTtlMs: undefined });
+    }
   });
 
   it("closures that omit decidedAt keep legacy redemption (backward compatible)", () => {

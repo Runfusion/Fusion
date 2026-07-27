@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -56,11 +56,33 @@ describe("session identity registry", () => {
     }
   });
 
-  it("resolves symlinked/realpath spellings of the same directory to one key", () => {
+  /*
+  FNXC:SessionIdentity 2026-07-26-18:30:
+  Review finding: the earlier version registered and resolved the SAME canonical
+  string, which passes even if canonicalizeCwd stops resolving symlinks. Register
+  through a genuine symlink alias and resolve through the real path (and vice
+  versa) so the realpath folding is actually exercised. Cleanup removes both
+  temporary artifacts.
+  */
+  it("resolves a symlink alias and its real path to one key", () => {
     const real = realpathSync(mkdtempSync(join(tmpdir(), "fusion-idreg-")));
-    registerFusionSessionIdentity(real, { agentId: "agent-real" });
-    // macOS: tmpdir() often returns /var/... while realpath is /private/var/...
-    const principal = resolveFusionSessionPrincipal(real);
-    expect(principal.kind).toBe("agent");
+    const alias = `${real}-alias`;
+    symlinkSync(real, alias, "dir");
+    try {
+      const dispose = registerFusionSessionIdentity(alias, { agentId: "agent-real" });
+      const viaReal = resolveFusionSessionPrincipal(real);
+      expect(viaReal.kind).toBe("agent");
+      if (viaReal.kind === "agent") {
+        expect(viaReal.identity.agentId).toBe("agent-real");
+      }
+      const viaAlias = resolveFusionSessionPrincipal(alias);
+      expect(viaAlias.kind).toBe("agent");
+      dispose();
+      expect(resolveFusionSessionPrincipal(real)).toEqual({ kind: "operator" });
+      expect(resolveFusionSessionPrincipal(alias)).toEqual({ kind: "operator" });
+    } finally {
+      rmSync(alias, { force: true });
+      rmSync(real, { recursive: true, force: true });
+    }
   });
 });

@@ -22,6 +22,8 @@ function makeFakeStore() {
     bypassFailedPreMergeReviewStep: vi.fn().mockResolvedValue({ id: "FN-1" }),
     archiveAllDone: vi.fn().mockResolvedValue([]),
     cleanupArchivedTasks: vi.fn().mockResolvedValue(0),
+    getDatabase: vi.fn().mockReturnValue({ raw: "sync-db" }),
+    getAsyncLayer: vi.fn().mockReturnValue({ raw: "async-layer" }),
     getTask: vi.fn().mockResolvedValue({ id: "FN-1", column: "todo" }),
     moveTask: vi.fn().mockResolvedValue({ id: "FN-1", column: "todo" }),
     someCounter: 7,
@@ -44,6 +46,35 @@ describe("createPluginGatedTaskStore", () => {
       expect((raw as unknown as Record<string, ReturnType<typeof vi.fn>>)[method]).not.toHaveBeenCalled();
     },
   );
+
+  /*
+  FNXC:PluginTaskStoreGate 2026-07-26-18:25:
+  Hardcoded raw-handle expectations (NOT derived from the denylist constant, so a
+  constant regression cannot self-adjust these): the sync getDatabase handle is
+  denied (raw SQL around the denylist), while getAsyncLayer deliberately passes
+  through — four in-repo plugins depend on it for plugin-scoped schema; the
+  residual is documented on the denylist in plugin-task-store-gate.ts.
+  */
+  it("denies the raw getDatabase handle without a declaration (hardcoded)", () => {
+    const raw = makeFakeStore();
+    const gated = createPluginGatedTaskStore(raw as unknown as TaskStore, {
+      pluginId: "fusion-plugin-test",
+    }) as unknown as typeof raw;
+
+    expect(() => gated.getDatabase()).toThrow(
+      "Plugin fusion-plugin-test is not permitted to call getDatabase; declare permissions.destructiveTaskOps in the plugin manifest",
+    );
+    expect(raw.getDatabase).not.toHaveBeenCalled();
+  });
+
+  it("keeps getAsyncLayer passing through (documented residual; plugins rely on it)", () => {
+    const raw = makeFakeStore();
+    const gated = createPluginGatedTaskStore(raw as unknown as TaskStore, {
+      pluginId: "fusion-plugin-test",
+    }) as unknown as typeof raw;
+
+    expect(gated.getAsyncLayer()).toEqual({ raw: "async-layer" });
+  });
 
   it("passes destructive calls through when the manifest declares destructiveTaskOps", async () => {
     const raw = makeFakeStore();

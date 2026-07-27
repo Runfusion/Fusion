@@ -3263,11 +3263,19 @@ export default function kbExtension(pi: ExtensionAPI) {
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
         const requesterActorId = fnCtx.agentId ?? "user";
-        const requesterSnapshot: ApprovalRequestActorSnapshot = {
-          actorId: requesterActorId,
-          actorType: "agent",
-          actorName: fnCtx.agentName ?? fnCtx.agentId ?? "Agent",
-        };
+        /*
+        FNXC:SecretsAccessApproval 2026-07-26-18:35:
+        Review finding: a caller with no agentId is the human CLI operator, and
+        recording it as actorType "agent" mislabels the attribution this branch
+        exists to fix. Snapshot the real principal shape.
+        */
+        const requesterSnapshot: ApprovalRequestActorSnapshot = fnCtx.agentId
+          ? {
+              actorId: requesterActorId,
+              actorType: "agent",
+              actorName: fnCtx.agentName ?? fnCtx.agentId,
+            }
+          : { actorId: "user", actorType: "user", actorName: "CLI User" };
         const existing = await findLatestApprovalRequestByDedupeKey(approvalStore, { requesterActorId, ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}), dedupeKey });
 
         if (existing?.status === "pending") {
@@ -3291,6 +3299,9 @@ export default function kbExtension(pi: ExtensionAPI) {
           await approvalStore.markCompleted(existing.id, {
             actor: requesterSnapshot,
             note: "Secret revealed after approval",
+            // FNXC:SecretsAccessApproval 2026-07-26-18:35: ownership guard — secret grants
+            // get the same expectedRequesterActorId enforcement as the gate path.
+            expectedRequesterActorId: requesterActorId,
           });
           emitSecretAudit(store, fnCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
           return {

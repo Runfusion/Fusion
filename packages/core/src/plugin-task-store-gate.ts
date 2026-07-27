@@ -23,6 +23,21 @@ otherwise unchanged.
  * - `cleanupArchivedTasks` — bulk destructive removal of archived task history.
  * Single-task `archiveTask` is intentionally NOT denylisted: it is reversible via
  * `unarchiveTask` and gating it would break benign board-hygiene plugins.
+ * - `getDatabase` — the raw sync SQLite handle. No in-repo plugin uses it (the QA
+ *   plugin explicitly documents NOT to), and a raw handle would let a plugin run
+ *   destructive SQL around the named-method denylist, so it requires the same
+ *   destructiveTaskOps declaration.
+ *
+ * FNXC:PluginTaskStoreGate 2026-07-26-18:20:
+ * KNOWN RESIDUAL (review finding, deliberately not closed here): `getAsyncLayer()`
+ * also exposes a raw (drizzle) handle that could execute destructive SQL outside
+ * the denylist. It is NOT denied because four in-repo plugins (printing-press,
+ * compound-engineering, glasses, quality) legitimately depend on it for their own
+ * plugin-scoped schema/reads — denying it breaks them, and granting them
+ * destructiveTaskOps to compensate would defeat the gate entirely. Making this
+ * airtight needs a scoped/read-only data-layer design (a follow-up), not a
+ * denylist entry. Until then the gate is an honest guard against the named
+ * destructive TaskStore surface, not a sandbox for raw SQL.
  */
 export const PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS = [
   "deleteTask",
@@ -32,6 +47,7 @@ export const PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS = [
   "bypassFailedPreMergeReviewStep",
   "archiveAllDone",
   "cleanupArchivedTasks",
+  "getDatabase",
 ] as const;
 
 export type PluginDestructiveTaskStoreMethod =

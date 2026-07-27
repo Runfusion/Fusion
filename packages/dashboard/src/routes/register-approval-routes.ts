@@ -472,16 +472,46 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
 
       emitSecretsAccessDecisionAudit({ scopedStore, request: updated, decision: body.decision });
 
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-18:40:
+      Review finding: an executor throw used to be swallowed into a warn while the
+      request stayed "approved" and only the approved audit event was written — an
+      operator could not tell provisioning never ran. The approval row itself is
+      deliberately NOT rolled back (the operator's decision stands, and the 15min
+      grant TTL bounds the window), but the failure is now first-class: a
+      sandbox:provisioning:execute-failed run-audit event (ids/outcomes only) is
+      recorded alongside the decision audit, and the failure is surfaced in the
+      HTTP response via executorError so the dashboard shows it immediately.
+      Modeling a durable retryable execution state is a schema/contract change
+      deferred to a follow-up.
+      */
+      let sandboxExecutorError: string | undefined;
       if (updated.targetAction.category === "sandbox_provisioning") {
         if (body.decision === "approve") {
           if (sandboxProvisioningExecutor) {
             try {
               await sandboxProvisioningExecutor(updated);
             } catch (error) {
+              sandboxExecutorError = error instanceof Error ? error.message : String(error);
               runtimeLogger.warn("Sandbox provisioning executor failed", {
                 requestId: updated.id,
-                error: error instanceof Error ? error.message : String(error),
+                error: sandboxExecutorError,
               });
+              const failureEvent: Parameters<typeof scopedStore.recordRunAuditEvent>[0] = {
+                agentId: updated.requester.actorId,
+                domain: "database",
+                mutationType: "sandbox:provisioning:execute-failed",
+                target: updated.targetAction.resourceId || updated.id,
+                metadata: {
+                  approvalRequestId: updated.id,
+                  requesterAgentId: updated.requester.actorId,
+                  outcome: "execute-failed",
+                },
+                runId: updated.id,
+              };
+              if (updated.taskId) failureEvent.taskId = updated.taskId;
+              if (updated.runId) failureEvent.runId = updated.runId;
+              void scopedStore.recordRunAuditEvent(failureEvent);
             }
           }
           emitSandboxProvisioningDecisionAudit({ scopedStore, request: updated, decision: "approved", runtimeLogger });
@@ -495,7 +525,9 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       const detail = toDetailDto(updated, history);
       emitApprovalSseEvent("approval:updated", detail, projectId);
       emitApprovalSseEvent("approval:decided", detail, projectId);
-      res.json(detail);
+      // FNXC:ApprovalDecisionAuthority 2026-07-26-18:40: additive field — clients that
+      // ignore it see the exact prior contract; the dashboard can surface the failure.
+      res.json(sandboxExecutorError !== undefined ? { ...detail, executorError: sandboxExecutorError } : detail);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);

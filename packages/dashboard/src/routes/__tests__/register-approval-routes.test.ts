@@ -304,6 +304,44 @@ describe("POST /api/approvals/:id/decision — sandbox provisioning honesty", ()
     expect(approvalState.decide).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:ApprovalDecisionAuthority 2026-07-26-18:55:
+  Review finding: a registered executor that THROWS used to be swallowed into a
+  warn while the response looked like a clean approval. The decision still stands
+  (grant TTL bounds the window) but the failure must be first-class: surfaced as
+  `executorError` on the response so the operator sees provisioning did not run.
+  */
+  it("surfaces a registered executor failure as executorError instead of swallowing it", async () => {
+    const sandboxRequest = makeApprovalRequest({
+      targetAction: {
+        category: "sandbox_provisioning",
+        action: "provision",
+        summary: "Provision a sandbox",
+        resourceType: "sandbox",
+        resourceId: "sb-1",
+        context: { backendId: "docker", operation: "provision" },
+      },
+    });
+    approvalState.requests.set(REQUEST_ID, sandboxRequest);
+    approvalState.decide.mockImplementation(async (id: string, status: string) => ({
+      ...sandboxRequest,
+      id,
+      status,
+      decidedAt: "2026-07-26T00:00:01.000Z",
+    }));
+    registerSandboxProvisioningExecutor(() => Promise.reject(new Error("docker daemon unreachable")));
+    try {
+      const { app } = makeApp();
+      const res = await postDecision(app, { decision: "approve" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.executorError).toBe("docker daemon unreachable");
+      expect(approvalState.decide).toHaveBeenCalledOnce();
+    } finally {
+      registerSandboxProvisioningExecutor(null);
+    }
+  });
+
   it("still allows denying sandbox_provisioning without an executor", async () => {
     approvalState.requests.set(REQUEST_ID, makeApprovalRequest({
       targetAction: {

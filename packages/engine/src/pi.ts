@@ -2901,6 +2901,49 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     });
   };
 
+  /*
+  FNXC:SessionIdentity 2026-07-26-18:50:
+  Review finding: model-swap sessions lost their identity registration. The swap
+  disposes the old session (whose wrapped dispose deregisters the identity) and
+  Object.assign then installs the NEW session's unwrapped dispose — so after a
+  fallback swap, extension tool calls for this cwd resolved to "operator" instead
+  of the engine agent principal. The registration/dispose-wrapping is therefore a
+  per-session-instance helper: applied to the initial session at the end of
+  createFnAgent AND to every swapped-in session here (before Object.assign copies
+  the wrapped dispose onto the caller-held facade), so each instance registers on
+  attach and deregisters exactly once on its own dispose.
+  */
+  const sessionIdentity = (() => {
+    const principalAgentId = options.actionGateContext?.agentId
+      ?? options.permanentAgentGating?.requester?.actorId
+      ?? "engine-session";
+    const principalAgentName = options.actionGateContext?.agentName
+      ?? options.permanentAgentGating?.requester?.actorName;
+    return {
+      agentId: principalAgentId,
+      ...(principalAgentName ? { agentName: principalAgentName } : {}),
+      ...(options.taskId ? { taskId: options.taskId } : {}),
+      ...(options.sessionPurpose ? { purpose: options.sessionPurpose } : {}),
+    };
+  })();
+  const sessionIdentityKeys = [...new Set([options.cwd, resolvedProjectRoot].filter((key): key is string => Boolean(key)))];
+  const attachSessionIdentity = (session: PromptableSession & { dispose?: () => void | Promise<void> }): void => {
+    const identityDisposers = sessionIdentityKeys.map((key) => registerFusionSessionIdentity(key, sessionIdentity));
+    const disposeBeforeIdentity = typeof session.dispose === "function"
+      ? session.dispose.bind(session)
+      : () => undefined;
+    session.dispose = async () => {
+      for (const disposeIdentity of identityDisposers) {
+        try {
+          disposeIdentity();
+        } catch {
+          // Registry cleanup must never mask the underlying dispose.
+        }
+      }
+      await Promise.resolve(disposeBeforeIdentity());
+    };
+  };
+
   const swapPromptSession = async (modelToUse: typeof selectedModel): Promise<PromptableSession> => {
     if (!modelToUse) {
       throw new Error("Cannot swap session without a resolved model");
@@ -2915,6 +2958,9 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     const next = (await createSessionWithModel(modelToUse)).session as PromptableSession;
     wireFallbackHooks(next);
     wrapSessionDisposeWithShutdown(next);
+    // FNXC:SessionIdentity 2026-07-26-18:50: re-register for the swapped-in session;
+    // Object.assign below copies the identity-wrapped dispose onto the facade.
+    attachSessionIdentity(next as PromptableSession & { dispose?: () => void | Promise<void> });
     applyThinkingLevelIfSupported(next, `${modelToUse.provider}/${modelToUse.id}`);
     Object.setPrototypeOf(promptableSession, Object.getPrototypeOf(next));
     Object.assign(promptableSession, next);
@@ -3060,35 +3106,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   resolved project root because pi may surface either as ExtensionContext.cwd.
   Deregistration rides the session's dispose chain.
   */
-  {
-    const principalAgentId = options.actionGateContext?.agentId
-      ?? options.permanentAgentGating?.requester?.actorId
-      ?? "engine-session";
-    const principalAgentName = options.actionGateContext?.agentName
-      ?? options.permanentAgentGating?.requester?.actorName;
-    const identity = {
-      agentId: principalAgentId,
-      ...(principalAgentName ? { agentName: principalAgentName } : {}),
-      ...(options.taskId ? { taskId: options.taskId } : {}),
-      ...(options.sessionPurpose ? { purpose: options.sessionPurpose } : {}),
-    };
-    const identityKeys = new Set([options.cwd, resolvedProjectRoot].filter((key): key is string => Boolean(key)));
-    const identityDisposers = [...identityKeys].map((key) => registerFusionSessionIdentity(key, identity));
-    const sessionWithDispose = promptableSession as PromptableSession & { dispose?: () => void | Promise<void> };
-    const disposeBeforeIdentity = typeof sessionWithDispose.dispose === "function"
-      ? sessionWithDispose.dispose.bind(sessionWithDispose)
-      : () => undefined;
-    sessionWithDispose.dispose = async () => {
-      for (const disposeIdentity of identityDisposers) {
-        try {
-          disposeIdentity();
-        } catch {
-          // Registry cleanup must never mask the underlying dispose.
-        }
-      }
-      await Promise.resolve(disposeBeforeIdentity());
-    };
-  }
+  attachSessionIdentity(promptableSession as PromptableSession & { dispose?: () => void | Promise<void> });
 
   return { session: promptableSession, sessionFile: promptableSession.sessionFile };
 }
