@@ -26,13 +26,27 @@ file and re-stating the safety argument. That friction is the point.
 import { describe, expect, it } from "vitest";
 import type { Task, WorkflowIr } from "@fusion/core";
 
-import { decideRecovery, isSuppressedBySafeguard, resolveColumnRecovery } from "../recovery-reconciler.js";
+import {
+  decideRecovery,
+  isSuppressedBySafeguard,
+  resolveColumnRecovery,
+  RECOVERY_POLICY_KEYS,
+} from "../recovery-reconciler.js";
 
 /**
- * Every key the recovery policy is ALLOWED to express. Adding to this list means
- * asserting, in review, that the new key cannot disable a safeguard.
+ * The keys the recovery policy is ALLOWED to express, as REVIEWED. Adding to this
+ * list means asserting, in review, that the new key cannot disable a safeguard.
  */
-const ALLOWED_POLICY_KEYS = ["stalenessMs", "onStale"] as const;
+const REVIEWED_POLICY_KEYS = ["onStale", "stalenessMs"] as const;
+
+/**
+ * The keys the TYPE actually accepts, derived from `RECOVERY_POLICY_KEYS` —
+ * a `Record<keyof WorkflowColumnRecovery, true>` that the compiler forces to stay
+ * exhaustive. Driving the ratchet off this instead of off a test fixture is the
+ * whole point: a fixture only proves what it happens to set, while this cannot
+ * drift from the interface without failing the build.
+ */
+const TYPE_POLICY_KEYS = Object.keys(RECOVERY_POLICY_KEYS);
 
 /** The six safeguards, in the vocabulary an author might try to use. */
 const SAFEGUARD_KEYS = [
@@ -89,16 +103,26 @@ const LATER = { now: () => Date.parse("2026-01-02T00:00:00.000Z") };
 
 describe("recovery policy safety invariant — safeguards live OUTSIDE the policy table", () => {
   describe("structural: the policy schema exposes no safeguard key", () => {
-    it("accepts only the allow-listed keys", () => {
-      /* Reading the policy back off a workflow must surface nothing beyond the
-         allow-list. A new key here is a deliberate review decision, not a drift. */
-      const policy = resolveColumnRecovery(ir(), "drafting");
-      expect(policy).toBeDefined();
-      expect(Object.keys(policy!).sort()).toEqual([...ALLOWED_POLICY_KEYS].sort());
+    it("the TYPE accepts exactly the reviewed key set", () => {
+      /*
+      The ratchet. `TYPE_POLICY_KEYS` is derived from a compiler-enforced
+      exhaustive manifest, so this fails the moment `WorkflowColumnRecovery`
+      gains or loses a key — even one no fixture ever sets, which is exactly the
+      case the fixture-driven version missed.
+      */
+      expect([...TYPE_POLICY_KEYS].sort()).toEqual([...REVIEWED_POLICY_KEYS].sort());
     });
 
-    it.each(SAFEGUARD_KEYS)("does not allow-list a safeguard key: %s", (key) => {
-      expect(ALLOWED_POLICY_KEYS as readonly string[]).not.toContain(key);
+    it.each(SAFEGUARD_KEYS)("the TYPE does not accept a safeguard key: %s", (key) => {
+      expect(TYPE_POLICY_KEYS).not.toContain(key);
+    });
+
+    it("a workflow cannot smuggle an unknown key past the parser into a live policy", () => {
+      /* Complements the type ratchet at runtime: whatever a stored workflow row
+         carries, what the reconciler READS must stay within the reviewed set. */
+      const policy = resolveColumnRecovery(ir(), "drafting");
+      expect(policy).toBeDefined();
+      expect(Object.keys(policy!).every((k) => (TYPE_POLICY_KEYS as string[]).includes(k))).toBe(true);
     });
   });
 

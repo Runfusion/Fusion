@@ -41,6 +41,33 @@ import {
   type WorkflowColumnRecovery,
 } from "@fusion/core";
 
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-28-15:35 (PR #2478 review, P2):
+THE TYPE-DRIVEN SAFETY RATCHET. Every key `WorkflowColumnRecovery` accepts,
+reified as a value.
+
+The first cut of the safety test read keys off a FIXTURE, so it guarded the
+fixture rather than the type: adding a safeguard-adjacent property to the
+interface left the advertised guarantee unenforced, because the fixture simply
+never set it. This manifest closes that hole.
+
+`Record<keyof WorkflowColumnRecovery, true>` forces exhaustiveness at COMPILE
+time — adding a key to the interface fails the build here until it is listed, and
+removing one fails as an excess property. It lives in PRODUCTION code
+deliberately: the engine tsconfig EXCLUDES the __tests__ directory, so a
+compile-time assertion placed in the test file would never be checked by `tsc`
+and the ratchet would be decorative.
+
+Two-stage effect. A new interface key breaks the build here; listing it to fix
+the build then fails `recovery-policy-safety.test.ts`, which asserts this manifest
+against the reviewed allow-list. Either way a human must re-state the safety
+argument. That friction is the point.
+*/
+export const RECOVERY_POLICY_KEYS: Record<keyof WorkflowColumnRecovery, true> = {
+  stalenessMs: true,
+  onStale: true,
+};
+
 /** One card's resolved recovery decision. */
 export interface RecoveryDecision {
   taskId: string;
