@@ -447,12 +447,6 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("backlogPressureAlertCooldownMs")).toBe(false);
   });
 
-  it("keeps dependency-blocked todo report settings project-scoped with documented defaults", () => {
-
-
-
-  });
-
   it("keeps github tracking keys in expected scopes with documented defaults", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingEnabledByDefault).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.sessionAdvisorEnabledByDefault).toBe(false);
