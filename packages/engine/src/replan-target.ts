@@ -19,6 +19,17 @@ service scans, so parking a needs-replan card in their custom entry column stran
 — and the legacy move path throws on custom targets, aborting the replan before the status
 write. "triage" preserves the pre-workflow-aware behavior for these workflows: the move is
 legal from every legacy column and eligibleTriageTasks re-specifies unconditionally.
+
+FNXC:WorkflowLifecycleColumns 2026-07-28-00:20 (Phase B / slice B2) DELIBERATE-LITERAL:
+Reviewed as a U5 conversion candidate and deliberately NOT converted. The value of this
+fallback is precisely that it is NOT trait-resolved: it fires only when the workflow
+declares neither planner column, and the whole point (documented above) is that resolving
+it against the workflow — to that workflow's entry column — is the bug it was written to
+fix. Converting it would reintroduce the stranded-card behavior.
+
+Recorded here for the U12 literal ratchet's allowlist. That ratchet does not exist in the
+tree yet; grep `DELIBERATE-LITERAL` to enumerate the sites it must admit, with the reason
+attached at the site rather than in a separate list that can drift from it.
 */
 /*
  * FNXC:WorkflowReplan 2026-07-15-13:15:

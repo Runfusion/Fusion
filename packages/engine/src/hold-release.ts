@@ -321,6 +321,20 @@ function resolveReleaseTarget(ir: WorkflowIr, fromColumn: string, preferCapacity
 
 // ── Dependency satisfaction (KTD-5 + FN-5719 dual-accept) ─────────────────────
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-00:20 (Phase B / slice B2) DELIBERATE-LITERAL:
+Reviewed as a U5 conversion candidate and deliberately NOT converted. This is the LEGACY
+half of the FN-5719 dual-accept pair in `dependencySatisfied` below: the trait half already
+handles renamed workflows, and this half exists specifically to honor the pre-trait
+completion signal and to log a `merge:dependency-parity-diff` audit event when the two
+disagree. Converting it to traits would make both halves compute the same answer — deleting
+the compatibility signal AND the divergence detector in one move, while looking like a
+cleanup. The literal IS the semantic here.
+
+Its removal is the dual-accept window CLOSING, which is U12's call, not a Phase B refactor.
+Recorded for the U12 literal ratchet's allowlist; that ratchet does not exist in the tree
+yet, so grep `DELIBERATE-LITERAL` to enumerate the sites it must admit.
+*/
 /** Legacy completion signal: dependency's column is a terminal/handoff column. */
 function legacyDependencySatisfied(dep: Task): boolean {
   return dep.column === "done" || dep.column === "in-review" || dep.column === "archived";
