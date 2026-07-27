@@ -3209,11 +3209,27 @@ export class SelfHealingManager {
     if (!recoverFn) return 0;
 
     try {
-      const tasks = await this.store.listTasks({ column: "todo", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:25 (Phase B / slice B3.1 — U4):
+      This sweep decided "is this card in the hold column?" TWICE — the QUERY
+      (`{ column: "todo" }`) and the per-task GUARD (`task.column !== "todo"`) —
+      and both were literal. They convert TOGETHER or not at all: a correct guard
+      behind a literal query never runs, and a converted query behind a literal
+      guard rejects every row it just fetched. Either half alone is a green diff
+      with no behavior change.
+
+      Cost discipline: the column filter is gone, so the CHEAP non-column
+      rejections (paused / executing / incomplete steps / errored / taint) run
+      FIRST and synchronously, and only the handful of survivors pay an IR
+      resolution — shared through `irCache`, so a board spanning three workflows
+      resolves three times regardless of card count. `includeArchived: false`
+      keeps archived rows out, which the old column filter did implicitly.
+      */
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
-      const stranded = tasks.filter((task) => {
-        if (task.column !== "todo" || task.paused) return false;
+      const completedNonColumnCandidates = tasks.filter((task) => {
+        if (task.paused) return false;
         if (executingIds.has(task.id)) return false;
         if (task.steps.length === 0 || !task.steps.every((s) => s.status === "done" || s.status === "skipped")) return false;
         /*
@@ -3235,9 +3251,32 @@ export class SelfHealingManager {
         return true;
       });
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:25 (Phase B / slice B3.1 — U4):
+      The column half of the old predicate, now resolved per task against the
+      card's OWN workflow. A board can span workflows with different hold
+      columns, so this cannot be hoisted to one board-wide value. A workflow that
+      declares no hold column keeps the legacy `todo`, matching the pre-conversion
+      behavior rather than matching nothing.
+      */
+      const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const stranded: Task[] = [];
+      for (const task of completedNonColumnCandidates) {
+        let holdColumn = "todo";
+        try {
+          const lifecycle = resolveLifecycleColumns(
+            await resolveWorkflowIrForTask(this.store, task.id, irCache),
+          );
+          if (lifecycle?.hold) holdColumn = lifecycle.hold;
+        } catch {
+          holdColumn = "todo";
+        }
+        if (task.column === holdColumn) stranded.push(task);
+      }
+
       if (stranded.length === 0) return 0;
 
-      log.warn(`Found ${stranded.length} completed task(s) stranded in todo`);
+      log.warn(`Found ${stranded.length} completed task(s) stranded in the hold column`);
 
       let recovered = 0;
       for (const task of stranded) {

@@ -3035,7 +3035,17 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
 
       expect(result).toBe(1);
-      expect(store.listTasks).toHaveBeenCalledWith({ column: "todo", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:40 (Phase B / slice B3.1 — U4):
+      The query shape CHANGED on purpose. This sweep can no longer scope itself to
+      `column: "todo"` — that literal made it blind to every workflow whose hold
+      column is named something else, so a finished card sat in `drafting` forever.
+      It now reads the board and filters by each task's RESOLVED hold column.
+
+      The behavioral assertions below are the ones that matter and are unchanged:
+      one qualifying card, promoted exactly once. Only the query shape moved.
+      */
+      expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
       expect(recoverFn).toHaveBeenCalledTimes(1);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
 
