@@ -33,7 +33,35 @@ export interface DependencyBlockedTodoReportContext {
   staleAgeMs?: number;
   minBlockedTodoCount?: number;
   maxGroups?: number;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-28-02:40 (PR #2470 review, P1):
+  The task's resolved lifecycle roles. `computeBlockerFanoutMap` already accepted
+  these, but this report called it with NEITHER — so a renamed workflow silently
+  fell back to the legacy sets. The failures pointed in opposite directions: a
+  FINISHED blocker in a renamed terminal column counted as ACTIVE (over-reporting
+  dead blockers), while dependents in a renamed hold column were not counted as
+  blocked todos at all (under-reporting real ones).
+
+  Both default to the legacy values, so a caller that cannot resolve a workflow
+  is byte-identical.
+  */
+  /** Columns that end a task's life (`complete` + `archived` roles). */
+  terminalColumns?: readonly string[];
+  /** The capacity-wait column whose residents are the report's "blocked todos". */
+  holdColumn?: string;
+  /*
+  PLURAL form. This report runs BOARD-WIDE, and a board may span more than one
+  workflow — so there can be more than one hold column and collapsing them to one
+  silently drops every card held by the other workflows. The engine reporter
+  passes the union across the workflows actually present on the board.
+  */
+  holdColumns?: readonly string[];
 }
+
+/* Legacy role ids — the builtin coding workflow's names, used when a caller
+   cannot resolve the task's workflow. */
+const DEFAULT_REPORT_TERMINAL_COLUMNS: readonly string[] = ["done", "archived"];
+const DEFAULT_REPORT_HOLD_COLUMN = "todo";
 
 export const DEFAULT_DEPENDENCY_BLOCKED_TODO_FRESH_MS = 30 * 60_000;
 export const DEFAULT_DEPENDENCY_BLOCKED_TODO_STALE_MS = 4 * 60 * 60_000;
@@ -71,8 +99,25 @@ export function computeDependencyBlockedTodoReport(
   context: DependencyBlockedTodoReportContext = {},
 ): DependencyBlockedTodoReport {
   const { now, freshMs, staleMs, minBlockedTodoCount, maxGroups } = sanitizeContext(context);
-  const blockerFanout = computeBlockerFanoutMap(tasks, maxAutoMergeRetries, { nowMs: now });
-  const todoTaskIds = new Set(tasks.filter((task) => task.column === "todo").map((task) => task.id));
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-28-02:40 (PR #2470 review, P1):
+  Thread the resolved roles into the fan-out AND into this function's own two
+  literals below. Threading only the fan-out would leave the `todoTaskIds` filter
+  and the terminal-blocker skip on legacy ids, so a renamed workflow would still
+  report nothing — a fix that looks complete and changes no outcome.
+  */
+  const terminalColumns = context.terminalColumns ?? DEFAULT_REPORT_TERMINAL_COLUMNS;
+  const holdColumns = new Set(
+    context.holdColumns ?? [context.holdColumn ?? DEFAULT_REPORT_HOLD_COLUMN],
+  );
+  const terminalColumnSet = new Set(terminalColumns);
+
+  const blockerFanout = computeBlockerFanoutMap(tasks, maxAutoMergeRetries, {
+    nowMs: now,
+    terminalColumns: terminalColumnSet,
+    holdColumns,
+  });
+  const todoTaskIds = new Set(tasks.filter((task) => holdColumns.has(task.column)).map((task) => task.id));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
 
   const groups: DependencyBlockedTodoGroup[] = [];
@@ -83,7 +128,8 @@ export function computeDependencyBlockedTodoReport(
     }
 
     const blocker = taskById.get(blockerId);
-    if (!blocker || blocker.column === "done" || blocker.column === "archived") {
+    // Terminal by the workflow's OWN roles, not the legacy done/archived pair.
+    if (!blocker || terminalColumnSet.has(blocker.column)) {
       continue;
     }
 
