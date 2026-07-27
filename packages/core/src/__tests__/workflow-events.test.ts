@@ -164,6 +164,76 @@ describe("workflow event payloads — ids/outcomes only (R5)", () => {
     })).toEqual([]);
   });
 
+  /*
+  FNXC:WorkflowEvents 2026-07-27-17:10 (U3, PR #2467 review — required-key half):
+  ALLOWED_EVENT_KEYS is a CEILING; this is the FLOOR. Without it a payload
+  missing `taskId` validated clean and got delivered, and a subscriber keying
+  derived state on `event.taskId` would write under `undefined` rather than
+  fail — the quiet-corruption mode this seam is supposed to be immune to.
+  One case per declared event type, so adding a type without its required keys
+  fails here rather than shipping an unvalidated payload.
+  */
+  it("rejects a payload missing a COMMON required key", () => {
+    const { taskId: _taskId, ...noTaskId } = transitioned() as Record<string, unknown>;
+    expect(findWorkflowEventShapeViolations(noTaskId))
+      .toEqual([{ path: "taskId", reason: "missing-required-key" }]);
+
+    const { at: _at, ...noAt } = transitioned() as Record<string, unknown>;
+    expect(findWorkflowEventShapeViolations(noAt))
+      .toEqual([{ path: "at", reason: "missing-required-key" }]);
+  });
+
+  it("treats an EXPLICITLY undefined required key as missing, not as present", () => {
+    // `{ taskId: maybeId }` where maybeId is undefined is the same bug as
+    // omitting the key; the emitters' conditional spreads produce the other form.
+    expect(findWorkflowEventShapeViolations({ ...transitioned(), taskId: undefined }))
+      .toEqual([{ path: "taskId", reason: "missing-required-key" }]);
+  });
+
+  it("enforces the per-type required keys for every declared event type", () => {
+    const complete: Record<string, Record<string, unknown>> = {
+      TaskTransitioned: { type: "TaskTransitioned", taskId: "FN-1", at: "t", from: "todo", to: "in-progress" },
+      NodeEntered: { type: "NodeEntered", taskId: "FN-1", at: "t", nodeId: "execute" },
+      NodeCompleted: { type: "NodeCompleted", taskId: "FN-1", at: "t", nodeId: "execute", outcome: "success" },
+      RunSuspended: { type: "RunSuspended", taskId: "FN-1", at: "t", nodeId: "execute", reason: "capacity" },
+      RunResumed: { type: "RunResumed", taskId: "FN-1", at: "t", nodeId: "execute" },
+    };
+    const typeSpecificRequired: Record<string, string[]> = {
+      TaskTransitioned: ["from", "to"],
+      NodeEntered: ["nodeId"],
+      NodeCompleted: ["nodeId", "outcome"],
+      RunSuspended: ["nodeId", "reason"],
+      RunResumed: ["nodeId"],
+    };
+
+    for (const [type, payload] of Object.entries(complete)) {
+      // The complete payload is clean...
+      expect(findWorkflowEventShapeViolations(payload)).toEqual([]);
+      // ...and dropping any one type-specific required key is a violation.
+      for (const key of typeSpecificRequired[type]) {
+        const { [key]: _dropped, ...incomplete } = payload;
+        expect(findWorkflowEventShapeViolations(incomplete))
+          .toEqual([{ path: key, reason: "missing-required-key" }]);
+      }
+    }
+  });
+
+  it("keeps genuinely OPTIONAL keys optional — column, fromColumn/toColumn, runId, workflowId", () => {
+    // `column` is absent for a columnless node (`end`); `fromColumn`/`toColumn`
+    // for a suspension with no crossing; `runId`/`workflowId` are legitimately
+    // unresolvable at some emit sites. None may be forced into the floor.
+    expect(findWorkflowEventShapeViolations({ type: "NodeEntered", taskId: "FN-1", at: "t", nodeId: "end" })).toEqual([]);
+    expect(findWorkflowEventShapeViolations({ type: "RunSuspended", taskId: "FN-1", at: "t", nodeId: "n", reason: "capacity" })).toEqual([]);
+  });
+
+  it("reports BOTH an unknown key and a missing required key on one payload", () => {
+    const { to: _to, ...noTo } = transitioned() as Record<string, unknown>;
+    expect(findWorkflowEventShapeViolations({ ...noTo, error: "boom" })).toEqual([
+      { path: "error", reason: "unknown-key" },
+      { path: "to", reason: "missing-required-key" },
+    ]);
+  });
+
   it("rejects an unrecognised event TYPE outright rather than validating its fields", () => {
     // An out-of-band type has no declared payload, so it gets no implicit
     // permission to invent one.

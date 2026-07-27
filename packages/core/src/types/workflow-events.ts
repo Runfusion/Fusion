@@ -120,6 +120,14 @@ The rule has TWO halves, and the second is the one that matters (PR #2467 review
      interfaces above are the whole permitted surface, so adding a field means
      adding it here, deliberately, rather than discovering it in a log.
 
+  c. REQUIRED keys, per event type. The allow-list is a ceiling; this is the
+     floor. Without it a payload missing `taskId` validates clean and gets
+     delivered — and a subscriber keying derived state on `event.taskId` then
+     writes under `undefined` rather than failing, which is the quiet-corruption
+     mode this whole seam is supposed to be immune to. An absent required key is
+     a producer bug, so it is caught at the emit boundary rather than at each of
+     N subscribers.
+
 An unknown TYPE is itself a violation: a caller inventing an event out of band
 gets no implicit permission to invent its payload either.
 */
@@ -127,6 +135,11 @@ export const MAX_ID_VALUE_LENGTH = 200;
 
 /** Keys every lifecycle event may carry. */
 const COMMON_EVENT_KEYS = ["type", "taskId", "at", "runId", "workflowId"] as const;
+
+/** Keys every lifecycle event MUST carry. `runId`/`workflowId` are deliberately
+ *  absent — both are legitimately unresolvable at some emit sites, and U3's own
+ *  `workflowId` fix omits rather than guesses. */
+const COMMON_REQUIRED_EVENT_KEYS = ["type", "taskId", "at"] as const;
 
 /** The per-type permitted key surface — the declared interfaces above, encoded.
  *  A key absent from its type's list is refused, not merely value-checked. */
@@ -138,10 +151,31 @@ const ALLOWED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]> 
   RunResumed: [...COMMON_EVENT_KEYS, "nodeId", "releasedBy"],
 };
 
+/*
+The non-optional fields of each interface above. Kept as a sibling literal rather
+than derived from ALLOWED_EVENT_KEYS because required-ness is exactly the part a
+type cannot express at runtime — `column` on NodeEntered and `fromColumn`/
+`toColumn` on RunSuspended are allowed but genuinely optional (a columnless node
+has no column), so the two lists differ on purpose.
+*/
+const REQUIRED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]> = {
+  TaskTransitioned: [...COMMON_REQUIRED_EVENT_KEYS, "from", "to"],
+  NodeEntered: [...COMMON_REQUIRED_EVENT_KEYS, "nodeId"],
+  NodeCompleted: [...COMMON_REQUIRED_EVENT_KEYS, "nodeId", "outcome"],
+  RunSuspended: [...COMMON_REQUIRED_EVENT_KEYS, "nodeId", "reason"],
+  RunResumed: [...COMMON_REQUIRED_EVENT_KEYS, "nodeId"],
+};
+
 /** A single ids-only rule violation. `path` locates it for the failure message. */
 export interface WorkflowEventShapeViolation {
   path: string;
-  reason: "object-body" | "prose-string" | "unsupported-type" | "unknown-key" | "unknown-type";
+  reason:
+    | "object-body"
+    | "prose-string"
+    | "unsupported-type"
+    | "unknown-key"
+    | "unknown-type"
+    | "missing-required-key";
 }
 
 function checkScalar(path: string, value: unknown, out: WorkflowEventShapeViolation[]): void {
@@ -189,6 +223,19 @@ export function findWorkflowEventShapeViolations(event: unknown): WorkflowEventS
       continue;
     }
     checkScalar(key, value, violations);
+  }
+  /*
+  The FLOOR. `undefined` counts as missing, not present: the emitters build
+  payloads with conditional spreads, so a field that failed to resolve is absent
+  rather than explicitly undefined — but a caller writing `{ taskId: maybeId }`
+  produces the explicitly-undefined form, and both are the same bug. Reported
+  after the per-key pass so a payload that is both malformed and incomplete
+  surfaces every reason at once.
+  */
+  for (const key of REQUIRED_EVENT_KEYS[record.type as WorkflowLifecycleEventType]) {
+    if (record[key] === undefined || record[key] === null) {
+      violations.push({ path: key, reason: "missing-required-key" });
+    }
   }
   return violations;
 }
