@@ -59,7 +59,7 @@ Scale of the surface being consolidated:
 - **R2.** Specification, Plan Review, and the replan/revise loop run while the card is persisted in Planning. The card crosses into In progress exactly once, when the scheduler releases it against capacity.
 - **R3.** Engine and dashboard resolve lifecycle columns from the task's workflow (traits), never from a hardcoded id. A workflow that renames or omits a column behaves correctly with no code change.
 - **R4.** The graph owns every lane — planning, execution, review, merge. Lane services keep substrate responsibilities only: storage, leases, timers, process supervision, capacity, routing, recovery, audit.
-- **R5.** A node transition emits an event **after** its transition commits. Subscribers react; no subscriber performs the transition. Durable follow-on work is enqueued as a work item under lease, never left to an in-memory listener.
+- **R5.** A node transition emits an event **after** its transition commits. Subscribers react; no subscriber performs the transition. Durable follow-on work is written as a work item **inside the transition transaction** (transactional outbox), never left to a post-commit listener that a crash can skip. Work-item delivery is at-least-once, so every durable handler is idempotent.
 - **R6.** Lifecycle state transitions remain transactional and single-writer. Capacity reservation, the move, and its guards commit together or not at all.
 - **R7.** A task row in a column its workflow no longer declares is re-homed to that workflow's hold/intake column on startup, with an ids-only audit event. *(Shipped: `reconcileUndeclaredTaskColumns`.)*
 - **R8.** Board, list, and move menus render each card's own workflow columns. No surface derives its column set from the legacy enum.
@@ -78,8 +78,14 @@ An intake-only column has no releaser — the capacity sweep only releases from 
 **KTD-2. Column vocabulary resolves through one per-task lifecycle-column seam.**
 Most of the 207 sites have no workflow IR in scope, which is why this is plumbing, not find-and-replace. One resolver returns a task's lifecycle columns with a per-workflow cache; the existing trait helpers are its primitives.
 
-**KTD-3. Events are post-commit reactions, never the transition.**
-*(Session-settled with the operator, chosen over event-sourced lifecycle.)* The transition commits transactionally — capacity reservation, guards, and the move together — and the event fires after. Subscribers react and may enqueue durable work items; none of them perform the move. Event-sourced lifecycle would make capacity and move atomicity eventually-consistent, which is precisely the double-release and crash-stranding class this program exists to remove. The durable substrate already exists (`workflow_work_items` with leases and states); the bus adds an emit point and a subscriber registry, not a second queue.
+**KTD-3. Events are post-commit reactions, never the transition — and durable follow-on work is enqueued IN the transaction.**
+*(Session-settled with the operator, chosen over event-sourced lifecycle.)* The transition commits transactionally — capacity reservation, guards, and the move together — and the event fires after. Subscribers react; none of them perform the move. Event-sourced lifecycle would make capacity and move atomicity eventually-consistent, which is precisely the double-release and crash-stranding class this program exists to remove.
+
+**Transactional outbox, not subscriber-enqueued work.** *(PR #2463 review — greptile P1.)* "Emit after commit, let a subscriber enqueue the durable work" has a crash window: a process that dies between the commit and the subscriber leaves no event and no work-item record, so required follow-on work is skipped permanently with nothing to recover from. The existing completion handoff already avoids this by creating its work item **inside** the move transaction. Follow the same pattern: any durable follow-on work is written as a work item in the same transaction as the transition, and the post-commit event carries only the reactions that are safe to lose (notify, board refresh, analytics). A dropped event must cost a notification, never a state change or a unit of work.
+
+**Delivery is at-least-once; handlers must be idempotent.** *(PR #2463 review — greptile P2.)* `listDueWorkflowWorkItems` returns items whose lease has expired (`leaseExpiresAt IS NULL OR <= now`), so a worker that performs an external side effect and dies before recording completion will have that item re-claimed and re-run. Calling this substrate "at-most-once" would invite subscribers to skip the deduplication the delivery semantics actually require. Every durable handler is written idempotent, keyed on a payload-identifying invariant.
+
+The durable substrate already exists (`workflow_work_items` with leases and states); the bus adds an emit point and a subscriber registry, not a second queue.
 
 **KTD-4. Lane services become substrate; the graph owns policy.**
 Triage discovers and seeds; the executor supplies primitives and node runners; the reviewer and merger expose capabilities. Node behavior moves to runners, policy moves to the IR. The vocabulary for this already exists in `CONCEPTS.md` — Workflow Runtime Primitive, Node Runner, Workflow Service — so this is completing a stated architecture, not inventing one.
@@ -156,12 +162,22 @@ node outcome
         COMMIT
         └─> emit TaskTransitioned{ taskId, from, to, nodeId, outcome, runId }
 
+node outcome
+  └─> transition( task, targetColumn ):
+        BEGIN TX
+          guards + capacity reservation + move                ← atomic, single-writer
+          enqueue durable follow-on work items                ← transactional outbox
+        COMMIT
+        └─> emit TaskTransitioned{ ... }                      ← losable reactions only
+
 subscribers (post-commit, non-authoritative):
   notify · board refresh · agent wake · plugin hooks · analytics
-  durable follow-on  ──> enqueue work item (leased, claimed once)
 
-INVARIANT: no subscriber performs a lifecycle transition.
-           A dropped event costs a reaction, never a state change.
+INVARIANTS:
+  no subscriber performs a lifecycle transition
+  no subscriber is the only record of durable work  (outbox owns that)
+  a dropped event costs a reaction, never a state change or a unit of work
+  work-item delivery is AT-LEAST-ONCE — handlers are idempotent
 ```
 
 ### Phasing
@@ -244,7 +260,9 @@ flowchart TD
 
 **Files:** `packages/core/src/task-store/moves.ts`, `packages/core/src/workflow-events.ts` (new), `packages/core/src/types/workflow-events.ts` (new), `packages/engine/src/workflow-column-boundary.ts`, `packages/engine/src/workflow-event-subscribers.ts` (new), `packages/core/src/__tests__/workflow-events.test.ts` (new)
 
-**Approach:** Define a typed lifecycle event (`TaskTransitioned`, `NodeEntered`, `NodeCompleted`, `RunSuspended`, `RunResumed`) carrying ids/outcomes only — same discipline as run-audit, no prose, no payload bodies. Emit **after** the transition transaction commits, from the single commit path in `moves.ts` and the boundary controller. Subscribers register through one registry; a subscriber throwing is logged and isolated, never able to fail or roll back the transition. Durable follow-on work is enqueued as a work item, not performed in the handler.
+**Approach:** Define a typed lifecycle event (`TaskTransitioned`, `NodeEntered`, `NodeCompleted`, `RunSuspended`, `RunResumed`) carrying ids/outcomes only — same discipline as run-audit, no prose, no payload bodies. Emit **after** the transition transaction commits, from the single commit path in `moves.ts` and the boundary controller. Subscribers register through one registry; a subscriber throwing is logged and isolated, never able to fail or roll back the transition.
+
+Durable follow-on work uses the **transactional outbox**: the work item is written inside the transition transaction (the shape `recordCompletionHandoff` already uses), so a crash between commit and emit loses at most a notification. Post-commit subscribers carry only losable reactions.
 
 The existing `store.on/off` seam (triage's column-wake handler) becomes the first subscriber rather than a parallel mechanism.
 
@@ -257,7 +275,8 @@ The existing `store.on/off` seam (triage's column-wake handler) becomes the firs
 - A throwing subscriber does not roll back the transition and does not prevent other subscribers running.
 - Event payloads carry ids/outcomes only; a payload with prose or a body fails the shape assertion.
 - Ordering: two transitions on one task emit in commit order.
-- A subscriber enqueuing durable work produces exactly one claimable work item.
+- Durable follow-on work survives a crash between commit and emit: kill after the transaction, and the work item is present and claimable on restart.
+- A work item whose lease expires mid-flight is re-claimable, and its handler is idempotent — running it twice produces one effect.
 - Dropping every subscriber leaves lifecycle behavior unchanged (proves reactions are non-authoritative).
 - A crash between commit and emit leaves the transition durable and recoverable by the existing sweeps.
 
@@ -398,6 +417,8 @@ The measurable goal is that the executor stops deciding *what happens next* — 
 **Files:** `packages/engine/src/merger.ts`, `packages/engine/src/merger-ai.ts`, `packages/engine/src/reviewer.ts`, `packages/engine/src/merge-trait.ts`, `packages/engine/src/auto-merge-finalization.ts`, `packages/engine/src/pr-nodes.ts`, plus the merge/review test suites
 
 **Approach:** Adopt `docs/plans/2026-06-09-003-refactor-workflow-owned-merge-full-migration-slices-plan.md` and its S02–S08 slices (`docs/plans/workflow-owned-merge-stack/`, all `draft-stack-handoff`) rather than authoring a parallel design (KTD-5). Sequence them behind U8 so the merge lane converts onto an executor that is already substrate. The reviewer follows the same shape as the planning service: a capability the graph's review nodes call.
+
+**S1 prerequisite — already landed.** *(PR #2463 review — greptile P1.)* S02 and S03 declare a direct dependency on S1 (workflow work-item schema + store API), and every later slice depends on it transitively. S1 is **in main**: the schema ships in `packages/core/src/postgres/migrations/0031_workflow_task_continuations.sql` and the store API (`listDueWorkflowWorkItems`, `acquireWorkflowWorkItemLease`, `transitionWorkflowWorkItem`, `replaceActiveTaskWorkflowContinuation`) is live and already drives the plan-review continuation path. Verify this at the start of U9 rather than assuming it — if any slice reaches for a store method that does not exist, land that gap as S1-completion work before continuing.
 
 **Execution note:** Re-validate each slice against current `main` before landing — the stack was drafted 2026-06-09 and the graph has moved since (optional-groups, merge-attempt nodes, post-merge verification).
 
