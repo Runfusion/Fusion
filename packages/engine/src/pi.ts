@@ -2627,7 +2627,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     ModelRuntime path already adopted in 0.80.8.
 
     FNXC:ModelCatalog 2026-07-24-12:00:
-    FN-8564 advances the exact matched pair to 0.82.0. Its catalog now exposes only
+    FN-8564 advances the exact matched pair to 0.82.x. Its catalog now exposes only
     provider-verified reasoning levels and adds Kimi/OpenRouter OAuth plus constrained tools;
     retain Fusion's ModelRuntime session construction and supplemental catalog merges rather
     than duplicating upstream provider behavior.
