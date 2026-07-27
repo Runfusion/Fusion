@@ -13,6 +13,9 @@ export interface StalePausedReviewSignal {
 }
 
 export interface StalePausedReviewContext {
+  /** The workflow's REVIEW (merge-orchestration) column. Defaults to the legacy
+   *  `"in-review"` so unconverted callers are byte-identical. */
+  reviewColumn?: string;
   now?: number;
   thresholdMs?: number;
   engineActiveSinceMs?: number;
@@ -25,7 +28,17 @@ export function getStalePausedReviewSignal(
   task: Pick<Task, "column" | "paused" | "columnMovedAt" | "updatedAt" | "mergeDetails" | "pausedReason" | "pausedByAgentId">,
   context: StalePausedReviewContext = {},
 ): StalePausedReviewSignal | undefined {
-  if (task.column !== "in-review" || task.paused !== true) return undefined;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-23:55 (U4 — surfacing family):
+  The lifecycle role this signal is about is REVIEW (the merge-orchestration
+  lane), not the id `in-review` — that is only what the builtin coding workflow
+  calls it. `getStalePausedTodoSignal` gained the equivalent `holdColumn`
+  parameter in B1; this sibling was missed, so it silently stopped matching for
+  any workflow that renames its review column. Defaults to the legacy id, so
+  every existing caller is byte-identical.
+  */
+  const reviewColumn = context.reviewColumn ?? "in-review";
+  if (task.column !== reviewColumn || task.paused !== true) return undefined;
   if (task.mergeDetails?.mergeConfirmed === true) return undefined;
 
   const thresholdMs = context.thresholdMs ?? DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS;
