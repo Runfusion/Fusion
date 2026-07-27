@@ -166,7 +166,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
 
       await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=new-task`);
       await page.waitForTimeout(350);
-      expect(await page.evaluate(() => document.querySelectorAll("[data-resize-hit-target='true']").length)).toBe(8);
+      expect(await page.evaluate(() => document.querySelectorAll("[data-resize-hit-target='true']").length)).toBe(9);
       const newTaskPanel = ".new-task-modal";
       const headerPoint = await targetCenter(page, "[data-testid='new-task-drag-handle']");
       const newTaskBeforeHeaderDrag = await rect(page, newTaskPanel);
@@ -178,7 +178,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(newTaskAfterHeaderDrag.width).toBe(newTaskBeforeHeaderDrag.width);
       expect(newTaskAfterHeaderDrag.height).toBe(newTaskBeforeHeaderDrag.height);
 
-      const newTaskTarget = "[data-testid='new-task-resize-se']";
+      const newTaskTarget = "[data-testid='floating-window-resize-se']";
       const newTaskPoint = await targetCenter(page, newTaskTarget);
       expect(await page.evaluate((point) => document.elementFromPoint(point.x, point.y)?.getAttribute("data-resize-hit-target"), newTaskPoint)).toBe("true");
       const newTaskBeforeResize = await rect(page, newTaskPanel);
@@ -189,8 +189,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(newTaskAfterResize.height).toBeGreaterThan(newTaskBeforeResize.height);
       expect(newTaskAfterResize.width).toBeLessThanOrEqual(width - 32);
       expect(newTaskAfterResize.height).toBeLessThanOrEqual(height - 32);
-      expect(await page.evaluate(() => localStorage.getItem("fusion:new-task-modal-size"))).not.toBeNull();
-      expect(await page.evaluate(() => localStorage.getItem("fusion:new-task-modal-position"))).not.toBeNull();
+      expect(await page.evaluate(() => localStorage.getItem("fusion:new-task-modal-geometry"))).not.toBeNull();
       if (width === 820) await page.screenshot({ path: path.join(screenshots, "tablet-after.png") });
       await page.close();
     }, 30_000);
@@ -337,7 +336,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       body: await boxMetrics(tablet, ".new-task-modal .modal-body"),
       overlay: await boxMetrics(tablet, "[data-testid='new-task-modal-overlay']"),
       panel: await boxMetrics(tablet, ".new-task-modal"),
-      handle: await boxMetrics(tablet, "[data-testid='new-task-resize-se']"),
+      handle: await boxMetrics(tablet, "[data-testid='floating-window-resize-se']"),
     };
     expect(tabletNewTask.header.paddingBlockStart).toBe(desktopNewTask.header.paddingBlockStart);
     expect(tabletNewTask.header.paddingBlockEnd).toBe(desktopNewTask.header.paddingBlockEnd);
