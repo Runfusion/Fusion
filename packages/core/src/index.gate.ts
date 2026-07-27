@@ -217,6 +217,8 @@ export type {
   WorkflowIrColumn,
   WorkflowIrColumnTrait,
   WorkflowColumnAgent,
+  WorkflowColumnRecovery,
+  WorkflowColumnOnStale,
   WorkflowHoldRelease,
   WorkflowJoinMode,
   WorkflowJoinBranchFailure,
