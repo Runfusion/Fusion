@@ -5994,7 +5994,12 @@
       "reportDiscussionCategorySelect": "토론 카테고리 선택",
       "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
       "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6048,7 +6053,9 @@
       "agentToolOutputLimit": "",
       "agentToolOutputLimitHint": "",
       "noLimitOnAgentToolOutput": "",
-      "noLimitOnAgentToolOutputHint": ""
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -8536,7 +8543,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "재계획"
+    "statusReplan": "재계획",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

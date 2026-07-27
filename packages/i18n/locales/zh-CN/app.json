@@ -5994,7 +5994,12 @@
       "reportDiscussionCategorySelect": "选择讨论类别",
       "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
       "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6048,7 +6053,9 @@
       "agentToolOutputLimit": "",
       "agentToolOutputLimitHint": "",
       "noLimitOnAgentToolOutput": "",
-      "noLimitOnAgentToolOutputHint": ""
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -8536,7 +8543,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "重新规划"
+    "statusReplan": "重新规划",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",
