@@ -35,8 +35,7 @@ import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
-import {ACTIVE_TASK_FILTER, insertTaskRow, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
-import {recordRunAuditEvent as recordRunAuditEventAsync} from "./async-audit.js";
+import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 
@@ -525,6 +524,10 @@ export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ig
             const context = store.createTaskPersistSerializationContext(task);
             await layer.transactionImmediate(async (tx) => {
               await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+              /*
+              FNXC:SqliteDualPathCleanup 2026-07-26-15:10:
+              Run-audit metadata stays ids/outcomes-only — do not persist taskJsonPath (filesystem path). Path remains on the transient storeLog lines around this recovery.
+              */
               await recordRunAuditEventWithinTransaction(tx, {
                 taskId: id,
                 agentId: "system",
@@ -536,7 +539,6 @@ export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ig
                   id,
                   column: task.column,
                   status: task.status ?? null,
-                  taskJsonPath,
                 },
               });
             });
