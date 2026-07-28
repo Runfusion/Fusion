@@ -9,6 +9,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX, WORKFLOW_MOVE_POLICY_TIMEOUT_MS} from "../store.js";
+import { resolveCapacityPoolId } from "../workflow-capacity.js";
 import {TransitionRejectionError} from "./errors.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, eq, isNull, ne, or, sql} from "drizzle-orm";
@@ -764,7 +765,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
 
     let count = 0;
     for (const row of rows) {
-      const effectiveWorkflowId = row.wid ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== workflowId) continue;
 
       if (row.col === targetColumn) {
@@ -816,7 +817,7 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
 
     let count = 0;
     for (const row of rows) {
-      const effectiveWorkflowId = row.wid ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== workflowId) continue;
 
       if (row.col === targetColumn) {

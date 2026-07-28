@@ -19,7 +19,7 @@ import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAU
 import {parseWorkflowIr} from "../workflow-ir.js";
 import {findWorkflowColumn, resolveColumnPluginGates} from "../plugin-gate-verdict.js";
 import {getTraitRegistry, resolveColumnFlags} from "../trait-registry.js";
-import {resolveColumnCapacity, resolveWipBudgetColumns} from "../workflow-capacity.js";
+import {resolveColumnCapacity, resolveWipBudgetColumns, resolveCapacityPoolId} from "../workflow-capacity.js";
 import {
   type TransitionColumnFacts,
   evaluateCapacityRejection,
@@ -315,9 +315,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     // capacity check is not a guard (U6 fills the enforcement; U4 leaves a
     // pass-through slot). An explicit option value wins; otherwise derive it.
     const bypassGuards = store.resolveWorkflowBypassGuards(moveSource, options);
-    const effectiveWorkflowIdForMove = useWorkflow
-      ? (await store.getTaskWorkflowSelectionAsync(id))?.workflowId ?? "builtin:coding"
-      : "builtin:coding";
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-19:05 (pool-id sentinel fix):
+    ONE selection read, TWO derived ids, because they are two different things
+    that were previously conflated into one variable — and the conflation is the
+    defect. The capacity POOL key must match how the counter buckets rows
+    (`resolveCapacityPoolId`, shared); the WORKFLOW id is telemetry and must stay
+    a real workflow id, never the bucketing sentinel.
+    */
+    const workflowSelectionForMove = useWorkflow
+      ? await store.getTaskWorkflowSelectionAsync(id)
+      : undefined;
+    const effectiveWorkflowIdForMove = workflowSelectionForMove?.workflowId ?? DEFAULT_WORKFLOW_ID;
+    const capacityPoolIdForMove = resolveCapacityPoolId(workflowSelectionForMove?.workflowId);
     const workflowIr: WorkflowIr | undefined = useWorkflow
       ? await resolveTaskWorkflowIrForMove(store, id)
       : undefined;
@@ -932,7 +942,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
               store.countActiveInCapacitySlotAsync({
                 tx,
                 targetColumn: budgetColumn,
-                workflowId: effectiveWorkflowIdForMove,
+                workflowId: capacityPoolIdForMove,
                 countPending,
                 excludeTaskId: id,
               }),

@@ -686,6 +686,59 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       expect(r.acted).toBe(false);
     });
   });
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-19:20 (pool-id sentinel fix — E2E acceptance):
+
+  The gate must BIND, and it must bind IN BOTH DIRECTIONS. A test that only asserts "held at cap"
+  passes trivially if the mover simply never admits anything — including if a future change breaks
+  admission outright — so each case is run twice against the SAME fixture with only the cap
+  changed: at limit 1 the card is HELD, at limit 2 the identical card is ADMITTED.
+
+  NO WORKFLOW SELECTION, deliberately. That is the whole defect: `moves.ts` asked the counter for
+  pool `"builtin:coding"` while the counter buckets selection-less rows under
+  `DEFAULT_WORKFLOW_POOL_ID`, so nothing was ever counted. A card WITH a selection makes both
+  sentinels agree and the gate already bound before the fix — seeding one here would have produced a
+  green test that never touched the bug. (Verified: with the fix reverted, this row fails.)
+
+  FLAG-ON, and labelled as such. The capacity block sits inside `if (useWorkflow && …)` and
+  `useWorkflow` reads a settings key nothing in production sets (Phase A3 R2, still live). So this
+  row proves the SENTINEL is fixed on the only path where the gate can execute at all; it does NOT
+  prove production behavior changed. Read the R2 note in workflow-capacity-invariant.pg.test.ts
+  before treating this as "capacity is enforced".
+  */
+  describe.each([
+    { limit: 1, expected: "held" as const },
+    { limit: 2, expected: "admitted" as const },
+  ])("in-transaction capacity gate (maxConcurrent=$limit → $expected)", ({ limit, expected }) => {
+    it(`a selection-less card at the wip boundary is ${expected}`, async () => {
+      const store = h.store();
+      await store.updateSettings({ maxConcurrent: limit } as never);
+      // The capacity block's enclosing flag is GLOBAL-scoped; a project-scoped write is silently
+      // dropped and the test then measures the unflagged path while claiming otherwise.
+      await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } } as never);
+
+      const holder = await store.createTask({ description: "capacity holder" });
+      await store.moveTask(holder.id, "todo");
+      await store.moveTask(holder.id, "in-progress");
+
+      const contender = await store.createTask({ description: "capacity contender" });
+      await store.moveTask(contender.id, "todo");
+      const error = await store
+        .moveTask(contender.id, "in-progress")
+        .then(() => null, (e: unknown) => e as Error);
+
+      store.taskCache.delete(contender.id);
+      const persisted = (await store.getTask(contender.id)).column;
+
+      if (expected === "held") {
+        expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe("capacity-exhausted");
+        expect(persisted).toBe("todo"); // observed state: refused, stays put
+      } else {
+        expect(error).toBeNull();
+        expect(persisted).toBe("in-progress"); // the same fixture admits once the cap allows it
+      }
+    });
+  });
 });
 
 /*

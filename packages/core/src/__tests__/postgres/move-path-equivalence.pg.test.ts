@@ -370,34 +370,43 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     expect(hooksErr!.message).toContain("Unknown column for this workflow");
   });
 
-  it("UNPROVEN: in-transaction column capacity did NOT reject on EITHER path in this fixture", async () => {
+  it("DIVERGENCE: in-transaction capacity rejects on the HOOKS path only — the inline path cannot run it", async () => {
     /*
-    HONEST NEGATIVE RESULT — recorded rather than dropped, because the code gate
-    is real and the practical impact is not what reading it suggests.
+    FNXC:WorkflowCapacity 2026-07-28-19:40 (pool-id sentinel fix):
+    WAS `UNPROVEN: … did NOT reject on EITHER path`. That test recorded an honest
+    negative result and left the cause open: "something further in
+    (`resolveColumnCapacity`'s limit resolution, or what
+    `countActiveInCapacitySlotAsync` counts as an occupant) keeps the check from
+    firing even when the flag is on. This suite does not establish which." It
+    also predicted its own obsolescence: "if a future change makes this reject,
+    that is the capacity gate coming alive."
 
-    STRUCTURALLY, `moves.ts` wraps the whole in-transaction capacity block in
-    `if (useWorkflow && workflowIr && fromColumn !== toColumn)`, so it cannot run
-    on the LIVE inline path at all. The obvious inference is "converging onto the
-    hooks path turns store-level capacity rejection ON for every project" — a
-    serious blast radius, since `capacity-exhausted` is a code the graph column
-    boundary parks on and the promote route surfaces to operators.
+    THE ANSWER, established by the sentinel fix: neither of those guesses. The
+    counter and the limit resolution were both fine. `moves.ts` asked the counter
+    for occupants of pool `"builtin:coding"` while the counter buckets
+    selection-less rows under `DEFAULT_WORKFLOW_POOL_ID`, so the count came back
+    0 for a pool nothing is ever placed in. Both sides now derive the pool
+    through `resolveCapacityPoolId`, and the hooks path rejects.
 
-    EMPIRICALLY that inference does not hold up: with `maxConcurrent: 1` and a
-    wip column already occupied, the second move was ACCEPTED on both paths. So
-    something further in (`resolveColumnCapacity`'s limit resolution, or what
-    `countActiveInCapacitySlotAsync` counts as an occupant — a task with no
-    session/agent may not count) keeps the check from firing even when the flag
-    is on. This suite does not establish which.
-
-    Consequence for the convergence decision: the capacity blast radius is
-    UNQUANTIFIED, not absent. It needs its own investigation before either path
-    is made authoritative — this test pins today's observed behavior so that
-    investigation starts from a fact instead of the code reading.
+    The blast-radius question this test was holding open is therefore ANSWERED for
+    the hooks path and STILL OPEN for the inline one: the inline path remains
+    structurally unable to run the block (`if (useWorkflow && …)`), so converging
+    the paths still turns store-level capacity rejection on for every project.
+    That convergence stays an operator decision — see the R2 note in
+    workflow-capacity-invariant.pg.test.ts.
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
 
+    /* Each phase starts from an EMPTY wip column. Before the gate bound, the two phases could share
+       one fixture because nothing ever counted occupants; now they cannot — the inline phase leaves
+       two cards in wip, and the hooks phase's own HOLDER move would trip the cap before the
+       contended move under test ever runs (observed: "column at capacity (2/1)"). Evacuating is
+       what keeps this a test of the contender's move rather than of fixture residue. */
     async function fillThenMoveSecond(): Promise<Error | null> {
+      for (const stale of await store.listTasks({ includeArchived: false })) {
+        if (stale.column === "in-progress") await store.deleteTask(stale.id);
+      }
       const first = await store.createTask({ description: "capacity holder" });
       await store.moveTask(first.id, "todo");
       await store.moveTask(first.id, "in-progress");
@@ -407,11 +416,14 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     }
 
     await setPath("inline");
+    // Unchanged: the block is unreachable on this path regardless of the pool id.
     expect(await fillThenMoveSecond()).toBeNull();
 
     await setPath("hooks");
-    // If a future change makes this reject, that is the capacity gate coming
-    // alive — and this failure is the signal to re-open the blast-radius question.
-    expect(await fillThenMoveSecond()).toBeNull();
+    const hooksErr = await fillThenMoveSecond();
+    expect(hooksErr).toBeInstanceOf(Error);
+    expect((hooksErr as unknown as { rejection?: { code?: string } }).rejection?.code).toBe(
+      "capacity-exhausted",
+    );
   });
 });

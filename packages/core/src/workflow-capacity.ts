@@ -34,6 +34,33 @@ const DEFAULT_WIP_COLUMN_ID = "in-progress";
  *  is not a real workflow row id (no `builtin:`/custom collision possible). */
 export const DEFAULT_WORKFLOW_POOL_ID = "__default-workflow__";
 
+/*
+FNXC:WorkflowCapacity 2026-07-28-19:05 (pool-id sentinel fix):
+THE one place the "no selection → which pool?" convention is expressed.
+
+It exists because the convention was previously restated at each end of the
+comparison, and the two restatements disagreed: the COUNTER bucketed
+selection-less rows under `DEFAULT_WORKFLOW_POOL_ID` while `moves.ts` asked the
+counter for pool `"builtin:coding"`. Nothing ever landed in the pool being asked
+about, so the count came back 0 and a finite limit could never bind — the
+in-transaction capacity gate was structurally dead for every default-workflow
+task (Phase A3, R1).
+
+A shared constant alone would NOT have prevented that: both sides had the
+constant available and one of them still wrote a literal. Both sides now call
+THIS function, so "what pool does a selection-less task belong to" has exactly
+one answer and no call site is in a position to disagree with it.
+
+NOT to be confused with `DEFAULT_WORKFLOW_ID` ("builtin:coding"). That is a real,
+resolvable workflow row id and is the correct fallback when the value is used to
+RESOLVE AN IR (as `scheduler.ts` does). This is a bucketing key that deliberately
+cannot collide with any workflow id. Using either one in the other's role is the
+bug this function exists to make unspellable.
+*/
+export function resolveCapacityPoolId(selectionWorkflowId: string | null | undefined): string {
+  return selectionWorkflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+}
+
 /** Resolved capacity configuration for a single column. */
 export interface ColumnCapacity {
   /** True when the column carries a capacity (`wip`/`countsTowardWip`) trait. */

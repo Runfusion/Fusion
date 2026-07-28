@@ -111,9 +111,25 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     return { error, secondColumn: (await store.getTask(contender.id))?.column };
   }
 
-  it("DEFECT (R2): on the LIVE inline path the in-txn capacity check cannot run at all", async () => {
-    // Not a surprise, but it is the reason the defect is latent rather than
-    // active today: the whole block is inside `if (useWorkflow && …)`.
+  it("DEFECT (R2, STILL LIVE): on the production inline path the in-txn capacity check cannot run at all", async () => {
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-19:05:
+    R1 IS FIXED; R2 IS NOT, and this test is the standing evidence. The whole
+    capacity block sits inside `if (useWorkflow && …)`, and `useWorkflow` reads
+    `experimentalFeatures.workflowColumns === true`, which NOTHING in production
+    sets (it is absent from DEFAULT_GLOBAL_SETTINGS and has no writer outside
+    tests). So on the path real projects take, the gate still does not run at all
+    and cards still enter wip past the cap.
+
+    Concretely, measured on this suite's fixture with maxConcurrent 1:
+        flag OFF, no selection  -> ADMITTED   (this test)
+        flag OFF, selection     -> ADMITTED
+        flag ON,  no selection  -> REFUSED    (was ADMITTED before the R1 fix)
+        flag ON,  selection     -> REFUSED
+    Making the gate bind for real projects means removing the `useWorkflow`
+    condition from the capacity block — a separate, larger blast radius than the
+    sentinel fix, and an operator decision rather than a drive-by.
+    */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
     await setPath("inline");
@@ -124,12 +140,14 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     expect(secondColumn).toBe("in-progress"); // limit of 1, two occupants
   });
 
-  it("DEFECT (R1): flag-ON, a NO-SELECTION task still slips the limit — the pool sentinels disagree", async () => {
+  it("FIXED (R1): flag-ON, a NO-SELECTION task is now REFUSED at the limit", async () => {
     /*
-    THE ACTUAL BUG. `moves.ts:319` asks the counter for pool "builtin:coding";
-    `countActiveInCapacitySlotAsyncImpl` buckets no-selection rows under
-    "__default-workflow__". No occupant is ever counted, so the limit cannot
-    bind. Flip this expectation to a rejection when the sentinel is fixed.
+    FNXC:WorkflowCapacity 2026-07-28-19:05:
+    Was `DEFECT (R1)`, asserting the wrong-but-current outcome. The pool-id
+    sentinel is fixed: `moves.ts` and the counter now BOTH derive the pool through
+    `resolveCapacityPoolId`, so a selection-less row is bucketed and asked about
+    under the same key and the limit binds. Flipping this expectation is the
+    acceptance test the original ratchet named.
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
@@ -137,8 +155,12 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
-    expect(error).toBeNull();
-    expect(secondColumn).toBe("in-progress");
+    expect(error).toBeInstanceOf(Error);
+    expect((error as unknown as { rejection?: { code?: string } }).rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect(secondColumn).toBe("todo"); // refused, stays put
+
   });
 
   it("DISCRIMINATOR: with an EXPLICIT builtin:coding selection the sentinels agree and the limit BINDS", async () => {
@@ -181,8 +203,8 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   invariant nobody can prove is an invariant nobody has; this is the proof
   obligation, written down.
   */
-  it.fails(
-    "INVARIANT (currently BROKEN): a move into a full capacity column is refused, even with no workflow selection",
+  it(
+    "INVARIANT (HOLDS on the flag-ON path): a move into a full capacity column is refused, even with no workflow selection",
     async () => {
       const store = h.store();
       await store.updateSettings({ maxConcurrent: 1 });
