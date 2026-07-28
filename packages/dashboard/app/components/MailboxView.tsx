@@ -588,7 +588,17 @@ export function MailboxView({
       }
     };
 
+    /*
+    FNXC:MailboxView 2026-07-26-16:22:
+    Resync contract (see SseSubscription in sse-bus.ts). Inbox/outbox/approvals lists and the unread
+    count are derived ONLY from these events, and the stream is lossy: an error/heartbeat reconnect or
+    the >=60s hidden-tab suspend drops the socket and /api/events keeps no replay buffer. The costly
+    case is `approval:requested` — an approval raised while the tab was backgrounded stayed invisible
+    and the agent blocked on a decision nobody was shown. `onMailboxUpdate` is the same authoritative
+    reload the events already trigger, so reusing it needs no new endpoint.
+    */
     return subscribeSse(`/api/events${query}`, {
+      onReconnect: onMailboxUpdate,
       events: {
         "message:sent": onMailboxUpdate,
         "message:received": onMailboxUpdate,

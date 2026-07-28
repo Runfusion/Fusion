@@ -152,6 +152,14 @@ html {
   44px accessibility floor without embedding a raw dimension in component-specific rules.
   */
   --touch-target-min-size: 44px;
+  /*
+  FNXC:TaskModalResize 2026-07-26-10:40:
+  Task-modal resize targets use the accessibility floor as an explicit hit-area
+  contract. The painted grip remains compact; only the tablet-class touch guard
+  opts into this token so phones and desktop coarse-pointer layouts do not gain
+  invisible resize chrome.
+  */
+  --modal-resize-touch-target: var(--touch-target-min-size);
 
   /*
   FNXC:QuickAddActionRow 2026-07-16-14:00:
@@ -1342,6 +1350,14 @@ Modal and dock pop-out surfaces should not darken or blur the app behind them. K
   cursor: se-resize;
   touch-action: none;
   background: transparent;
+}
+
+.modal-resize-grip--touch-target {
+  width: var(--modal-resize-touch-target);
+  height: var(--modal-resize-touch-target);
+  right: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  bottom: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  z-index: 3;
 }
 
 .modal-resize-grip::after {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchEngineStatus, startEngine, type EngineStatusResponse } from "../api";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 10000;
 
@@ -87,17 +88,13 @@ export function useEngineStatus(projectId?: string): UseEngineStatusResult {
     void refetch();
   }, [refetch]);
 
-  useEffect(() => {
-    if (!projectId || status?.connected) return;
-
-    const interval = window.setInterval(() => {
-      void refetch();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [projectId, refetch, status?.connected]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:34:
+  The "engine not yet connected" retry poll is suspended while the tab is hidden. Nothing observes engine
+  connectivity while the page is backgrounded, and a page that keeps fetching is exactly what iOS/Chrome
+  Android discard; the hidden -> visible edge re-checks once so a reconnected engine is reflected on return.
+  */
+  useVisibilityAwarePoll(refetch, POLL_INTERVAL_MS, { enabled: Boolean(projectId) && !status?.connected });
 
   return useMemo(() => ({
     status,

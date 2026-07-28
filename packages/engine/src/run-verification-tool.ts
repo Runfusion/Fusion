@@ -31,6 +31,9 @@ import { withVerificationSlot } from "./verification-concurrency.js";
 // ---------------------------------------------------------------------------
 
 const MAX_OUTPUT_BYTES = 200 * 1024; // 200 KB
+const VERIFICATION_FAILURE_SUMMARY_MAX_CHARS = 8_000;
+const VERIFICATION_FAILURE_SUMMARY_MAX_LINES = 40;
+const VERIFICATION_FAILURE_SUMMARY_LINE_MAX_CHARS = 500;
 const QUIET_HEARTBEAT_INTERVAL_MS = 60_000; // emit synthetic heartbeat after 60s silence
 const SIGKILL_GRACE_MS = 10_000;
 const NORMAL_EXIT_REAP_GRACE_MS = 500;
@@ -455,6 +458,161 @@ function flattenBuffer(buf: OutputBuffer): string {
   );
 }
 
+const ESC = "\\u001b";
+const ANSI_ESCAPE_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "g");
+
+function normalizeFailureLine(line: string): string {
+  const compact = line
+    .replace(ANSI_ESCAPE_PATTERN, "")
+    .replace(/\r/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (compact.length <= VERIFICATION_FAILURE_SUMMARY_LINE_MAX_CHARS) return compact;
+  return `${compact.slice(0, VERIFICATION_FAILURE_SUMMARY_LINE_MAX_CHARS - 16)} ... (truncated)`;
+}
+
+function isFailureSummaryNoise(line: string): boolean {
+  return line.length === 0
+    || /^(?:Ignored nodes:|<[/!?]?[a-z]|[a-z-]+=(?:"|')|[·.✓✔xX]+$)/i.test(line)
+    || /^[⎯━─═-]{4,}/.test(line);
+}
+
+function isHighSignalFailureLine(line: string): boolean {
+  return /^(?:FAIL(?:ED)?\b|Failed (?:Tests?|Suites?)\b|Test Files\b|Tests:?\b|Snapshots:?\b|Ran all test suites\b)/i.test(line)
+    || /^(?:AssertionError|TypeError|ReferenceError|SyntaxError|RangeError|Error|Fatal|Expected:|Received:)\b/i.test(line)
+    || /^(?:npm ERR!|ERR_[A-Z0-9_]+|ELIFECYCLE\b|Command failed\b)/i.test(line)
+    || /^(?:\d+:\d+\s+(?:error|warning)\b|\[(?:vite|rollup)\].*\b(?:error|failed)\b)/i.test(line)
+    || /^❯\s+\S+/.test(line)
+    || /\(\d+,\d+\):\s*(?:error|warning)\b/i.test(line)
+    || /:\d+:\d+\s+(?:error|warning)\b/i.test(line)
+    || /\berror TS\d+\b/i.test(line);
+}
+
+function normalizeFailureLines(output: string): string[] {
+  const lines: string[] = [];
+  let htmlDepth = 0;
+
+  for (const rawLine of output.split("\n")) {
+    const line = normalizeFailureLine(rawLine);
+    const tagOnly = line.match(/^<(\/?)([a-z][\w-]*)(?:\s[^>]*)?\s*\/?>$/i);
+    if (tagOnly) {
+      const isClosing = tagOnly[1] === "/";
+      const isSelfClosing = /\/>$/.test(line)
+        || /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(
+          tagOnly[2]!,
+        );
+      if (isClosing) htmlDepth = Math.max(0, htmlDepth - 1);
+      else if (!isSelfClosing) htmlDepth += 1;
+      continue;
+    }
+    if (htmlDepth > 0 || isFailureSummaryNoise(line)) continue;
+    lines.push(line);
+  }
+
+  return lines;
+}
+
+function extractFailureSummaryLines(output: string): string[] {
+  const lines = normalizeFailureLines(output);
+  const selectedIndexes = new Set<number>();
+
+  lines.forEach((line, index) => {
+    if (!isHighSignalFailureLine(line)) return;
+    selectedIndexes.add(index);
+    if (index > 0) selectedIndexes.add(index - 1);
+    if (/^(?:AssertionError|Expected:|Received:)\b/i.test(line)) {
+      for (let offset = 1; offset <= 6 && index + offset < lines.length; offset += 1) {
+        selectedIndexes.add(index + offset);
+      }
+    }
+    if (/^(?:npm ERR!|ELIFECYCLE\b|Command failed\b)/i.test(line)) {
+      selectedIndexes.add(Math.max(0, index - 2));
+    }
+  });
+
+  const candidates = selectedIndexes.size > 0
+    ? lines.filter((_, index) => selectedIndexes.has(index))
+    : lines.slice(-12);
+  return Array.from(new Set(candidates));
+}
+
+function interleaveFailureLines(stderrLines: string[], stdoutLines: string[]): string[] {
+  const lines: string[] = [];
+  const maxLength = Math.max(stderrLines.length, stdoutLines.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    if (index < stderrLines.length) lines.push(stderrLines[index]!);
+    if (index < stdoutLines.length) lines.push(stdoutLines[index]!);
+  }
+  return lines;
+}
+
+function prioritizeTerminalFailureLines(lines: string[]): string[] {
+  if (lines.length <= VERIFICATION_FAILURE_SUMMARY_MAX_LINES) return lines;
+  const halfLimit = VERIFICATION_FAILURE_SUMMARY_MAX_LINES / 2;
+  return [
+    ...lines.slice(-halfLimit),
+    ...lines.slice(0, halfLimit),
+  ];
+}
+
+/**
+ * FNXC:Verification 2026-07-26-14:29:
+ * Green verification output stays quiet unless it reports a failure or proves that no work ran; those signals must remain visible so agents do not complete tasks on a vacuous success.
+ */
+function summarizeSuccessfulVerificationWarnings(stdout: string, stderr: string): string[] {
+  const warnings = new Set<string>();
+  for (const rawLine of `${stderr}\n${stdout}`.split("\n")) {
+    const line = normalizeFailureLine(rawLine);
+    if (
+      /(?:no projects matched|no test files found|no tests found|^(?:FAIL\b|ELIFECYCLE\b|Command failed\b)|(?:Test Files|Tests)\s+[1-9]\d*\s+failed\b)/i.test(line)
+    ) {
+      warnings.add(line);
+      if (warnings.size === 3) break;
+    }
+  }
+  return [...warnings];
+}
+
+/**
+ * FNXC:Verification 2026-07-26-14:23:
+ * Reduce captured verification output to model-safe diagnostics.
+ *
+ * The subprocess capture remains unchanged for heartbeat and process-lifecycle
+ * behavior. This formatter is only for the tool response injected back into the
+ * agent context, where full Vitest DOM dumps can otherwise consume an entire
+ * model window and cause an empty stop before fn_task_done.
+ */
+export function summarizeVerificationFailureOutput(stdout: string, stderr: string): string {
+  const combined = [stderr, stdout].filter((part) => part.trim().length > 0).join("\n");
+  if (combined.length === 0) {
+    return "No failure output was captured.";
+  }
+
+  const candidates = prioritizeTerminalFailureLines(
+    interleaveFailureLines(
+      extractFailureSummaryLines(stderr),
+      extractFailureSummaryLines(stdout),
+    ),
+  );
+  const footer =
+    `[verification output compacted from ${combined.length.toLocaleString("en-US")} characters; ` +
+    "rerun one failing file or test for full detail]";
+  const bodyBudget = VERIFICATION_FAILURE_SUMMARY_MAX_CHARS - footer.length - 2;
+  const selected: string[] = [];
+  let selectedChars = 0;
+
+  for (const line of candidates) {
+    if (selected.length >= VERIFICATION_FAILURE_SUMMARY_MAX_LINES) break;
+    const separatorChars = selected.length > 0 ? 1 : 0;
+    if (selectedChars + separatorChars + line.length > bodyBudget) continue;
+    selected.push(line);
+    selectedChars += separatorChars + line.length;
+  }
+
+  const body = selected.length > 0 ? selected.join("\n") : "No actionable failure lines were detected.";
+  return `${body}\n\n${footer}`;
+}
+
 // ---------------------------------------------------------------------------
 // Core logic (exported for unit testing)
 // ---------------------------------------------------------------------------
@@ -531,7 +689,11 @@ async function runVerificationCommandUnlocked(
     const quietTimer = setInterval(() => {
       const silenceMs = Date.now() - lastLineMs;
       if (silenceMs >= QUIET_HEARTBEAT_INTERVAL_MS) {
-        executorLog.log(
+        /*
+        FNXC:EngineDiagnostics 2026-07-26-09:33:
+        Quiet-interval heartbeats fire every 60s for the life of a long verify command. They keep the stuck detector alive but are not operator events — debug-only (FUSION_DEBUG=executor).
+        */
+        executorLog.debug(
           `[fn_run_verification] command quiet for ${Math.round(silenceMs / 1000)}s, still running... (${command})`,
         );
         onHeartbeat();
@@ -679,6 +841,8 @@ export interface CreateRunVerificationToolOpts {
   onVerificationEnd?: () => void;
   log: {
     info: (s: string) => void;
+    /** Steady-state start/done chatter; opt-in via FUSION_DEBUG=executor when wired to executorLog.debug. */
+    debug?: (s: string) => void;
     warn: (s: string) => void;
     error: (s: string) => void;
   };
@@ -800,7 +964,11 @@ export function createRunVerificationTool(
         }
       }
 
-      log.info(
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-09:33:
+      Every agent verification tool call logged start + done at info and filled the TUI during normal green runs. Route success-path bookkeeping to debug; timeouts/warnings stay on warn.
+      */
+      (log.debug ?? log.info)(
         `[fn_run_verification] ${taskId}: scope=${scope} timeout=${timeoutSec}s cwd=${resolvedCwd} cmd=${effectiveCommand}`,
       );
 
@@ -840,11 +1008,16 @@ export function createRunVerificationTool(
       lines.push(`Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
       lines.push(`Success: ${result.success}`);
 
-      if (result.stdout.length > 0) {
-        lines.push(`\n--- stdout ---\n${result.stdout}`);
-      }
-      if (result.stderr.length > 0) {
-        lines.push(`\n--- stderr ---\n${result.stderr}`);
+      const hasFailureOutput = result.exitCode !== 0 || result.timedOut;
+      if (hasFailureOutput) {
+        lines.push(
+          `\nFailure summary:\n${summarizeVerificationFailureOutput(result.stdout, result.stderr)}`,
+        );
+      } else {
+        const successWarnings = summarizeSuccessfulVerificationWarnings(result.stdout, result.stderr);
+        if (successWarnings.length > 0) {
+          lines.push(`\nVerification warning:\n${successWarnings.join("\n")}`);
+        }
       }
 
       if (result.timedOut) {
@@ -857,9 +1030,16 @@ export function createRunVerificationTool(
 
       const text = lines.join("\n");
 
-      log.info(
-        `[fn_run_verification] ${taskId}: done exit=${result.exitCode} duration=${result.durationMs}ms success=${result.success}`,
-      );
+      if (result.success) {
+        (log.debug ?? log.info)(
+          `[fn_run_verification] ${taskId}: done exit=${result.exitCode} duration=${result.durationMs}ms success=${result.success}`,
+        );
+      } else {
+        // Failures remain visible so operators see red verification without enabling FUSION_DEBUG.
+        log.info(
+          `[fn_run_verification] ${taskId}: done exit=${result.exitCode} duration=${result.durationMs}ms success=${result.success}`,
+        );
+      }
 
       return {
         content: [{ type: "text" as const, text }],

@@ -37,9 +37,8 @@ import {
   useGitHubImportAutoTranslate,
 } from "./GitHubImportTranslateControls";
 import type { TFunction } from "i18next";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useConfirm } from "../hooks/useConfirm";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
@@ -417,7 +416,7 @@ export function buildCheckFixTaskPrompt(
 }
 
 export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, onOpenChatWithPrefill, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
-  const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
+  const { isEmbedded, scrollLockEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
   const { t, i18n } = useTranslation("app");
   /*
@@ -597,9 +596,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
   const [selectedRemoteName, setSelectedRemoteName] = useState<string>("");
   const mountedRef = useRef(false);
   const remoteLoadRequestIdRef = useRef(0);
-  const modalRef = useRef<HTMLDivElement>(null);
-  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:github-modal-size");
-  const overlayDismissProps = useOverlayDismiss(onClose);
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
 
   // Track which owner/repo we've already auto-loaded to prevent duplicate loads
   const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string; tab: TabType } | null>(null);
@@ -1446,6 +1443,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
         key: `gitlab:${selectedGitlabKey ?? ""}`,
         title: selectedGitlabItem.title ?? "",
         body: selectedGitlabItem.description ?? "",
+        identity: selectedGitlabItem.projectPath
+          ? { provider: "gitlab" as const, repoKey: selectedGitlabItem.projectPath, issueNumber: selectedGitlabItem.iid }
+          : null,
       };
     }
     if (provider === "github" && activeTab === "issues" && selectedIssue) {
@@ -1453,6 +1453,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
         key: `issue:${selectedIssue.number}`,
         title: selectedIssue.title ?? "",
         body: selectedIssue.body ?? "",
+        identity: owner.trim() && repo.trim()
+          ? { provider: "github" as const, repoKey: `${owner.trim()}/${repo.trim()}`, issueNumber: selectedIssue.number }
+          : null,
       };
     }
     if (provider === "github" && activeTab === "pulls" && selectedPull) {
@@ -1460,10 +1463,13 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
         key: `pull:${selectedPull.number}`,
         title: selectedPull.title ?? "",
         body: selectedPull.body ?? "",
+        identity: owner.trim() && repo.trim()
+          ? { provider: "github" as const, repoKey: `${owner.trim()}/${repo.trim()}`, issueNumber: selectedPull.number }
+          : null,
       };
     }
-    return { key: null as string | null, title: "", body: "" };
-  }, [provider, selectedGitlabItem, selectedGitlabKey, activeTab, selectedIssue, selectedPull]);
+    return { key: null as string | null, title: "", body: "", identity: null };
+  }, [provider, selectedGitlabItem, selectedGitlabKey, activeTab, selectedIssue, selectedPull, owner, repo]);
 
   /*
   FNXC:GitHubImportTranslate 2026-07-17-12:50:
@@ -1499,6 +1505,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
     body: translateSelection.body,
     dashboardLocale: translateTargetLocale,
     projectId,
+    identity: translateSelection.identity,
     autoTranslation: selectedAutoTranslation,
     autoTranslateEnabled,
   });
@@ -1568,7 +1575,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
   Modal mode is kept byte-identical: same overlay wrapper, header with subtitle + close button, and overlay-dismiss props.
   */
   const inner = (
-    <div className={`modal modal-lg github-import-modal${isEmbedded ? " github-import-modal--embedded" : ""}`} ref={modalRef}>
+    <div className={`modal modal-lg github-import-modal${isEmbedded ? " github-import-modal--embedded" : ""}`}>
       {isEmbedded ? (
         /*
         FNXC:RightDockEmbedding 2026-06-22-00:40:
@@ -1583,7 +1590,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
       ) : (
         <div className="modal-header github-import-modal__header">
           <div>
-            <h3>{t("git.importFromGitHub", "Import from GitHub")}</h3>
+            <h3 id="github-import-modal-title">{t("git.importFromGitHub", "Import from GitHub")}</h3>
             <p className="github-import-modal__subtitle">
               {t("git.importSubtitle", "Choose a detected remote, load open issues or pull requests, and import one into the board.")}
             </p>
@@ -2013,6 +2020,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
               </div>
             </section>
 
+            {/* FNXC:ModalTouchGeometry 2026-07-26-19:05: Import detail is already an independent FloatingWindow and remains unwrapped so it stacks above the migrated root importer. */}
             {(selectedIssue || selectedPull) && (
             <FloatingWindow
               windowKey="github-import-detail"
@@ -2471,13 +2479,35 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
     </div>
   );
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-19:05:
+  Embedded Import Tasks remains a container-filling presentation exception. resizePersistEnabled
+  continues to gate modal-only geometry behavior rather than introducing FloatingWindow chrome here.
+  */
   if (isEmbedded) {
     return <div className="github-import-embedded right-dock-embedded-view">{inner}</div>;
   }
 
   return (
-    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
+    <FloatingWindow
+      windowKey="github-import"
+      title={t("git.importFromGitHub", "Import from GitHub")}
+      ariaLabelledBy="github-import-modal-title"
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".github-import-modal__header"
+      className="floating-window--github-import"
+      defaultSize={{ width: 1200, height: 720 }}
+      minSize={{ width: 480, height: 480 }}
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: The legacy size-only key cannot restore FloatingWindow position, so a new complete geometry key intentionally resets once. */
+      persistGeometryKey="floating-window:github-import"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Preserve the global default-off dismissal preference; unconditional pointer-down would lose the data-safety contract. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
+    >
       {inner}
-    </div>
+    </FloatingWindow>
   );
 }

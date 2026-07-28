@@ -1,6 +1,6 @@
 {
   "name": "@fusion/engine",
-  "version": "0.74.0-beta.3",
+  "version": "0.74.0-beta.5",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -38,8 +38,8 @@
     "test:watch": "vitest src/__tests__/executor-*.test.ts --watch"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.82.0",
-    "@earendil-works/pi-coding-agent": "0.82.0",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@fusion/core": "workspace:*",
     "@fusion/pi-claude-cli": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",

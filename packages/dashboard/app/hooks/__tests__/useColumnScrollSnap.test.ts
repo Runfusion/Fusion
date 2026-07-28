@@ -291,6 +291,139 @@ describe("resolveSettleTargetIndex", () => {
   });
 });
 
+/*
+FNXC:BoardNavigation 2026-07-26-09:15:
+Phone geometry: board columns (min-width 300px) are NARROWER than the phone viewport, so the first
+and last columns can never reach their ideal centered scrollLeft (it is negative / past max). This
+is the geometry the two-column edge jump only reproduces under — the default `createScroller` makes
+columns exactly viewport-wide, where every column is perfectly centerable.
+*/
+const NARROW_VIEWPORT_WIDTH = 390;
+const NARROW_COLUMN_WIDTH = 300;
+
+function createNarrowColumnScroller(columnCount: number, initialScrollLeft: number): HTMLElement {
+  const scroller = document.createElement("main");
+  const contentWidth = columnCount * NARROW_COLUMN_WIDTH;
+  Object.defineProperty(scroller, "clientWidth", { configurable: true, value: NARROW_VIEWPORT_WIDTH });
+  Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: contentWidth });
+  scroller.getBoundingClientRect = () => new DOMRect(0, 0, NARROW_VIEWPORT_WIDTH, 200);
+  const maxScrollLeft = Math.max(0, contentWidth - NARROW_VIEWPORT_WIDTH);
+  let scrollLeft = initialScrollLeft;
+  Object.defineProperty(scroller, "scrollLeft", {
+    configurable: true,
+    get: () => scrollLeft,
+    // Mirror the browser: positions outside the scrollable range are clamped, never stored.
+    set: (value: number) => {
+      scrollLeft = Math.min(Math.max(value, 0), maxScrollLeft);
+    },
+  });
+  scroller.setPointerCapture = vi.fn();
+  scroller.releasePointerCapture = vi.fn();
+  scroller.hasPointerCapture = vi.fn(() => false);
+  for (let index = 0; index < columnCount; index++) {
+    const column = document.createElement("section");
+    column.className = "column";
+    column.getBoundingClientRect = () =>
+      new DOMRect(index * NARROW_COLUMN_WIDTH - scrollLeft, 0, NARROW_COLUMN_WIDTH, 200);
+    scroller.append(column);
+  }
+  document.body.append(scroller);
+  return scroller;
+}
+
+/** scrollLeft that rests column `index` at its (range-clamped) center. */
+function narrowColumnRest(index: number, columnCount: number): number {
+  const ideal =
+    index * NARROW_COLUMN_WIDTH + NARROW_COLUMN_WIDTH / 2 - NARROW_VIEWPORT_WIDTH / 2;
+  const maxScrollLeft = Math.max(0, columnCount * NARROW_COLUMN_WIDTH - NARROW_VIEWPORT_WIDTH);
+  return Math.min(Math.max(Math.round(ideal), 0), maxScrollLeft);
+}
+
+/** One deliberate drag: finger travel plus the board scroll it produced, then lift. */
+function dispatchDrag(
+  scroller: HTMLElement,
+  options: { scrollDelta: number; clientDelta: number },
+): void {
+  const { scrollDelta, clientDelta } = options;
+  scroller.dispatchEvent(new Event("touchstart"));
+  dispatchPointerEvent(scroller, "pointerdown", 200);
+  dispatchPointerEvent(scroller, "pointermove", 200 - clientDelta);
+  scroller.scrollLeft = scroller.scrollLeft + scrollDelta;
+  scroller.dispatchEvent(new Event("scroll"));
+  dispatchPointerEvent(scroller, "pointerup", 200 - clientDelta);
+}
+
+describe("edge columns narrower than the viewport", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stubViewport("mobile");
+  });
+
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("counts the far-left rest position as centered on the first column", () => {
+    const scroller = createNarrowColumnScroller(4, 0);
+    expect(isColumnCentered(scroller, [...scroller.children] as HTMLElement[])).toBe(true);
+  });
+
+  it("counts the far-right rest position as centered on the last column", () => {
+    const columnCount = 4;
+    const scroller = createNarrowColumnScroller(columnCount, narrowColumnRest(columnCount - 1, columnCount));
+    expect(isColumnCentered(scroller, [...scroller.children] as HTMLElement[])).toBe(true);
+  });
+
+  /*
+  FNXC:BoardNavigation 2026-07-26-09:15:
+  Original symptom: one swipe starting on the far-left column advanced TWO columns, while the same
+  swipe from a scrolled-over position advanced one. Assert one column of travel from every resting
+  position — both clamped edges and the interior.
+  */
+  it.each([
+    { label: "far-left edge", from: 0, expected: 1 },
+    { label: "interior column", from: 1, expected: 2 },
+  ])("advances exactly one column per forward swipe from the $label", ({ from, expected }) => {
+    const columnCount = 4;
+    const scroller = createNarrowColumnScroller(columnCount, narrowColumnRest(from, columnCount));
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    // Drag far enough that the NEAREST column has already flipped to the next one at lift.
+    act(() => dispatchDrag(scroller, { scrollDelta: 200, clientDelta: 200 }));
+    settleAfterMomentum();
+
+    expect(scroller.scrollLeft).toBe(narrowColumnRest(expected, columnCount));
+  });
+
+  it("advances exactly one column per backward swipe from the far-right edge", () => {
+    const columnCount = 4;
+    const scroller = createNarrowColumnScroller(columnCount, narrowColumnRest(columnCount - 1, columnCount));
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => dispatchDrag(scroller, { scrollDelta: -200, clientDelta: -200 }));
+    settleAfterMomentum();
+
+    expect(scroller.scrollLeft).toBe(narrowColumnRest(columnCount - 2, columnCount));
+  });
+
+  it("never pins an unreachable scroll position at an edge", () => {
+    const scroller = createNarrowColumnScroller(4, narrowColumnRest(1, 4));
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => dispatchDrag(scroller, { scrollDelta: -400, clientDelta: -400 }));
+    settleAfterMomentum();
+    const settled = scroller.scrollLeft;
+
+    // The pin watchdog must agree with the clamped position instead of fighting it forever.
+    act(() => vi.advanceTimersByTime(200));
+    expect(scroller.scrollLeft).toBe(settled);
+    expect(settled).toBe(0);
+  });
+});
+
 describe("useColumnScrollSnap", () => {
   beforeEach(() => {
     vi.useFakeTimers();

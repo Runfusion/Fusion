@@ -156,33 +156,21 @@ export async function readTaskForMoveImpl(store: TaskStore, id: string): Promise
     // moveTask/handoffToReview, so using getTask() (which also acquires the
     // lock) would deadlock. We read the raw row and convert it. Fall back to
     // archive lookup if the task is not in the live table.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
-      if (pgRow) {
-        if (pgRow.deletedAt) {
-          throw new TaskDeletedError(id, pgRow.deletedAt as string);
-        }
-        return store.rowToTask(store.pgRowToTaskRow(pgRow));
+        const layer = store.asyncLayer!;
+    const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+    if (pgRow) {
+      if (pgRow.deletedAt) {
+        throw new TaskDeletedError(id, pgRow.deletedAt as string);
       }
-      // Fall back to archive lookup (soft-deleted/archived tasks).
-      const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
-      if (entry) {
-        return store.archiveEntryToTask(entry, false);
-      }
-      throw new Error(`Task ${id} not found`);
+      return store.rowToTask(store.pgRowToTaskRow(pgRow));
     }
-    const dir = store.taskDir(id);
-    try {
-      return await store.readTaskJson(dir);
-    } catch (error) {
-      const archived = store.archiveDb.get(id);
-      if (!archived) {
-        throw error;
-      }
-      return store.archiveEntryToTask(archived, false);
+    // Fall back to archive lookup (soft-deleted/archived tasks).
+    const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
+    if (entry) {
+      return store.archiveEntryToTask(entry, false);
     }
-  }
+    throw new Error(`Task ${id} not found`);
+}
 
 export function rowToMergeQueueEntryImpl(store: TaskStore, row: MergeQueueRow): MergeQueueEntry {
     return {

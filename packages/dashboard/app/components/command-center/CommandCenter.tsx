@@ -28,6 +28,7 @@ import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
 import type { ToastType } from "../../hooks/useToast";
 import type { TaskView } from "../../hooks/useViewState";
+import { useVisibilityAwarePoll } from "../../hooks/visibilitySuspension";
 import { SdlcFunnel } from "./SdlcFunnel";
 import { inferProviderIconKey } from "../../utils/providerIconKey";
 import { Bar, type BarDatum } from "./charts/Bar";
@@ -174,15 +175,28 @@ function OverviewTab({
   const [codebaseMetrics, setCodebaseMetrics] = useState<CodebaseMetrics | null>(null);
   const [verificationRequests, setVerificationRequests] = useState<TaskVerificationRequest[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => void api<{ requests: TaskVerificationRequest[] }>(withProjectId("/command-center/verification-requests", projectId))
-      .then((response) => { if (!cancelled) setVerificationRequests(response.requests); })
-      .catch(() => { if (!cancelled) setVerificationRequests([]); });
-    refresh();
-    const timer = window.setInterval(refresh, OVERVIEW_TOKEN_REFRESH_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
+  const verificationRequestsVersionRef = useRef(0);
+  const refreshVerificationRequests = useCallback(() => {
+    const versionAtStart = verificationRequestsVersionRef.current;
+    const isStale = () => verificationRequestsVersionRef.current !== versionAtStart;
+    void api<{ requests: TaskVerificationRequest[] }>(withProjectId("/command-center/verification-requests", projectId))
+      .then((response) => { if (!isStale()) setVerificationRequests(response.requests); })
+      .catch(() => { if (!isStale()) setVerificationRequests([]); });
   }, [projectId]);
+
+  useEffect(() => {
+    refreshVerificationRequests();
+    return () => { verificationRequestsVersionRef.current += 1; };
+  }, [refreshVerificationRequests]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:32:
+  Verification-request polling is suspended while the document is hidden. The Overview surface kept this
+  request in flight every refresh cycle in the background, and continuous background network work is a
+  primary reason iOS Safari/PWA and Chrome Android discard the tab, producing the white-splash reload
+  operators saw on return. One refresh fires on the hidden -> visible edge.
+  */
+  useVisibilityAwarePoll(refreshVerificationRequests, OVERVIEW_TOKEN_REFRESH_MS);
 
   useEffect(() => {
     let cancelled = false;

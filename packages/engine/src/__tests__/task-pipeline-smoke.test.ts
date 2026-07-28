@@ -121,8 +121,13 @@ describe("task pipeline smoke", () => {
     expect(selectionReads).toBe(1);
     expect(result.context[WORKFLOW_RUN_ID_CONTEXT_KEY]).toBe("FN-7228-SMOKE:builtin:coding");
     expect(result.context[WORKFLOW_ID_CONTEXT_KEY]).toBe("builtin-stepwise-final-review-coding");
+    /*
+    FNXC:WorkflowGraphEntry 2026-07-26-17:10:
+    No `start`: this card is in `todo`, and a run with no continuation now resumes at the card's own
+    column instead of replaying the pipeline from the first column. `start` lives in `triage`, a
+    column this card has already left, so the trace begins at the first planning-lane node.
+    */
     expect(result.visitedNodeIds).toEqual([
-      "start",
       "plan",
       "plan-review",
       "plan-review::plan-review-step",

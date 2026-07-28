@@ -300,19 +300,23 @@ export async function resetStepToBaseline(
   if (reviewType === "code" && baselineSha) {
     try {
       await execAsync(`git reset --hard ${baselineSha}`, { cwd: worktreePath });
-      executorLog.log(`${taskId}: RETHINK — git reset --hard ${baselineSha}`);
+      executorLog.debug(`${taskId}: RETHINK — git reset --hard ${baselineSha}`);
     } catch (gitErr: unknown) {
       executorLog.error(`${taskId}: RETHINK git reset failed: ${errMsg(gitErr)}`);
     }
   } else if (reviewType === "code") {
-    executorLog.log(`${taskId}: RETHINK — no baseline SHA, skipping git reset`);
+    executorLog.debug(`${taskId}: RETHINK — no baseline SHA, skipping git reset`);
   }
 
   // ── Rewind conversation to the pre-step checkpoint. ──────────────────────
+  /*
+  FNXC:EngineDiagnostics 2026-07-26-10:15:
+  Successful/skip RETHINK checkpoint rewind lines are recovery-path bookkeeping; keep failures on warn/error. Opt-in via FUSION_DEBUG=executor.
+  */
   if (checkpointId && sessionRef.current) {
     try {
       await sessionRef.current.navigateTree(checkpointId, { summarize: false });
-      executorLog.log(`${taskId}: RETHINK — session rewound to checkpoint ${checkpointId}`);
+      executorLog.debug(`${taskId}: RETHINK — session rewound to checkpoint ${checkpointId}`);
     } catch (rewindErr: unknown) {
       executorLog.warn(
         `${taskId}: RETHINK navigateTree rewind failed, falling back to branchWithSummary: ${errMsg(rewindErr)}`,
@@ -322,13 +326,13 @@ export async function resetStepToBaseline(
           checkpointId,
           `RETHINK: ${deps.summary || "Approach rejected by reviewer"}`,
         );
-        executorLog.log(`${taskId}: RETHINK — branched from checkpoint ${checkpointId}`);
+        executorLog.debug(`${taskId}: RETHINK — branched from checkpoint ${checkpointId}`);
       } catch (branchErr: unknown) {
         executorLog.error(`${taskId}: RETHINK session rewind failed: ${errMsg(branchErr)}`);
       }
     }
   } else {
-    executorLog.log(`${taskId}: RETHINK — no session checkpoint for step ${step}, skipping rewind`);
+    executorLog.debug(`${taskId}: RETHINK — no session checkpoint for step ${step}, skipping rewind`);
   }
 
   // ── Reset step status to pending (projection sink). ──────────────────────

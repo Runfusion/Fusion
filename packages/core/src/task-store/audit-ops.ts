@@ -7,15 +7,13 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
-import type {Task, TaskDetail, Column, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {Task, TaskDetail, TaskLogEntry, RunMutationContext} from "../types.js";
 import {findWorkflowColumn} from "../plugin-gate-verdict.js";
 import {getTraitRegistry} from "../trait-registry.js";
 import {makeTransitionPending} from "../transition-types.js";
-import {writeTransitionPending} from "../transition-pending.js";
 import {writeTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
-import {toJson, fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
 import { getLiveTaskColumn } from "./async-comments-attachments.js";
@@ -55,11 +53,8 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     const writeMarker = async (remainingHookIds: string[]): Promise<void> => {
       try {
         const marker = makeTransitionPending(toColumn, remainingHookIds, startedAt);
-        if (store.backendMode) {
-          await writeTransitionPendingAsync(store.asyncLayer!.db, taskId, marker);
-        } else {
-          writeTransitionPending(store.db, taskId, marker);
-        }
+                await writeTransitionPendingAsync(store.asyncLayer!.db, taskId, marker);
+
       } catch {
         // Marker bookkeeping is best-effort; proceed to run the hooks regardless.
       }
@@ -70,15 +65,10 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     // runs inside `withTaskLock`, so `getTask` (which re-acquires the lock)
     // would deadlock. `readTaskFromDb` is the in-lock-safe read (backend mode:
     // raw readTaskRow + row conversion, same non-locking property).
-    let taskDetail: TaskDetail | undefined;
-    if (store.backendMode) {
-      const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
-      taskDetail = pgRow
-        ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
-        : undefined;
-    } else {
-      taskDetail = store.readTaskFromDb(taskId, { includeDeleted: false }) as unknown as TaskDetail | undefined;
-    }
+    const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
+    const taskDetail: TaskDetail | undefined = pgRow
+      ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
+      : undefined;
 
     const remaining = ["default-workflow:postCommit", ...hookIds];
     for (const { traitId, hookKind } of pending) {
@@ -131,14 +121,11 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
-        if (store.backendMode) {
+        {
           const layer = store.asyncLayer!;
           const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
           if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
-        }
-        if (store.isTaskArchived(id)) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
         }
 
         const dir = store.taskDir(id);
@@ -181,68 +168,28 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       // and write back only the log + updatedAt columns. This avoids the
       // sync this.db.prepare() path which throws "SQLite Database is not
       // available in backend mode" (discovered by sqlite-final-removal session 3).
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
-        if (!pgRow) {
-          throw new Error(`Task ${id} not found`);
-        }
-        if (pgRow.column === "archived" || pgRow.deletedAt != null) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
-        }
-        // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
-        const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
-        existingLog.push(entry);
-        const _entryLimit = getTaskActivityLogEntryLimit();
-        if (existingLog.length > _entryLimit) {
-          existingLog.splice(0, existingLog.length - _entryLimit);
-        }
-        const updatedAt = new Date().toISOString();
-        await updateTaskColumns(layer, id, { log: existingLog, updatedAt });
-
-        // Re-read the task for event emission (full row → Task).
-        const updatedRow = await readTaskRow(layer, id, { includeDeleted: false });
-        if (updatedRow) {
-          const current = store.rowToTask(store.pgRowToTaskRow(updatedRow));
-          await store.writeTaskJsonFile(store.taskDir(id), current);
-          if (store.isWatching) {
-            store.taskCache.set(id, { ...current });
-          }
-          store.emitTaskLifecycleEventSafely("task:updated", [current]);
-          return current;
-        }
-        const emittedTask = ({ id, log: existingLog, updatedAt } as unknown) as Task;
-        store.emitTaskLifecycleEventSafely("task:updated", [emittedTask]);
-        return emittedTask;
-      }
-
-      const row = store.db.prepare(`SELECT log, "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(id) as
-        | { log: string | null; column: Column }
-        | undefined;
-      if (!row) {
-        if (store.isTaskArchived(id)) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
-        }
+            const layer = store.asyncLayer!;
+      const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
+      if (!pgRow) {
         throw new Error(`Task ${id} not found`);
       }
-
-      if (row.column === "archived") {
+      if (pgRow.column === "archived" || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
       }
-
-      const log = fromJson<TaskLogEntry[]>(row.log) || [];
-      log.push(entry);
+      // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
+      const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
+      existingLog.push(entry);
       const _entryLimit = getTaskActivityLogEntryLimit();
-      if (log.length > _entryLimit) {
-        log.splice(0, log.length - _entryLimit);
+      if (existingLog.length > _entryLimit) {
+        existingLog.splice(0, existingLog.length - _entryLimit);
       }
       const updatedAt = new Date().toISOString();
+      await updateTaskColumns(layer, id, { log: existingLog, updatedAt });
 
-      store.db.prepare("UPDATE tasks SET log = ?, updatedAt = ? WHERE id = ?").run(toJson(log), updatedAt, id);
-      store.db.bumpLastModified();
-
-      const current = store.readTaskFromDb(id);
-      if (current) {
+      // Re-read the task for event emission (full row → Task).
+      const updatedRow = await readTaskRow(layer, id, { includeDeleted: false });
+      if (updatedRow) {
+        const current = store.rowToTask(store.pgRowToTaskRow(updatedRow));
         await store.writeTaskJsonFile(store.taskDir(id), current);
         if (store.isWatching) {
           store.taskCache.set(id, { ...current });
@@ -250,9 +197,8 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         store.emitTaskLifecycleEventSafely("task:updated", [current]);
         return current;
       }
-
-      const emittedTask = ({ id, log, updatedAt } as unknown) as Task;
+      const emittedTask = ({ id, log: existingLog, updatedAt } as unknown) as Task;
       store.emitTaskLifecycleEventSafely("task:updated", [emittedTask]);
       return emittedTask;
-    });
+});
   }

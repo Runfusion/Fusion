@@ -560,14 +560,21 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     <FloatingWindow
       windowKey="automation"
       title={t("schedule.title", "Automations")}
+      ariaLabel={`${t("schedule.title", "Automations")} dialog`}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".automation-modal__drag-handle"
       className="floating-window--automation"
       defaultSize={{ width: 720, height: 640 }}
       minSize={{ width: 420, height: 360 }}
-      /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Automations is a full-screen sheet at ≤768px; its movable desktop geometry must survive mobile opens. */
+      /*
+      FNXC:ModalTouchGeometry 2026-07-26-13:00:
+      Automations is the canonical headerless migration: its existing title row owns drag while
+      FloatingWindow owns touch resize, clamping, stacking, and persistence. Suspend both phone
+      and short-sheet viewports so saved desktop geometry never leaks into either full-screen form.
+      */
       suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
       persistGeometryKey="floating-window:automation"
     >
       {/**

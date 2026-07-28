@@ -45,13 +45,12 @@ describe("TaskDetailModal CSS contract", () => {
   });
 
   /*
-  FNXC:TaskDetailActivity 2026-07-18-07:25:
-  FN-8166 zeroed mobile `.detail-activity` padding-inline-end (equal insets from
-  `.detail-body`); overlay clearance lives only on first-row selectors. Keep the
-  contract aligned with TaskDetailModal.css so full-suite does not assert the
-  pre-8166 `var(--space-md)` residual inset.
+  FNXC:TaskDetailActivity 2026-07-27-02:15:
+  FN-8624 extends FN-8166's symmetric Activity container inset from mobile to
+  desktop and tablet. Only possible overlay-covered first rows may reserve tokenized
+  clearance, so modal, pop-out, and embedded task-detail renders share this CSS contract.
   */
-  it("FN-8154 keeps the mobile Feed inset narrow while clearing its overlay toggle from first rows", async () => {
+  it("FN-8624 keeps Activity container insets symmetric while clearing the overlay from first rows", async () => {
     const css = await loadAllAppCss();
     const baseCss = await loadAllAppCssBaseOnly();
     const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));
@@ -63,13 +62,13 @@ describe("TaskDetailModal CSS contract", () => {
       ".detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child",
     ];
 
-    expect(baseCss).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
-    expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
-    expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));\n  }");
-    expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end: var(--space-md);\n  }");
-    expect(mobileCss).toContain("  .detail-activity--interventions {\n    padding-inline-end: 0;\n  }");
+    expect(baseCss).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: 0;\n}");
+    expect(baseCss).toContain(".detail-activity--interventions {\n  padding-inline-end: 0;\n}");
+    expect(baseCss).not.toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+    expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end:");
     for (const selector of firstRowSelectors) {
       const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(baseCss, selector).toMatch(new RegExp(`${escapedSelector}(?:\\s*,\\s*[^{}]+)*\\s*\\{[^}]*padding-inline-end: calc\\(var\\(--space-2xl\\) \\+ var\\(--space-md\\)\\);`));
       expect(mobileCss, selector).toMatch(new RegExp(`${escapedSelector}(?:\\s*,\\s*[^{}]+)*\\s*\\{[^}]*padding-inline-end: calc\\(var\\(--space-2xl\\) \\+ var\\(--space-sm\\)\\);`));
     }
   });

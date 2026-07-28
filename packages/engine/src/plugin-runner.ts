@@ -818,7 +818,7 @@ export class PluginRunner {
           settings,
           logger: this.createPluginLogger(pluginId),
           emitEvent: (event: string, data: unknown) => {
-            this.log.log(`[plugin:${pluginId}] Event: ${event}`, data);
+            this.log.debug(`[plugin:${pluginId}] Executor runtime environment event: ${event}`, data);
           },
         };
 
@@ -902,8 +902,8 @@ export class PluginRunner {
       if (!evaluation.included) {
         if (evaluation.reason) {
           this.log.warn(`Excluded prompt contribution for plugin ${pluginId} on surface ${surface}: ${evaluation.reason}`);
-        } else if (process.env.DEBUG?.includes("plugins")) {
-          this.log.log(`Excluded prompt contribution for plugin ${pluginId} on surface ${surface}: condition evaluated false`);
+        } else {
+          this.log.debug(`Excluded prompt contribution for plugin ${pluginId} on surface ${surface}: condition evaluated false`);
         }
         continue;
       }
@@ -1257,7 +1257,7 @@ export class PluginRunner {
       settings,
       logger: this.createPluginLogger(plugin.manifest.id),
       emitEvent: (event: string, data: unknown) => {
-        this.log.log(`[plugin:${plugin.manifest.id}] Event: ${event}`, data);
+        this.log.debug(`[plugin:${plugin.manifest.id}] Tool execution event: ${event}`, data);
       },
     };
   }
@@ -1286,7 +1286,7 @@ export class PluginRunner {
       settings,
       logger: this.createPluginLogger(pluginId),
       emitEvent: (event: string, data: unknown) => {
-        this.log.log(`[plugin:${pluginId}] Event: ${event}`, data);
+        this.log.debug(`[plugin:${pluginId}] Runtime instantiation event: ${event}`, data);
       },
     };
   }
@@ -1330,11 +1330,7 @@ export class PluginRunner {
       info: (...args: unknown[]) => this.log.log(prefix, ...args),
       warn: (...args: unknown[]) => this.log.warn(prefix, ...args),
       error: (...args: unknown[]) => this.log.error(prefix, ...args),
-      debug: (...args: unknown[]) => {
-        if (process.env.DEBUG?.includes("plugins")) {
-          this.log.log(prefix, ...args);
-        }
-      },
+      debug: (...args: unknown[]) => this.log.debug(prefix, ...args),
     };
   }
 
@@ -1345,7 +1341,7 @@ export class PluginRunner {
    */
   private invalidateToolsCache(): void {
     this.toolsCacheVersion++;
-    this.log.log(`Tools cache invalidated (version: ${this.toolsCacheVersion})`);
+    this.log.debug(`Tools cache invalidated (version: ${this.toolsCacheVersion})`);
   }
 
   /**
@@ -1353,7 +1349,7 @@ export class PluginRunner {
    */
   private invalidateRoutesCache(): void {
     this.routesCacheVersion++;
-    this.log.log(`Routes cache invalidated (version: ${this.routesCacheVersion})`);
+    this.log.debug(`Routes cache invalidated (version: ${this.routesCacheVersion})`);
   }
 
   /**
@@ -1361,12 +1357,12 @@ export class PluginRunner {
    */
   private invalidateUiSlotsCache(): void {
     this.uiSlotsCacheVersion++;
-    this.log.log(`UI slots cache invalidated (version: ${this.uiSlotsCacheVersion})`);
+    this.log.debug(`UI slots cache invalidated (version: ${this.uiSlotsCacheVersion})`);
   }
 
   private invalidateUiContributionsCache(): void {
     this.uiContributionsCacheVersion++;
-    this.log.log(`UI contributions cache invalidated (version: ${this.uiContributionsCacheVersion})`);
+    this.log.debug(`UI contributions cache invalidated (version: ${this.uiContributionsCacheVersion})`);
   }
 
   /**
@@ -1374,43 +1370,43 @@ export class PluginRunner {
    */
   private invalidateRuntimesCache(): void {
     this.runtimesCacheVersion++;
-    this.log.log(`Runtimes cache invalidated (version: ${this.runtimesCacheVersion})`);
+    this.log.debug(`Runtimes cache invalidated (version: ${this.runtimesCacheVersion})`);
   }
 
   private invalidateCliProviderContributionsCache(): void {
     this.cliProviderContributionsCacheVersion++;
-    this.log.log(`CLI provider contributions cache invalidated (version: ${this.cliProviderContributionsCacheVersion})`);
+    this.log.debug(`CLI provider contributions cache invalidated (version: ${this.cliProviderContributionsCacheVersion})`);
   }
 
   private invalidateSkillsCache(): void {
     this.skillsCacheVersion++;
-    this.log.log(`Skills cache invalidated (version: ${this.skillsCacheVersion})`);
+    this.log.debug(`Skills cache invalidated (version: ${this.skillsCacheVersion})`);
   }
 
   private invalidateMcpServersCache(): void {
     this.mcpServersCacheVersion++;
-    this.log.log(`MCP servers cache invalidated (version: ${this.mcpServersCacheVersion})`);
+    this.log.debug(`MCP servers cache invalidated (version: ${this.mcpServersCacheVersion})`);
   }
 
   private invalidateWorkflowStepsCache(): void {
     this.workflowStepsCacheVersion++;
-    this.log.log(`Workflow steps cache invalidated (version: ${this.workflowStepsCacheVersion})`);
+    this.log.debug(`Workflow steps cache invalidated (version: ${this.workflowStepsCacheVersion})`);
   }
 
   private invalidateWorkflowExtensionsCache(): void {
     this.workflowExtensionsCacheVersion++;
-    this.log.log(`Workflow extensions cache invalidated (version: ${this.workflowExtensionsCacheVersion})`);
+    this.log.debug(`Workflow extensions cache invalidated (version: ${this.workflowExtensionsCacheVersion})`);
     this.syncPluginWorkflowExtensions();
   }
 
   private invalidateWorkflowStepTemplatesCache(): void {
     this.workflowStepTemplatesCacheVersion++;
-    this.log.log(`Workflow step templates cache invalidated (version: ${this.workflowStepTemplatesCacheVersion})`);
+    this.log.debug(`Workflow step templates cache invalidated (version: ${this.workflowStepTemplatesCacheVersion})`);
   }
 
   private invalidateTraitsCache(): void {
     this.traitsCacheVersion++;
-    this.log.log(`Plugin traits cache invalidated (version: ${this.traitsCacheVersion})`);
+    this.log.debug(`Plugin traits cache invalidated (version: ${this.traitsCacheVersion})`);
     // Re-register/deregister plugin traits in the core registry to match the
     // newly-loaded/unloaded set (mirrors the workflow-step contribution flow).
     this.syncPluginTraits();
@@ -1420,12 +1416,12 @@ export class PluginRunner {
 
   private invalidatePromptContributionsCache(): void {
     this.promptContributionsCacheVersion++;
-    this.log.log(`Prompt contributions cache invalidated (version: ${this.promptContributionsCacheVersion})`);
+    this.log.debug(`Prompt contributions cache invalidated (version: ${this.promptContributionsCacheVersion})`);
   }
 
   private invalidateSetupCache(): void {
     this.setupCacheVersion++;
-    this.log.log(`Setup cache invalidated (version: ${this.setupCacheVersion})`);
+    this.log.debug(`Setup cache invalidated (version: ${this.setupCacheVersion})`);
   }
 
   // ── Store Event Subscriptions ────────────────────────────────────

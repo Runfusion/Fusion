@@ -127,6 +127,15 @@ export interface WorkflowNodePreparationRequirement {
 }
 
 export interface WorkflowGraphExecutorDeps {
+  /*
+   * FNXC:PlanReviewLease 2026-07-26-20:18:
+   * Cluster node id stamped onto review-gate leases (`WorkflowStepResult.leaseNodeId`). It lets a
+   * node later recognize a lease its OWN previous process left behind and reclaim it without
+   * waiting out the staleness floor; peer-owned leases stay protected by the floor. Optional —
+   * when unset the lease is written unattributed and keeps pure floor semantics, which is the
+   * pre-existing behavior.
+   */
+  localNodeId?: string;
   handlers?: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>>;
   /*
    * FNXC:WorkflowNodeRunners 2026-07-01-00:00:
@@ -381,6 +390,58 @@ function hasTaskProjection(patch: WorkflowTaskProjection): boolean {
   return Object.keys(patch).length > 0;
 }
 
+/*
+FNXC:WorkflowGraphEntry 2026-07-26-17:10:
+THE GRAPH ENTRY CONTRACT: a run with no durable continuation resumes at the card's OWN COLUMN, not
+at `start`.
+
+Post-cutover a node's column IS the card's lifecycle position, so replaying from `start` contradicted
+that invariant: any run without a continuation (self-healing's graph re-entry, a fresh dispatch, an
+operator drag into a processing column) re-entered at the first node of the FIRST column and dragged
+the card backward through columns it had already left — firing `abort-on-exit` on its live session,
+and stranding it in any pre-wip column that has no releaser. That backward drag is what previously
+forced planning nodes to live in the implementation column.
+
+The rule: enter at the first node, in pipeline order from `start`, whose column is not BEHIND the
+card's current column (`ir.columns` is ordered, and that order is the lifecycle order). A card in the
+planning lane still runs the planning prologue; a card already in implementation resumes at the first
+implementation node instead of re-planning; a card in review re-enters at the first review node, so
+review gates are never skipped.
+
+Traversal follows the forward pipeline only — `rework` back-edges and failure edges are excluded — so
+the entry point is the main path, never a remediation node that merely happens to sit in the column.
+*/
+export function resolveColumnResumeNode(ir: WorkflowIr, column: string | undefined): WorkflowIrNode | undefined {
+  if (!column || ir.version !== "v2") return undefined;
+  const columnOrder = new Map(ir.columns.map((entry, index) => [entry.id, index]));
+  const taskColumnIndex = columnOrder.get(column);
+  if (taskColumnIndex === undefined) return undefined;
+
+  const startNode = ir.nodes.find((node) => node.kind === "start");
+  if (!startNode) return undefined;
+  const nodeById = new Map(ir.nodes.map((node) => [node.id, node]));
+
+  const queue: string[] = [startNode.id];
+  const seen = new Set<string>([startNode.id]);
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const node = nodeById.get(id);
+    if (!node) continue;
+    const nodeColumnIndex = node.column ? columnOrder.get(node.column) : undefined;
+    // `>=` and not `===`: a card can rest in a column the pipeline has no node for
+    // (a pure hold column in some workflows), and must then resume at the next node forward.
+    if (nodeColumnIndex !== undefined && nodeColumnIndex >= taskColumnIndex) return node;
+    for (const edge of ir.edges) {
+      if (edge.from !== id || edge.kind === "rework") continue;
+      if (edge.condition && edge.condition !== "success") continue;
+      if (seen.has(edge.to)) continue;
+      seen.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  return undefined;
+}
+
 export class WorkflowGraphExecutor {
   private readonly maxRetriesPerNode: number;
 
@@ -409,7 +470,7 @@ export class WorkflowGraphExecutor {
   ): Promise<WorkflowGraphExecutorResult> {
     const startNode = startNodeId
       ? ir.nodes.find((node) => node.id === startNodeId)
-      : ir.nodes.find((node) => node.kind === "start");
+      : resolveColumnResumeNode(ir, task.column) ?? ir.nodes.find((node) => node.kind === "start");
     if (!startNode) throw new WorkflowIrError("Workflow IR missing start node");
 
     const nodeMap = new Map(ir.nodes.map((node) => [node.id, node]));
@@ -818,6 +879,14 @@ export class WorkflowGraphExecutor {
             // U3/KTD-4: stamp the lease owner so a concurrent/crashed re-entry
             // adopts this pending gate instead of dispatching a second reviewer.
             leaseOwner: runId,
+            /*
+            FNXC:PlanReviewLease 2026-07-26-20:20:
+            Stamp WHERE the lease runs, not just which run holds it. `runId` cannot distinguish
+            "this node's dead previous process" from "a peer node running right now", so without
+            this every restart-orphaned gate had to wait out the full staleness floor. Omitted when
+            the node id is unknown, which preserves the previous floor-only behavior.
+            */
+            ...(this.deps.localNodeId ? { leaseNodeId: this.deps.localNodeId } : {}),
           });
           this.deps.logTaskEntry?.(`${logPrefix} Starting workflow step: ${groupName}`);
 

@@ -202,9 +202,11 @@ export function getRunningWorkflowStepLabel(
 
 /*
 FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
-Lane-owned optional gates are header badges, not progress bullet-list rows. Plan Review badges on planning columns (triage / todo); Code Review and Browser Verification (and post-merge verification) badge on in-review. Each badge reuses the same startedAt-without-completedAt "running" semantics as the progress list.
+Lane-owned optional gates are header badges, not progress bullet-list rows. Code Review and Browser Verification (and post-merge verification) badge on in-review. Each badge reuses the same startedAt-without-completedAt "running" semantics as the progress list.
+
+FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
+Plan Review's planning-lane restriction is GONE (see getRunningOptionalGateBadge) — it badges wherever it runs. The badge is keyed on the RUNNING gate rather than the card's column, so it stays correct across every workflow regardless of where that workflow places the node.
 */
-const PLANNING_LANE_COLUMNS = new Set(["triage", "todo"]);
 const REVIEW_LANE_COLUMNS = new Set(["in-review"]);
 
 export interface RunningOptionalGateBadge {
@@ -233,12 +235,26 @@ export function getRunningOptionalGateBadge(
   if (!isNonImplementationWorkflowStepId(workflowStepId)) return undefined;
 
   if (workflowStepId === "plan-review" || workflowStepId === "plan-replan") {
-    if (!PLANNING_LANE_COLUMNS.has(task.column)) return undefined;
+    /*
+    FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
+    Plan Review badges wherever it RUNS. A workflow places this node where its own lane shape calls
+    for it — the built-in coding workflows run it in the planning column, a custom workflow may not —
+    and a lane gate here silently suppressed the badge for every placement it did not anticipate. The
+    gate's own running state is the signal; the card's column is not a second opinion on it. Code
+    Review / Browser Verification keep their in-review lane gate below, because those genuinely DO
+    move the card into the review column when they run.
+    */
     return {
       workflowStepId,
       name: running.name,
-      // Keep the established short "Reviewing" label for Plan Review (FN-7831).
-      label: "Reviewing",
+      /*
+      FNXC:TaskCardOptionalGateBadge 2026-07-26-14:05:
+      The badge names the GATE, not a generic activity: the short "Reviewing" copy (FN-7831) read
+      identically to a code-review badge and did not tell the operator which review was running.
+      Plan Review and its replan loop both badge as "Plan Review". The `reviewing` testId is
+      unchanged so existing board/list selectors keep working.
+      */
+      label: "Plan Review",
       testId: "reviewing",
     };
   }

@@ -180,7 +180,10 @@ type OrgChartTransform = { scale: number; x: number; y: number };
 
 /*
 FNXC:AgentHeartbeatControls 2026-07-23-13:10:
-List, board, and org-chart cards use one explicit heartbeat action. It changes only runtimeConfig.enabled through the preserved payload helper; lifecycle pause/resume remains a separate control.
+List and board cards use one explicit heartbeat action. It changes only runtimeConfig.enabled through the preserved payload helper; lifecycle pause/resume remains a separate control.
+
+FNXC:AgentHeartbeatControls 2026-07-26-19:07:
+FN-8625 makes the org chart intentionally read-only for heartbeat configuration. Enable and disable actions remain available through board, list, and bulk-control surfaces.
 */
 function HeartbeatToggle({ agent, pending, onToggle }: { agent: Agent; pending: boolean; onToggle: (agent: Agent) => void }) {
   const { t } = useTranslation("app");
@@ -210,15 +213,13 @@ function HeartbeatToggle({ agent, pending, onToggle }: { agent: Agent; pending: 
 type OrgChartNodeProps = {
   node: OrgTreeNode;
   onSelect: (id: string) => void;
-  onToggleHeartbeat: (agent: Agent) => void;
-  isHeartbeatPending: (agentId: string) => boolean;
   getHealthStatus: (agent: Agent) => AgentHealthStatus;
   selectedAgentId: string | null;
   registerNodeElement: (id: string, element: HTMLDivElement | null) => void;
   linksRef: MutableRefObject<OrgChartLink[]>;
 };
 
-function OrgChartNode({ node, onSelect, onToggleHeartbeat, isHeartbeatPending, getHealthStatus, selectedAgentId, registerNodeElement, linksRef }: OrgChartNodeProps) {
+function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, registerNodeElement, linksRef }: OrgChartNodeProps) {
   const { t } = useTranslation("app");
   const { agent, children } = node;
   const health = getHealthStatus(agent);
@@ -258,7 +259,6 @@ function OrgChartNode({ node, onSelect, onToggleHeartbeat, isHeartbeatPending, g
           </span>
         </div>
       </div>
-      <div className="org-chart-node__actions"><HeartbeatToggle agent={agent} pending={isHeartbeatPending(agent.id)} onToggle={onToggleHeartbeat} /></div>
       {children.length > 0 && (
         <div className="org-chart-children" role="group" aria-label={t("agents.orgChartEmployees", "{{name}} employees", { name: agent.name })}>
           {children.map((child) => {
@@ -268,8 +268,6 @@ function OrgChartNode({ node, onSelect, onToggleHeartbeat, isHeartbeatPending, g
                 key={child.agent.id}
                 node={child}
                 onSelect={onSelect}
-                onToggleHeartbeat={onToggleHeartbeat}
-                isHeartbeatPending={isHeartbeatPending}
                 getHealthStatus={getHealthStatus}
                 selectedAgentId={selectedAgentId}
                 registerNodeElement={registerNodeElement}
@@ -1874,8 +1872,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                               key={node.agent.id}
                               node={node}
                               onSelect={handleOrgChartNodeSelect}
-                              onToggleHeartbeat={(agent) => void handleHeartbeatEnabledChange(agent, !isAgentHeartbeatEnabled(agent))}
-                              isHeartbeatPending={(agentId) => isBulkHeartbeatMutationRunning || heartbeatMutationAgentIds.has(agentId)}
                               getHealthStatus={getHealthStatus}
                               selectedAgentId={selectedOrgChartAgentId}
                               registerNodeElement={registerOrgChartNodeElement}

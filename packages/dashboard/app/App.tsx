@@ -360,7 +360,23 @@ function AppInner() {
       const params = new URLSearchParams();
       if (currentProject?.id) params.set("projectId", currentProject.id);
       const query = params.size > 0 ? `?${params.toString()}` : "";
+      /*
+      FNXC:PluginEvents 2026-07-26-16:46:
+      Resync contract (see SseSubscription in sse-bus.ts). This subscription is a pure relay: it parses
+      `plugin:custom`, filters by pluginId, and hands the payload to the plugin view's callback. It
+      holds no state of its own, so there is nothing here to refetch — and the host cannot synthesize a
+      refetch for the plugin either, because `plugin:custom` payloads are opaque and no generic
+      "current plugin state" endpoint exists. Adding a refetch here would only add a request to the
+      visible-edge burst without correcting anything, so this takes the documented replaySafe opt-out.
+      RESIDUAL RISK, stated deliberately: a plugin view that accumulates state purely from these events
+      still diverges across a hidden-suspend gap. The fix belongs in the plugin surface, which must
+      resync when its own view remounts or through its own authoritative fetch; the relay cannot do it.
+      */
       return subscribeSse(`/api/events${query}`, {
+        replaySafe: {
+          reason:
+            "relay-only: no host state; plugin:custom payloads are opaque so the host has no authoritative refetch, plugin views own their resync",
+        },
         events: {
           "plugin:custom": (event: MessageEvent) => {
             try {
@@ -877,6 +893,7 @@ function AppInner() {
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
   const executorFooterVisible = viewMode === "project" && !!currentProject;
+  const mobileNavVisible = viewMode === "project" && !!currentProject;
   const rightDockActive = rightDockEnabled && !isMobile && executorFooterVisible;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && executorFooterVisible;
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
@@ -1890,13 +1907,23 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
+          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
         </div>
         {rightDock.dock}
       </div>
-      {currentProject && (
+      {/*
+      FNXC:Terminal 2026-07-26-11:40:
+      Mount the terminal ONLY while it is open. It used to be mounted for the whole session (visibility driven purely by `isOpen`), so a closed terminal still ran `useTerminalSessions` + `useTerminal`: a live PTY WebSocket, its heartbeat interval, and — because xterm is torn down on close, leaving no `onData` subscriber — an UNBOUNDED client-side buffer of every byte the shell emitted while the user was elsewhere. Background timers/sockets are a primary tab-discard signal on iOS Safari and Chrome Android, and the growing buffer is the memory pressure that triggers the discard; together they are why returning to the dashboard after a few minutes costs a full white-splash reload.
+      This does NOT regress the "persist across tab switches" requirement: `terminalOpen` survives view switches, so switching views keeps the modal mounted and its buffer intact. Only an explicit close unmounts. Terminal tabs are server-side PTY sessions restored on reopen, with scrollback replayed by the server on reconnect.
+
+      FNXC:Terminal 2026-07-26-14:10 (CORRECTION — the paragraph above originally ended "close already disposed xterm and its scrollback, so nothing is lost that closing did not already discard"; that was FALSE and must not be reasserted):
+      Closing DID dispose xterm, but the WebSocket stayed open with zero `onData` subscribers, so `useTerminal`'s `initialBufferRef.current.data` accumulated EVERY byte emitted while closed and `onData()` replayed the whole array verbatim when xterm re-initialized on reopen. Reopen was therefore lossless for arbitrarily long closed-terminal output. It no longer is: unmounting closes the socket, and reopen now starts from the server's replay — `MAX_SCROLLBACK_SIZE = 50000` CHARACTERS in `packages/dashboard/src/terminal-service.ts` (~600-800 typical lines), not lines and not unbounded.
+      Keeping the component mounted is nonetheless the WRONG repair, because the property it preserved was itself the defect: that buffer has no cap and is never drained while closed, so a long-running command (a watch build, `tail -f`) left in a closed terminal grows the heap without bound for as long as the app is open — strictly worse than losing scrollback, and precisely the memory pressure that gets the tab discarded. There is no in-component way to keep both properties: the buffer lives inside `useTerminal`, which cannot outlive the mount.
+      The real ceiling is the server ring, and the correct place to recover the lost history is to raise `MAX_SCROLLBACK_SIZE` (the repo's own CLI-agent session ring is 512 KiB by comparison) or to bound-and-persist the client buffer outside the component. Both are outside this change's file scope; this comment records the deliberate, known trade so it is not rediscovered as a mystery.
+      */}
+      {currentProject && modalManager.terminalOpen && (
         <TerminalModal
           isOpen={modalManager.terminalOpen}
           onClose={closeTerminalWithNav}
@@ -1929,8 +1956,9 @@ function AppInner() {
       )}
       <MobileNavBar
         view={taskView}
-        onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : () => {}}
-        footerVisible={viewMode === "project" && !!currentProject}
+        onChangeView={mobileNavVisible ? handleTaskViewChange : () => {}}
+        footerVisible={mobileNavVisible}
+        hidden={!mobileNavVisible}
         modalOpen={modalManager.anyModalOpen}
         keyboardOpen={mobileNavKeyboardOpen}
         mobileNavPrimaryItems={mobileNavPrimaryItems}
@@ -2016,8 +2044,14 @@ function AppInner() {
           overlapping surface claims the front on pointer/focus. Other utility FloatingWindows keep
           their higher utility band, so this scoped opt-in cannot change Terminal, Files, or New Task.
           */
-          /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Chat is a full-screen sheet at ≤768px, so preserve its desktop location and size instead of restoring or overwriting them there. */
+          /*
+          FNXC:ModalGeometryPersistence 2026-07-26-21:00:
+          Quick Chat is a full-screen sheet at both the narrow and short-viewport CSS breakpoints.
+          Suspend desktop geometry restoration, writes, drag, and resize controls for both surfaces
+          so a short sheet cannot corrupt the desktop window it restores after rotation.
+          */
           suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
           persistGeometryKey="kb-dashboard-chat-floating-window"
           defaultSize={{ width: 980, height: 680 }}
           /*

@@ -5994,7 +5994,12 @@
       "reportDiscussionCategorySelect": "Sélectionnez une catégorie de discussion",
       "reportDiscussionCategoryUnavailable": "Les catégories de discussion ne sont pas disponibles pour le dépôt configuré.",
       "reportDiscussionCategoryEmpty": "Aucune catégorie de discussion n’est disponible pour le dépôt configuré.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6043,8 +6048,16 @@
       "enableProactiveTaskChatHint": "",
       "releaseChannel": "",
       "releaseChannelHelp": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": "",
       "channelStable": "",
-      "channelBeta": ""
+      "channelBeta": "",
+      "agentToolOutputLimit": "",
+      "agentToolOutputLimitHint": "",
+      "noLimitOnAgentToolOutput": "",
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -8532,7 +8545,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "Replanifier"
+    "statusReplan": "Replanifier",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

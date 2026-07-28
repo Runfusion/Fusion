@@ -124,6 +124,113 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
     }
   });
 
+  /*
+  FNXC:RefinementTitle 2026-07-26-20:10:
+  The refinement title comes from the operator's FEEDBACK, not "Refinement: <source title>".
+  The invariant asserted here is the one that broke the board: SIBLING refinements of the SAME
+  parent must be distinguishable by title. A single-refinement assertion would have passed
+  against the old "Refinement: <parent>" shape too, since the bug only appears at N > 1.
+  */
+  it("titles a refinement from the operator's feedback, not the parent's title", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({
+        title: "Source feature",
+        description: "Original completed work",
+        column: "done",
+      });
+
+      const refined = await h.store.refineTask(source.id, "Tighten the empty-state copy");
+
+      expect(refined.title).toBe("Tighten the empty-state copy");
+      expect(refined.title).not.toContain("Refinement:");
+      expect(refined.title).not.toContain("Source feature");
+      // Provenance survives on the fields that carry it, not on the title.
+      expect(refined.sourceType).toBe("task_refine");
+      expect(refined.sourceParentTaskId).toBe(source.id);
+      expect(refined.description).toContain(`Refines: ${source.id}`);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("gives sibling refinements of one parent distinct titles", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({
+        title: "Source feature",
+        description: "Original completed work",
+        column: "done",
+      });
+
+      const first = await h.store.refineTask(source.id, "Add a loading skeleton");
+      const second = await h.store.refineTask(source.id, "Fix the mobile overflow");
+      const third = await h.store.refineTask(source.id, "Rename the confirm button");
+
+      const titles = [first.title, second.title, third.title];
+      expect(titles).toEqual([
+        "Add a loading skeleton",
+        "Fix the mobile overflow",
+        "Rename the confirm button",
+      ]);
+      expect(new Set(titles).size).toBe(3);
+    } finally {
+      await teardown();
+    }
+  });
+
+  // Multi-line and markdown feedback must title like any other card: first meaningful line,
+  // markdown stripped — not the raw blob and not a bespoke refinement truncation rule.
+  it("derives the title from the first meaningful line of multi-line feedback", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({
+        title: "Source feature",
+        description: "Original completed work",
+        column: "done",
+      });
+
+      const refined = await h.store.refineTask(
+        source.id,
+        "- **Fix** the badge alignment\n\nIt overlaps the avatar on narrow screens.",
+      );
+
+      expect(refined.title).toBe("Fix the badge alignment");
+      // The full feedback still lives in the description; only the TITLE is condensed.
+      expect(refined.description).toContain("It overlaps the avatar on narrow screens.");
+    } finally {
+      await teardown();
+    }
+  });
+
+  /*
+  Free-typed feedback routinely names the task being refined, so the title-id-drift normalizer
+  is now on this path in a way the old parent-derived title rarely exercised.
+  Scope note: `TASK_ID_TOKEN_RE` in task-title-id-drift.ts matches the `FN-` prefix ONLY, so a
+  project using a different `taskPrefix` keeps the typed id in the title. That is a pre-existing
+  limitation of the shared normalizer, not of this path — asserted here with a literal FN- token
+  so the test states what the code actually does rather than what the prefix setting suggests.
+  */
+  it("strips an FN- task-id token the operator typed into the feedback", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({
+        title: "Source feature",
+        description: "Original completed work",
+        column: "done",
+      });
+
+      const refined = await h.store.refineTask(source.id, "FN-4847: still drops the badge");
+
+      expect(refined.title).toBe("still drops the badge");
+      expect(refined.title).not.toContain("FN-4847");
+      // The untouched feedback is still recoverable from the description.
+      expect(refined.description).toContain("FN-4847: still drops the badge");
+    } finally {
+      await teardown();
+    }
+  });
+
   it("refineTask works for an in-review source task in backend mode", async () => {
     const h = await makeHarness();
     try {

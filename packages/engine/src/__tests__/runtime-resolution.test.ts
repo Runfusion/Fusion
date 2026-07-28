@@ -16,11 +16,13 @@ import {
   type ResolvedRuntime,
 } from "../runtime-resolution.js";
 import type { PluginRunner } from "../plugin-runner.js";
+import { createFnAgent } from "../pi.js";
 import type { PluginRuntimeRegistration } from "@fusion/core";
 
 // Mock the logger to suppress output during tests
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn(() => ({
+    debug: vi.fn(),
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -113,6 +115,20 @@ describe("runtime-resolution", () => {
     it("should implement describeModel", () => {
       const runtime = getDefaultPiRuntime();
       expect(typeof runtime.describeModel).toBe("function");
+    });
+
+    it("forwards bounded and unlimited tool-output budgets into the pi agent", async () => {
+      const runtime = getDefaultPiRuntime();
+      const sessionOptions = {
+        cwd: "/tmp/project",
+        systemPrompt: "system",
+      } as AgentRuntimeOptions;
+
+      await runtime.createSession({ ...sessionOptions, toolOutputMaxChars: 500 });
+      expect(createFnAgent).toHaveBeenLastCalledWith(expect.objectContaining({ toolOutputMaxChars: 500 }));
+
+      await runtime.createSession({ ...sessionOptions, toolOutputMaxChars: null });
+      expect(createFnAgent).toHaveBeenLastCalledWith(expect.objectContaining({ toolOutputMaxChars: null }));
     });
   });
 

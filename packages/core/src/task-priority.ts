@@ -87,14 +87,30 @@ export function sortTasksByPriorityThenAgeAndId<T extends TaskPrioritySortable>(
 }
 
 const FANOUT_SECONDARY_WEIGHT_MULTIPLIER = 1_000_000;
-const UNBLOCK_ACTIVE_COLUMNS = new Set<Task["column"]>(["triage", "todo", "in-progress", "in-review"]);
-const DONE_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:10 (Phase B / U6):
+`UNBLOCK_ACTIVE_COLUMNS` is DELETED. It enumerated the default workflow's
+non-terminal columns, which is the same concept `DONE_COLUMNS` already expressed
+by exclusion two lines below — one idea encoded twice, and the two halves
+disagreed for any column a custom workflow adds: dependency counting treated a
+`drafting` card as unmet (correct) while the active check treated it as inactive
+(wrong), so the blocker's unblock weight silently scored 0. Both halves now read
+the single terminal set.
+*/
+const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 export interface BuildUnblockWeightMapOptions {
   maxAutoMergeRetries?: ProjectSettings["maxAutoMergeRetries"];
+  /** The workflow's terminal columns (complete + archived). Defaults to the
+   *  built-in `{done, archived}` so existing callers are unchanged (R11). */
+  terminalColumns?: ReadonlySet<string>;
 }
 
-function countUnmetDependencies(task: Task, taskById: Map<string, Task>): number {
+function countUnmetDependencies(
+  task: Task,
+  taskById: Map<string, Task>,
+  terminalColumns: ReadonlySet<string>,
+): number {
   let unmet = 0;
   for (const dependencyId of task.dependencies ?? []) {
     const dependency = taskById.get(dependencyId);
@@ -102,7 +118,7 @@ function countUnmetDependencies(task: Task, taskById: Map<string, Task>): number
       unmet += 1;
       continue;
     }
-    if (DONE_COLUMNS.has(dependency.column)) {
+    if (terminalColumns.has(dependency.column)) {
       continue;
     }
     unmet += 1;
@@ -115,7 +131,8 @@ export function buildUnblockWeightMap(
   options: BuildUnblockWeightMapOptions = {},
 ): Map<string, number> {
   const taskList = [...tasks];
-  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0);
+  const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
+  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, { terminalColumns });
   const taskById = new Map(taskList.map((task) => [task.id, task]));
   const weights = new Map<string, number>();
 
@@ -125,11 +142,12 @@ export function buildUnblockWeightMap(
 
     for (const dependentId of entry.dependencyDependentIds) {
       const dependent = taskById.get(dependentId);
-      if (!dependent || !UNBLOCK_ACTIVE_COLUMNS.has(dependent.column)) {
+      // Active by exclusion — the same terminal set the dependency count uses.
+      if (!dependent || terminalColumns.has(dependent.column)) {
         continue;
       }
       secondaryActiveDependentCount += 1;
-      if (countUnmetDependencies(dependent, taskById) === 1) {
+      if (countUnmetDependencies(dependent, taskById, terminalColumns) === 1) {
         primaryOnlyUnmetCount += 1;
       }
     }

@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import type {
@@ -122,16 +121,8 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * file under backend mode.
    */
   private get db(): Database {
-    if (this.backendMode) {
-      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
-    }
-    if (!this._db) {
-      const fusionDir = join(this.rootDir, ".fusion");
-      this._db = new Database(fusionDir);
-      this._db.init();
-    }
-    return this._db;
-  }
+        throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+}
 
   /**
    * Initialize the store.
@@ -142,9 +133,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * no SQLite file to open or one-shot migration to run.
    */
   async init(): Promise<void> {
-    if (this.backendMode) return;
-    // Ensure DB is initialized
-    const _ = this.db;
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-13:55: PostgreSQL schema is applied at startup; no SQLite open. */
   }
 
   // ── Row Conversion ─────────────────────────────────────────────────
@@ -226,24 +215,13 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   // ── Persistence ────────────────────────────────────────────────────
 
   private async readScheduleJson(id: string): Promise<ScheduledTask> {
-    if (this.backendMode) {
-      return getScheduleAsync(this.asyncLayer!, id);
-    }
-    const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id) as unknown as ScheduleRow | undefined;
-    if (!row) {
-      throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
-    }
-    return this.rowToSchedule(row);
-  }
+        return getScheduleAsync(this.asyncLayer!, id);
+}
 
   private async persistSchedule(schedule: ScheduledTask): Promise<void> {
-    if (this.backendMode) {
-      await upsertScheduleAsync(this.asyncLayer!, schedule);
-      return;
-    }
-    this.upsertSchedule(schedule);
-    this.db.bumpLastModified();
-  }
+        await upsertScheduleAsync(this.asyncLayer!, schedule);
+    return;
+}
 
   // ── Cron Computation ───────────────────────────────────────────────
 
@@ -334,15 +312,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     FN-8282 treats automation definitions as versioned configuration. Create
     and its immutable before/after snapshot share one backend transaction.
     */
-    if (this.backendMode) {
-      await this.asyncLayer!.transactionImmediate(async (tx) => {
-        await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
-        const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: null, after: schedule, changedBy });
-        if (revision) await appendConfigurationRevision(tx, revision);
-      });
-    } else {
-      await this.persistSchedule(schedule);
-    }
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+      await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+      const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: null, after: schedule, changedBy });
+      if (revision) await appendConfigurationRevision(tx, revision);
+    });
+
     this.emit("schedule:created", schedule);
     return schedule;
   }
@@ -367,19 +342,16 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
-    if (this.backendMode) {
-      return getScheduleAsync(this.asyncLayer!, id);
-    }
-    return this.readScheduleJson(id);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Schedule reads are PostgreSQL-only; the SQLite readScheduleJson arm is deleted.
+    */
+    return getScheduleAsync(this.asyncLayer!, id);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {
-    if (this.backendMode) {
-      return listSchedulesAsync(this.asyncLayer!);
-    }
-    const rows = this.db.prepare('SELECT * FROM automations ORDER BY createdAt ASC').all() as unknown as ScheduleRow[];
-    return rows.map((row) => this.rowToSchedule(row));
-  }
+        return listSchedulesAsync(this.asyncLayer!);
+}
 
   async updateSchedule(id: string, updates: ScheduledTaskUpdateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
     this.requireVersionedConfigurationBackend();
@@ -450,15 +422,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       }
 
       schedule.updatedAt = new Date().toISOString();
-      if (this.backendMode) {
-        await this.asyncLayer!.transactionImmediate(async (tx) => {
-          await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
-          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
-          if (revision) await appendConfigurationRevision(tx, revision);
-        });
-      } else {
-        await this.persistSchedule(schedule);
-      }
+            await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+        const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+
       this.emit("schedule:updated", schedule);
       return schedule;
     });
@@ -494,15 +463,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
       schedule.steps = reordered;
       schedule.updatedAt = new Date().toISOString();
-      if (this.backendMode) {
-        await this.asyncLayer!.transactionImmediate(async (tx) => {
-          await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
-          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
-          if (revision) await appendConfigurationRevision(tx, revision);
-        });
-      } else {
-        await this.persistSchedule(schedule);
-      }
+            await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+        const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+
       this.emit("schedule:updated", schedule);
       return schedule;
     });
@@ -512,17 +478,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
-      if (this.backendMode) {
-        await this.asyncLayer!.transactionImmediate(async (tx) => {
-          await deleteScheduleAsync({ ...this.asyncLayer!, db: tx }, id);
-          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: schedule, after: null, changedBy });
-          if (revision) await appendConfigurationRevision(tx, revision);
-        });
-      } else {
-        // Delete from SQLite
-        this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
-        this.db.bumpLastModified();
-      }
+            await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await deleteScheduleAsync({ ...this.asyncLayer!, db: tx }, id);
+        const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: schedule, after: null, changedBy });
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+
       this.emit("schedule:deleted", schedule);
       return schedule;
     });
@@ -539,44 +500,19 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    */
   async claimDueSchedule(id: string, expectedNextRunAt: string): Promise<boolean> {
     return this.withScheduleLock(id, async () => {
-      if (this.backendMode) {
-        const schedule = await getScheduleAsync(this.asyncLayer!, id).catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-          throw error;
-        });
-        if (!schedule?.enabled || !schedule.nextRunAt) return false;
-        return claimDueScheduleAsync(
-          this.asyncLayer!,
-          id,
-          expectedNextRunAt,
-          this.computeNextRun(schedule.cronExpression),
-          new Date().toISOString(),
-        );
-      }
-
-      const row = this.db.prepare(
-        'SELECT id, cronExpression, enabled, nextRunAt FROM automations WHERE id = ?',
-      ).get(id) as unknown as Pick<ScheduleRow, "id" | "cronExpression" | "enabled" | "nextRunAt"> | undefined;
-
-      if (!row || row.enabled !== 1 || !row.nextRunAt) {
-        return false;
-      }
-
-      const nextRunAt = this.computeNextRun(row.cronExpression);
-      const updatedAt = new Date().toISOString();
-      const result = this.db.prepare(`
-        UPDATE automations
-        SET nextRunAt = ?, updatedAt = ?
-        WHERE id = ? AND enabled = 1 AND nextRunAt = ?
-      `).run(nextRunAt, updatedAt, id, expectedNextRunAt);
-
-      const changes = typeof result.changes === "bigint" ? Number(result.changes) : result.changes;
-      if (changes === 1) {
-        this.db.bumpLastModified();
-        return true;
-      }
-      return false;
-    });
+            const schedule = await getScheduleAsync(this.asyncLayer!, id).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!schedule?.enabled || !schedule.nextRunAt) return false;
+      return claimDueScheduleAsync(
+        this.asyncLayer!,
+        id,
+        expectedNextRunAt,
+        this.computeNextRun(schedule.cronExpression),
+        new Date().toISOString(),
+      );
+});
   }
 
   /**
@@ -615,14 +551,8 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    */
   async getDueSchedules(scope: "global" | "project"): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
-    if (this.backendMode) {
-      return getDueSchedulesAsync(this.asyncLayer!, now, scope);
-    }
-    const rows = this.db.prepare(
-      'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?'
-    ).all(now, scope) as unknown as ScheduleRow[];
-    return rows.map((row) => this.rowToSchedule(row));
-  }
+        return getDueSchedulesAsync(this.asyncLayer!, now, scope);
+}
 
   /**
    * Get all schedules that are due to run (nextRunAt <= now and enabled) for both scopes.
@@ -630,12 +560,6 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    */
   async getDueSchedulesAllScopes(): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
-    if (this.backendMode) {
-      return getDueSchedulesAsync(this.asyncLayer!, now);
-    }
-    const rows = this.db.prepare(
-      'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?'
-    ).all(now) as unknown as ScheduleRow[];
-    return rows.map((row) => this.rowToSchedule(row));
-  }
+        return getDueSchedulesAsync(this.asyncLayer!, now);
+}
 }

@@ -663,3 +663,102 @@ Keep Dashboard on the canonical header model instead of changing every other vie
     max-width: 100%;
   }
 }
+
+/*
+FNXC:DashboardResponsive 2026-07-25-22:57:
+The overview must stay usable down to 320px. Literal pixel media conditions are the permitted dashboard breakpoint convention; declaration values remain token-based.
+*/
+@media (max-width: 480px) {
+  .project-overview__body {
+    padding: var(--space-sm);
+  }
+
+  .project-overview__header,
+  .project-overview__filters {
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+  }
+
+  .project-overview__stats,
+  .project-overview__stats-row {
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .project-stat,
+  .project-overview__stat-skeleton {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .project-filter-tabs,
+  .project-overview__filters-skeleton {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .project-filter-tab {
+    flex: 1 1 auto;
+  }
+
+  .project-sort,
+  .project-node-filter {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+    min-width: 0;
+  }
+
+  .project-sort-select,
+  .project-node-filter-select {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .project-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-empty-state,
+  .project-overview__no-results {
+    min-width: 0;
+    padding: var(--space-lg);
+  }
+
+  .project-card--skeleton,
+  .project-skeleton__text-group {
+    min-width: 0;
+  }
+}
+
+/*
+FNXC:DashboardResponsive 2026-07-25-22:57:
+At the 320px floor, stack compact stat and skeleton rows so fixed-width placeholders cannot force horizontal scrolling. Literal pixel media conditions are intentional; declarations use tokens.
+*/
+@media (max-width: 380px) {
+  .project-overview__stats,
+  .project-overview__stats-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-stat,
+  .project-overview__stat-skeleton {
+    width: 100%;
+  }
+
+  .project-overview__filters-skeleton {
+    gap: var(--space-xs);
+  }
+
+  .project-skeleton--tab {
+    flex: 1 1 auto;
+  }
+
+  .project-empty-state,
+  .project-overview__no-results {
+    padding: var(--space-md);
+  }
+}

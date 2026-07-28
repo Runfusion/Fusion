@@ -231,6 +231,21 @@ the existing compact padding rule keeps the affordance usable below the mobile b
   background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
 }
 
+/*
+FNXC:TaskChat-LogGap 2026-07-26-17:30:
+The reconnect gap marker must not read as ordinary chat or as a routine status update: it reports
+that output is MISSING. Reuse the `.task-chat-entry` block and error token, and mark the break with a
+dashed edge so the row scans as a discontinuity in the transcript rather than content in it.
+Tokens only — no forked entry variant, no hardcoded px/hex.
+*/
+.task-chat-entry--gap {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-error) 55%, var(--border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--surface));
+  color: var(--text-muted);
+}
+
+.task-chat-entry--gap .task-chat-entry-label-row,
 .task-chat-entry--status .task-chat-entry-label-row {
   justify-content: flex-start;
   gap: var(--space-xs);
@@ -483,6 +498,11 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
 }
 
 .task-chat-tool-entry--tool-error .task-chat-entry-kicker {
+  color: var(--color-error);
+}
+
+/* FNXC:TaskChat-LogGap 2026-07-26-17:33: gap notice reuses the tool-error kicker tone so "output is missing" reads as a warning, not a status update. Declared after the base kicker rule so it overrides it. */
+.task-chat-entry--gap .task-chat-entry-kicker {
   color: var(--color-error);
 }
 

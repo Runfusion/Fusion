@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-workflow-integrity");
 /**
  * workflow-integrity operations.
  *
@@ -101,7 +104,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
       // where an uncaught throw exits the process. The catch blocks exist
       // precisely to keep a failed flush from crashing the caller/process, so
       // they must not themselves dereference `store.db`.
-      console.warn(
+      severityAuditLog.warn(
         `[fusion] Dropped ${dropCount} buffered agent log entries — backlog cap reached (${store.fusionDir})`,
       );
     }
@@ -122,7 +125,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
         store.flushAgentLogBuffer();
       } catch (err) {
         // Size-triggered flush failed — log but don't crash the caller.
-        console.error(`[fusion] Size-triggered agent log flush failed (${store.fusionDir}):`, err);
+        severityAuditLog.error(`[fusion] Size-triggered agent log flush failed (${store.fusionDir}):`, err);
       }
     } else if (!store.agentLogFlushTimer) {
       store.agentLogFlushTimer = setTimeout(
@@ -131,7 +134,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
             store.flushAgentLogBuffer();
           } catch (err) {
             // Timer-triggered flush failed — log but don't crash the process.
-            console.error(`[fusion] Timer-triggered agent log flush failed (${store.fusionDir}):`, err);
+            severityAuditLog.error(`[fusion] Timer-triggered agent log flush failed (${store.fusionDir}):`, err);
           }
         },
         TaskStore.AGENT_LOG_FLUSH_MS,
@@ -316,57 +319,36 @@ export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, o
     to count affected rows accurately regardless of driver rowCount exposure
     (the async-lifecycle.ts precedent).
     */
-    let candidates: CommitAssociationDiffBackfillCandidateRow[];
-    let applyUpdate: (commitSha: string, additions: number, deletions: number) => Promise<number>;
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const grouped = await layer.db
-        .select({
-          commitSha: schema.project.taskCommitAssociations.commitSha,
-          rowCount: sql<number>`count(*)`,
-        })
-        .from(schema.project.taskCommitAssociations)
+    const layer = store.asyncLayer!;
+    const grouped = await layer.db
+      .select({
+        commitSha: schema.project.taskCommitAssociations.commitSha,
+        rowCount: sql<number>`count(*)`,
+      })
+      .from(schema.project.taskCommitAssociations)
+      .where(
+        and(
+          isNull(schema.project.taskCommitAssociations.additions),
+          isNull(schema.project.taskCommitAssociations.deletions),
+        ),
+      )
+      .groupBy(schema.project.taskCommitAssociations.commitSha)
+      .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
+    const candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
+    const applyUpdate = async (commitSha: string, additions: number, deletions: number) => {
+      const updated = await layer.db
+        .update(schema.project.taskCommitAssociations)
+        .set({ additions, deletions, updatedAt: new Date().toISOString() })
         .where(
           and(
+            eq(schema.project.taskCommitAssociations.commitSha, commitSha),
             isNull(schema.project.taskCommitAssociations.additions),
             isNull(schema.project.taskCommitAssociations.deletions),
           ),
         )
-        .groupBy(schema.project.taskCommitAssociations.commitSha)
-        .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
-      candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const updated = await layer.db
-          .update(schema.project.taskCommitAssociations)
-          .set({ additions, deletions, updatedAt: new Date().toISOString() })
-          .where(
-            and(
-              eq(schema.project.taskCommitAssociations.commitSha, commitSha),
-              isNull(schema.project.taskCommitAssociations.additions),
-              isNull(schema.project.taskCommitAssociations.deletions),
-            ),
-          )
-          .returning({ id: schema.project.taskCommitAssociations.id });
-        return updated.length;
-      };
-    } else {
-      candidates = store.db.prepare(
-        `SELECT commitSha, COUNT(*) AS rowCount
-         FROM task_commit_associations
-         WHERE additions IS NULL AND deletions IS NULL
-         GROUP BY commitSha
-         ORDER BY commitSha`,
-      ).all() as CommitAssociationDiffBackfillCandidateRow[];
-      const updateStats = store.db.prepare(
-        `UPDATE task_commit_associations
-         SET additions = ?, deletions = ?, updatedAt = ?
-         WHERE commitSha = ? AND additions IS NULL AND deletions IS NULL`,
-      );
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const result = updateStats.run(additions, deletions, new Date().toISOString(), commitSha);
-        return Number(result.changes);
-      };
-    }
+        .returning({ id: schema.project.taskCommitAssociations.id });
+      return updated.length;
+    };
 
     const report: CommitAssociationDiffBackfillReport = {
       scannedRows: candidates.reduce((sum, row) => sum + row.rowCount, 0),

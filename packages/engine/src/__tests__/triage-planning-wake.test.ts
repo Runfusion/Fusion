@@ -284,6 +284,90 @@ describe("TriageProcessor planning discovery: missing PROMPT.md", () => {
     expect(await discover(store, [task])).toEqual(["FN-REFINE"]);
   });
 
+  /*
+  FNXC:WorkflowReplan 2026-07-26-06:10:
+  FN-8594 symptom: a card that executed once, failed Plan Review, and was rebounded to triage with
+  status `needs-replan` was never re-admitted for planning — it sat in triage/needs-replan forever
+  ("stuck in planning" on the board) because execution timestamps are sticky and outranked the
+  planner-lane checks in hasAdvancedPastPlanning. Discovery is the surface that stranded the card,
+  so assert admission here and not only on the pure guard. `firstExecutionAt` and
+  `executionStartedAt` are stamped independently, so both are covered.
+  */
+  it("re-admits a rebounded triage replan card that already executed once", async () => {
+    for (const [label, stamps] of [
+      ["firstExecutionAt", { firstExecutionAt: "2026-07-26T04:35:29.068Z" }],
+      ["executionStartedAt", { executionStartedAt: "2026-07-26T04:35:29.068Z" }],
+      [
+        "both stamps",
+        {
+          firstExecutionAt: "2026-07-26T04:35:29.068Z",
+          executionStartedAt: "2026-07-26T04:35:29.068Z",
+        },
+      ],
+    ] as const) {
+      const { store } = createEventedStore();
+      const task = createTask({
+        id: "FN-REPLAN-EXECUTED",
+        column: "triage",
+        status: "needs-replan",
+        // A replan card carries the steps and spec of its previous (rejected) planning pass.
+        steps: [{ name: "step-1", status: "pending" }],
+        ...stamps,
+      });
+      const dir = join(rootDir, ".fusion", "tasks", task.id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "PROMPT.md"),
+        "# FN-REPLAN-EXECUTED: Idea card\n\n## Mission\n\nRejected spec.\n",
+        "utf-8",
+      );
+
+      expect(await discover(store, [task]), label).toEqual(["FN-REPLAN-EXECUTED"]);
+    }
+  });
+
+  /*
+  FNXC:WorkflowReplan 2026-07-26-08:35:
+  The FN-8361 counter-case at the SURFACE, not only in the pure guard table: a `planning` row that
+  execution claimed mid-race (stamp landed before the column/status write) must NOT be admitted for
+  planning — otherwise a second planner starts on a card the executor already owns.
+  */
+  it("does not admit a planning row that execution claimed mid-race", async () => {
+    const { store } = createEventedStore();
+    const task = createTask({
+      id: "FN-CLAIMED",
+      column: "triage",
+      status: "planning",
+      worktree: "/tmp/claimed",
+      firstExecutionAt: "2026-07-26T04:35:29.068Z",
+    });
+    const dir = join(rootDir, ".fusion", "tasks", task.id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "PROMPT.md"), "# FN-CLAIMED: Idea card\n\n## Mission\n\nSpec.\n", "utf-8");
+
+    expect(await discover(store, [task])).toEqual([]);
+  });
+
+  it("re-admits a plan-in-place todo replan card that already executed once", async () => {
+    const { store } = createEventedStore();
+    const task = createTask({
+      id: "FN-IDEAS-REPLAN",
+      column: "todo",
+      status: "needs-replan",
+      steps: [{ name: "step-1", status: "pending" }],
+      firstExecutionAt: "2026-07-26T04:35:29.068Z",
+    });
+    const dir = join(rootDir, ".fusion", "tasks", task.id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "PROMPT.md"),
+      "# FN-IDEAS-REPLAN: Idea card\n\n## Mission\n\nRejected spec.\n",
+      "utf-8",
+    );
+
+    expect(await discover(store, [task])).toEqual(["FN-IDEAS-REPLAN"]);
+  });
+
   it("does not admit a todo task that already has a real spec", async () => {
     const { store } = createEventedStore();
     const task = createTask({ id: "FN-PLANNED", column: "todo", title: "Idea card", description: "desc" });

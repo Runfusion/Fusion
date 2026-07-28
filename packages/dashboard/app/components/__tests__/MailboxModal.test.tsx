@@ -775,6 +775,58 @@ describe("MailboxModal", () => {
     });
   });
 
+  /*
+  FNXC:Mailbox 2026-07-26-20:10:
+  An expanded reply-context row must survive unrelated mailbox re-renders with its DOM node intact.
+  ReplyContextExpandable used to be declared inside MailboxModal's render, making it a new element type
+  every render: opening the composer (or any parent state change) remounted the whole recursive thread,
+  discarding row identity, focus, and scroll position. Assert node identity, not just visible text —
+  a remount reproduces identical markup and would pass a text-only assertion.
+  */
+  it("keeps an expanded reply-context row mounted across unrelated re-renders", async () => {
+    const grandparent: Message = { ...mockMessage, id: "msg-grandparent", content: "Original message" };
+    const parent: Message = {
+      ...mockMessage,
+      id: "msg-parent",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-001",
+      toType: "agent",
+      type: "user-to-agent",
+      content: "Second reply",
+      metadata: { replyTo: { messageId: "msg-grandparent" } },
+    };
+    const child: Message = {
+      ...mockMessage,
+      id: "msg-child",
+      fromId: "agent-001",
+      fromType: "agent",
+      toId: "dashboard",
+      toType: "user",
+      content: "Third reply",
+      metadata: { replyTo: { messageId: "msg-parent" } },
+    };
+
+    mockFetchInbox.mockResolvedValue({ messages: [grandparent], total: 1, unreadCount: 1 });
+    mockFetchConversation.mockResolvedValue([grandparent, parent, child]);
+
+    render(<MailboxModal {...defaultProps} />);
+
+    await waitFor(() => expect(screen.getByTestId("mailbox-item-msg-grandparent")).toBeDefined());
+    fireEvent.click(screen.getByTestId("mailbox-item-msg-grandparent"));
+
+    const parentContext = await screen.findByTestId("mailbox-reply-context-msg-parent");
+    fireEvent.click(parentContext);
+    await waitFor(() => expect(parentContext.getAttribute("aria-expanded")).toBe("true"));
+
+    // Unrelated parent state change: expanding a different row re-renders MailboxModal.
+    fireEvent.click(screen.getByTestId("mailbox-reply-context-msg-child"));
+    await screen.findByTestId("mailbox-reply-expanded-msg-parent");
+
+    expect(screen.getByTestId("mailbox-reply-context-msg-parent")).toBe(parentContext);
+    expect(parentContext.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("renders nested reply context rows for multi-level thread metadata", async () => {
     const grandparent: Message = { ...mockMessage, id: "msg-grandparent", content: "Original message" };
     const parent: Message = {

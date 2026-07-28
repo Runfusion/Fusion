@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-plugin-routes");
 /**
  * Plugin REST API Routes
  *
@@ -98,7 +101,7 @@ export async function loadRegistryManifest(): Promise<RegistryManifestShape> {
     // registry manifest as data at request time and degrade to an empty registry
     // when the packaged manifest is missing or malformed so startup never fails at
     // module load with ERR_IMPORT_ATTRIBUTE_MISSING.
-    console.warn("[dashboard/plugins] Registry manifest unavailable; serving an empty plugin registry", error);
+    severityAuditLog.warn("[dashboard/plugins] Registry manifest unavailable; serving an empty plugin registry", error);
     cachedRegistryManifest = {};
     return cachedRegistryManifest;
   }
@@ -427,7 +430,7 @@ export function createPluginRouter(
           await pluginLoader.loadPlugin(plugin.id);
         } catch (loadErr) {
           // Log but don't fail - the plugin is registered, just not loaded
-          console.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
+          severityAuditLog.error(`[plugin-routes] Failed to load plugin ${plugin.id}:`, loadErr);
         }
       }
 

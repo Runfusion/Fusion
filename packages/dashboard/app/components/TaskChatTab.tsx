@@ -2,11 +2,12 @@ import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
+import { AlertTriangle, ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { addSteeringComment, refineTask } from "../api";
 import { useAgentLogs } from "../hooks/useAgentLogs";
+import { isLogGapMarker } from "../hooks/logStreamReconcile";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
 import type { ToastType } from "../hooks/useToast";
@@ -399,9 +400,39 @@ function segmentGroupEntries(entries: AgentLogEntry[]): TaskChatSegment[] {
   return segments;
 }
 
+/*
+FNXC:TaskChat-LogGap 2026-07-26-17:25:
+The reconnect gap marker says OUTPUT IS MISSING from the transcript. It is carried as a `status`
+entry, so it used to render as an ordinary "Status update" row — the same chrome the engine uses for
+routine progress messages — and read as chat content rather than a warning. That is the failure this
+whole marker exists to prevent: a reader who does not notice the row believes the transcript is
+complete.
+Rendered as its own affordance: the shared `status-dot--error` convention plus a lucide AlertTriangle
+and a dashed-edge variant of the existing `.task-chat-entry` block (tokens only, no forked
+component), and `role="status"` so assistive tech announces it as a state message, not prose.
+*/
+function TaskChatLogGapNotice({ entry }: { entry: AgentLogEntry }) {
+  return (
+    <article
+      className="task-chat-entry task-chat-entry--gap"
+      data-testid="task-chat-entry-log-gap"
+      role="status"
+    >
+      <div className="task-chat-entry-label-row">
+        <span className="status-dot status-dot--error" aria-hidden="true" />
+        <AlertTriangle size={14} aria-hidden="true" />
+        <span className="task-chat-entry-kicker">Missing output</span>
+        <TaskChatTimestamp timestamp={entry.timestamp} label="Missing output timestamp" />
+      </div>
+      <div className="task-chat-entry-text">{entry.text}</div>
+    </article>
+  );
+}
+
 function TaskChatText({ entries }: { entries: AgentLogEntry[] }) {
   const firstEntry = entries[0];
   if (!firstEntry) return null;
+  if (isLogGapMarker(firstEntry)) return <TaskChatLogGapNotice entry={firstEntry} />;
 
   return (
     <article

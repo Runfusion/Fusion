@@ -1244,7 +1244,16 @@ function InnerEditor({
     const refreshFromWorkflowMutation = () => {
       void loadWorkflows({ forceFresh: true });
     };
+    /*
+    FNXC:ChatWorkflowAuthoring 2026-07-26-16:24:
+    Resync contract (see SseSubscription in sse-bus.ts). The editor's workflow list is refreshed ONLY by
+    these events after the initial load, and the stream is lossy: an error/heartbeat reconnect or the
+    >=60s hidden-tab suspend drops the socket with no replay buffer. A workflow created or deleted while
+    the editor sat backgrounded would otherwise stay missing (or stay listed after deletion, so opening
+    it 404s) until a hard reload. The reconnect reuses the same force-fresh reload the events use.
+    */
     return subscribeSse(`/api/events${query}`, {
+      onReconnect: refreshFromWorkflowMutation,
       events: {
         "workflow:created": refreshFromWorkflowMutation,
         "workflow:updated": refreshFromWorkflowMutation,

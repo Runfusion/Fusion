@@ -88,6 +88,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => mockViewportMode,
   isMobileViewport: () => mockViewportMode === "mobile",
+  isTabletTouchViewport: () => mockViewportMode === "tablet",
   useViewportMode: () => mockViewportMode,
 }));
 
@@ -152,6 +153,14 @@ describe("NewTaskModal", () => {
       viewportHeight: null,
       viewportOffsetTop: 0,
     });
+  });
+
+  it("restores desktop body density only for the 768px tablet resize class", () => {
+    const tabletRule = newTaskModalCss.match(/\.new-task-modal\.task-modal--tablet \.modal-body\s*\{[^}]*\}/s)?.[0] ?? "";
+    const phoneRule = newTaskModalCss.match(/\.new-task-modal \.modal-body\s*\{[^}]*padding:\s*var\(--space-md\) var\(--space-sm\);[^}]*\}/s)?.[0] ?? "";
+
+    expect(tabletRule).toContain("padding: var(--space-xl);");
+    expect(phoneRule).toContain("padding: var(--space-md) var(--space-sm);");
   });
 
   it("applies keyboard CSS variables when mobile keyboard is open", () => {
@@ -413,8 +422,8 @@ describe("NewTaskModal", () => {
       await renderPickerWithData({ viewport: "mobile" });
       await waitFor(() => expect(screen.getByTestId("new-task-github-reference-picker")).toBeInTheDocument());
 
-      expect(document.querySelector(".new-task-modal--floating")).toBeNull();
-      expect(newTaskModalCss).toContain("FNXC:NewTaskMobileAffordances 2026-06-25");
+      expect(document.querySelector(".floating-window.new-task-modal")).toBeNull();
+      expect(newTaskModalCss).toContain("FNXC:ModalTouchGeometry 2026-07-27-18:00");
       expect(newTaskModalCss).toMatch(/\.new-task-modal\s*\{[^}]*pointer-events:\s*auto;/s);
     });
 
@@ -935,7 +944,7 @@ describe("NewTaskModal", () => {
       ["mobile Escape", "mobile", (overlay: HTMLElement) => fireEvent.keyDown(overlay, { key: "Escape" })],
       ["desktop Close", "desktop", (_overlay: HTMLElement) => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
       ["desktop Cancel", "desktop", (_overlay: HTMLElement) => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
-      ["desktop Escape", "desktop", (overlay: HTMLElement) => fireEvent.keyDown(overlay, { key: "Escape" })],
+      ["desktop Escape", "desktop", (_overlay: HTMLElement) => fireEvent.keyDown(document, { key: "Escape" })],
     ] as const)("closes a blank modal with inherited default-on steps through %s without confirmation", async (_closePath, viewport, close) => {
       const { fetchSettings, fetchWorkflowOptionalSteps } = await import("../../api");
       mockViewportMode = viewport;
@@ -2173,8 +2182,9 @@ describe("NewTaskModal", () => {
       renderNewTaskModal({ onClose });
 
       const overlay = screen.getByTestId("new-task-modal-overlay");
-      // Non-blocking: click-through overlay, not a modal.
-      expect(overlay).toHaveClass("new-task-modal-overlay");
+      // FloatingWindow owns the host but New Task retains its click-through desktop contract.
+      expect(overlay).toHaveClass("floating-window-overlay");
+      expect(overlay).not.toHaveClass("floating-window-overlay--modal");
       expect(overlay).toHaveAttribute("aria-modal", "false");
 
       // A behind-click on the overlay must NOT close the dialog (no overlay click-to-dismiss).
@@ -2187,12 +2197,11 @@ describe("NewTaskModal", () => {
       renderNewTaskModal();
 
       expect(screen.getByTestId("new-task-drag-handle")).toHaveClass("new-task-modal__header--draggable");
-      expect(document.querySelector(".new-task-modal")).toHaveClass("task-modal--tablet");
-      expect(document.querySelector(".new-task-modal")).toHaveClass("new-task-modal--floating");
+      expect(document.querySelector(".new-task-modal")).toHaveClass("task-modal--tablet", "floating-window", "new-task-modal");
       for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
-        expect(screen.getByTestId(`new-task-resize-${dir}`)).toHaveAttribute("role", "separator");
-        expect(screen.getByTestId(`new-task-resize-${dir}`)).toHaveAttribute("aria-label", "Resize new task window");
-        expect(screen.getByTestId(`new-task-resize-${dir}`)).toHaveAttribute("tabindex", "0");
+        expect(screen.getByTestId(`floating-window-resize-${dir}`)).toHaveAttribute("role", "separator");
+        expect(screen.getByTestId(`floating-window-resize-${dir}`)).toHaveAttribute("aria-label", "Resize floating window");
+        expect(screen.getByTestId(`floating-window-resize-${dir}`)).toHaveAttribute("data-resize-hit-target", "true");
       }
     });
 
@@ -2202,38 +2211,21 @@ describe("NewTaskModal", () => {
       expect(screen.getByTestId("new-task-drag-handle")).toHaveClass("new-task-modal__header--draggable");
       // All eight corner/edge resize handles are present.
       for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
-        expect(screen.getByTestId(`new-task-resize-${dir}`)).toBeInTheDocument();
+        expect(screen.getByTestId(`floating-window-resize-${dir}`)).toBeInTheDocument();
       }
       // The floating panel is the fixed-positioned window.
-      const panel = document.querySelector(".new-task-modal--floating");
+      const panel = document.querySelector(".floating-window.new-task-modal");
       expect(panel).not.toBeNull();
     });
 
-    it("resizes from a focused tablet handle with keyboard controls and exposes updated geometry", () => {
+    it("uses shared pointer-only resize controls for tablet geometry", () => {
       mockViewportMode = "tablet";
       renderNewTaskModal();
 
-      const panel = document.querySelector(".new-task-modal--floating") as HTMLElement;
-      const handle = screen.getByTestId("new-task-resize-se");
-      const initialWidth = Number.parseFloat(panel.style.width);
-      const initialHeight = Number.parseFloat(panel.style.height);
-      handle.focus();
-
-      expect(handle).toHaveFocus();
-      expect(handle).toHaveAttribute("aria-valuenow", String(initialWidth));
-      expect(handle).toHaveAttribute("aria-valuetext", `Resize new task window: ${initialWidth} by ${initialHeight}`);
-
-      fireEvent.keyDown(handle, { key: "ArrowRight" });
-      fireEvent.keyDown(handle, { key: "ArrowDown" });
-
-      expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(initialWidth);
-      expect(Number.parseFloat(panel.style.height)).toBeGreaterThan(initialHeight);
-      expect(handle).toHaveAttribute("aria-valuenow", panel.style.width.replace("px", ""));
-      expect(handle).toHaveAttribute("aria-valuetext", `Resize new task window: ${panel.style.width.replace("px", "")} by ${panel.style.height.replace("px", "")}`);
-      expect(JSON.parse(window.localStorage.getItem("fusion:new-task-modal-size") ?? "{}")).toMatchObject({
-        width: Number.parseFloat(panel.style.width),
-        height: Number.parseFloat(panel.style.height),
-      });
+      const handle = screen.getByTestId("floating-window-resize-se");
+      expect(handle).toHaveAttribute("role", "separator");
+      expect(handle).not.toHaveAttribute("tabindex");
+      expect(handle).not.toHaveAttribute("aria-valuenow");
     });
 
     it("resizes from a tablet touch handle without dismissing or leaking selection state", () => {
@@ -2246,13 +2238,15 @@ describe("NewTaskModal", () => {
       vi.stubGlobal("cancelAnimationFrame", vi.fn());
       renderNewTaskModal({ onClose });
 
-      const panel = document.querySelector(".new-task-modal--floating") as HTMLElement;
-      const handle = screen.getByTestId("new-task-resize-se");
+      const panel = document.querySelector(".floating-window.new-task-modal") as HTMLElement;
+      const handle = screen.getByTestId("floating-window-resize-se");
       const initialWidth = Number.parseFloat(panel.style.width);
       const initialHeight = Number.parseFloat(panel.style.height);
 
       fireEvent.pointerDown(handle, { pointerId: 4, clientX: 100, clientY: 100, pointerType: "touch" });
       fireEvent.pointerMove(handle, { pointerId: 4, clientX: 140, clientY: 130, pointerType: "touch" });
+      fireEvent.pointerUp(handle, { pointerId: 9, clientX: 140, clientY: 130, pointerType: "touch" });
+      expect(document.body.style.userSelect).toBe("none");
       fireEvent.pointerUp(handle, { pointerId: 4, clientX: 140, clientY: 130, pointerType: "touch" });
 
       expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(initialWidth);
@@ -2261,13 +2255,9 @@ describe("NewTaskModal", () => {
       expect(onClose).not.toHaveBeenCalled();
     });
 
-    it("keeps the floating window touch-draggable with theme-controlled shadow", () => {
-      const panelRule = newTaskModalCss.match(/\.new-task-modal--floating\s*\{([^}]*)\}/)?.[1] ?? "";
-      const headerRule = newTaskModalCss.match(/\.new-task-modal__header--draggable\s*\{([^}]*)\}/)?.[1] ?? "";
-
-      expect(panelRule).toContain("box-shadow: var(--floating-window-shadow, var(--shadow-lg));");
-      expect(headerRule).toContain("touch-action: none;");
-      expect(headerRule).toContain("min-height: 48px;");
+    it("delegates touch drag styling to the shared FloatingWindow primitive", () => {
+      expect(newTaskModalCss).toContain("FloatingWindow owns its shared drag");
+      expect(newTaskModalCss).not.toContain("new-task-resize-handle");
       expect(newTaskModalCss).not.toContain("var(--shadow-xl)");
     });
 

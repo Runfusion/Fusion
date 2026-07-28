@@ -13,6 +13,7 @@ import "./ExperimentalAgentOnboardingModal.css";
 
 type ViewState = "initial" | "loading" | "question" | "summary" | "error";
 
+import { FloatingWindow } from "./FloatingWindow";
 interface ExperimentalAgentOnboardingModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -184,8 +185,9 @@ export function ExperimentalAgentOnboardingModal({
   };
 
   return (
-    <div className="modal-overlay open" role="presentation">
-      <div className="modal modal-lg experimental-agent-onboarding-modal" role="dialog" aria-modal="true" aria-label={t("agents.onboarding.dialogLabel", "AI Interview")}>
+        <FloatingWindow windowKey="experimental-agent-onboarding" modal title={t("agents.onboarding.title", "AI Interview")} ariaLabel={t("agents.onboarding.dialogLabel", "AI Interview")} onClose={() => void handleClose()} hideHeader dragHandleSelector=".experimental-agent-onboarding-modal .modal-header" className="floating-window--experimental-agent-onboarding" defaultSize={{ width: 720, height: 620 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:experimental-agent-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Experimental onboarding remains a blocking flow; no outside-dismiss opt-in accompanies shared geometry. */}
+      <div className="modal modal-lg experimental-agent-onboarding-modal">
         <div className="modal-header">
           <h3>{t("agents.onboarding.title", "AI Interview")}</h3>
           <button className="modal-close" onClick={() => void handleClose()} aria-label={t("common.closeAriaLabel", "Close")}>×</button>
@@ -283,6 +285,6 @@ export function ExperimentalAgentOnboardingModal({
           </div>
         )}
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

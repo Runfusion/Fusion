@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-github-tracking-state");
 import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
@@ -261,7 +264,7 @@ export class GitHubTrackingStateService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes(`Task ${taskId} not found`)) {
-        console.warn(`[github-tracking-state] Unable to write log entry for deleted task ${taskId}: ${message}`);
+        severityAuditLog.warn(`[github-tracking-state] Unable to write log entry for deleted task ${taskId}: ${message}`);
         return;
       }
       throw error;

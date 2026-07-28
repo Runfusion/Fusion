@@ -2102,7 +2102,6 @@ Theme-level modal backdrop rules can load after component CSS and reapply dim/bl
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  resize: both;
   pointer-events: auto;
 }
 

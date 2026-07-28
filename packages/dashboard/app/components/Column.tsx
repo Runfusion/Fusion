@@ -337,8 +337,18 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     ).length,
     [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
   );
-  // When search is active, skip pagination so all matching tasks are visible
-  const shouldPaginate = !isArchived && !isSearchActive && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
+  /*
+  FNXC:BoardColumnWindowing 2026-07-26-11:48:
+  Search used to disable pagination entirely (`!isSearchActive`) so every match rendered at once. That
+  escape hatch is unbounded — a broad query over a large project mounts an unlimited number of
+  ~4000-line TaskCards, and a resident set that large is a primary reason mobile browsers reclaim the
+  backgrounded tab (the operator sees a white-splash reload on return). It is also unnecessary: the
+  `tasks` handed to this column are ALREADY search-filtered upstream, so paginating them still shows
+  matches — just an increment at a time behind the same "Load more" button. The remaining bypasses are
+  bounded: the archived column is server-paginated (100 per page) and worktree grouping renders only
+  the WIP/processing lane.
+  */
+  const shouldPaginate = !isArchived && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
 
   useEffect(() => {
     setVisibleTaskCount((current) => {
@@ -349,6 +359,33 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       return Math.min(Math.max(current, VISIBLE_TASKS_INITIAL), tasks.length);
     });
   }, [showWorktreeGroups, isArchived, tasks.length]);
+
+  /*
+  FNXC:BoardColumnWindowing 2026-07-26-14:20:
+  Correction of a false claim: the block above previously stated "the window resets whenever the search
+  term toggles", but the reset effect keyed on `isSearchActive`, a BOOLEAN. Editing a query from one
+  broad term to another keeps that boolean true, so a window expanded to hundreds of cards by repeated
+  "Load more" survived into an entirely new result set — reinstating the unbounded DOM this change
+  removed, via an ordinary search refinement.
+
+  Column is not given the query text (Board/Lane pass only `isSearchActive`), and the query string is
+  not the real invariant anyway: what must stay bounded is the RESULT SET. So the reset keys on a cheap
+  identity signature of the incoming filtered `tasks` while search is active — length plus the first
+  and last id. Refining a query changes at least one of those, collapsing the window back to one
+  screenful; a re-render or poll that yields the same result set produces the same string and does NOT
+  disturb the operator's expanded window (an effect keyed on the array itself would fire every poll).
+  A query edit that yields a byte-identical result set intentionally keeps its window: the DOM size is
+  unchanged, so there is nothing to bound.
+  */
+  const searchResultSignature = useMemo(() => {
+    if (!isSearchActive || tasks.length === 0) return "";
+    return `${tasks.length}:${tasks[0]?.id ?? ""}:${tasks[tasks.length - 1]?.id ?? ""}`;
+  }, [isSearchActive, tasks]);
+
+  // Entering/leaving search, or landing on a different search result set, collapses back to one window.
+  useEffect(() => {
+    setVisibleTaskCount(VISIBLE_TASKS_INITIAL);
+  }, [isSearchActive, searchResultSignature]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     // Don't allow dropping into archived column via drag-drop

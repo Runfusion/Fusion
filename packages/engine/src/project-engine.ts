@@ -78,11 +78,6 @@ import { ResearchRunDispatcher } from "./research-dispatcher.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import {
-  computeVerificationFailureSignature,
-  createAutomatedFollowup,
-  extractFailingTestFiles,
-} from "./verification-followup-dedup.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
@@ -249,21 +244,6 @@ async function verifyMergeConfirmedReachability(args: {
     }
     return { reachable: false, reason: "git-error", diagnostic };
   }
-}
-
-function buildVerificationFailureSignature(error: VerificationError): string {
-  const commandResult = error.verificationResult.testResult ?? error.verificationResult.buildResult;
-  const lane = commandResult?.command?.trim()
-    || error.verificationResult.failedCommand?.trim()
-    || "verification-failure";
-  const failingTestFiles = commandResult
-    ? extractFailingTestFiles(commandResult.stdout, commandResult.stderr)
-    : [];
-  return computeVerificationFailureSignature({
-    lane,
-    failingTestFiles,
-    failedCommand: commandResult?.command ?? error.verificationResult.failedCommand ?? null,
-  }).signature;
 }
 
 export interface AutomationSubsystemHealth {
@@ -3194,32 +3174,6 @@ export class ProjectEngine {
     }, intervalMs);
   }
 
-  private async findActiveRecoveryFollowUp(
-    store: TaskStore,
-    parentTaskId: string,
-    branch?: string,
-  ): Promise<{ task: Task; reason: "parent" | "branch" } | null> {
-    const tasks = await store.listTasks({ slim: true }).catch(() => [] as Task[]);
-    const activeRecoveryTasks = tasks.filter(
-      (task) =>
-        task.column !== "done" &&
-        task.column !== "archived" &&
-        task.sourceType === "recovery",
-    );
-
-    const sameParent = activeRecoveryTasks.find(
-      (task) => task.sourceParentTaskId === parentTaskId,
-    );
-    if (sameParent) return { task: sameParent, reason: "parent" };
-
-    if (branch) {
-      const sameBranch = activeRecoveryTasks.find((task) => task.branch === branch);
-      if (sameBranch) return { task: sameBranch, reason: "branch" };
-    }
-
-    return null;
-  }
-
   private async drainMergeQueue(): Promise<void> {
     if (this.mergeRunning) return;
     this.mergeRunning = true;
@@ -4302,12 +4256,15 @@ export class ProjectEngine {
             const cap = ProjectEngine.MAX_VERIFICATION_FAILURE_BOUNCES;
 
             if (nextBounces >= cap) {
-              // Cap reached — stop bouncing the task and create a follow-up.
-              // The original task stays in in-review with status=failed so a
-              // human can inspect; the follow-up captures the failure context
-              // so a fresh agent can investigate (often a flaky test or an
-              // unrelated regression that won't be fixed by re-running this
-              // task's branch).
+              /*
+              FNXC:AutoMergeLifecycle 2026-07-26-00:00:
+              Cap reached — stop bouncing the task. The task stays in in-review with status=failed
+              and a descriptive `error` so a human can inspect. This used to also file an automated
+              recovery follow-up card; that machinery was deleted because the card only restated
+              context already on this task (the [verification] log entries carry the failing command
+              and output). The park + error + log entry ARE the surface now, so the error text must
+              stand on its own and must not point at a follow-up that will never exist.
+              */
               try {
                 const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
                 if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
@@ -4347,65 +4304,26 @@ export class ProjectEngine {
                 await store.updateTask(taskId, {
                   status: "failed",
                   verificationFailureCount: nextBounces,
-                  error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. See follow-up task for investigation.`,
+                  error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. Likely a flaky test or an unrelated regression rather than a fix this task can produce on its own; see the most recent [verification] log entries on this task for the failing command and output.`,
                 });
-                const followUpDescription =
-                  `Investigate repeated ${failedKind} verification failure on ${taskId} (${taskOnErr.title || "untitled"}). ` +
-                  `Auto-merge attempted to fix and re-verify ${nextBounces} times without success — likely a flaky test or unrelated regression rather than a fix this task can produce on its own. ` +
-                  `Look at the most recent [verification] log entries on ${taskId} for the failing command and output, then either fix the underlying issue or quarantine the flake.`;
-                const verificationAuditor = createRunAuditor(store, {
-                  runId: generateSyntheticRunId("auto-merge", taskId),
-                  agentId: "auto-merge",
+                await store.addTaskComment(
                   taskId,
-                  phase: "merge",
-                });
-                const followUpResult = await createAutomatedFollowup(store, {
-                  kind: "verification-failure",
-                  parentTaskId: taskId,
-                  signature: err instanceof VerificationError ? buildVerificationFailureSignature(err) : undefined,
-                  createInput: {
-                    description: followUpDescription,
-                    column: "triage",
-                    priority: "high",
-                    source: {
-                      sourceType: "recovery",
-                      sourceParentTaskId: taskId,
-                    },
-                  },
-                  auditor: verificationAuditor,
-                });
-                if (followUpResult.outcome === "deduped") {
-                  await store.addTaskComment(
-                    taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Reusing existing follow-up ${followUpResult.existingTaskId}.`,
-                    "agent",
-                  );
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — skipped creating duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                    "VerificationError",
-                  );
-                  runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                  );
-                } else {
-                  await store.addTaskComment(
-                    taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUpResult.task.id} to investigate.`,
-                    "agent",
-                  );
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUpResult.task.id}`,
-                    "VerificationError",
-                  );
-                  runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUpResult.task.id}`,
-                  );
-                }
-              } catch (followUpErr) {
+                  `Auto-merge giving up after ${nextBounces} verification-failure bounces. ` +
+                    `Review the most recent [verification] log entries on this task for the failing command and output, ` +
+                    `then either fix the underlying issue or quarantine the flake.`,
+                  "agent",
+                );
+                await store.logEntry(
+                  taskId,
+                  `Auto-merge gave up after ${nextBounces} verification-failure bounces — task parked for human intervention`,
+                  "VerificationError",
+                );
+                runtimeLog.warn(
+                  `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and parked for human intervention`,
+                );
+              } catch (parkErr) {
                 runtimeLog.error(
-                  `Auto-merge: failed to fail-and-followup ${taskId} after verification cap: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
+                  `Auto-merge: failed to park ${taskId} after verification cap: ${parkErr instanceof Error ? parkErr.message : String(parkErr)}`,
                 );
               }
               continue;
@@ -4518,8 +4436,17 @@ export class ProjectEngine {
                 // New behavior: bounce the task back to in-progress so the
                 // executor can rebase against the latest main and retry. Cap
                 // bounces at MAX_MERGE_CONFLICT_BOUNCES — past that, park in
-                // in-review with status=failed and create a follow-up task so
-                // a human can resolve the conflict manually.
+                // in-review with status=failed so a human can resolve the
+                // conflict manually.
+                //
+                /*
+                FNXC:AutoMergeLifecycle 2026-07-26-00:00:
+                The park used to also file an automated recovery follow-up card (only when we capped
+                on bounces, not when autoResolveConflicts was merely off). That machinery was deleted
+                because the card restated facts already on this task: the `error`, the operator
+                comment naming the branch to resolve, and the MergeConflictGiveUp log entry all carry
+                the branch, the reason, and the last merge error. The park itself is the surface now.
+                */
                 const previousBounces = taskOnErr.mergeConflictBounceCount ?? 0;
                 const nextBounces = previousBounces + 1;
                 const bounceCap = ProjectEngine.MAX_MERGE_CONFLICT_BOUNCES;
@@ -4548,66 +4475,6 @@ export class ProjectEngine {
                       `Auto-merge gave up after conflict retries exhausted (${reason}); task parked for human intervention`,
                       "MergeConflictGiveUp",
                     );
-                    if (!autoResolveDisabled) {
-                      // Create a follow-up only when we capped on bounces; if
-                      // auto-resolve is just disabled, the user is presumed to
-                      // be handling merges manually and a follow-up is noise.
-                      try {
-                        const followUpResult = await createAutomatedFollowup(store, {
-                          kind: "merge-conflict",
-                          parentTaskId: taskId,
-                          branch: taskOnErr.branch,
-                          signature: computeVerificationFailureSignature({
-                            lane: "merge-conflict",
-                            failingTestFiles: [],
-                          }).signature,
-                          createInput: {
-                            description:
-                              `Resolve auto-merge conflict on ${taskId} (${taskOnErr.title || "untitled"}). ` +
-                              `Auto-merge attempted to rebase + resolve ${nextBounces - 1} times against main and exhausted retries each pass. ` +
-                              `Branch: \`${taskOnErr.branch ?? "?"}\`. Worktree: \`${taskOnErr.worktree ?? "?"}\`. ` +
-                              `Last merge error: ${errorMsg}`,
-                            column: "triage",
-                            priority: "high",
-                            source: {
-                              sourceType: "recovery",
-                              sourceParentTaskId: taskId,
-                            },
-                          },
-                          auditor: createRunAuditor(store, {
-                            runId: generateSyntheticRunId("auto-merge", taskId),
-                            agentId: "auto-merge",
-                            taskId,
-                            phase: "merge",
-                          }),
-                        });
-                        if (followUpResult.outcome === "deduped") {
-                          await store.addTaskComment(
-                            taskId,
-                            `Auto-merge recovery follow-up already exists (${followUpResult.existingTaskId}). Skipping duplicate follow-up creation.`,
-                            "agent",
-                          );
-                          await store.logEntry(
-                            taskId,
-                            `Auto-merge conflict recovery skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                            "MergeConflictGiveUp",
-                          );
-                          runtimeLog.warn(
-                            `Auto-merge: ${taskId} conflict give-up skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                          );
-                        } else {
-                          await store.addTaskComment(
-                            taskId,
-                            `Created follow-up ${followUpResult.task.id} to track manual conflict resolution.`,
-                            "agent",
-                          );
-                        }
-                      } catch (followUpErr) {
-                        runtimeLog.warn(
-                          `Auto-merge: failed to create follow-up for ${taskId}: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
-                        );
-                      }
-                    }
                   } catch (recoveryErr) {
                     runtimeLog.error(
                       `Auto-merge: failed to park ${taskId} after conflict-bounce cap: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
@@ -4920,39 +4787,56 @@ export class ProjectEngine {
         if (!parentTaskId) continue;
         try {
           const sourcePhase = record.sourcePhase ?? "unknown";
-          const followUpResult = await createAutomatedFollowup(store, {
-            kind: "autostash-orphan",
-            parentTaskId,
-            signature: computeVerificationFailureSignature({
-              lane: "autostash-orphan",
-              failingTestFiles: [],
-            }).signature,
-            createInput: {
-              description:
-                `Investigate preserved merger autostash leftover from ${parentTaskId} (${record.sha.slice(0, 7)}). ` +
-                `Detected by ${record.detectedByTaskId ?? "merge sweep"} during ${sourcePhase}; ` +
-                `stash label: ${record.label}. Recover from stash-recovery before dropping.`,
-              source: {
-                sourceType: "recovery",
-                sourceParentTaskId: parentTaskId,
-              },
-            },
-            auditor: createRunAuditor(store, {
-              runId: generateSyntheticRunId("auto-merge", parentTaskId),
-              agentId: "auto-merge",
-              taskId: parentTaskId,
-              phase: "merge",
-            }),
-          });
+          const shortSha = record.sha.slice(0, 7);
+          const detectedBy = record.detectedByTaskId ?? "merge sweep";
+
+          /*
+          FNXC:AutostashRecovery 2026-07-26-00:00:
+          A `live`-classified autostash orphan is a merger stash that still holds REAL UNCOMMITTED
+          WORK stranded by a merge pass. This used to file an automated recovery follow-up card via
+          the shared follow-up engine; that engine was deleted, but unlike the verification-cap and
+          merge-conflict paths this site has NO parked parent to carry the notice — the parent task
+          may already be `done` and merged, so if we say nothing here the stash becomes invisible and
+          the work is silently lost. So the card is replaced by a durable log entry AND an operator
+          comment on the parent, both of which must keep every fact the old description carried:
+          the sha, the detecting task, the source phase, and above all `record.label` — that stash
+          label is the handle `git stash` recovery needs, so it must never be dropped from the
+          message or truncated. A comment (not only a log entry) because the parent may be closed and
+          the log is not what an operator reads on a done card.
+          */
           await store.logEntry(
             parentTaskId,
-            followUpResult.outcome === "deduped"
-              ? `Auto-detected live autostash orphan ${record.sha.slice(0, 7)} — reused follow-up ${followUpResult.existingTaskId}`
-              : `Auto-created recovery follow-up ${followUpResult.task.id} for live autostash orphan ${record.sha.slice(0, 7)}`,
+            `Auto-detected live autostash orphan ${shortSha} holding uncommitted work — preserved for manual recovery (stash label: ${record.label})`,
             `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`,
           ).catch(() => undefined);
+
+          await store.addTaskComment(
+            parentTaskId,
+            `Preserved merger autostash leftover from this task (${shortSha}) still holds uncommitted work. ` +
+              `Detected by ${detectedBy} during ${sourcePhase}. ` +
+              `Stash label: \`${record.label}\` — recover it via stash-recovery before dropping the stash.`,
+            "agent",
+          ).catch(() => undefined);
+
+          const auditor = createRunAuditor(store, {
+            runId: generateSyntheticRunId("auto-merge", parentTaskId),
+            agentId: "auto-merge",
+            taskId: parentTaskId,
+            phase: "merge",
+          });
+          await auditor.database({
+            type: "task:autostash-orphan-live-detected",
+            target: parentTaskId,
+            metadata: {
+              taskId: parentTaskId,
+              sha: record.sha,
+              stashLabel: record.label,
+              detectedByTaskId: record.detectedByTaskId ?? null,
+              sourcePhase,
+            },
+          }).catch(() => undefined);
         } catch (err: unknown) {
-          runtimeLog.warn(`Autostash orphan recovery follow-up failed for ${parentTaskId}: ${err instanceof Error ? err.message : String(err)}`);
+          runtimeLog.warn(`Autostash orphan recovery notice failed for ${parentTaskId}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     };

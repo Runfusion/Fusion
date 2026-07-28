@@ -84,6 +84,32 @@ First-run list view users should see only the Title column by default for a clea
 const DEFAULT_LIST_COLUMNS = ["title"] as const;
 type ListColumn = typeof ALL_LIST_COLUMNS[number];
 
+/*
+FNXC:ListViewWindowing 2026-07-26-11:20:
+Mobile browsers (iOS Safari tabs, iOS installed PWAs, Chrome Android) reclaim a backgrounded tab whose
+resident set is large, which the operator sees as a white-splash "reload" on return. ListView used to
+render EVERY grouped task row/card at once, so a project with thousands of tasks produced a DOM large
+enough to be a primary contributor to that reclaim. No virtualization library exists in this repo and
+none may be added, so List reuses the board's manual paging affordance (Column.tsx
+VISIBLE_TASKS_INITIAL / VISIBLE_TASKS_INCREMENT) with the same "Load more" button styling and copy.
+
+Invariants this window must not break:
+- Filtering (search/column/stale/hide-done/workflow) runs over the FULL task set in `groupedTasks`;
+  the window is applied AFTER, per section, so a match beyond the window is still reachable via
+  "Load more" instead of being filtered out of existence.
+- Grouping is preserved: the window is per column section, never across the flattened list, so every
+  section keeps its own header, count (which reports the FULL group size), and collapse state.
+- Selection is id-based (`kb-dashboard-selected-tasks` / `kb-dashboard-list-selected-task` in
+  projectStorage), so a selected task outside the window stays selected. The window is additionally
+  widened to cover the persisted single selection so the highlighted row remains visible after a
+  remount rather than silently vanishing from the rendered list.
+- Bulk select-all is scoped to the RENDERED window, not the filtered set. See the
+  FNXC:ListViewSelectAll block on `selectAllTaskIds`; this invariant was missing from the original
+  windowing change and the "Select all visible tasks" label was false until it was added.
+*/
+const LIST_SECTION_VISIBLE_INITIAL = 50;
+const LIST_SECTION_VISIBLE_INCREMENT = 25;
+
 function getNodeStatusLabel(status: NodeInfo["status"], t: TFunction<"app">): string {
   if (status === "online") return t("listView.nodeStatusOnline", "Online");
   if (status === "connecting") return t("listView.nodeStatusConnecting", "Connecting");
@@ -932,46 +958,129 @@ export function ListView({
     return Object.values(groupedTasks).reduce((sum, group) => sum + group.length, 0);
   }, [groupedTasks]);
 
-  // Selection logic that depends on groupedTasks (must be after groupedTasks definition)
-  // Toggle all visible tasks
-  const toggleSelectAll = useCallback(() => {
-    const visibleTaskIds = Object.values(groupedTasks)
-      .flat()
-      .filter((t) => !isArchivedColumn(t.column)) // Can't bulk edit archived
-      .map((t) => t.id);
+  /*
+  FNXC:ListViewWindowing 2026-07-26-11:24:
+  Per-section reveal counters, keyed by column id. Absent entries mean "still at the initial window".
+  Every change to what the FULL set contains or how it is ordered (search text, column filter,
+  hide-done, stale filters, sort, workflow selection, project) resets the counters so a fresh result
+  set starts from one screen of rows again — otherwise a previously-expanded section would keep an
+  arbitrarily large DOM alive across filter changes, which is exactly the resident-set growth that
+  gets the backgrounded tab reclaimed.
+  */
+  const [sectionVisibleCounts, setSectionVisibleCounts] = useState<Record<string, number>>({});
 
-    setSelectedTaskIds((prev) => {
-      const allSelected = visibleTaskIds.every((id) => prev.has(id));
-      if (allSelected) {
-        // Deselect all visible
-        const next = new Set(prev);
-        visibleTaskIds.forEach((id) => next.delete(id));
-        return next;
-      } else {
-        // Select all visible
-        return new Set([...prev, ...visibleTaskIds]);
+  useEffect(() => {
+    setSectionVisibleCounts({});
+  }, [
+    projectId,
+    searchQuery,
+    selectedColumn,
+    hideDoneTasks,
+    staleOnlyFilter,
+    stalePausedReviewOnlyFilter,
+    sortField,
+    sortDirection,
+    selectedWorkflowId,
+  ]);
+
+  /**
+   * FNXC:ListViewWindowing 2026-07-26-11:28:
+   * Slice each already-filtered, already-sorted section down to its visible window. `hiddenCount`
+   * drives the shared "Load more" affordance; a section at or under its window renders unchanged with
+   * no button shell. The window is stretched to include the persisted single-selection index so the
+   * selected row is never hidden by paging.
+   */
+  const listSectionWindows = useMemo(() => {
+    const windows: Record<string, { tasks: Task[]; hiddenCount: number }> = {};
+    for (const [columnId, group] of Object.entries(groupedTasks)) {
+      const stored = sectionVisibleCounts[columnId] ?? LIST_SECTION_VISIBLE_INITIAL;
+      const selectedIndex = selectedTaskId ? group.findIndex((task) => task.id === selectedTaskId) : -1;
+      const effective = Math.max(stored, selectedIndex >= 0 ? selectedIndex + 1 : 0);
+      if (group.length <= effective) {
+        windows[columnId] = { tasks: group, hiddenCount: 0 };
+        continue;
       }
+      windows[columnId] = { tasks: group.slice(0, effective), hiddenCount: group.length - effective };
+    }
+    return windows;
+  }, [groupedTasks, sectionVisibleCounts, selectedTaskId]);
+
+  const handleLoadMoreSection = useCallback((columnId: ColumnId, currentVisibleCount: number) => {
+    setSectionVisibleCounts((previous) => ({
+      ...previous,
+      [columnId]: currentVisibleCount + LIST_SECTION_VISIBLE_INCREMENT,
+    }));
+  }, []);
+
+  /*
+  FNXC:ListViewSelectAll 2026-07-26-14:05:
+  The header checkbox is labelled "Select all visible tasks" and the bulk bar behind it performs
+  DESTRUCTIVE actions (bulk delete, bulk column move). Before render windowing it flattened
+  `groupedTasks` and that was honest, because every filtered row was in the DOM. Windowing broke the
+  label: on a 3000-task project the operator sees 50 rows and the old handler armed 3000 for deletion.
+  Correction of a false claim: the earlier windowing FNXC block enumerated filtering, grouping and
+  single-selection invariants and asserted nothing about bulk selection — it did NOT hold. A bulk
+  action must never reach a row the operator cannot see, so select-all is scoped to what is actually
+  rendered.
+
+  "Rendered" here mirrors the two render loops (single-pane cards and the table) exactly: the
+  selected-column filter, the hide-done/archived section skip, the collapsed-section skip (a collapsed
+  section renders no rows), and the per-section window slice. Archived rows are then dropped because
+  bulk edit cannot act on them. Keep this in sync with both loops — if a loop grows another skip, it
+  belongs here too, or the label lies again.
+  */
+  const selectAllTaskIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const columnDef of listColumns) {
+      const column = columnDef.id;
+      if (selectedColumn && column !== selectedColumn) continue;
+      if (hideDoneTasks && (columnDef.flags.complete || columnDef.flags.archived) && !selectedColumn) continue;
+      if (collapsedSections.has(column)) continue;
+      const group = groupedTasks[column];
+      if (!group || group.length === 0) continue;
+      const windowed = listSectionWindows[column]?.tasks ?? group;
+      for (const task of windowed) {
+        if (isArchivedColumn(task.column)) continue; // Can't bulk edit archived
+        ids.push(task.id);
+      }
+    }
+    return ids;
+  }, [
+    listColumns,
+    selectedColumn,
+    hideDoneTasks,
+    collapsedSections,
+    groupedTasks,
+    listSectionWindows,
+    isArchivedColumn,
+  ]);
+
+  // Toggle every rendered (windowed) task
+  const toggleSelectAll = useCallback(() => {
+    setSelectedTaskIds((prev) => {
+      const allSelected = selectAllTaskIds.every((id) => prev.has(id));
+      if (allSelected) {
+        // Deselect the rendered rows, leaving any selection made outside the current window intact.
+        const next = new Set(prev);
+        selectAllTaskIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...selectAllTaskIds]);
     });
-  }, [groupedTasks, isArchivedColumn]);
+  }, [selectAllTaskIds]);
 
-  // Check if all visible tasks are selected
+  // Check if all rendered tasks are selected
   const isSelectAll = useMemo(() => {
-    const visibleTaskIds = Object.values(groupedTasks)
-      .flat()
-      .filter((t) => !isArchivedColumn(t.column));
-    if (visibleTaskIds.length === 0) return false;
-    return visibleTaskIds.every((t) => selectedTaskIds.has(t.id));
-  }, [groupedTasks, isArchivedColumn, selectedTaskIds]);
+    if (selectAllTaskIds.length === 0) return false;
+    return selectAllTaskIds.every((id) => selectedTaskIds.has(id));
+  }, [selectAllTaskIds, selectedTaskIds]);
 
-  // Check if some (but not all) visible tasks are selected
+  // Check if some (but not all) rendered tasks are selected
   const isSelectIndeterminate = useMemo(() => {
-    const visibleTaskIds = Object.values(groupedTasks)
-      .flat()
-      .filter((t) => !isArchivedColumn(t.column));
-    if (visibleTaskIds.length === 0) return false;
-    const selectedCount = visibleTaskIds.filter((t) => selectedTaskIds.has(t.id)).length;
-    return selectedCount > 0 && selectedCount < visibleTaskIds.length;
-  }, [groupedTasks, isArchivedColumn, selectedTaskIds]);
+    if (selectAllTaskIds.length === 0) return false;
+    const selectedCount = selectAllTaskIds.filter((id) => selectedTaskIds.has(id)).length;
+    return selectedCount > 0 && selectedCount < selectAllTaskIds.length;
+  }, [selectAllTaskIds, selectedTaskIds]);
 
   // Bulk edit state and handlers (must be after groupedTasks and clearSelection definition)
   const [availableNodes, setAvailableNodes] = useState<NodeInfo[]>([]);
@@ -2641,6 +2750,11 @@ export function ListView({
               const isEmpty = columnTasks.length === 0;
               if (searchQuery && isEmpty) return null;
 
+              // FNXC:ListViewWindowing 2026-07-26-11:32: header count stays the FULL group size; only the rendered slice is windowed.
+              const sectionWindow = listSectionWindows[column] ?? { tasks: columnTasks, hiddenCount: 0 };
+              const windowedTasks = sectionWindow.tasks;
+              const hiddenTaskCount = sectionWindow.hiddenCount;
+
               const isCollapsed = collapsedSections.has(column);
 
               return (
@@ -2672,7 +2786,7 @@ export function ListView({
                       {isEmpty ? (
                         <div className="list-empty-cell list-card-empty">{t("listView.noTasks", "No tasks")}</div>
                       ) : (
-                        columnTasks.map((task) => {
+                        windowedTasks.map((task) => {
                           const isDoneColumn = isCompleteColumn(task.column);
                           const visualStatus = isDoneColumn ? "done" : task.status;
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
@@ -2689,6 +2803,17 @@ export function ListView({
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const optionalGateBadge = getRunningOptionalGateBadge(task);
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                          /*
+                          FNXC:TaskStatusBadge 2026-07-26-14:05:
+                          Same rule as TaskCard: the gate badge owns the gate's name ("Plan Review"), so the
+                          status badge drops U12's workflow-step-name override while that badge renders and
+                          states the row's own status instead — never the same words twice on one row.
+                          */
+                          const statusBadgeLabel = isReviewBudgetExhausted
+                            ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                            : isTransientPlannerActive
+                              ? t("tasks.statusPlanning", "Planning")
+                              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
                           const hasProgress = taskProgress.hasProgress;
@@ -2749,11 +2874,7 @@ export function ListView({
                                     aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                   >
-                                    {isReviewBudgetExhausted
-                                      ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                      : isTransientPlannerActive
-                                        ? t("tasks.statusPlanning", "Planning")
-                                        : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
+                                    {statusBadgeLabel}
                                   </span>
                                 ) : null}
                                 {showOptionalGateBadge && optionalGateBadge && (
@@ -2775,7 +2896,7 @@ export function ListView({
                                     }
                                   >
                                     {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
-                                      ? t("listView.reviewing", "Reviewing")
+                                      ? t("listView.planReviewBadge", "Plan Review")
                                       : optionalGateBadge.label}
                                   </span>
                                 )}
@@ -2811,6 +2932,20 @@ export function ListView({
                             </div>
                           );
                         })
+                      )}
+                      {hiddenTaskCount > 0 && (
+                        <div className="list-section-load-more">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleLoadMoreSection(column, windowedTasks.length)}
+                          >
+                            {t("column.loadMore", "Load {{count}} more ({{remaining}} remaining)", {
+                              count: Math.min(LIST_SECTION_VISIBLE_INCREMENT, hiddenTaskCount),
+                              remaining: hiddenTaskCount,
+                            })}
+                          </button>
+                        </div>
                       )}
                     </>
                   )}
@@ -2878,6 +3013,11 @@ export function ListView({
                 // When text filtering, hide empty sections entirely
                 if (searchQuery && isEmpty) return null;
 
+                // FNXC:ListViewWindowing 2026-07-26-11:34: header count stays the FULL group size; only the rendered slice is windowed.
+                const sectionWindow = listSectionWindows[column] ?? { tasks: columnTasks, hiddenCount: 0 };
+                const windowedTasks = sectionWindow.tasks;
+                const hiddenTaskCount = sectionWindow.hiddenCount;
+
                 const isCollapsed = collapsedSections.has(column);
 
                 return (
@@ -2909,7 +3049,7 @@ export function ListView({
                             </td>
                           </tr>
                         ) : (
-                          columnTasks.map((task) => {
+                          windowedTasks.map((task) => {
                             const isDoneColumn = isCompleteColumn(task.column);
                             const visualStatus = isDoneColumn ? "done" : task.status;
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
@@ -2925,6 +3065,13 @@ export function ListView({
                               || isTransientPlannerActive;
                             const optionalGateBadge = getRunningOptionalGateBadge(task);
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                            // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
+                            // gate badge — see the grouped-card render path above.
+                            const statusBadgeLabel = isReviewBudgetExhausted
+                              ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                              : isTransientPlannerActive
+                                ? t("tasks.statusPlanning", "Planning")
+                                : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                             const isDragging = draggingTaskId === task.id;
 
                             return (
@@ -2997,11 +3144,7 @@ export function ListView({
                                         aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                         data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >
-                                        {isReviewBudgetExhausted
-                                          ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                          : isTransientPlannerActive
-                                            ? t("tasks.statusPlanning", "Planning")
-                                            : getTaskStatusLabel(visualStatus ?? "", t, getRunningWorkflowStepLabel(task))}
+                                        {statusBadgeLabel}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>
@@ -3025,7 +3168,7 @@ export function ListView({
                                         }
                                       >
                                         {optionalGateBadge.workflowStepId === "plan-review" || optionalGateBadge.workflowStepId === "plan-replan"
-                                          ? t("listView.reviewing", "Reviewing")
+                                          ? t("listView.planReviewBadge", "Plan Review")
                                           : optionalGateBadge.label}
                                       </span>
                                     )}
@@ -3083,6 +3226,22 @@ export function ListView({
                               </tr>
                             );
                           })
+                        )}
+                        {hiddenTaskCount > 0 && (
+                          <tr className="list-section-load-more-row">
+                            <td colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} className="list-section-load-more">
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleLoadMoreSection(column, windowedTasks.length)}
+                              >
+                                {t("column.loadMore", "Load {{count}} more ({{remaining}} remaining)", {
+                                  count: Math.min(LIST_SECTION_VISIBLE_INCREMENT, hiddenTaskCount),
+                                  remaining: hiddenTaskCount,
+                                })}
+                              </button>
+                            </td>
+                          </tr>
                         )}
                       </>
                     )}

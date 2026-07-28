@@ -74,11 +74,14 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     {
       id: "planning",
       kind: "prompt",
-      column: "triage",
+      column: "todo",
       config: builtinPromptConfig("planning", "Plan / specify"),
     },
-    planReviewOptionalGroupNode("in-progress"),
-    planReplanNode("triage"),
+    // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — the specification phase runs in the
+    // planning lane (`todo`) before the card takes an implementation slot. See the placement note in
+    // builtin-stepwise-coding-workflow-ir.ts.
+    planReviewOptionalGroupNode("todo"),
+    planReplanNode("todo"),
     {
       id: "execute",
       kind: "prompt",

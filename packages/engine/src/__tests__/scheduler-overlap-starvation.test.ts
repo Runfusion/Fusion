@@ -2,6 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { filterPathsByIgnoreList, Scheduler } from "../scheduler.js";
 import type { Agent, AgentStore, Settings, Task, TaskStore } from "@fusion/core";
 
+/*
+FNXC:PlanReviewStep 2026-07-26-17:10:
+The default workflow is plan-in-place: a `todo` card releases only after Plan Review passed, so these
+scheduler fixtures model a card that already cleared the gate (the state every real card is in when
+the capacity sweep sees it). Holding an unreviewed card is the gate working — that path is owned by
+`pre-release-plan-review.test.ts`.
+*/
+const PASSED_PLAN_REVIEW = {
+  workflowStepId: "plan-review",
+  workflowStepName: "Plan Review",
+  status: "passed" as const,
+  source: "node" as const,
+  phase: "pre-merge" as const,
+};
+
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-001",
@@ -12,6 +27,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     steps: [],
     currentStep: 0,
     log: [],
+    workflowStepResults: [PASSED_PLAN_REVIEW],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,

@@ -23,6 +23,7 @@ import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 
 type ViewState = "initial" | "loading" | "question" | "summary" | "creating" | "error";
 
+import { FloatingWindow } from "./FloatingWindow";
 interface AgentOnboardingModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -191,8 +192,9 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
   };
 
   return (
-    <div className="modal-overlay open" role="presentation">
-      <div className="modal modal-lg agent-onboarding-modal" role="dialog" aria-modal="true" aria-label={t("agents.onboarding.title", "Agent Onboarding")}>
+        <FloatingWindow windowKey="agent-onboarding" modal title={t("agents.onboarding.title", "Agent Onboarding")} ariaLabel={t("agents.onboarding.title", "Agent Onboarding")} onClose={() => void handleClose()} hideHeader dragHandleSelector=".agent-onboarding-modal .modal-header" className="floating-window--agent-onboarding" defaultSize={{ width: 720, height: 620 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:agent-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: First-run onboarding remains blocking: omit outside dismissal while sharing tablet geometry and suspending every sheet viewport. */}
+      <div className="modal modal-lg agent-onboarding-modal">
         <div className="modal-header">
           <h3>{t("agents.onboarding.title", "Agent Onboarding")}</h3>
           <button className="modal-close" onClick={() => void handleClose()} aria-label={t("common.close", "Close")}>×</button>
@@ -277,6 +279,6 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
           </div>
         )}
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

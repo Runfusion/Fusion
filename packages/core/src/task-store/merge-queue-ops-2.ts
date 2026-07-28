@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError, MergeQueueLeaseOwnershipError} from "./errors.js";
+import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError} from "./errors.js";
 import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
@@ -103,62 +103,9 @@ export function enqueueMergeQueueSyncInternalImpl(store: TaskStore, taskId: stri
   }
 
 export async function releaseMergeQueueLeaseImpl(store: TaskStore, taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): Promise<void> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return releaseMergeQueueLeaseAsync(layer, taskId, workerId, outcome);
-    }
-    store.db.transactionImmediate(() => {
-      const current = store.db.prepare("SELECT leasedBy FROM mergeQueue WHERE taskId = ?").get(taskId) as { leasedBy: string | null } | undefined;
-      if (!current || current.leasedBy !== workerId) {
-        throw new MergeQueueLeaseOwnershipError(taskId, workerId, current?.leasedBy ?? null);
-      }
-
-      if (outcome.kind === "success") {
-        store.db.prepare("DELETE FROM mergeQueue WHERE taskId = ? AND leasedBy = ?").run(taskId, workerId);
-        store.insertRunAuditEventRow({
-          taskId,
-          domain: "database",
-          mutationType: "mergeQueue:lease-released",
-          target: taskId,
-          metadata: {
-            taskId,
-            workerId,
-            outcome: "success",
-          },
-        });
-        return;
-      }
-
-      const released = store.db.prepare(`
-        UPDATE mergeQueue
-           SET leasedBy = NULL,
-               leasedAt = NULL,
-               leaseExpiresAt = NULL,
-               attemptCount = attemptCount + 1,
-               lastError = ?
-         WHERE taskId = ? AND leasedBy = ?
-         RETURNING *
-      `).get(outcome.error, taskId, workerId) as MergeQueueRow | undefined;
-      if (!released) {
-        throw new MergeQueueLeaseOwnershipError(taskId, workerId, null);
-      }
-
-      const entry = store.rowToMergeQueueEntry(released);
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeQueue:lease-released",
-        target: taskId,
-        metadata: {
-          taskId,
-          workerId,
-          outcome: "failure",
-          attemptCount: entry.attemptCount,
-          error: outcome.error,
-        },
-      });
-    });
-  }
+        const layer = store.asyncLayer!;
+    return releaseMergeQueueLeaseAsync(layer, taskId, workerId, outcome);
+}
 
 export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _branch: string, task: Task, commitMessage: string, mergeTarget?: { branch: string; source: "task-base-branch" | "task-branch-context" | "branch-group-integration" | "project-default" | "legacy-main"; },): Promise<import("../types.js").MergeDetails> {
     const mergedAt = new Date().toISOString();

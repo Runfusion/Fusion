@@ -4,7 +4,7 @@ import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgen
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
 import { isTaskStuck } from "../utils/taskStuck";
-import { isLikelyTabSuspensionError, isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isLikelyTabSuspensionError, isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds - different from useProjectHealth's 10s
 /*
@@ -141,7 +141,6 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorState, setErrorState] = useState<{ projectId?: string; message: string } | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const hasFetchedStatsRef = useRef(false);
   const consecutiveFailuresRef = useRef(0);
@@ -222,25 +221,13 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
     };
   }, [refresh]);
 
-  // Polling - refresh every 5 seconds
-  useEffect(() => {
-    // Clear any existing interval
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    // Start new polling interval
-    intervalRef.current = setInterval(() => {
-      refresh();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [refresh]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:12:
+  This 5s poll was one of the loudest background loops. Mobile browsers discard a backgrounded page that
+  keeps issuing network requests, so the interval is suspended while the document is hidden and resumed
+  with a single immediate refresh on return. See `useVisibilityAwarePoll`.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS);
 
   const currentProjectApiDataState = apiDataState && apiDataState.projectId === projectId ? apiDataState : null;
   const apiData = currentProjectApiDataState?.data ?? DEFAULT_API_DATA;

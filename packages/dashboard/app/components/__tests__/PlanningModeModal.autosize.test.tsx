@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { PlanningModeModal } from "../PlanningModeModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import {
   mockStartPlanningStreaming,
   mockCreatePlanningDraft,
@@ -105,8 +106,9 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  isFullScreenSheetViewport: () => false,
-  isShortViewport: () => false,
+  isFullScreenSheetViewport: () => window.matchMedia("(max-width: 767.98px)").matches,
+  isShortViewport: () => window.matchMedia("(max-height: 480px)").matches,
+  isTabletTouchViewport: () => false,
   useViewportMode: () => mockUseViewportMode(),
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
@@ -184,7 +186,31 @@ describe("PlanningModeModal autosize", () => {
     expect(screen.getByText("Generating initial plan…")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:PlanningMode 2026-07-26-19:40:
+  Typing into a Planning composer must keep the SAME textarea node mounted and focused. The FN-8606 floating-window
+  migration declared the modal/embedded shell as a component inside render, so every keystroke produced a new element
+  type, remounted the whole subtree, and dropped focus after one character — Planning Mode became untypable. Assert the
+  invariant with real per-character typing (fireEvent.change cannot see it) across both presentation surfaces.
+  */
+  it.each(["modal", "embedded"] as const)("keeps the %s composer mounted and focused across keystrokes", async (presentation) => {
+    mockCreatePlanningDraft.mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<PlanningModeModal isOpen={true} onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} presentation={presentation} />);
+
+    const textarea = screen.getByPlaceholderText(/Build a user authentication/i) as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, "auth flow");
+
+    expect(screen.getByPlaceholderText(/Build a user authentication/i)).toBe(textarea);
+    expect(textarea.value).toBe("auth flow");
+    expect(document.activeElement).toBe(textarea);
+  });
+
   it("grows initial planning textarea and caps at max", async () => {
+    // This assertion owns the blank composer; do not let its draft debounce replace it with a
+    // session view while verifying the textarea's height contract.
+    mockCreatePlanningDraft.mockReturnValue(new Promise(() => {}));
     render(<PlanningModeModal isOpen={true} onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} />);
 
     const textarea = screen.getByPlaceholderText(/Build a user authentication/i) as HTMLTextAreaElement;
@@ -199,20 +225,21 @@ describe("PlanningModeModal autosize", () => {
       },
     });
 
-    await userEvent.type(textarea, "line 1\nline 2");
+    fireEvent.change(textarea, { target: { value: "line 1\nline 2" } });
     await waitFor(() => {
-      expect(Number.parseInt(textarea.style.height, 10)).toBeGreaterThanOrEqual(120);
-      expect(Number.parseInt(textarea.style.height, 10)).toBeLessThanOrEqual(640);
+      const renderedTextarea = screen.getByPlaceholderText(/Build a user authentication/i) as HTMLTextAreaElement;
+      expect(Number.parseInt(renderedTextarea.style.height, 10)).toBeGreaterThanOrEqual(120);
+      expect(Number.parseInt(renderedTextarea.style.height, 10)).toBeLessThanOrEqual(640);
     });
 
-    await userEvent.type(textarea, "\nline 3\nline 4\nline 5");
+    fireEvent.change(screen.getByPlaceholderText(/Build a user authentication/i), { target: { value: "line 1\nline 2\nline 3\nline 4\nline 5" } });
     await waitFor(() => {
-      expect(textarea.style.height).toBe("500px");
+      expect((screen.getByPlaceholderText(/Build a user authentication/i) as HTMLTextAreaElement).style.height).toBe("500px");
     });
 
-    await userEvent.type(textarea, "\nline 6\nline 7");
+    fireEvent.change(screen.getByPlaceholderText(/Build a user authentication/i), { target: { value: "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7" } });
     await waitFor(() => {
-      expect(textarea.style.height).toBe("640px");
+      expect((screen.getByPlaceholderText(/Build a user authentication/i) as HTMLTextAreaElement).style.height).toBe("640px");
     });
   });
 
@@ -315,5 +342,11 @@ describe("PlanningModeModal autosize", () => {
     expect(screen.getByTestId("planning-linked-task-note").textContent).toContain("FN-9001");
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
     expect(screen.queryByTestId("planning-create-retry")).toBeNull();
+  });
+
+  it("uses its production header for touch drag and resize", () => {
+    render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} />);
+    assertRenderedModalTouchGeometry("planning-mode", screen.getByTestId("floating-window-planning-mode").querySelector(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("planning-mode", () => render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} />));
   });
 });

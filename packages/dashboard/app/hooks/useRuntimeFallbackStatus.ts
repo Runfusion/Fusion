@@ -14,8 +14,9 @@
  * This hook only polls while `enabled` is true (callers should pass
  * `isInViewport` so off-screen cards do not generate background traffic).
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTaskRuntimeFallback, type TaskRuntimeFallbackResponse } from "../api/legacy";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -111,6 +112,38 @@ export function useRuntimeFallbackStatus(
   projectId?: string,
 ): RuntimeFallbackStatus {
   const [status, setStatus] = useState<RuntimeFallbackStatus>(IDLE_STATUS);
+  const contextVersionRef = useRef(0);
+
+  const poll = useCallback(async () => {
+    if (!enabled || !taskId) return;
+    const versionAtStart = contextVersionRef.current;
+    let data: TaskRuntimeFallbackResponse;
+    try {
+      data = await fetchTaskRuntimeFallback(taskId, projectId);
+    } catch {
+      // Network hiccups shouldn't flip a shown badge back off; just skip this cycle.
+      return;
+    }
+    if (contextVersionRef.current !== versionAtStart) return;
+
+    if (!data.showFallbackBadge || !data.runtimeHint) {
+      setStatus(IDLE_STATUS);
+      return;
+    }
+
+    // Dedupe against the shared module-level store (not a per-instance ref)
+    // so a fallback event toasts exactly once across every simultaneously
+    // mounted badge instance for this task, not once per instance.
+    const isNewlyObserved = data.eventId !== null && claimToastOnce(taskId, data.eventId);
+
+    setStatus({
+      showBadge: true,
+      runtimeHint: data.runtimeHint,
+      reason: data.reason,
+      message: formatRuntimeFallbackMessage(data.runtimeHint),
+      shouldToastNow: isNewlyObserved,
+    });
+  }, [taskId, enabled, projectId]);
 
   useEffect(() => {
     if (!enabled || !taskId) {
@@ -118,47 +151,31 @@ export function useRuntimeFallbackStatus(
       return;
     }
 
-    let cancelled = false;
-
-    const poll = async () => {
-      let data: TaskRuntimeFallbackResponse;
-      try {
-        data = await fetchTaskRuntimeFallback(taskId, projectId);
-      } catch {
-        // Network hiccups shouldn't flip a shown badge back off; just skip this cycle.
-        return;
-      }
-      if (cancelled) return;
-
-      if (!data.showFallbackBadge || !data.runtimeHint) {
-        setStatus(IDLE_STATUS);
-        return;
-      }
-
-      // Dedupe against the shared module-level store (not a per-instance ref)
-      // so a fallback event toasts exactly once across every simultaneously
-      // mounted badge instance for this task, not once per instance.
-      const isNewlyObserved = data.eventId !== null && taskId !== undefined && claimToastOnce(taskId, data.eventId);
-
-      setStatus({
-        showBadge: true,
-        runtimeHint: data.runtimeHint,
-        reason: data.reason,
-        message: formatRuntimeFallbackMessage(data.runtimeHint),
-        shouldToastNow: isNewlyObserved,
-      });
-    };
-
     void poll();
-    const interval = setInterval(() => {
-      void poll();
-    }, POLL_INTERVAL_MS);
-
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      contextVersionRef.current += 1;
     };
-  }, [taskId, enabled, projectId]);
+  }, [taskId, enabled, poll]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:55:
+  Runtime-fallback badge polling is suspended while the document is hidden, on top of the existing viewport
+  `enabled` gate. Board cards run one of these each, so a backgrounded tab was issuing a burst of fetches
+  every 30s — the exact "page never goes idle" signal that makes iOS/Chrome Android discard the tab and
+  force a white-splash reload. Badges re-poll once on the hidden -> visible edge.
+
+  FNXC:MobileTabRetention 2026-07-26-14:20:
+  `priority: "background"` is stated EXPLICITLY here even though it is the helper default, because this is the
+  call site that makes the visible-edge stampede matter: one instance per in-viewport card means ~25 identical
+  -shaped requests fire off a single visibilitychange, against a 6-connection-per-origin browser cap and while
+  the SSE bus is trying to reopen. A runtime-fallback badge is ancillary decoration — it changes at most once
+  per agent session — so spreading it across the stagger window costs the operator nothing. Do not "promote"
+  this to `priority: "critical"`; that is what reintroduces the herd.
+  */
+  useVisibilityAwarePoll(poll, POLL_INTERVAL_MS, {
+    enabled: enabled && Boolean(taskId),
+    priority: "background",
+  });
 
   return status;
 }

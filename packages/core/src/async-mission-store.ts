@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-async-mission-store");
 /**
  * Event-emitting PostgreSQL MissionStore facade.
  *
@@ -977,7 +980,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       try {
         await this.triageSlice(id);
       } catch (err) {
-        console.error(`[AsyncMissionStore] Auto-triage failed for slice ${id}:`, err);
+        severityAuditLog.error(`[AsyncMissionStore] Auto-triage failed for slice ${id}:`, err);
       }
     }
     this.emit("slice:activated", updated);

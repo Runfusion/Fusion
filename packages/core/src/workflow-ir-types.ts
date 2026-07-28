@@ -375,6 +375,48 @@ export interface WorkflowIrColumn {
    *  omitted entirely when unset — never serialized as `agent: null` — so legacy
    *  and default workflows stay byte-identical (R9). */
   agent?: WorkflowColumnAgent;
+  /** Optional recovery policy (U4). Additive; omitted entirely when unset. */
+  recovery?: WorkflowColumnRecovery;
+}
+
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-28-13:55 (U4):
+The workflow-declared recovery policy for one column — the first key of the U4
+reshape, which moves self-healing from ~53 hardcoded imperative sweeps to rules
+the workflow declares and ONE reconciler applies.
+
+Deliberately tiny. The survey's finding was that a knob per sweep would move 53
+sweeps into 53 config keys and trim nothing, so this grows only when a whole
+FAMILY of sweeps collapses onto a new key.
+
+SAFETY BOUNDARY, ratified and non-negotiable: this type can express WHEN a card
+is considered stuck and WHAT to do about it. It can NEVER express whether to
+respect a user pause, `autoMerge:false`, a dependency, a capacity limit, a
+merge-proof requirement, or an at-most-once guarantee. Those six safeguards are
+enforced by the reconciler OUTSIDE the policy table, because as policy keys a
+workflow author could switch a safety invariant off. `recovery-policy-safety`
+tests fail if any of the six becomes reachable from here.
+*/
+export interface WorkflowColumnRecovery {
+  /**
+   * How long a card may rest in this column before the reconciler treats it as
+   * stuck. Omitted = this column has no staleness rule and is never reconciled
+   * on that basis.
+   */
+  stalenessMs?: number;
+  /** What to do when `stalenessMs` elapses. */
+  onStale?: WorkflowColumnOnStale;
+}
+
+/**
+ * `surface` records an operator-visible signal and mutates NO lifecycle state.
+ * It is the only action in the vertical slice; `rebound` and `archive` land with
+ * the families that need them, so the union stays honest about what is built.
+ */
+export interface WorkflowColumnOnStale {
+  action: "surface";
+  /** Stable signal code written to the task log, e.g. `stale-paused-todo`. */
+  code: string;
 }
 
 /** Release conditions for a `hold` node (KTD-2, R3). */

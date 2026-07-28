@@ -135,17 +135,40 @@ describe("sse-bus", () => {
     unsubB();
   });
 
-  it("fires onReconnect whenever the channel is rebuilt", () => {
-    const url = "/api/events";
-    let reconnects = 0;
-    const unsub = subscribeSse(url, {
-      onReconnect: () => reconnects++,
-    });
-    const es = MockEventSource.instances[0];
-    // An error that tears down the connection triggers a resync signal.
-    es._emit("error");
-    expect(reconnects).toBe(1);
-    unsub();
+  /*
+  FNXC:DashboardSSE 2026-07-26-11:20:
+  onReconnect now fires when the REBUILT stream actually opens, not at the moment the old one errored.
+  A failed reconnect attempt must not claim to have resynced, and the old synchronous signal fired
+  BEFORE the replacement EventSource had a connection slot, so the resync burst competed with the
+  reconnect it was meant to follow. The test therefore has to drive the reconnect timer and emit `open`
+  on the replacement stream — vitest.setup's MockEventSource marks itself OPEN in its constructor but
+  never dispatches `open`, unlike a real EventSource.
+  */
+  it("fires onReconnect once the rebuilt channel actually opens, not when it fails", () => {
+    vi.useFakeTimers();
+    try {
+      const url = "/api/events";
+      let reconnects = 0;
+      const unsub = subscribeSse(url, {
+        onReconnect: () => reconnects++,
+      });
+      const es = MockEventSource.instances[0];
+      // The channel must have genuinely connected once before a later `open` counts as a RE-connect.
+      es._emit("open");
+      expect(reconnects).toBe(0);
+      // A transport error alone is not proof of a resync.
+      es._emit("error");
+      expect(reconnects).toBe(0);
+
+      // The scheduled reconnect builds a replacement stream; only its `open` is authoritative.
+      vi.advanceTimersByTime(3_000);
+      expect(MockEventSource.instances.length).toBeGreaterThan(1);
+      MockEventSource.instances[MockEventSource.instances.length - 1]._emit("open");
+      expect(reconnects).toBe(1);
+      unsub();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not set a reconnect timer after closeChannel is called", () => {

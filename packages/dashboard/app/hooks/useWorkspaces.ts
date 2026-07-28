@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { fetchWorkspaces, type WorkspaceTaskInfo } from "../api";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 export interface WorkspaceInfo {
   id: string;
@@ -43,41 +44,48 @@ export function useWorkspaces(projectId?: string): UseWorkspacesReturn {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic context version: bumped whenever the mounted projectId scope changes or the hook unmounts, so
+  // a response from a superseded scope can never overwrite the current one (replaces the previous
+  // effect-local `cancelled` flag, which no longer exists now that the poll lives outside the effect).
+  const contextVersionRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadWorkspaces = useCallback(async () => {
+    const versionAtStart = contextVersionRef.current;
+    const isStale = () => contextVersionRef.current !== versionAtStart;
+    try {
+      const response = await fetchWorkspaces(projectId);
+      if (isStale()) {
+        return;
+      }
 
-    async function loadWorkspaces() {
-      try {
-        const response = await fetchWorkspaces(projectId);
-        if (cancelled) {
-          return;
-        }
-
-        setProjectName(getProjectName(response.project));
-        setWorkspaces(response.tasks.map(mapTaskWorkspace));
-        setError(null);
-      } catch (err) {
-        if (!cancelled) {
-          setError(getErrorMessage(err) || "Failed to load workspaces");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+      setProjectName(getProjectName(response.project));
+      setWorkspaces(response.tasks.map(mapTaskWorkspace));
+      setError(null);
+    } catch (err) {
+      if (!isStale()) {
+        setError(getErrorMessage(err) || "Failed to load workspaces");
+      }
+    } finally {
+      if (!isStale()) {
+        setLoading(false);
       }
     }
-
-    void loadWorkspaces();
-    const intervalId = window.setInterval(() => {
-      void loadWorkspaces();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
   }, [projectId]);
+
+  useEffect(() => {
+    void loadWorkspaces();
+    return () => {
+      contextVersionRef.current += 1;
+    };
+  }, [loadWorkspaces]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:38:
+  Workspace listing polling is suspended while the document is hidden. Continuous background fetches are a
+  primary reason mobile browsers discard the dashboard tab (the returning user then sees a white-splash cold
+  reload); the hidden -> visible edge reloads once so the workspace list is current when looked at.
+  */
+  useVisibilityAwarePoll(loadWorkspaces, POLL_INTERVAL_MS);
 
   return {
     projectName,

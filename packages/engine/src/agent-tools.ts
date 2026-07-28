@@ -977,6 +977,53 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
 
 // ── Tool factory functions ────────────────────────────────────────────────
 
+/**
+ * FNXC:EphemeralAgentTaskCreation 2026-07-26-06:20:
+ * When the project policy is `deny`, an ephemeral/runtime task-worker must not merely
+ * be REFUSED at execute time — `fn_task_create` must not be registered for that session
+ * at all, so the model never sees the tool in its tool list.
+ *
+ * Incident: an executing agent under a `deny` project fired five parallel `fn_task_create`
+ * calls, reported them as timed out, retried them sequentially, and left ten tasks on a
+ * board whose operator had switched follow-up creation off. An execute-time-only refusal
+ * still invites the model to plan around the tool, burn turns retrying it, and — on any
+ * lane where `callerIsEphemeral` fails to reach the factory — create the tasks anyway.
+ * Suppressing registration makes the operator's Deny structural instead of advisory.
+ *
+ * `upon_validation` keeps the tool registered: that policy routes a proposal to the
+ * operator mailbox and is a supported agent action, not a prohibition.
+ */
+export function isAgentTaskCreateToolAvailable(
+  settings: Pick<Settings, "ephemeralAgentTaskCreationPolicy" | "ephemeralAgentsCanCreateTasks"> | undefined | null,
+  callerIsEphemeral: boolean | undefined,
+): boolean {
+  if (!callerIsEphemeral) return true;
+  return fusionCore.resolveEphemeralTaskCreationPolicy(settings ?? {}) !== "deny";
+}
+
+/**
+ * FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
+ * `fn_delegate_task` creates a task through the same `createAgentTask` primitive as
+ * `fn_task_create`, so the follow-up-task policy must govern both or it governs neither.
+ * Code review of the first Deny fix found the gap: the tool validated only that the TARGET
+ * agent is non-ephemeral and never checked the CALLER, so under Deny an ephemeral worker
+ * could enumerate agents and delegate unlimited tasks to any permanent one — reproducing the
+ * ten-duplicate incident through a sibling tool name.
+ *
+ * Delegation is withheld under BOTH non-allow policies, which is stricter than the
+ * `fn_task_create` rule. `upon_validation` means "an operator approves before work is filed";
+ * delegation has no proposal channel of its own, so honoring it as an allow would launder a
+ * create past the very validation the operator asked for. Under `upon_validation` the agent
+ * still has the sanctioned path: `fn_task_create` remains registered and mails a proposal.
+ */
+export function isAgentDelegateTaskToolAvailable(
+  settings: Pick<Settings, "ephemeralAgentTaskCreationPolicy" | "ephemeralAgentsCanCreateTasks"> | undefined | null,
+  callerIsEphemeral: boolean | undefined,
+): boolean {
+  if (!callerIsEphemeral) return true;
+  return fusionCore.resolveEphemeralTaskCreationPolicy(settings ?? {}) === "allow";
+}
+
 type AgentTaskCreationOptions = {
   rootDir?: string;
   bypassDuplicateCheck?: boolean;
@@ -1558,6 +1605,20 @@ function formatTaskReadLines(lines: string[], emptyStateText: string): string {
   return text.trim().length > 0 ? text : emptyStateText;
 }
 
+/*
+FNXC:ToolOutputBudget 2026-08-06-12:00:
+FN-8614 requires high-volume read tools to preserve their identifying headers while
+providing a useful source-level stop before the universal per-result wrapper runs.
+The hint names the narrowing surface instead of silently tail-cutting an agent's context.
+*/
+const SEMANTIC_TOOL_READ_MAX_CHARS = 12_000;
+
+function trimSemanticToolRead(text: string, hint: string): string {
+  if (text.length <= SEMANTIC_TOOL_READ_MAX_CHARS) return text;
+  const marker = `\n\n[Output truncated; ${hint}]`;
+  return text.slice(0, Math.max(0, SEMANTIC_TOOL_READ_MAX_CHARS - marker.length)) + marker;
+}
+
 function formatTaskSummaryLine(task: { id: string; column: string; title?: string | null; description: string; dependencies: string[] }): string {
   const desc = task.title || task.description.slice(0, 80) || "(no description)";
   const deps = task.dependencies.length ? ` [deps: ${task.dependencies.join(", ")}]` : "";
@@ -1652,7 +1713,13 @@ export function createTaskShowTool(store: TaskStore): ToolDefinition {
           task.prompt || "(not yet specified)",
         ].filter((part): part is string => typeof part === "string");
         return {
-          content: [{ type: "text" as const, text: parts.join("\n") || `Task ${params.id} has no details.` }],
+          content: [{
+            type: "text" as const,
+            text: trimSemanticToolRead(
+              parts.join("\n") || `Task ${params.id} has no details.`,
+              "use fn_task_document_read or a focused task query for more",
+            ),
+          }],
           details: { taskId: task.id },
         };
       } catch {
@@ -1784,7 +1851,11 @@ async function readTaskAgentLogs(
     ]);
     const filter = params.type ? `, type=${params.type}` : "";
     const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
-    return { content: [{ type: "text" as const, text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }], details: { taskId, total, limit, offset, type: params.type } };
+    const text = entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)`;
+    return {
+      content: [{ type: "text" as const, text: trimSemanticToolRead(text, "use a smaller limit, offset, or type filter for more") }],
+      details: { taskId, total, limit, offset, type: params.type },
+    };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     return { content: [{ type: "text" as const, text: `ERROR: Failed to read agent log for task ${taskId}: ${err.message}` }], details: {} };
@@ -2586,7 +2657,10 @@ async function viewArtifactForAgent(store: TaskStore, id: string) {
     if (artifact.content) lines.push("", artifact.content);
 
     return {
-      content: [{ type: "text" as const, text: lines.join("\n") }],
+      content: [{
+        type: "text" as const,
+        text: trimSemanticToolRead(lines.join("\n"), "use artifact metadata or a more focused artifact read for more"),
+      }],
       details: { artifactId: artifact.id },
     };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2615,11 +2689,13 @@ async function readTaskDocuments(store: TaskStore, taskId: string, key?: string)
       return {
         content: [{
           type: "text" as const,
-          text:
+          text: trimSemanticToolRead(
             `Document: ${document.key}\n` +
-            `Revision: ${document.revision}\n` +
-            `Updated: ${document.updatedAt}\n\n` +
-            document.content,
+              `Revision: ${document.revision}\n` +
+              `Updated: ${document.updatedAt}\n\n` +
+              document.content,
+            "read a narrower document or use its revision metadata before requesting more",
+          ),
         }],
         details: {},
       };
@@ -4815,6 +4891,29 @@ export function createDelegateTaskTool(
       "fn_workflow_list to discover valid IDs.",
     parameters: delegateTaskParams,
     execute: async (_id: string, params: Static<typeof delegateTaskParams>) => {
+      /*
+      FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
+      Caller-side policy gate, mirroring fn_task_create. The target-agent check below is a
+      routing rule, not an authorization one — it never asked whether the CALLER may create
+      work at all. Fail open only on a settings read error so a store hiccup cannot strand
+      delegation for permanent agents.
+      */
+      if (options?.callerIsEphemeral) {
+        const settings = typeof (taskStore as { getSettings?: unknown }).getSettings === "function"
+          ? await taskStore.getSettings().catch(() => ({} as Settings))
+          : ({} as Settings);
+        if (!isAgentDelegateTaskToolAvailable(settings as Settings, true)) {
+          const policy = fusionCore.resolveEphemeralTaskCreationPolicy(settings as Settings);
+          const message = policy === "deny"
+            ? "Ephemeral task-worker agents are not allowed to create tasks (ephemeral agent task creation is denied for this project), and delegation creates a task."
+            : "Ephemeral task-worker agents must route new work through fn_task_create for operator validation; delegation cannot bypass that review.";
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${message}` }],
+            details: { error: message, rule: "ephemeral-agents-cannot-create-tasks", policy },
+            isError: true,
+          };
+        }
+      }
       // Validate target agent exists
       const agent = await agentStore.getAgent(params.agent_id);
       if (!agent) {

@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { Bot, Heart, Activity, Pause } from "lucide-react";
 import type { Agent } from "../api";
 import { resolveHeartbeatIntervalMs } from "./heartbeatIntervals";
+import { elapsedSinceMs } from "./dataFreshness";
 
 // Heartbeat scheduling depends on both state and `runtimeConfig.enabled`.
 // Durable agents with heartbeat disabled should render distinctly from healthy
@@ -118,6 +119,9 @@ function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
  * - "Unresponsive" — heartbeat exceeded the configured interval's 4× grace window
  *
  * @param agent - The agent object (partial Agent shape is accepted)
+ * @param heartbeatMultiplier - Project-resolved heartbeat interval multiplier
+ * @param dataAsOfMs - When this agent record was last confirmed fresh by the server (SWR envelope
+ *   `savedAt` for a hydrated snapshot, fetch time for live data). Omit only for provably-live data.
  * @returns A health status object with label, icon, color, and stateDerived metadata
  */
 function getHeartbeatRepairMetadata(agent: AgentHealthInput): {
@@ -139,6 +143,7 @@ function getHeartbeatRepairMetadata(agent: AgentHealthInput): {
 export function getAgentHealthStatus(
   agent: AgentHealthInput,
   heartbeatMultiplier: number = 1,
+  dataAsOfMs?: number,
 ): AgentHealthStatus {
   const { state, lastHeartbeatAt, lastError, pauseReason, runtimeConfig } = agent;
   const isTaskWorker = isTaskWorkerAgent(agent);
@@ -231,7 +236,16 @@ export function getAgentHealthStatus(
     };
   }
 
-  const elapsed = Math.max(0, Date.now() - lastHeartbeat);
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-10:16:
+  Heartbeat freshness measures the heartbeat against the AGE OF THE AGENT RECORD, not wall-clock now.
+  After a mobile tab discard the agents list hydrates from an SWR snapshot that can be hours old; aging
+  its heartbeats against `Date.now()` labelled every healthy agent "Unresponsive" (and printed a
+  fabricated "No heartbeat for 2h") until revalidation landed — seconds on a waking mobile radio. Same
+  defect that made every in-progress card render "stuck"; see utils/dataFreshness.ts.
+  `dataAsOfMs === undefined` keeps the previous `Date.now()` behavior for live data.
+  */
+  const elapsed = elapsedSinceMs(lastHeartbeat, dataAsOfMs);
 
   if (elapsed > stalenessThresholdMs) {
     const reason = `No heartbeat for ${formatDuration(elapsed)} (threshold: ${formatDuration(stalenessThresholdMs)})`;
@@ -256,8 +270,8 @@ export function getAgentHealthStatus(
  * Returns a CSS variable name for the health color.
  * Useful when you need the raw CSS variable name for custom styling.
  */
-export function getAgentHealthColorVar(agent: AgentHealthInput): string {
-  const status = getAgentHealthStatus(agent);
+export function getAgentHealthColorVar(agent: AgentHealthInput, dataAsOfMs?: number): string {
+  const status = getAgentHealthStatus(agent, 1, dataAsOfMs);
   // Extract the CSS variable name from the color string
   // e.g., "var(--state-error-text)" -> "--state-error-text"
   const match = status.color.match(/var\((--[^)]+)\)/);

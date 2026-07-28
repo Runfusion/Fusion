@@ -700,7 +700,7 @@ Review Level `0` and `>=2` run in warn-only telemetry mode (never block).
 
 Not all workflow failures are revision requests:
 
-- **Revision requested**: Implementation needs changes → routes back to executor in-place while keeping the task in `in-progress`
+- **Revision requested**: Implementation needs changes → routes back to the executor for a fresh remediation pass. For the pre-merge gates (Code Review, Browser Verification) the card is sitting in `in-review` while the gate runs, so the paired remediation node (`code-review-remediation` / `browser-verification-remediation`) moves it back to `in-progress` on entry.
 - **Hard failure**: Treated as remediable until retries are exhausted; the executor injects feedback and sends the task through `todo → in-progress` for a fresh remediation pass
 
 #### Pre-merge hard failure remediation flow
@@ -712,7 +712,9 @@ For pre-merge gate hard failures, the graph executor drives remediation through 
 3. Reopen the terminal verification/delivery suffix plus the nearest preceding implementation step (`pending`) so the resumed pass can address feedback without discarding unrelated completed work
 4. Schedule `todo → in-progress` after guard unwind, triggering a fresh executor remediation run that must complete every reopened step before the workflow step re-evaluates
 
-Tasks are not parked in `in-review` for this remediable path unless additional terminal failures occur.
+Tasks are not *parked* in `in-review` for this remediable path unless additional terminal failures occur — they pass through it. The pre-merge review gates run with the card in `in-review` (which is what surfaces the running step as a card badge on the board), and remediation moves it back to `in-progress`; the card only stays in `in-review` when a terminal failure blocks the merge gate.
+
+Because `in-review` carries no WIP trait, a card releases its concurrency/worktree slot while a review gate runs, even though its agent and checkout are still live. The pool can therefore be full when the remediation node crosses back into `in-progress`, and capacity is enforced in-transaction and is never bypassable — so that move can be rejected. The workflow column boundary treats a capacity rejection as a **park, not a failure**: the run unwinds cleanly, the card keeps its failed pre-merge gate result and its worktree, and the next graph run retries the crossing once a slot frees. Non-capacity rejections (invariant violations) still surface as real errors.
 
 ## Workflow Interpreter Dual-Observe (retired parity instrumentation)
 

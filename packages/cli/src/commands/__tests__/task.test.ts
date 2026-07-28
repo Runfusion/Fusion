@@ -517,7 +517,7 @@ describe("task node overrides", () => {
     const updateTask = vi.fn().mockResolvedValue(makeTask({ nodeId: "node-123" }));
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: vi.fn().mockResolvedValue(makeTask({ id: "FN-900", column: "triage" })),
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: vi.fn().mockResolvedValue(makeTask({ id: "FN-900", column: "triage" })),
       updateTask,
     }));
     (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
@@ -537,6 +537,13 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
 }));
 
+/*
+FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+Every partial TaskStore mock below stubs `resolveOriginWorkflowOverrideId`: `runTaskCreate`
+consults it to honor the project `taskCreateWorkflowId` setting, and these mocks are structural
+partials, so a missing method is a TypeError rather than a fallback. `undefined` is the
+unconfigured answer — CLI create then takes its unchanged project-default path.
+*/
 describe("project-aware task command behavior", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -632,7 +639,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: mockAddAttachment, getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, addAttachment: mockAddAttachment, getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("test task", undefined, undefined, "demo-project");
@@ -658,7 +665,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/default/project",
       projectName: "default-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/default/project") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/default/project") } as unknown as TaskStore,
     });
 
     await runTaskCreate("default task");
@@ -681,7 +688,7 @@ describe("project-aware task command behavior", () => {
 
     vi.mocked(createLocalStore).mockResolvedValueOnce({
       init,
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       addAttachment: vi.fn(),
       getRootDir: vi.fn().mockReturnValue("/current/project"),
       projectPath: "/current/project",
@@ -712,7 +719,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("same task");
@@ -730,7 +737,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("plain task");
@@ -769,7 +776,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await expect(runTaskCreate("Investigate /pr/options /pr/preflight flow")).rejects.toThrow("exit:1");
@@ -817,7 +824,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("Investigate /pr/options /pr/preflight flow");
@@ -867,7 +874,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await expect(runTaskCreate("Investigate /pr/options /pr/preflight flow")).rejects.toThrow("exit:0");
@@ -899,7 +906,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("same task", undefined, undefined, undefined, undefined, true);
@@ -932,7 +939,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks: vi.fn().mockRejectedValue(new Error("list boom")), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks: vi.fn().mockRejectedValue(new Error("list boom")), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("Investigate /pr/options /pr/preflight flow");
@@ -954,7 +961,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("Investigate /pr/options /pr/preflight flow");
@@ -979,7 +986,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: vi.fn(), listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: vi.fn(), listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("same task");
@@ -1006,7 +1013,7 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+      store: { resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("task a");
@@ -1100,7 +1107,7 @@ describe("project-aware task command behavior", () => {
     };
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
     }));
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj_test",
@@ -1108,7 +1115,7 @@ describe("project-aware task command behavior", () => {
       projectName: "demo-project",
       isRegistered: true,
       store: {
-        createTask: mockCreateTask,
+        resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       } as unknown as TaskStore,
     });
     vi.mocked(createSession).mockResolvedValue({
@@ -1452,7 +1459,7 @@ describe("runTaskCreate with --attach", () => {
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: vi.fn().mockResolvedValue({
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: vi.fn().mockResolvedValue({
         id: "FN-002",
         description: "test task",
         column: "triage",
@@ -1562,7 +1569,7 @@ describe("runTaskCreate with --depends", () => {
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
     }));
   });
 
@@ -1640,7 +1647,7 @@ describe("runTaskImportGitHubInteractive", () => {
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       listTasks: mockListTasks,
       getSettings: vi.fn().mockResolvedValue({}),
       getGlobalSettingsStore: vi.fn().mockReturnValue({ getSettings: vi.fn().mockResolvedValue({}) }),
@@ -1711,7 +1718,7 @@ describe("runTaskImportGitHubInteractive", () => {
   it("marks interactive imports as tracked when tracking defaults are on", async () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       listTasks: mockListTasks,
       getSettings: vi.fn().mockResolvedValue({ githubTrackingEnabledByDefault: true }),
       getGlobalSettingsStore: vi.fn().mockReturnValue({ getSettings: vi.fn().mockResolvedValue({}) }),
@@ -1735,7 +1742,7 @@ describe("runTaskImportGitHubInteractive", () => {
   it("marks interactive imports as tracked when import linking is on and new-task defaults are off", async () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       listTasks: mockListTasks,
       getSettings: vi.fn().mockResolvedValue({
         githubTrackingEnabledByDefault: false,
@@ -2037,7 +2044,7 @@ describe("runTaskImportFromGitHub", () => {
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       listTasks: mockListTasks,
       getSettings: vi.fn().mockResolvedValue({}),
       getGlobalSettingsStore: vi.fn().mockReturnValue({ getSettings: vi.fn().mockResolvedValue({}) }),
@@ -2091,7 +2098,7 @@ describe("runTaskImportFromGitHub", () => {
   it("marks non-interactive imports as tracked when tracking defaults are on", async () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
-      createTask: mockCreateTask,
+      resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       listTasks: mockListTasks,
       getSettings: vi.fn().mockResolvedValue({}),
       getGlobalSettingsStore: vi.fn().mockReturnValue({

@@ -3,6 +3,8 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { MessageSquare, Repeat } from "lucide-react";
 import type { WorkflowDefinition, WorkflowStepTemplate } from "@fusion/core";
 import { WorkflowAddStepModal, type AddStepPaletteEntry } from "../WorkflowAddStepModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
+import { expectStableTyping } from "./typingStability.test-helpers";
 
 /*
 FNXC:WorkflowSimpleView 2026-07-12-14:30:
@@ -52,12 +54,31 @@ function renderModal(disallowContainers: boolean) {
 describe("WorkflowAddStepModal", () => {
   afterEach(() => cleanup());
 
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard. The FN-8606 floating-window migration made Planning Mode and Settings
+  untypable and no test noticed, because field coverage here uses fireEvent.change, which never needs
+  the input to stay mounted. This asserts the field keeps its DOM node, value, and focus while typed.
+  */
+  it("keeps the step search field mounted and focused while typing", async () => {
+    renderModal(false);
+    const field = screen.getByPlaceholderText("Search steps and templates…") as HTMLInputElement;
+    await expectStableTyping(field, "sec", () => screen.getByPlaceholderText("Search steps and templates…"));
+  });
+
   it("offers containers, fragments, and optional-group inserts for top-level targets", () => {
     renderModal(false);
     expect(screen.getByTestId("wf-add-step-loop-loop")).toBeInTheDocument();
     expect(screen.getByTestId("wf-add-step-fragment-WF-FRAG")).toBeInTheDocument();
     expect(screen.getByTestId("wf-add-step-tpl-tpl-1")).toBeInTheDocument();
     expect(screen.getByTestId("wf-add-step-tpl-tpl-1-optional-group")).toBeInTheDocument();
+  });
+
+  it("uses the real workflow dialog header for touch geometry", () => {
+    renderModal(false);
+    assertRenderedModalTouchGeometry("workflow-add-step", screen.getByRole("heading", { name: "Add a step" }).closest(".wf-add-step-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("workflow-add-step", () => renderModal(false));
   });
 
   it("hides containers, fragments, and optional-group inserts for container-internal targets", () => {

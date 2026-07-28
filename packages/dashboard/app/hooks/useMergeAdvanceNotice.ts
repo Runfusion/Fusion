@@ -168,12 +168,22 @@ export function useMergeAdvanceNotice({ projectId, apiBase = "/api" }: { project
     void fetchEvents();
     void fetchPushStatus();
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    /*
+    FNXC:MergeAdvanceNotice 2026-07-26-14:26:
+    Missed-event recovery. The advance notice and Smart Pull affordance were refreshed ONLY from
+    inside the `task:merged` handler, so a merge landing while the SSE stream was down (error
+    reconnect, or the mobile hidden-tab suspend) left the operator's checkout silently behind with no
+    banner and no pull affordance. The refetch pair is the same one the event handler runs, so a
+    reopen converges on the authoritative merge-advance events and push status.
+    */
+    const resync = () => {
+      void fetchEvents();
+      void fetchPushStatus();
+    };
     const unsubscribe = subscribeSse(`${apiBase}/events${query}`, {
+      onReconnect: resync,
       events: {
-        "task:merged": () => {
-          void fetchEvents();
-          void fetchPushStatus();
-        },
+        "task:merged": resync,
       },
     });
     return () => unsubscribe();

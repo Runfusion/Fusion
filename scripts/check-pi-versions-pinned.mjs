@@ -9,10 +9,25 @@ manifest declaration must be an exact semver and all declarations must agree.
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 export const PI_DEPENDENCIES = [
   "@earendil-works/pi-ai",
   "@earendil-works/pi-coding-agent",
+];
+
+/*
+FNXC:DesktopPackaging 2026-07-25-17:15:
+The legacy desktop deploy resolves pi-coding-agent's transitive pi-mono ranges
+without the workspace lockfile. Keep every Pi package in that staged runtime
+closure on one exact override so a new agent-core or tui patch cannot be hoisted
+beside older direct ai/coding-agent dependencies.
+*/
+export const PI_RUNTIME_PACKAGES = [
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-tui",
 ];
 
 export const GUARDED_MANIFESTS = [
@@ -28,6 +43,31 @@ const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+
 
 export function isExactSemver(version) {
   return typeof version === "string" && EXACT_SEMVER.test(version);
+}
+
+export function validateWorkspaceOverrides(overrides = {}) {
+  const violations = [];
+  const versions = [];
+
+  for (const packageName of PI_RUNTIME_PACKAGES) {
+    const version = overrides?.[packageName];
+    if (version === undefined) {
+      violations.push(`pnpm-workspace.yaml: overrides.${packageName} must be pinned for the staged desktop closure`);
+      continue;
+    }
+    if (!isExactSemver(version)) {
+      violations.push(`pnpm-workspace.yaml: overrides.${packageName} must be an exact semver, found ${JSON.stringify(version)}`);
+      continue;
+    }
+    versions.push(version);
+  }
+
+  const uniqueVersions = [...new Set(versions)];
+  if (uniqueVersions.length > 1) {
+    violations.push(`${PI_RUNTIME_PACKAGES.join(", ")} must use one exact version in pnpm-workspace.yaml overrides; found ${uniqueVersions.join(", ")}`);
+  }
+
+  return violations;
 }
 
 function listTrackedManifests() {
@@ -99,13 +139,37 @@ export function scanTrackedManifests(files = listTrackedManifests(), options = {
       return [`${filePath}: invalid JSON (${error instanceof Error ? error.message : String(error)})`];
     }
   }
-  return validateManifestSet(manifests);
+  const violations = validateManifestSet(manifests);
+  let workspaceConfig;
+  try {
+    workspaceConfig = parseYaml(readFile("pnpm-workspace.yaml", "utf8"));
+  } catch (error) {
+    return [...violations, `pnpm-workspace.yaml: invalid YAML (${error instanceof Error ? error.message : String(error)})`];
+  }
+
+  const workspaceOverrides = workspaceConfig?.overrides ?? {};
+  violations.push(...validateWorkspaceOverrides(workspaceOverrides));
+
+  const manifestVersions = new Set(
+    manifests.flatMap(({ manifest }) =>
+      DEPENDENCY_BLOCKS.flatMap((blockName) =>
+        PI_DEPENDENCIES.map((packageName) => manifest?.[blockName]?.[packageName]).filter(isExactSemver),
+      ),
+    ),
+  );
+  const overrideVersions = new Set(PI_RUNTIME_PACKAGES.map((packageName) => workspaceOverrides[packageName]).filter(isExactSemver));
+  const allRuntimeVersions = [...new Set([...manifestVersions, ...overrideVersions])];
+  if (allRuntimeVersions.length > 1) {
+    violations.push(`guarded Pi manifests and workspace overrides must use one exact runtime version; found ${allRuntimeVersions.join(", ")}`);
+  }
+
+  return violations;
 }
 
 export function formatFailureMessage(violations) {
   return [
-    "[check-pi-versions-pinned] pi runtime dependencies must be exact, matched versions.",
-    "npm global installs do not use pnpm-lock.yaml; ranges can resolve an incompatible pi-mono patch set.",
+    "[check-pi-versions-pinned] Pi runtime dependencies and workspace overrides must be exact, matched versions.",
+    "npm global installs and legacy desktop deploy do not reliably use pnpm-lock.yaml; ranges can resolve an incompatible pi-mono patch set.",
     ...violations.map((violation) => `- ${violation}`),
   ].join("\n");
 }

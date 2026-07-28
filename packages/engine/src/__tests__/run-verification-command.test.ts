@@ -9,6 +9,7 @@ import {
   detectMarathonVerification,
   normalizeVerificationCommand,
   runVerificationCommand,
+  summarizeVerificationFailureOutput,
   __testOnlyReapVerificationProcessGroup,
   type RunVerificationOptions,
 } from "../run-verification-tool.js";
@@ -471,6 +472,210 @@ describe("runVerificationCommand", { timeout: 30000 }, () => {
 
       expect(result.stdout).toContain("to-stdout");
       expect(result.stderr).toContain("to-stderr");
+    });
+  });
+
+  describe("tool response output", () => {
+    const createCompactTool = () =>
+      createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-COMPACT",
+        recordActivity: vi.fn(),
+        onVerificationStart: vi.fn(),
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+    it("reduces noisy test failures to counts, failing tests, errors, and source locations", () => {
+      const stdout = [
+        "\u001b[41m FAIL \u001b[0m app/components/Widget.test.tsx > Widget > preserves focus",
+        "AssertionError: expected false to be true",
+        "Ignored nodes: comments, script, style",
+        "<html>",
+        "  <body>",
+        "    <div class=\"entire-rendered-application\">",
+        "      <input />",
+        "      DOM-NOISE-THAT-MUST-NOT-REACH-THE-AGENT",
+        "    </div>",
+        "  </body>",
+        "</html>",
+        " ❯ app/components/Widget.test.tsx:42:7",
+        " Test Files  1 failed | 12 passed (13)",
+        "      Tests  1 failed | 650 passed (651)",
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput(stdout, "");
+
+      expect(summary).toContain("FAIL app/components/Widget.test.tsx > Widget > preserves focus");
+      expect(summary).toContain("AssertionError: expected false to be true");
+      expect(summary).toContain("app/components/Widget.test.tsx:42:7");
+      expect(summary).toContain("Test Files 1 failed | 12 passed (13)");
+      expect(summary).toContain("Tests 1 failed | 650 passed (651)");
+      expect(summary).not.toContain("DOM-NOISE-THAT-MUST-NOT-REACH-THE-AGENT");
+      expect(summary).not.toContain("\u001b[");
+    });
+
+    it("keeps compiler diagnostics and caps generic failure output", () => {
+      const diagnostic = "src/example.ts(12,4): error TS2322: Type 'number' is not assignable to type 'string'.";
+      const stderr = [
+        diagnostic,
+        ...Array.from(
+          { length: 200 },
+          (_, index) =>
+            `src/example-${index}.ts(12,4): error TS2322: ${"x".repeat(200)}`,
+        ),
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput("", stderr);
+
+      expect(summary).toContain(diagnostic);
+      expect(summary.length).toBeLessThanOrEqual(8_000);
+      expect(summary).toContain("output compacted");
+    });
+
+    it("retains actionable lint context ahead of a generic package-manager failure", () => {
+      const stderr = [
+        "/workspace/src/widget.ts",
+        "  12:3  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any",
+        "✖ 1 problem (1 error, 0 warnings)",
+        "ELIFECYCLE Command failed with exit code 1.",
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput("", stderr);
+
+      expect(summary).toContain("/workspace/src/widget.ts");
+      expect(summary).toContain("12:3 error Unexpected any");
+      expect(summary).toContain("@typescript-eslint/no-explicit-any");
+      expect(summary).toContain("ELIFECYCLE Command failed with exit code 1.");
+    });
+
+    it("preserves failure details from both streams when one stream exceeds the cap", () => {
+      const stderr = Array.from(
+        { length: 100 },
+        (_, index) => `src/error-${index}.ts(1,1): error TS2322: diagnostic ${index}`,
+      ).join("\n");
+      const stdout = [
+        "[vite]: Rollup failed to resolve import \"missing-package\" from \"src/main.ts\".",
+        "Command failed with exit code 1.",
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput(stdout, stderr);
+
+      expect(summary).toContain("Rollup failed to resolve import");
+      expect(summary).toContain("src/error-0.ts");
+      expect(summary.length).toBeLessThanOrEqual(8_000);
+    });
+
+    it("preserves terminal totals when one stream has more high-signal lines than the cap", () => {
+      const stdout = [
+        ...Array.from(
+          { length: 100 },
+          (_, index) => `src/error-${index}.ts(1,1): error TS2322: diagnostic ${index}`,
+        ),
+        "Test Files  20 failed | 2 passed (22)",
+        "Tests  100 failed | 10 passed (110)",
+        "ELIFECYCLE Command failed with exit code 1.",
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput(stdout, "");
+
+      expect(summary).toContain("src/error-0.ts");
+      expect(summary).toContain("Test Files 20 failed | 2 passed (22)");
+      expect(summary).toContain("Tests 100 failed | 10 passed (110)");
+      expect(summary).toContain("ELIFECYCLE Command failed with exit code 1.");
+      expect(summary.length).toBeLessThanOrEqual(8_000);
+    });
+
+    it("keeps a bounded assertion diff with an elided assertion headline", () => {
+      const stdout = [
+        "AssertionError: expected { …(5) } to deeply equal { …(5) }",
+        "- Expected",
+        "+ Received",
+        "  Object {",
+        "-   \"status\": \"ready\",",
+        "+   \"status\": \"failed\",",
+        "  }",
+        " ❯ src/widget.test.ts:18:4",
+      ].join("\n");
+
+      const summary = summarizeVerificationFailureOutput(stdout, "");
+
+      expect(summary).toContain("- Expected");
+      expect(summary).toContain("+ Received");
+      expect(summary).toContain("\"status\": \"failed\"");
+      expect(summary).toContain("src/widget.test.ts:18:4");
+    });
+
+    itPosix("omits routine stdout from successful tool responses", async () => {
+      const tool = createCompactTool();
+
+      const result = await tool.execute("call-compact-success", {
+        command:
+          "printf 'routine build chatter\\nTests  0 failed | 20 passed (20)\\n100%% tests passed, 0 tests failed out of 5\\n'",
+        scope: "package",
+      });
+
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(text).toContain("Success: true");
+      expect(text).not.toContain("routine build chatter");
+      expect(text).not.toContain("Verification warning:");
+      expect(text).not.toContain("--- stdout ---");
+    });
+
+    itPosix("retains zero-work warnings from commands that exit successfully", async () => {
+      const tool = createCompactTool();
+
+      const result = await tool.execute("call-compact-no-work", {
+        command: "printf 'No projects matched the filters\\nroutine chatter\\n'",
+        scope: "package",
+      });
+
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(text).toContain("Success: true");
+      expect(text).toContain("Verification warning:");
+      expect(text).toContain("No projects matched the filters");
+      expect(text).not.toContain("routine chatter");
+    });
+
+    itPosix("warns when an exit-zero command reports failed tests", async () => {
+      const tool = createCompactTool();
+
+      const result = await tool.execute("call-compact-green-while-red", {
+        command: "printf 'Test Files  1 failed | 2 passed (3)\\nroutine chatter\\n'",
+        scope: "package",
+      });
+
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(text).toContain("Success: true");
+      expect(text).toContain("Verification warning:");
+      expect(text).toContain("Test Files 1 failed | 2 passed (3)");
+      expect(text).not.toContain("routine chatter");
+    });
+
+    itPosix("returns only the compact summary for failed tool responses", async () => {
+      const tool = createCompactTool();
+      const script = [
+        "console.log('FAIL src/widget.test.ts > Widget > reports the failure');",
+        "console.log('Test Files  1 failed | 2 passed (3)');",
+        "console.error('AssertionError: expected 1 to be 2');",
+        "console.error('<div>DOM-NOISE-THAT-MUST-NOT-REACH-THE-AGENT</div>');",
+        "process.exit(1);",
+      ].join("");
+
+      const result = await tool.execute("call-compact-failure", {
+        command: `${process.execPath} -e ${JSON.stringify(script)}`,
+        scope: "package",
+      });
+
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(text).toContain("Failure summary:");
+      expect(text).toContain("Widget > reports the failure");
+      expect(text).toContain("AssertionError: expected 1 to be 2");
+      expect(text).toContain("Test Files 1 failed | 2 passed (3)");
+      expect(text).not.toContain("DOM-NOISE-THAT-MUST-NOT-REACH-THE-AGENT");
+      expect(text).not.toContain("--- stdout ---");
+      expect(text).not.toContain("--- stderr ---");
     });
   });
 

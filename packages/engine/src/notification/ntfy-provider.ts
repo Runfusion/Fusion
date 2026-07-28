@@ -122,13 +122,13 @@ export class NtfyNotificationProvider implements NotificationProvider {
 
   isEventSupported(event: NotificationEvent): boolean {
     if (!SUPPORTED_EVENTS.has(event as SupportedNtfyEvent)) {
-      schedulerLog.log(`NtfyNotificationProvider event filtered unsupported event=${event}`);
+      schedulerLog.debug(`NtfyNotificationProvider event filtered unsupported event=${event}`);
       return false;
     }
 
     const enabledEvents = this.config?.events ?? [...DEFAULT_NTFY_EVENTS];
     const allowed = enabledEvents.includes(event as NtfyNotificationEvent);
-    schedulerLog.log(
+    schedulerLog.debug(
       `NtfyNotificationProvider allowlist event=${event} decision=${allowed ? "allowed" : "filtered-by-event"}`,
     );
     return allowed;
@@ -305,7 +305,8 @@ export class NtfyNotificationProvider implements NotificationProvider {
       }
     })();
 
-    schedulerLog.log(
+    // FNXC:EngineDiagnostics 2026-07-26-10:25: send/delivery bookkeeping every notify; failures surface via result + dispatch failed logs.
+    schedulerLog.debug(
       `NtfyNotificationProvider send event=${event} host=${host} topic=${this.config.topic}`,
     );
 
@@ -320,7 +321,7 @@ export class NtfyNotificationProvider implements NotificationProvider {
       signal: this.abortController?.signal,
     });
 
-    schedulerLog.log(
+    schedulerLog.debug(
       `NtfyNotificationProvider delivery event=${event} status=${response?.status ?? "error"} ok=${String(response?.ok ?? false)}`,
     );
 

@@ -130,6 +130,7 @@ const createProjects = () => [
 describe("Mobile Feature Access Regression Guard", () => {
   beforeEach(() => {
     mockViewport("mobile");
+    document.documentElement.style.removeProperty("--mobile-nav-height");
   });
 
   it("list view is accessible via mobile nav bar", () => {
@@ -261,10 +262,14 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
   });
 
-  it("mobile nav bar renders only on mobile viewport and hides for modal or desktop", () => {
-    const mobileRender = render(<MobileNavBar {...createDefaultMobileNavProps()} />);
+  it("mobile nav bar renders only on mobile viewport and hides for modal, desktop, or project overview", () => {
+    const mobileRender = render(<MobileNavBar {...createDefaultMobileNavProps()} hidden={false} />);
     expect(mobileRender.container.querySelector(".mobile-nav-bar")).not.toBeNull();
     mobileRender.unmount();
+
+    const hiddenRender = render(<MobileNavBar {...createDefaultMobileNavProps()} hidden />);
+    expect(hiddenRender.container.querySelector(".mobile-nav-bar")).toBeNull();
+    hiddenRender.unmount();
 
     mockViewport("desktop");
     const desktopRender = render(<MobileNavBar {...createDefaultMobileNavProps()} />);
@@ -274,6 +279,19 @@ describe("Mobile Feature Access Regression Guard", () => {
     mockViewport("mobile");
     const modalRender = render(<MobileNavBar {...createDefaultMobileNavProps()} modalOpen={true} />);
     expect(modalRender.container.querySelector(".mobile-nav-bar")).toBeNull();
+  });
+
+  it("clears the published mobile-nav height when the overview hides the bar", () => {
+    const hiddenRender = render(<MobileNavBar {...createDefaultMobileNavProps()} hidden />);
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("");
+    hiddenRender.unmount();
+
+    const { rerender, unmount } = render(<MobileNavBar {...createDefaultMobileNavProps()} hidden={false} />);
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toMatch(/^[1-9]\d*px$/);
+
+    rerender(<MobileNavBar {...createDefaultMobileNavProps()} hidden />);
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("");
+    unmount();
   });
 
   it("desktop and tablet header view navigation is suppressed when left sidebar is active", () => {

@@ -25,8 +25,16 @@ overrides:
   # to match guarded package manifests (cli/core/engine/dashboard/pi-claude-cli).
   # FNXC:ModelCatalog 2026-07-24-12:00: FN-8564 advances the matched runtime pair
   # to 0.82.0. Wildcard consumers must resolve the exact guarded Pi API surface.
-  '@earendil-works/pi-ai': 0.82.0
-  '@earendil-works/pi-coding-agent': 0.82.0
+  # FNXC:DesktopPackaging 2026-07-25-17:15: Legacy `pnpm deploy` resolves pi-coding-agent's
+  # transitive ranges without the workspace lockfile. Pin the complete Pi runtime closure to one
+  # exact version so new agent-core or tui patches cannot split the packageable desktop tree.
+  # FNXC:DesktopPackaging 2026-07-26-22:55: Advance the matched closure 0.82.0 → 0.82.1 so
+  # electron-builder's production-dependency walk accepts pi-agent-core's pi-ai@^0.82.1 requirement
+  # (Desktop packaging PR-lane failure when deploy resolved a newer agent-core patch beside 0.82.0 ai).
+  '@earendil-works/pi-agent-core': 0.82.1
+  '@earendil-works/pi-ai': 0.82.1
+  '@earendil-works/pi-coding-agent': 0.82.1
+  '@earendil-works/pi-tui': 0.82.1
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each

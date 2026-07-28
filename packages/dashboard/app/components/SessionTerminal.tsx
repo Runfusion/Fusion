@@ -37,6 +37,20 @@ import {
 
 /** ACK cadence — ACK roughly every 32KB of consumed output. */
 const ACK_THRESHOLD_BYTES = 32 * 1024;
+
+/*
+FNXC:Terminal 2026-07-26-11:30:
+Mobile browsers (iOS Safari tab, iOS installed PWA, Chrome Android) DISCARD a backgrounded tab under memory pressure, costing the user a full white-splash reload on return. xterm retains its whole scrollback ring in JS memory, so this ring is one of the larger allocations this view holds. That made 2000 lines look like a free win.
+
+FNXC:Terminal 2026-07-26-14:05 (CORRECTION — do not restore the 2000-line value on the old reasoning):
+The 2000-line cut above was justified with "the server-side replay on re-attach remains the authority for older history". THAT WAS FALSE, in two ways, and the wrong reasoning must not be reintroduced:
+1. The server ring is NOT unbounded and is NOT larger than the client ring. It is `DEFAULT_SCROLLBACK_BYTES = 512 * 1024` BYTES in `packages/engine/src/cli-agent/session-manager.ts` — roughly 6000-7000 typical 80-column lines, i.e. LESS than the 10000-line client ring it was supposed to back-stop.
+2. More importantly, server replay only happens AT ATTACH TIME (`cli-session-ws.ts` sends one `scrollback` frame on connect). While a session stays attached, the client ring is the ONLY history the user can scroll back through — nothing re-fetches evicted lines. So every line evicted past the cap is permanently unreachable, not merely "not cached locally".
+Concretely: an agent session emitting ~4000 lines of build output loses the first compile error at 2000. Restored to the pre-cut 10000, which sits at/above what the server could replay anyway, so the ring is genuinely the user-reachable history and not a redundant copy of it.
+Keep in step with TerminalModal's TERMINAL_SCROLLBACK_LINES (duplicated rather than shared so neither terminal surface pulls the other's heavy module into its lazy chunk). Note the two surfaces have DIFFERENT server rings — TerminalModal's is far smaller (50000 characters) — so the values are kept in step for maintenance, not because the backing store is the same.
+The WebGL-context disposal below is the part of the memory work that was sound; it stays.
+*/
+const TERMINAL_SCROLLBACK_LINES = 10000;
 const RESIZE_DEBOUNCE_MS = 100;
 
 /**
@@ -194,6 +208,11 @@ export function SessionTerminal({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
+  /*
+  FNXC:Terminal 2026-07-26-11:32:
+  The WebGL renderer owns a real GL context plus glyph atlas textures. GL contexts are a scarce process-wide resource that GC does not release promptly, and unreleased ones are a known source of iOS memory pressure — which is what makes the OS discard the backgrounded tab. Hold the addon so teardown disposes it EXPLICITLY before term.dispose(), instead of relying on xterm's AddonManager or the onContextLoss handler to get there.
+  */
+  const webglAddonRef = useRef<ITerminalAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [postureTooltipOpen, setPostureTooltipOpen] = useState(false);
@@ -457,7 +476,7 @@ export function SessionTerminal({
         cursorBlink: terminalPreferences.cursorBlink && ticketCanAcceptInput,
         cursorStyle: terminalPreferences.cursorStyle,
         disableStdin: !ticketCanAcceptInput,
-        scrollback: 10000,
+        scrollback: TERMINAL_SCROLLBACK_LINES,
         // Defensive: do NOT register an OSC 52 (clipboard-write) handler. The
         // server-side neutralizer (U10) strips it; we add no client handling.
         fontFamily: resolvedFontFamily,
@@ -503,8 +522,10 @@ export function SessionTerminal({
               } catch {
                 /* fall back to DOM renderer */
               }
+              if (webglAddonRef.current === webgl) webglAddonRef.current = null;
             });
             term.loadAddon(webgl);
+            webglAddonRef.current = webgl;
           }
         } catch {
           /* WebGL unavailable — DOM renderer is the default fallback */
@@ -700,6 +721,18 @@ export function SessionTerminal({
           /* already closing */
         }
         wsRef.current = null;
+      }
+      /*
+      FNXC:Terminal 2026-07-26-11:35:
+      Dispose the WebGL addon explicitly BEFORE the terminal, so the GL context is released deterministically on teardown rather than left to xterm's AddonManager and GC. See webglAddonRef.
+      */
+      if (webglAddonRef.current) {
+        try {
+          webglAddonRef.current.dispose();
+        } catch {
+          /* already disposed (e.g. by onContextLoss) */
+        }
+        webglAddonRef.current = null;
       }
       const term = xtermRef.current;
       if (term) {

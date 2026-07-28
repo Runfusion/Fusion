@@ -93,10 +93,16 @@ describe("inReviewStallCopy", () => {
   });
 
   it.each([
+    /*
+    FNXC:InReviewStallBadge 2026-07-26-18:15:
+    merge-blocker is badge-suppressed in EVERY merge status, not just the active ones. The
+    `undefined` row previously expected true — that was the only status in which this code badged,
+    and it is the row that proves the suppression is unconditional rather than a widened carve-out.
+    */
     ["merge-blocker", "merging", false],
     ["merge-blocker", "merging-pr", false],
     ["merge-blocker", "merging-fix", false],
-    ["merge-blocker", undefined, true],
+    ["merge-blocker", undefined, false],
     ["merge-retries-exhausted", "merging", true],
     ["transient-merge-status-no-owner", "merging", true],
     ["non-retryable-provider-error", undefined, true],

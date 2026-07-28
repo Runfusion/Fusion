@@ -43,6 +43,26 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "agentToolOutputMaxChars",
+    labelKey: "settings.globalGeneral.agentToolOutputLimit",
+    labelFallback: " Agent tool-output limit ",
+    helpKey: "settings.globalGeneral.agentToolOutputLimitHint",
+    helpFallback:
+      " Maximum characters returned from each engine-injected tool result. When unset, inherits the 16,000-character engine default. Leave empty to use the default. ",
+    keywords: ["tokens", "context", "truncate", "tool output", "agent"],
+  },
+  {
+    sectionId: "global-general",
+    key: "agentToolOutputMaxCharsNoLimit",
+    labelKey: "settings.globalGeneral.noLimitOnAgentToolOutput",
+    labelFallback: " No limit on agent tool output ",
+    helpKey: "settings.globalGeneral.noLimitOnAgentToolOutputHint",
+    helpFallback:
+      " Disable the shared tool-output clamp. A single tool result can consume the agent context window. Default: disabled; when unset, the budget inherits the 16,000-character engine default. ",
+    keywords: ["unlimited", "tokens", "context", "truncate", "tool output"],
+  },
+  {
+    sectionId: "global-general",
     key: "proactiveTaskChatEnabled",
     labelKey: "settings.globalGeneral.enableProactiveTaskChat",
     labelFallback: " Enable proactive task-chat updates ",
@@ -73,6 +93,16 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       " Stable follows official releases. Beta follows pre-releases cut from main (versions like 0.73.0-beta.2) and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades; you stay on the installed beta until the next stable release passes it. Default: stable. ",
     keywords: ["beta", "channel", "release track", "prerelease", "early access"],
+  },
+  {
+    sectionId: "global-general",
+    key: "autoUpdateAndRestart",
+    labelKey: "settings.globalGeneral.autoUpdateAndRestart",
+    labelFallback: " Auto-update and restart ",
+    helpKey: "settings.globalGeneral.autoUpdateAndRestartHelp",
+    helpFallback:
+      " When enabled, Fusion installs available updates on the selected release channel by itself and then restarts to apply them — the same install + restart the \"Update now\" button performs, without asking. Requires a supervising parent (the default for `fn dashboard`); hosts started with --no-supervise skip the install. Default: disabled. ",
+    keywords: ["auto update", "automatic update", "self update", "unattended", "restart"],
   },
   {
     sectionId: "global-general",
