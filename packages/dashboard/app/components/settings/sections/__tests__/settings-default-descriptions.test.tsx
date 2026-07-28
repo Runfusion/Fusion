@@ -241,6 +241,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   overlapIgnorePaths: "scheduling.optionalFileOrDirectoryPathsToIgnoreWhen",
   // WorktreesSection
   maxWorktrees: "worktrees.limitsTotalGitWorktreesIncludingInReviewTasks",
+  worktreesEnabled: "worktrees.worktreesEnabledHelp",
   worktreeInitCommand: "worktrees.shellCommandToRunInEachNewWorktree",
   recycleWorktrees: "worktrees.offByDefaultOptInWhenEnabledCompleted",
   showWorktreeGrouping: "worktrees.showWorktreeGroupingHelp",

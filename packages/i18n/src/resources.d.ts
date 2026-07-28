@@ -6878,6 +6878,8 @@ export default interface Resources {
         "keepsProgressMovingBySwitchingToFusionApos": " keeps progress moving by switching to Fusion&apos;s built-in worktree backend. ",
         "limitsTotalGitWorktreesIncludingInReviewTasks": "Limits total git worktrees including in-review tasks. Default: 4.",
         "maxWorktrees": "Max Worktrees",
+        "worktreesEnabled": "Run tasks in worktrees",
+        "worktreesEnabledHelp": "Each task — planning included — gets its own git worktree. Turn off to limit capacity by agent count alone. Default: on.",
         "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
         "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming.",
         "openApprovals": "Open Approvals",

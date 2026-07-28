@@ -39,7 +39,7 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
@@ -378,11 +378,24 @@ interface ConcurrencyGateDiagnostic {
   available: number;
   bindingGates: ConcurrencyGateName[];
   maxConcurrentGate: ConcurrencyGateSnapshot;
-  maxWorktreesGate: ConcurrencyGateSnapshot;
+  /*
+  FNXC:CapacityModel 2026-07-28-11:35:
+  OPTIONAL because worktrees can be turned off as a capacity dimension
+  (`settings.worktreesEnabled === false` → "limit via total agents only").
+
+  When off, this field is ABSENT — there is no worktree gate object, not a gate
+  holding Infinity and not a comparison skipped by convention. That is deliberate
+  and is the operator's explicit requirement: an inert limiter must be incapable
+  of binding, not merely unlikely to. Optionality moves the guarantee into the
+  type system — `diagnostic.maxWorktreesGate.limit` does not compile without a
+  presence check, so a future edit cannot reintroduce a silent worktree
+  comparison in OFF mode. `bindingGates` can never contain "maxWorktrees" there.
+  */
+  maxWorktreesGate?: ConcurrencyGateSnapshot;
   semaphoreGate?: ConcurrencyGateSnapshot;
   holders: {
     maxConcurrent: string[];
-    maxWorktrees: string[];
+    maxWorktrees?: string[];
     semaphore?: string[];
   };
   /** U6: additive per-column capacity gates (flag-ON only; omitted otherwise so
@@ -416,7 +429,15 @@ function computeConcurrencyGateDiagnostic(params: {
   agentSlots: number;
   maxConcurrent: number;
   activeWorktrees: number;
-  maxWorktrees: number;
+  /*
+  FNXC:CapacityModel 2026-07-28-11:35:
+  `null` means worktrees are not a capacity dimension for this project
+  (`settings.worktreesEnabled === false`) — NOT "unlimited". Callers resolve it
+  through `resolveWorktreeCapacityLimit` so the OFF convention has exactly one
+  expression; passing a raw number here cannot accidentally re-enable the gate
+  because the resolver is the only thing that produces this value.
+  */
+  maxWorktrees: number | null;
   semaphore?: AgentSemaphore;
   inProgressTaskIds: string[];
   startedThisTick?: number;
@@ -438,11 +459,16 @@ function computeConcurrencyGateDiagnostic(params: {
     limit: params.maxConcurrent,
     slack: params.maxConcurrent - maxConcurrentUsed,
   };
-  const maxWorktreesGate: ConcurrencyGateSnapshot = {
-    used: maxWorktreesUsed,
-    limit: params.maxWorktrees,
-    slack: params.maxWorktrees - maxWorktreesUsed,
-  };
+  // Worktrees off → no gate object at all. See the FNXC on `maxWorktreesGate`.
+  const maxWorktreesLimit = params.maxWorktrees;
+  const maxWorktreesGate: ConcurrencyGateSnapshot | undefined =
+    maxWorktreesLimit === null
+      ? undefined
+      : {
+        used: maxWorktreesUsed,
+        limit: maxWorktreesLimit,
+        slack: maxWorktreesLimit - maxWorktreesUsed,
+      };
   const semaphoreGate = params.semaphore
     ? (() => {
       /*
@@ -461,13 +487,13 @@ function computeConcurrencyGateDiagnostic(params: {
     : undefined;
   const available = Math.min(
     maxConcurrentGate.slack,
-    maxWorktreesGate.slack,
+    maxWorktreesGate?.slack ?? Infinity,
     semaphoreGate?.slack ?? Infinity,
   );
 
   const bindingGates: ConcurrencyGateName[] = [];
   if (maxConcurrentGate.used >= maxConcurrentGate.limit) bindingGates.push("maxConcurrent");
-  if (maxWorktreesGate.used >= maxWorktreesGate.limit) bindingGates.push("maxWorktrees");
+  if (maxWorktreesGate && maxWorktreesGate.used >= maxWorktreesGate.limit) bindingGates.push("maxWorktrees");
   if (semaphoreGate && semaphoreGate.used >= semaphoreGate.limit) bindingGates.push("semaphore");
 
   return {
@@ -478,7 +504,7 @@ function computeConcurrencyGateDiagnostic(params: {
     semaphoreGate,
     holders: {
       maxConcurrent: [...params.inProgressTaskIds],
-      maxWorktrees: [...params.inProgressTaskIds],
+      maxWorktrees: maxWorktreesGate ? [...params.inProgressTaskIds] : undefined,
       semaphore: semaphoreGate ? [...params.inProgressTaskIds] : undefined,
     },
     // U6: additive only — present when flag-ON, omitted otherwise.
@@ -494,8 +520,20 @@ function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnostic): st
   const gateLabel = diagnostic.bindingGates.join(", ");
   const details = [
     `maxConcurrent used=${diagnostic.maxConcurrentGate.used}/${diagnostic.maxConcurrentGate.limit} (holders: ${holdersText("maxConcurrent")})`,
-    `maxWorktrees used=${diagnostic.maxWorktreesGate.used}/${diagnostic.maxWorktreesGate.limit} (holders: ${holdersText("maxWorktrees")})`,
   ];
+  /*
+  FNXC:CapacityModel 2026-07-28-11:35:
+  Omit the worktree line entirely when worktrees are off. Printing
+  "maxWorktrees used=2/Infinity" would tell an operator a limiter is present and
+  merely generous, which is the opposite of true — it is not consulted at all.
+  This string is the operator's answer to "why is my card queued?", so an absent
+  dimension must be absent from the answer.
+  */
+  if (diagnostic.maxWorktreesGate) {
+    details.push(
+      `maxWorktrees used=${diagnostic.maxWorktreesGate.used}/${diagnostic.maxWorktreesGate.limit} (holders: ${holdersText("maxWorktrees")})`,
+    );
+  }
   if (diagnostic.semaphoreGate) {
     const semaphoreUsed = Math.max(0, diagnostic.semaphoreGate.used);
     details.push(
@@ -1556,7 +1594,12 @@ export class Scheduler {
 
   private async runHoldReleaseSweepPass(tasks: Task[], settings: Settings): Promise<void> {
     try {
-      const maxWorktrees = settings.maxWorktrees ?? this.options.maxWorktrees ?? 4;
+      // FNXC:CapacityModel 2026-07-28-11:35: null = worktrees are not a capacity
+      // dimension for this project (worktreesEnabled false), NOT unlimited.
+      const maxWorktrees = resolveWorktreeCapacityLimit({
+        maxWorktrees: settings.maxWorktrees ?? this.options.maxWorktrees ?? 4,
+        worktreesEnabled: settings.worktreesEnabled,
+      });
       const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
       /*
       FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):

@@ -973,6 +973,9 @@ export function SettingsModal({
     maxConcurrent: 2,
     maxConcurrentVerifications: 1,
     maxWorktrees: 4,
+    // FNXC:CapacityModel 2026-07-28-13:20: worktrees are a capacity dimension by
+    // default; off means capacity is total agents only.
+    worktreesEnabled: true,
     pollIntervalMs: 15000,
     heartbeatMultiplier: 1,
     groupOverlappingFiles: true,

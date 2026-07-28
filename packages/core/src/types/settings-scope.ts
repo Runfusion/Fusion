@@ -1148,6 +1148,23 @@ export interface ProjectSettings {
    *  Default: 4. When undefined, falls back to CentralCore default (4). */
   globalMaxConcurrent?: number;
   maxWorktrees: number;
+  /**
+   * FNXC:CapacityModel 2026-07-28-11:20:
+   * Whether worktrees are a capacity dimension for this project. Default true.
+   *
+   * When false the operator asked to "limit via total agents only": `maxWorktrees`
+   * stops gating dispatch entirely — not raised, not skipped by convention, but
+   * structurally absent (`resolveWorktreeCapacityLimit` returns null and no
+   * worktree gate object is constructed, so `bindingGates` can never contain
+   * "maxWorktrees"). See `resolveWorktreeCapacityLimit` in workflow-capacity.ts
+   * for why this is a boolean rather than `maxWorktrees: 0`.
+   *
+   * SCOPE: this is a statement about COUNTING, not about isolation. It does not
+   * make concurrent agents safe to share one checkout — the non-worktree paths
+   * that exist today are fallbacks to the operator's own tree, one of which
+   * caused FN-8600. Turning this off does not grant shared-checkout concurrency.
+   */
+  worktreesEnabled?: boolean;
   pollIntervalMs: number;
   /** Global multiplier applied to all agent heartbeat intervals.
    *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).

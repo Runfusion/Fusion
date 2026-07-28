@@ -41,6 +41,28 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
     const worktreeCopyFileRows = (form.worktreeCopyFiles?.length ?? 0) > 0 ? form.worktreeCopyFiles ?? [] : [""];
     return (<>
       <h4 className="settings-section-heading">{t("settings.worktrees.worktrees", "Worktrees")}</h4>
+      {/*
+      FNXC:CapacityModel 2026-07-28-13:20:
+      The master switch renders ABOVE Max Worktrees because it decides whether the
+      row below it applies at all. Capacity is two configurable numbers per project
+      (total agents + max worktrees); turning this off drops the second one, leaving
+      total agents as the only limit.
+
+      Max Worktrees is DISABLED rather than merely ignored while this is off. A
+      control that still accepts input it no longer honours is the UI form of the
+      inert-limiter bug this change exists to remove — the operator would set a
+      number, watch it have no effect, and reasonably conclude capacity is broken.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "worktreesEnabled",
+          label: t("settings.worktrees.worktreesEnabled", "Run tasks in worktrees"),
+          help: t("settings.worktrees.worktreesEnabledHelp", "Each task — planning included — gets its own git worktree. Turn off to limit capacity by agent count alone. Default: on."),
+          scope: "project",
+        }}
+        value={form.worktreesEnabled !== false}
+        onChange={(value) => setForm((f) => ({ ...f, worktreesEnabled: value !== false } as SettingsFormState))}
+      />
       {/* FNXC:Worktrees 2026-07-15-17:35: An emptied Max Worktrees stores `undefined`, not 0 or "", so the key is absent from the settings blob and the scheduler falls back to the schema default of 4 rather than capping concurrency at nothing. */}
       <SettingsNumberRow
         descriptor={{
@@ -50,6 +72,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           scope: "project",
           min: 1,
           max: 20,
+          disabled: form.worktreesEnabled === false,
         }}
         value={form.maxWorktrees ?? null}
         onChange={(v) => setForm((f) => ({ ...f, maxWorktrees: v ?? undefined } as SettingsFormState))}

@@ -29,6 +29,42 @@ import { getTraitRegistry } from "./trait-registry.js";
  *  `settings.maxConcurrent` (the legacy "N agents in-progress" gate). */
 const DEFAULT_WIP_COLUMN_ID = "in-progress";
 
+/** Fallback when `maxWorktrees` is unset. Matches `DEFAULT_SETTINGS.maxWorktrees`. */
+const DEFAULT_MAX_WORKTREES = 4;
+
+/*
+FNXC:CapacityModel 2026-07-28-11:20:
+THE one place "are worktrees a capacity dimension for this project?" is answered.
+
+The capacity model is two configurable numbers per project:
+  1. total agents  (`maxConcurrent`)  — always binds
+  2. `maxWorktrees`                   — binds ONLY when worktrees are enabled
+
+When `worktreesEnabled === false` the operator asked for "limit via total agents
+only". This returns `null` for that case, and callers construct NO worktree gate
+at all — rather than a gate with a very high or infinite limit. That distinction
+is the whole point: a limiter that still exists and merely happens not to bind is
+the bug class this program keeps excavating (the pool-id sentinel that never
+matched a real pool; the approval gate three surfaces re-derived; the always-true
+flag whose "disabled" branch was the live one). An absent gate cannot silently
+start binding again; a gate holding `Infinity` can, the moment someone "fixes" a
+comparison. `ConcurrencyGateDiagnostic.maxWorktreesGate` is therefore OPTIONAL,
+so consulting a worktree limit in OFF mode does not type-check.
+
+Deliberately NOT expressed as `maxWorktrees === 0`. Zero is a legible number that
+already means something to the gate (`used >= 0` is true on an empty board, so a
+0 limit deadlocks dispatch rather than disabling it) and the Command Center
+slider clamps it to a 1..50 range. Overloading a value as a mode is how sentinels
+become defects; the boolean says what it means.
+*/
+export function resolveWorktreeCapacityLimit(
+  settings: Pick<Settings, "maxWorktrees" | "worktreesEnabled"> | undefined,
+): number | null {
+  if (settings?.worktreesEnabled === false) return null;
+  const limit = settings?.maxWorktrees;
+  return typeof limit === "number" && Number.isFinite(limit) ? limit : DEFAULT_MAX_WORKTREES;
+}
+
 /** U6 (KTD-10): sentinel effective-workflow id for default-workflow
  *  (null-selection) tasks, so they all share one per-column capacity pool. It
  *  is not a real workflow row id (no `builtin:`/custom collision possible). */

@@ -119,6 +119,7 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
   worktrees: [
     "executorAllowSiblingBranchRename",
     "maxWorktrees",
+    "worktreesEnabled",
     "recycleWorktrees",
     "showWorktreeGrouping",
     "worktreeCopyFiles",

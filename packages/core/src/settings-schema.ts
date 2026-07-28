@@ -429,6 +429,14 @@ export const DEFAULT_PROJECT_SETTINGS = {
   maxTriageConcurrent: 2,
   globalMaxConcurrent: 4,
   maxWorktrees: 4,
+  /*
+  FNXC:CapacityModel 2026-07-28-11:20:
+  Worktrees ON is the default and the supported shape — everything (planning
+  included) runs in a worktree. OFF drops maxWorktrees from the dispatch gate so
+  capacity is total agents only; it is a counting statement, not permission for
+  concurrent agents to share one checkout.
+  */
+  worktreesEnabled: true,
   pollIntervalMs: 15000,
   heartbeatMultiplier: 1,
   autoClaimCandidatesInPrompt: 5,

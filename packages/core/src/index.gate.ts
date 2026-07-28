@@ -416,7 +416,7 @@ export {
 } from "./plugin-gate-verdict.js";
 export type { PluginGateVerdict, ColumnPluginGate } from "./plugin-gate-verdict.js";
 // ── U6: workflow capacity (WIP) resolution shared by store + sweep ───────────
-export { resolveColumnCapacity, DEFAULT_WORKFLOW_POOL_ID, resolveCapacityPoolId } from "./workflow-capacity.js";
+export { resolveColumnCapacity, DEFAULT_WORKFLOW_POOL_ID, resolveCapacityPoolId, resolveWorktreeCapacityLimit } from "./workflow-capacity.js";
 export type { ColumnCapacity } from "./workflow-capacity.js";
 // ── U5: workflow lifecycle reconciliation (switch / edit / delete) ───────────
 export {

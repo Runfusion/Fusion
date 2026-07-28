@@ -6809,6 +6809,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": "",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "",
       "maxWorktrees": "",
+      "worktreesEnabled": "",
+      "worktreesEnabledHelp": "",
       "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "打开审批",
       "optionalLeaveBlankToAutoResolveFusionWill": "",

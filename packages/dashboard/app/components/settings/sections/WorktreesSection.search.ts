@@ -11,6 +11,21 @@ import type { SettingsSearchEntry } from "../search/types";
 export const worktreesSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "worktrees",
+    key: "worktreesEnabled",
+    labelKey: "settings.worktrees.worktreesEnabled",
+    labelFallback: "Run tasks in worktrees",
+    helpKey: "settings.worktrees.worktreesEnabledHelp",
+    helpFallback: "Each task — planning included — gets its own git worktree. Turn off to limit capacity by agent count alone. Default: on.",
+    /*
+    FNXC:SettingsSearch 2026-07-28-13:20:
+    An operator reaching for this is usually asking a CAPACITY question ("why
+    won't more tasks start?"), not a worktree question, so the keywords carry the
+    capacity vocabulary the label and help never spell out.
+    */
+    keywords: ["capacity", "parallelism", "agents only", "isolation", "git", "concurrency"],
+  },
+  {
+    sectionId: "worktrees",
     key: "maxWorktrees",
     labelKey: "settings.worktrees.maxWorktrees",
     labelFallback: "Max Worktrees",
