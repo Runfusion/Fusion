@@ -55,7 +55,11 @@ import {
   evaluateStrandedHoldContinuation,
   seedPreReleasePlanReviewContinuation,
 } from "../plan-review-continuation.js";
-import { resolvePlanningContinuationCandidate } from "../runtimes/in-process-runtime.js";
+import {
+  PARKED_CONTINUATION_DEFER_MS,
+  resolveParkedContinuationDeferral,
+  resolvePlanningContinuationCandidate,
+} from "../runtimes/in-process-runtime.js";
 import { schedulerLog } from "../logger.js";
 
 const WF = "custom:planning-lane";
@@ -130,15 +134,29 @@ function releaseIr(): WorkflowIr {
   } as unknown as WorkflowIr;
 }
 
-function releaseStore(tasks: Task[]): TaskStore {
+/**
+ * `onLockedRead` models the live row as the task lock sees it, which is NOT
+ * necessarily the snapshot `runHoldReleaseSweep` loaded at the top of the pass.
+ * Without it the fake would move unconditionally and the in-transaction recheck
+ * would be dead code that no test could distinguish from its absence.
+ */
+function releaseStore(tasks: Task[], onLockedRead?: (live: Task) => Task): TaskStore {
   const selection = { workflowId: WF, stepIds: [] };
   const ir = releaseIr();
   return {
     getSettings: vi.fn(async () => ({ maxConcurrent: 2 })),
     listTasks: vi.fn(async () => tasks),
     getTask: vi.fn(async (id: string) => tasks.find((t) => t.id === id) ?? null),
-    moveTaskIf: vi.fn(async (id: string, column: string) => {
+    moveTaskIf: vi.fn(async (
+      id: string,
+      column: string,
+      predicate: (live: Task) => boolean | Promise<boolean>,
+    ) => {
       const cur = tasks.find((t) => t.id === id)!;
+      // The predicate is the authoritative guard; the fake must consult it or the
+      // in-lock recheck is untested (PR #2491 review — greptile P2 / CodeRabbit).
+      const live = onLockedRead ? onLockedRead(cur) : cur;
+      if (!(await predicate(live))) return { task: cur, moved: false };
       cur.column = column;
       return { task: cur, moved: true };
     }),
@@ -177,6 +195,20 @@ describe("#1 the capacity release never advances a card blocked on approval", ()
       // The operator has not decided yet: the card must still be in the hold column.
       expect(held.column).toBe("todo");
       expect(result.released).not.toContain("HOLD");
+    });
+
+    it(`refuses IN THE LOCK when the hold (${hold.label}) lands after the sweep's snapshot`, async () => {
+      // The snapshot is clean, so the pre-check passes and the sweep proceeds to
+      // the move — the only thing that can still stop it is the predicate under
+      // the task lock. This is the race the in-txn half exists for: a plan gate
+      // (or an operator) parking the card mid-pass must win.
+      const held = task({ id: "RACE" });
+      const store = releaseStore([held], (live) => ({ ...live, ...hold.fields }));
+
+      const result = await runHoldReleaseSweep(store, { now: () => 1_000_000 });
+
+      expect(held.column).toBe("todo");
+      expect(result.released).not.toContain("RACE");
     });
   }
 });
@@ -337,5 +369,63 @@ describe("#3 the continuation drain holds, and never cancels, an approval-blocke
 
     expect(resolved.kind).toBe("skip");
     expect(resolved.kind === "skip" && resolved.reason).toBe("paused");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #4 — the starvation the guard would otherwise introduce
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+Skipping is not free. The due poll is a FIFO batch (`limit: 20`) and a skipped item
+stays `runnable` and due, so it re-occupies a slot every pass. Before the approval
+guard an approval-held item was DISPATCHED and therefore never accumulated — so
+this starvation is a consequence the guard INTRODUCES, and it is fixed here rather
+than noted. A parked item is pushed out of the due window instead.
+*/
+describe("#4 an operator-parked item leaves the due window instead of starving the batch", () => {
+  const NOW = Date.parse("2026-07-27T12:00:00.000Z");
+
+  for (const hold of APPROVAL_HOLDS) {
+    it(`defers the approval-parked item (${hold.label})`, () => {
+      const resolved = resolvePlanningContinuationCandidate(dueItem(), task({ ...hold.fields }));
+      const deferral = resolveParkedContinuationDeferral(resolved, NOW);
+
+      expect(deferral?.itemId).toBe("wi-1");
+      // Pushed strictly into the future, so the next due poll does not return it.
+      expect(Date.parse(deferral!.retryAfter)).toBe(NOW + PARKED_CONTINUATION_DEFER_MS);
+      expect(Date.parse(deferral!.retryAfter)).toBeGreaterThan(NOW);
+    });
+  }
+
+  it("defers an ordinary pause too — the same open-ended human wait", () => {
+    const resolved = resolvePlanningContinuationCandidate(dueItem(), task({ ...ORDINARY_PAUSE }));
+
+    expect(resolveParkedContinuationDeferral(resolved, NOW)?.itemId).toBe("wi-1");
+  });
+
+  it("never defers an ACTIONABLE item — deferring work that is ready would stall the lane", () => {
+    const resolved = resolvePlanningContinuationCandidate(dueItem(), task());
+
+    expect(resolved.kind).toBe("actionable");
+    expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
+  });
+
+  it("never defers a non-planning item — that item belongs to a different drain", () => {
+    const resolved = resolvePlanningContinuationCandidate(
+      dueItem({ waitReason: "capacity" }),
+      task(),
+    );
+
+    expect(resolved.kind === "skip" && resolved.reason).toBe("not-planning");
+    expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
+  });
+
+  it("never defers an ORPHAN — a cancelled item is terminal and must not be resurrected as runnable", () => {
+    const resolved = resolvePlanningContinuationCandidate(dueItem(), null);
+
+    expect(resolved.kind).toBe("orphan");
+    expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
   });
 });

@@ -178,6 +178,57 @@ export function resolvePlanningContinuationCandidate(
 }
 
 /**
+ * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+ * How long a park-skipped continuation leaves the due window for.
+ *
+ * The due poll is a FIFO batch (`limit: 20`) and a skipped item stays `runnable`
+ * and due, so it re-fills a batch slot on every pass. Before the approval guard
+ * an approval-held item was DISPATCHED, so it never accumulated; now that it is
+ * correctly skipped, 20 cards parked on approval would starve every newer
+ * plan-review continuation until enough humans decided. That is a real
+ * consequence of the guard, not a pre-existing one.
+ *
+ * Deferral, not a state change: the item stays `runnable`, so every "is the graph
+ * idle?" predicate that reasons over ACTIVE_WORKFLOW_WORK_ITEM_STATES behaves
+ * exactly as before — moving it to `held` would remove it from the due set too,
+ * but nothing requeues a `held` planning item, which trades starvation for a
+ * permanent strand. `retryAfter` is a pure due-window filter, so the worst case
+ * is bounded latency instead.
+ *
+ * 60s is chosen against HUMAN latency: the park it defers is waiting on a person,
+ * who has already taken minutes or hours, so an extra minute after the decision
+ * is invisible — while occupancy of the shared batch drops from every poll (~2s)
+ * to at most one slot per minute per parked card.
+ */
+export const PARKED_CONTINUATION_DEFER_MS = 60_000;
+
+/**
+ * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+ * Decide whether a skipped due item should be pushed out of the due window.
+ *
+ * Only the OPERATOR-PARK skips qualify (`awaiting-approval`, `paused`): those are
+ * open-ended waits on a human, which is what makes them able to accumulate.
+ * `not-planning` is deliberately excluded — that item belongs to a different
+ * drain, and deferring another owner's work would be this drain reaching outside
+ * its own lane.
+ *
+ * Pure and separately exported so the deferral is testable without constructing a
+ * runtime, matching why `resolvePlanningContinuationCandidate` is exported.
+ */
+export function resolveParkedContinuationDeferral(
+  resolution: PlanningContinuationResolution,
+  nowMs: number,
+  deferMs: number = PARKED_CONTINUATION_DEFER_MS,
+): { itemId: string; retryAfter: string } | null {
+  if (resolution.kind !== "skip") return null;
+  if (resolution.reason !== "awaiting-approval" && resolution.reason !== "paused") return null;
+  return {
+    itemId: resolution.item.id,
+    retryAfter: new Date(nowMs + deferMs).toISOString(),
+  };
+}
+
+/**
  * FNXC:WorkflowScheduling 2026-07-21-12:30:
  * Select due planning continuations whose task remains dispatchable.
  *
@@ -2082,6 +2133,11 @@ export class InProcessRuntime
           await this.cancelOrphanedWorkflowWorkItem(resolved.item, resolved.reason);
           continue;
         }
+        // FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+        // push an operator-parked item out of the FIFO due window so it cannot
+        // starve newer actionable continuations while a human decides.
+        const deferral = resolveParkedContinuationDeferral(resolved, Date.now());
+        if (deferral) await this.deferParkedWorkflowWorkItem(deferral);
         if (resolved.kind !== "actionable") continue;
         void this.executor.execute(resolved.task).catch((error) => {
           runtimeLog.error(`Workflow continuation ${resolved.item.id} failed:`, error);
@@ -2089,6 +2145,33 @@ export class InProcessRuntime
       }
     } finally {
       this.workflowContinuationDrainActive = false;
+    }
+  }
+
+  /**
+   * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+   * Push an operator-parked item's `retryAfter` forward so it leaves the due
+   * window. State stays `runnable` on purpose (see
+   * `PARKED_CONTINUATION_DEFER_MS`).
+   *
+   * Fail-soft: if the write loses, the item simply stays due and is re-skipped
+   * next pass — exactly the pre-deferral behavior — so a store hiccup degrades to
+   * the old starvation risk rather than dropping the card's continuation.
+   */
+  private async deferParkedWorkflowWorkItem(
+    deferral: { itemId: string; retryAfter: string },
+  ): Promise<void> {
+    if (typeof this.taskStore.transitionWorkflowWorkItem !== "function") return;
+    try {
+      await this.taskStore.transitionWorkflowWorkItem(deferral.itemId, "runnable", {
+        retryAfter: deferral.retryAfter,
+      });
+    } catch (error) {
+      runtimeLog.warn(
+        `Failed to defer parked workflow work item ${deferral.itemId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 
