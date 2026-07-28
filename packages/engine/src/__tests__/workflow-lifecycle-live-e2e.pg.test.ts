@@ -678,6 +678,10 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
   - recovery-reconciler.ts column-declared policy lookup       (table row, returned-decision — WEAKER)
   - hold-release.ts        isHeldTask / the capacity release   (spine)
   - the graph column boundary + store.moveTask + the post-commit bus (spine)
+  - self-healing.ts  resolveReboundTarget, BOTH paths — the undeclared-column repair
+    (reconcileUndeclaredTaskColumns) and the session-start requeue
+    (autoRecoverWorktreeSessionStartFailure); workflow-rebound-family-live-e2e.pg.test.ts,
+    each mutation-verified independently
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -694,7 +698,6 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
-  - self-healing.ts:713,6732 resolveReboundTarget (two distinct rebound paths)
   - mesh-lease-manager.ts:61 resolveReboundTarget
   - task-agent-sync.ts:59    resolveTaskLifecycleColumns
   - core/task-store/reads.ts:130      listTasks hydration
