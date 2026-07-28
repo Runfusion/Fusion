@@ -1751,7 +1751,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1789,7 +1788,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1827,7 +1825,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1847,7 +1844,7 @@ Planner rewrote mission without the raw request.
 
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
+    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling the planning lane purely from semaphore.availableCount.
     */
     it("leaves global concurrency room for live in-progress agents when admitting planners", async () => {
       const tasks: Task[] = [
@@ -1867,7 +1864,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 4,
-          maxTriageConcurrent: 4,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1911,7 +1907,6 @@ Planner rewrote mission without the raw request.
         getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1962,7 +1957,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -2001,7 +1995,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([promotedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2044,7 +2037,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([plannedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2094,7 +2086,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([replanTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2144,7 +2135,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([refineTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,

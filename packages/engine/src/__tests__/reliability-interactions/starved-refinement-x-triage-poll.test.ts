@@ -51,7 +51,7 @@ describe("reliability interaction: starved refinement x triage poll", () => {
       ];
 
       const store: any = {
-        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 1, maxTriageConcurrent: 1, pollIntervalMs: 10_000, globalPause: false, enginePaused: false }),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 1, pollIntervalMs: 10_000, globalPause: false, enginePaused: false }),
         listTasks: vi.fn().mockImplementation(async () => tasks.map((t) => ({ ...t }))),
         updateTask: vi.fn().mockImplementation(async (id: string, patch: Partial<Task>) => {
           const idx = tasks.findIndex((t) => t.id === id);

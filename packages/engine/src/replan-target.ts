@@ -44,7 +44,7 @@ attached at the site rather than in a separate list that can drift from it.
  * REVISE -> needs-replan) legitimately carries the steps of its previous planning pass.
  * Counting steps>0 as "advanced" made the primary triage claim in specifyTask() skip its
  * status:"planning" write on every poll: the card was re-claimed forever, never planned,
- * and — because wedged cards keep occupying maxTriageConcurrent slots — starved every
+ * and — because wedged cards keep occupying planning admission slots — starved every
  * healthy card queued behind them. Both planner surfaces must stay plannable: the "triage"
  * column, and plan-in-place workflows (Coding (Ideas)) that park needs-replan cards in
  * "todo" carrying a real spec. A planned-and-queued "todo" card with no planning status is
@@ -112,12 +112,12 @@ export function hasAdvancedPastPlanning(
   worktree up front (so no lane runs in the shared checkout), which means a card being planned right
   now carries `worktree` — and reading that as "advanced" would make every planning write skip:
   `status:"planning"` never lands, the spec finalization is refused, and the card is re-claimed
-  forever while occupying a maxTriageConcurrent slot. Execution TIMESTAMPS are the durable evidence
+  forever while occupying a planning admission slot. Execution TIMESTAMPS are the durable evidence
   instead; they are written when implementation actually starts, never by worktree acquisition.
 
   A triage card carrying a timestamp with NO planning status is the stranded-advanced class that
   self-healing's advanced recovery owns (PR #2360): planning must exclude it so it cannot burn a
-  maxTriageConcurrent slot in a claim/skip loop.
+  planning admission slot in a claim/skip loop.
   */
   if (task.firstExecutionAt != null || task.executionStartedAt != null) {
     /*

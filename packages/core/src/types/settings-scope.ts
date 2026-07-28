@@ -1139,9 +1139,6 @@ export interface ProjectSettings {
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
    */
   maxConcurrentVerifications?: number;
-  /** Maximum number of concurrent triage/specification agents. When undefined,
-   *  falls back to maxConcurrent. */
-  maxTriageConcurrent?: number;
   /** System-wide maximum concurrent agents across ALL projects.
    *  When multiple projects are active, the sum of their in-flight agents
    *  will not exceed this limit. Applies to triage, execution, and merge.

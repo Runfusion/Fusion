@@ -426,7 +426,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings (clamped 1–8 at runtime).
   */
   maxConcurrentVerifications: 1,
-  maxTriageConcurrent: 2,
   globalMaxConcurrent: 4,
   maxWorktrees: 4,
   /*

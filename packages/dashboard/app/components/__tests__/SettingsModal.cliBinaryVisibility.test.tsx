@@ -57,7 +57,6 @@ function buildSettings() {
   return {
     autoMerge: true,
     maxConcurrent: 2,
-    maxTriageConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15000,
     heartbeatMultiplier: 1,

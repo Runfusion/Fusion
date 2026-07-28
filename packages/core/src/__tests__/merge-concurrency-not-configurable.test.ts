@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getTraitRegistry } from "../trait-registry.js";
 import { registerBuiltinTraits } from "../builtin-traits.js";
+import { DEFAULT_SETTINGS } from "../settings-schema.js";
 
 /*
 FNXC:CapacityModel 2026-07-28-10:15:
@@ -84,6 +85,23 @@ describe("merge concurrency is fixed at 1 and cannot be made configurable", () =
 
     const offenders = fieldKeys.filter((k) => NAMES_CAPACITY.test(k) || /^limit/i.test(k));
     expect(offenders, "the merge trait must not let a workflow configure merge concurrency").toEqual([]);
+  });
+
+  /*
+  FNXC:CapacityModel 2026-07-28-14:30:
+  TOMBSTONE. `maxTriageConcurrent` shipped as a settings default, a Settings
+  section key, a /config response field and six i18n catalogs while being read by
+  ZERO enforcement sites — FN-8453 removed the pool it gated and left the knob
+  behind. It is deleted; this keeps it deleted. A knob that no longer does anything
+  is worse than a deleted one: the next person to find it wires it up.
+  */
+  it("maxTriageConcurrent stays deleted (dead-knob tombstone)", () => {
+    for (const file of SETTINGS_SOURCES) {
+      const source = readFileSync(file, "utf8");
+      expect(source.length, `${file} is empty or unreadable — the guard checked nothing`).toBeGreaterThan(500);
+      expect(source).not.toContain("maxTriageConcurrent");
+    }
+    expect(Object.keys(DEFAULT_SETTINGS)).not.toContain("maxTriageConcurrent");
   });
 
   it("the merge trait carries no wip/capacity flag", () => {

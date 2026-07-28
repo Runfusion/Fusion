@@ -762,7 +762,7 @@ export class TriageProcessor {
   private async clearStaleSpecifyingStatuses(): Promise<void> {
     /*
     FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
-    In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a maxTriageConcurrent slot and blocks new triage work.
+    In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a planning admission slot and blocks new triage work. (The separate maxTriageConcurrent pool AND its setting are both gone — FN-8453 removed the pool, the capacity simplification removed the dead key; planning shares the one agent count.)
     */
     const triageTasks = await this.store.listTasks({ column: "triage", slim: true });
     const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
@@ -1562,7 +1562,7 @@ export class TriageProcessor {
 
       /*
       FNXC:ConcurrencyAdmission 2026-08-03-12:00:
-      FN-8453 removes the separate maxTriageConcurrent pool. Planning uses the
+      FN-8453 removed the separate maxTriageConcurrent pool, and the capacity simplification deleted the orphaned setting it left behind. Planning uses the
       same maxConcurrent live-agent claim as execute/review so a project cannot
       exceed its operator-facing top-level capacity in a different lane.
       */
@@ -1844,7 +1844,7 @@ export class TriageProcessor {
         FNXC:Triage 2026-07-16-05:35:
         A skip on this PRIMARY claim path is an anomaly, not a benign scheduler race: poll()
         already proved the card is an eligible planner candidate, so failing the guard here
-        means it is re-claimed every poll, never planned, and holds a maxTriageConcurrent slot
+        means it is re-claimed every poll, never planned, and holds a planning admission slot
         against healthy cards. Recovery-write skips stay silent by design (see
         updatePlanningStateIfStillCurrent); this one must be visible — the FN-7977 steps>0
         wedge stalled the whole planner for hours precisely because it logged nothing.

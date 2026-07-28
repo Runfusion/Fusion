@@ -27,7 +27,6 @@ vi.mock("../../../hooks/useAppSettings", () => ({
 
 const defaultSettings = {
   maxConcurrent: 12,
-  maxTriageConcurrent: 1,
   maxWorktrees: 4,
 };
 

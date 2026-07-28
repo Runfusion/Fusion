@@ -149,7 +149,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "maxConcurrent",
     "maxConcurrentVerifications",
     "maxStuckKills",
-    "maxTriageConcurrent",
     "overlapIgnorePaths",
     "pollIntervalMs",
     "preserveProgressOnStuckRequeue",

@@ -12,7 +12,6 @@ const commandCenterControlsCss = readAppFile("components/command-center/CommandC
 
 const defaultSettings = {
   maxConcurrent: 2,
-  maxTriageConcurrent: 1,
   maxWorktrees: 4,
   globalPause: false,
   enginePaused: false,
@@ -293,7 +292,6 @@ describe("EngineControlMenu", () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 60,
-      maxTriageConcurrent: 70,
       maxWorktrees: 80,
     });
     await openMenu();
@@ -335,7 +333,6 @@ describe("EngineControlMenu", () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 12,
-      maxTriageConcurrent: 3,
       maxWorktrees: 25,
     });
     await openMenu();
