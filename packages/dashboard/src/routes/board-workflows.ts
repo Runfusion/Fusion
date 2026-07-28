@@ -96,9 +96,24 @@ function toV2(ir: WorkflowIr): WorkflowIrV2 | undefined {
   return ir.version === "v2" ? ir : undefined;
 }
 
+/*
+ * FNXC:WorkflowResolvedColumns 2026-07-27-16:45 (U10 / R8):
+ * The canonical map is a FALLBACK, not an override. Applied unconditionally it replaced the name
+ * a built-in workflow deliberately chose — `builtin:lead-generation` names `triage` "Lead intake"
+ * and the board rendered "Planning" — and it is the same mechanism that would clobber a renamed
+ * built-in column (U11's Todo -> Planning). Canonicalise only when the IR's own name adds nothing:
+ * blank, the raw column id, or the same words in different case (the "In progress"/"In Progress"
+ * variants that motivated the map). Anything else is an authored name and wins.
+ */
 function displayColumnName(id: string, name: string, canonicalizeLifecycle: boolean): string {
   if (!canonicalizeLifecycle) return name;
-  return BUILTIN_WORKFLOW_COLUMN_LABELS[id] ?? name;
+  const canonical = BUILTIN_WORKFLOW_COLUMN_LABELS[id];
+  if (!canonical) return name;
+  const trimmed = name?.trim() ?? "";
+  const isUninformative = trimmed === ""
+    || trimmed.toLowerCase() === id.toLowerCase()
+    || trimmed.toLowerCase() === canonical.toLowerCase();
+  return isUninformative ? canonical : trimmed;
 }
 
 function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWorkflowColumn[] {

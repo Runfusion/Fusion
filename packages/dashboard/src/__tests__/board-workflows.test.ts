@@ -57,3 +57,52 @@ describe("buildBoardWorkflowsPayload column descriptions", () => {
     expect(workflow?.columns[1]).not.toHaveProperty("description");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-16:40 (U10 / R8):
+`BUILTIN_WORKFLOW_COLUMN_LABELS` canonicalises lifecycle column labels for BUILT-IN workflows.
+It was applied unconditionally, so it also overwrote a built-in that DELIBERATELY renames a
+lifecycle column — `builtin:lead-generation` names `triage` "Lead intake" and the board rendered
+it as "Planning". Measured against the built-in IRs in tree: 4 column names were being replaced,
+3 by case-only variants ("In progress" -> "In Progress") and 1 by a genuine semantic rename.
+
+The canonical map must therefore be a FALLBACK for a column whose IR name adds nothing (blank,
+the raw id, or the same words in different case) — never an override of a name the IR chose.
+This is also the mechanism that would clobber U11's Todo->Planning rename.
+*/
+describe("buildBoardWorkflowsPayload built-in column labels", () => {
+  function builtinStore(workflowId: string) {
+    return {
+      getSettings: vi.fn(),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId })),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      listWorkflowDefinitions: vi.fn(async () => []),
+    };
+  }
+
+  it("keeps a built-in's deliberately renamed lifecycle column name", async () => {
+    const payload = await buildBoardWorkflowsPayload(
+      builtinStore("builtin:lead-generation") as never,
+      ["FN-LEAD"],
+    );
+    const workflow = payload.workflows.find(({ id }) => id === "builtin:lead-generation");
+    expect(workflow?.columns.find((column) => column.id === "triage")?.name).toBe("Lead intake");
+  });
+
+  it("still canonicalises the default coding workflow's lifecycle labels", async () => {
+    const payload = await buildBoardWorkflowsPayload(
+      builtinStore("builtin:coding") as never,
+      ["FN-CODE"],
+    );
+    const workflow = payload.workflows.find(({ id }) => id === "builtin:coding");
+    const named = Object.fromEntries((workflow?.columns ?? []).map((column) => [column.id, column.name]));
+    expect(named).toMatchObject({
+      triage: "Planning",
+      todo: "Todo",
+      "in-progress": "In Progress",
+      "in-review": "In Review",
+      done: "Done",
+      archived: "Archived",
+    });
+  });
+});

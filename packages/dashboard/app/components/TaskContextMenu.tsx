@@ -46,6 +46,9 @@ export interface TaskContextMenuColumnFlags {
   intake?: boolean;
   mergeBlocker?: boolean;
   humanReview?: boolean;
+  /* FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8): surfaced so column-trait consumers
+     can tell an implementation lane from a pre-implementation one without naming `in-progress`. */
+  countsTowardWip?: boolean;
 }
 
 export interface TaskContextMenuColumnMetadata {
@@ -160,7 +163,24 @@ function getWorkflowMoveTargets(task: Task | TaskDetail, columns: readonly TaskC
   }
 
   const currentIndex = visibleColumns.findIndex((column) => column.id === task.column);
-  if (currentIndex < 0) return [];
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-27-14:55 (U10 / R8):
+  A card resting in a column its workflow no longer declares used to get an EMPTY move list —
+  the one surface that could rescue it offered nothing, so the card was stranded until an engine
+  sweep re-homed it. Offer the workflow's own recovery lane instead (intake, else hold, else the
+  first live lane), which is the same target `resolveReboundTarget` picks engine-side. Undeclared
+  columns are produced by a workflow edit that drops a lane and by U11's Todo→Planning merge for
+  rows still stored in `todo`.
+  */
+  if (currentIndex < 0) {
+    const liveColumns = visibleColumns.filter(
+      (column) => column.flags?.complete !== true && column.flags?.archived !== true,
+    );
+    const recoveryColumn = liveColumns.find((column) => column.flags?.intake === true)
+      ?? liveColumns.find((column) => column.flags?.hold === true)
+      ?? liveColumns[0];
+    return recoveryColumn ? [recoveryColumn.id] : [];
+  }
   const targets: ColumnId[] = [];
   const previous = visibleColumns[currentIndex - 1]?.id;
   const next = visibleColumns[currentIndex + 1]?.id;

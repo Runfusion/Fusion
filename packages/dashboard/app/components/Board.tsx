@@ -749,6 +749,13 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
 
   FNXC:WorkflowBoard 2026-06-29-23:54:
   Aggregate Board rendering separates active columns from archived columns after the deterministic union is built. This preserves the existing collapsed archived-column behavior while the main All workflows lane set stays limited to non-hidden, non-archived destinations.
+
+  FNXC:WorkflowResolvedColumns 2026-07-27-14:35 (U10 / R8):
+  The union is now built ONLY from the workflows the payload declares. It previously appended every id of the legacy `COLUMNS` enum with synthesised trait flags, which drew a phantom lane for any lifecycle column no workflow declares — the visible failure a removed column (U11 merging Todo into Planning) would ship. Those injected lanes also carried the raw column id as their label, so a lane named "in-progress" appeared beside properly named workflow lanes.
+
+  Ordering follows the workflows' own declaration order (default workflow first, then the remaining workflows in payload order) instead of the legacy enum's index. For the built-in workflows the two are identical — their IR declares columns in exactly the legacy order — so the default board is unchanged; for a renamed or reordered workflow the lanes now follow the IR rather than collapsing to an alphabetical tie-break.
+
+  Cards resting in a column NO workflow declares are still rendered: `aggregateTasksByColumn` re-homes them for display into the aggregate quick-create intake lane (see its safety net below). Dropping the injected lanes therefore removes phantom lanes without stranding a single card.
   */
   const aggregateBoardColumns = useMemo<AggregateBoardColumn[]>(() => {
     const byId = new Map<string, AggregateBoardColumn>();
@@ -770,23 +777,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
         }
       }
     }
-    for (const column of COLUMNS) {
-      if (!byId.has(column)) {
-        byId.set(column, {
-          id: column,
-          name: column,
-          flags: { archived: column === "archived", complete: column === "done", intake: column === "triage", countsTowardWip: column === "in-progress", mergeBlocker: column === "in-review" },
-          sourceWorkflowIds: [],
-        });
-      }
-    }
-    const order = new Map(COLUMNS.map((column, index) => [column, index]));
-    return [...byId.values()].sort((a, b) => {
-      const aOrder = order.get(a.id as ColumnType) ?? (a.flags.archived ? 10_000 : 1_000);
-      const bOrder = order.get(b.id as ColumnType) ?? (b.flags.archived ? 10_000 : 1_000);
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return a.name.localeCompare(b.name);
-    });
+    return [...byId.values()];
   }, [boardWorkflows]);
 
   const aggregateQuickCreateTarget = useMemo<AggregateQuickCreateTarget | null>(() => {

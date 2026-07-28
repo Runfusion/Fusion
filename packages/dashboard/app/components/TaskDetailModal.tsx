@@ -639,6 +639,24 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
 // #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (non-members correctly resolve to false → not editable).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8):
+Title/description editing belongs to PRE-IMPLEMENTATION lanes — the card has no session, no
+worktree, and no plan being executed against the text. That was encoded as the legacy id pair
+{triage, todo}, so a workflow that renames its planning lane (or U11's Todo→Planning merge)
+silently lost the Edit affordance with nothing on screen to explain it. Resolve it from the
+card's own column traits instead, and keep the legacy id set as the fallback for the window
+before the board-workflows payload resolves and for a column the workflow does not declare —
+where the traits are unknown rather than known-false.
+*/
+function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
+  if (!flags) return EDITABLE_COLUMNS.has(column);
+  if (flags.complete || flags.archived || flags.countsTowardWip || flags.mergeBlocker || flags.humanReview) {
+    return false;
+  }
+  return flags.intake === true || flags.hold === true;
+}
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
 const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
@@ -1678,7 +1696,9 @@ export function TaskDetailContent({
   // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
-  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const canEdit = isTaskFieldEditableColumn(task.column, workflowMoveMetadata?.currentColumnFlags) && !isSaving;
+  /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
+  const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
@@ -4075,8 +4095,17 @@ export function TaskDetailContent({
       <div className="modal-header">
           <div className="detail-title-row">
             <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
+            {/*
+            FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
+            The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
+            is the shared lifecycle translator keyed on legacy ids, so a workflow-declared column
+            it does not know fell through to the raw stored id ("staging") beside properly named
+            lanes elsewhere in the UI. Prefer the workflow's declared column name; keep
+            `columnLabel` for the column a workflow does not declare and for the window before the
+            board-workflows payload resolves.
+            */}
             <span className={`detail-column-badge badge-${task.column}`}>
-              {columnLabel(task.column)}
+              {workflowColumnDisplayName ?? columnLabel(task.column)}
             </span>
           </div>
           <div className="modal-header-actions">

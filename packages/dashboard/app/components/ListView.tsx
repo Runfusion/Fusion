@@ -694,6 +694,22 @@ export function ListView({
     return [...columnsById.values()];
   }, [boardWorkflows, isAllWorkflowsSelected, selectedWorkflow, workflowMode]);
 
+  /**
+   * FNXC:WorkflowResolvedColumns 2026-07-27-14:45 (U10 / R8):
+   * Display-only landing lane for a row whose stored column the resolved workflow does not
+   * declare. Prefers the workflow's intake lane (where an operator expects unplaced work),
+   * then the first non-complete/non-archived lane, then the first lane at all. `undefined`
+   * only when the workflow declares no visible column, in which case the row is skipped
+   * rather than pushed into a group key the render loop never reads.
+   */
+  const listFallbackColumnId = useMemo<ColumnId | undefined>(() => {
+    const placeable = listColumns.filter((column) => !column.flags.archived);
+    return placeable.find((column) => column.flags.intake)?.id
+      ?? placeable.find((column) => !column.flags.complete)?.id
+      ?? placeable[0]?.id
+      ?? listColumns[0]?.id;
+  }, [listColumns]);
+
   const columnNameById = useMemo(() => {
     const map = new Map<ColumnId, string>();
     for (const column of listColumns) {
@@ -919,9 +935,20 @@ export function ListView({
     const groups: Record<string, Task[]> = {};
     for (const column of listColumns) groups[column.id] = [];
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-27-14:45 (U10 / R8):
+    A row whose stored column the resolved workflow no longer declares must NOT vanish. The
+    previous `if (groups[column])` guard silently dropped it — no lane, no row, no error — which
+    is exactly what a removed column (U11 merging Todo into Planning) or a workflow edited to
+    drop a lane produces for cards already resting there. Re-home it for DISPLAY into the
+    workflow's intake/first visible lane, mirroring the safety nets Board already carries for its
+    selected-workflow and aggregate groupings. Display-only: the task's stored column is untouched,
+    so the move menu and any engine rebound still see the real column.
+    */
     columnFiltered.forEach((task) => {
       const column = workflowMode ? task.column : (isColumn(task.column) ? task.column : DEFAULT_COLUMN);
-      if (groups[column]) groups[column].push(task);
+      const columnId = groups[column] !== undefined ? column : listFallbackColumnId;
+      if (columnId !== undefined && groups[columnId]) groups[columnId].push(task);
     });
 
     for (const column of listColumns) {

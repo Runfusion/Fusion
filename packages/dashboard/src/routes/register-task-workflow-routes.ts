@@ -27,6 +27,7 @@ import type {
   RunAuditEvent,
   ArtifactType,
   PrInfo,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   COLUMNS,
@@ -167,6 +168,27 @@ async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Pro
   } catch {
     return "triage";
   }
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8):
+Lifecycle POSITION — "is this move backward?" — resolved through `COLUMNS.indexOf(...)`, the
+legacy enum. A workflow that renames its lanes returns -1 for both endpoints, and
+`isBackwardMoveBlockedByOpenPr` treats a negative index as "cannot tell → allow", so the open-PR
+guard silently stopped existing on every custom board rather than rejecting anything. A guard that
+never fires does not fail a test.
+
+`ir.columns` is ordered and that order IS the lifecycle order (see the graph entry contract), so
+the workflow is the authority. The legacy enum stays as the fallback for an unresolvable or v1
+(column-less) IR, which keeps `builtin:coding` — whose column order equals the enum — unchanged.
+*/
+function columnOrderIndexer(ir: WorkflowIr | undefined): (columnId: string) => number {
+  const declared = (ir as { columns?: Array<{ id: string }> } | undefined)?.columns;
+  if (!Array.isArray(declared) || declared.length === 0) {
+    return (columnId: string) => COLUMNS.indexOf(columnId as Column);
+  }
+  const order = new Map(declared.map((column, index) => [column.id, index]));
+  return (columnId: string) => order.get(columnId) ?? -1;
 }
 
 async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promise<string> {
@@ -748,6 +770,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       (task.branchContext?.groupId
         ? await scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
         : null);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-27-16:20 (U10 / R8):
+    Deliberately still on the legacy enum, unlike the move route's copy of this guard. This whole
+    function is gated on the literal `task.column !== "in-review"` above and re-engages to the
+    literal `"in-progress"`, so both endpoints are legacy ids by construction and the enum resolves
+    them correctly. Swapping in the task's workflow order here would make the guard WEAKER, not
+    stronger: a workflow declaring `in-review` but not `in-progress` would score -1 for the target
+    and disable the guard entirely. Convert this site when its surrounding literals are converted
+    (U5 owns the re-engage lane), not before.
+    */
     if (
       isBackwardMoveBlockedByOpenPr({
         fromIndex: COLUMNS.indexOf(task.column as Column),
@@ -1763,10 +1795,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           (guardTask.branchContext?.groupId
             ? await scopedStore.getActivePrEntityBySource?.("branch-group", guardTask.branchContext.groupId)
             : null);
+        // FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8): position comes from the
+        // task's own workflow column order (already resolved above as `moveTargetIr`).
+        const columnOrderIndex = columnOrderIndexer(moveTargetIr);
         if (
           isBackwardMoveBlockedByOpenPr({
-            fromIndex: COLUMNS.indexOf(guardTask.column as Column),
-            toIndex: COLUMNS.indexOf(moveTarget),
+            fromIndex: columnOrderIndex(guardTask.column),
+            toIndex: columnOrderIndex(moveTarget),
             activePrEntity,
           })
         ) {
