@@ -246,6 +246,8 @@ export type {
   WorkflowIrColumn,
   WorkflowIrColumnTrait,
   WorkflowColumnAgent,
+  WorkflowColumnRecovery,
+  WorkflowColumnOnStale,
   WorkflowHoldRelease,
   WorkflowJoinMode,
   WorkflowJoinBranchFailure,
@@ -438,7 +440,6 @@ export {
   workflowHasColumn,
 } from "./workflow-transitions.js";
 export type { ColumnAdjacency } from "./workflow-transitions.js";
-export { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
 // ── U8: pre-evaluated plugin gate verdicts (KTD-2) ───────────────────────────
 export {
   findWorkflowColumn,
@@ -447,7 +448,12 @@ export {
 export type { PluginGateVerdict, ColumnPluginGate } from "./plugin-gate-verdict.js";
 // ── U6: workflow capacity (WIP) resolution shared by store + sweep ───────────
 export { resolveColumnCapacity, resolveWipBudgetColumns, DEFAULT_WORKFLOW_POOL_ID } from "./workflow-capacity.js";
-export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "./workflow-lifecycle-traits.js";
+export { createWorkflowEventBus, getWorkflowEventBus, emitWorkflowLifecycleEvent, resetWorkflowEventBusForTesting } from "./workflow-events.js";
+export type { WorkflowEventBus, WorkflowEventSubscriber, WorkflowEventSubscription } from "./workflow-events.js";
+export { findWorkflowEventShapeViolations, isIdsOnlyWorkflowEvent, MAX_ID_VALUE_LENGTH } from "./types/workflow-events.js";
+export type { WorkflowLifecycleEvent, WorkflowLifecycleEventType, WorkflowLifecycleEventBase, TaskTransitionedEvent, NodeEnteredEvent, NodeCompletedEvent, RunSuspendedEvent, RunResumedEvent, WorkflowEventShapeViolation } from "./types/workflow-events.js";
+export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns } from "./workflow-lifecycle-traits.js";
+export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";
 export {
   LEGACY_STATUS_ADOPTION,
@@ -1100,19 +1106,6 @@ export {
   DEFAULT_CAPACITY_RISK_TODO_THRESHOLD,
 } from "./capacity.js";
 export type { CapacityRiskSignal } from "./capacity.js";
-export {
-  computeDependencyBlockedTodoReport,
-  DEFAULT_DEPENDENCY_BLOCKED_TODO_FRESH_MS,
-  DEFAULT_DEPENDENCY_BLOCKED_TODO_STALE_MS,
-  DEFAULT_DEPENDENCY_BLOCKED_TODO_MIN_COUNT,
-  DEFAULT_DEPENDENCY_BLOCKED_TODO_MAX_GROUPS,
-} from "./dependency-blocked-todo-report.js";
-export type {
-  DependencyBlockedTodoCode,
-  DependencyBlockedTodoGroup,
-  DependencyBlockedTodoReport,
-  DependencyBlockedTodoReportContext,
-} from "./dependency-blocked-todo-report.js";
 export { getPrimaryPrInfo, taskHasManualOpenPullRequest } from "./task-helpers.js";
 export {
   getTaskMergeBlocker,
@@ -2136,41 +2129,6 @@ export {
   postMergeVerificationOptionalGroupNode,
 } from "./builtin-post-merge-group.js";
 export type { PostMergeOptionalGroupSpec } from "./builtin-post-merge-group.js";
-export {
-  WORKFLOW_COMPARABLE_AUDIT_MUTATIONS,
-  WORKFLOW_PARITY_OBSERVED_MUTATION,
-  WORKFLOW_PARITY_DRIFT_MUTATION,
-  compareWorkflowRunAudits,
-  compareWorkflowRunObservations,
-  extractWorkflowAuditObservations,
-  DEFAULT_WORKFLOW_INVARIANTS,
-  deriveStageTransitions,
-  buildWorkflowObservationFromTask,
-  buildWorkflowObservation,
-  checkTransitionParity,
-  countDualAcceptDisagreements,
-  computeWorkflowColumnsGraduationReport,
-  DUAL_ACCEPT_PARITY_MUTATIONS,
-} from "./workflow-parity.js";
-export type {
-  WorkflowAuditObservation,
-  WorkflowParityDiff,
-  WorkflowParityDiffCategory,
-  WorkflowParityDiffSeverity,
-  WorkflowParityDriftReport,
-  WorkflowReliabilityInvariantSignals,
-  WorkflowRunObservation,
-  WorkflowStage,
-  WorkflowObservationTaskInput,
-  WorkflowObservationBuildOptions,
-  WorkflowObservationParts,
-  WorkflowParitySummary,
-  TransitionParityDiff,
-  TransitionParityReport,
-  DualAcceptDisagreementReport,
-  WorkflowColumnsGraduationReport,
-  GraduationReportInputs,
-} from "./workflow-parity.js";
 export { isResearchExperimentalEnabled, resolveResearchSettings } from "./research-settings.js";
 export type { ResolvedResearchSettings } from "./research-settings.js";
 export { isEvalsExperimentalEnabled, resolveEvalSettings } from "./eval-settings.js";

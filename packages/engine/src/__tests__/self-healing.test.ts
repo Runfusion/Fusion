@@ -3035,7 +3035,17 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
 
       expect(result).toBe(1);
-      expect(store.listTasks).toHaveBeenCalledWith({ column: "todo", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:40 (Phase B / slice B3.1 — U4):
+      The query shape CHANGED on purpose. This sweep can no longer scope itself to
+      `column: "todo"` — that literal made it blind to every workflow whose hold
+      column is named something else, so a finished card sat in `drafting` forever.
+      It now reads the board and filters by each task's RESOLVED hold column.
+
+      The behavioral assertions below are the ones that matter and are unchanged:
+      one qualifying card, promoted exactly once. Only the query shape moved.
+      */
+      expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
       expect(recoverFn).toHaveBeenCalledTimes(1);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
 
@@ -7653,45 +7663,6 @@ describe("SelfHealingManager", () => {
       expect(store.logEntry).not.toHaveBeenCalled();
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
-      managerWithRecovery.stop();
-    });
-  });
-
-  describe("surfaceDependencyBlockedTodos", () => {
-    it("returns 0 when globalPause is enabled", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ globalPause: true });
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
-      managerWithRecovery.stop();
-    });
-
-    it("returns 0 when dependency-blocked todo reporting is disabled", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: false });
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
-      managerWithRecovery.stop();
-    });
-
-    it("returns groupCount from reporter", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: true });
-      const reportSpy = vi.fn().mockResolvedValue({ alerted: true, groupCount: 1 });
-      (managerWithRecovery as unknown as { dependencyBlockedTodoReporter: { report: typeof reportSpy } }).dependencyBlockedTodoReporter = { report: reportSpy };
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(1);
-      expect(reportSpy).toHaveBeenCalledWith();
-      managerWithRecovery.stop();
-    });
-
-    it("returns 0 and logs error when reporter fails", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: true });
-      const reportSpy = vi.fn().mockRejectedValue(new Error("boom"));
-      (managerWithRecovery as unknown as { dependencyBlockedTodoReporter: { report: typeof reportSpy } }).dependencyBlockedTodoReporter = { report: reportSpy };
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
       managerWithRecovery.stop();
     });
   });
