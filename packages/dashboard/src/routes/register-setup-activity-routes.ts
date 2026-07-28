@@ -90,12 +90,18 @@ router.get("/activity-feed", async (req, res) => {
     const typesParam = typeof req.query.types === "string" ? req.query.types.split(",") : undefined;
     const types = typesParam as import("@fusion/core").ActivityEventType[] | undefined;
 
-    const { CentralCore } = await import("@fusion/core");
-    const central = new CentralCore();
-    await central.init();
+    /*
+    FNXC:ActivityFeed 2026-07-28-03:00:
+    Prefer the server-owned centralCore (already backend-mode with asyncLayer) over `new CentralCore()` so GET /api/activity-feed does not open a per-request pool and cannot hit backendHandle-before-attach. Mirrors global-concurrency / setup-state routes. Layer-less fallback still works once CentralCore.init restores PG bootstrap (#2454 regression).
+    */
+    const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
+    const shouldClose = !options?.centralCore;
+    if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+      await central.init();
+    }
 
     const entries = await central.getRecentActivity({ limit, projectId, types });
-    await central.close();
+    if (shouldClose) await central.close();
 
     res.json(entries);
   } catch (err: unknown) {

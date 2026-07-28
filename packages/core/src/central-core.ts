@@ -355,7 +355,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private async initializeOnce(): Promise<void> {
     this.assertOpen();
     if (this.initialized) return;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:15:
+    CentralCore.init is PostgreSQL-only (SQLite CentralDatabase path deleted).
 
+    FNXC:CentralCore 2026-07-28-03:00:
+    #2454 accidentally early-returned on layer-less init and left the PG bootstrap as dead code. Dashboard routes (e.g. GET /api/activity-feed) and CLI fallbacks call `new CentralCore(); await init(); getRecentActivity()` without attachBackendLayer, so a no-op init throws backendHandle ("only available in backend mode"). Restore layer-less createCentralBackendLayer bootstrap. When a pre-injected asyncLayer exists, bootstrap that shared layer only. Runtime serve may still call attachBackendLayer later to adopt the TaskStore pool (releases any owned central-only pool).
+    */
     if (this.asyncLayer) {
       await asyncCentralCore.ensureBackendBootstrap(this.asyncLayer);
       this.initialized = true;
