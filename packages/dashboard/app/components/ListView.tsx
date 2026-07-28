@@ -306,24 +306,10 @@ interface ListViewProps {
   mergeStrategy?: string;
   onOpenWorkflowEditor?: (workflowId?: string) => void;
   onCreateWorkflow?: () => void;
-  workflowColumnsEnabled?: boolean;
-  settingsLoaded?: boolean;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
 }
 
-const LEGACY_LIST_COLUMNS: BoardWorkflowColumn[] = COLUMNS.map((column) => ({
-  id: column,
-  name: column,
-  flags: {
-    intake: column === "triage",
-    countsTowardWip: column === "in-progress",
-    mergeBlocker: column === "in-review",
-    complete: column === "done",
-    archived: column === "archived",
-    hold: column === "todo",
-  },
-}));
 
 function shouldShowTaskProgress(task: Task): boolean {
   return task.status === "executing" || task.column === "in-progress";
@@ -384,8 +370,6 @@ export function ListView({
   mergeStrategy = "direct",
   onOpenWorkflowEditor,
   onCreateWorkflow,
-  workflowColumnsEnabled,
-  settingsLoaded,
   workflowControlsInHeader = false,
 }: ListViewProps) {
   const { t } = useTranslation("app");
@@ -402,13 +386,12 @@ export function ListView({
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const suppressNextRowClickRef = useRef(false);
   /*
-  FNXC:BoardWorkflows 2026-06-20-09:07:
-  ListView shares the board-workflows first-paint invariant with Board: hydrate per-project workflow metadata from sessionStorage and gate legacy list columns while workflowColumns settings or uncached lane metadata are still unknown.
-
   FNXC:BoardWorkflowSelection 2026-06-29-12:35:
   ListView must use the same project-scoped durable workflow selection invariant as Board/Header/Graph so task refreshes, respecification route returns, and remounts do not reset operators from a custom workflow back to the default workflow. Keep this separate from list task-selection storage keys.
+
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  The `shouldHydrateCache` gate is DELETED alongside Board's. It read `workflowColumnsEnabled === true || settingsLoaded === false`, and MainContent passed `workflowColumnsEnabled` as a literal `true`, so it was unconditionally true — the hook's own default.
   */
-  const shouldHydrateBoardWorkflowsCache = workflowColumnsEnabled === true || settingsLoaded === false;
   const {
     boardWorkflows,
     workflowMode,
@@ -419,7 +402,7 @@ export function ListView({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,
-  } = useBoardWorkflows({ projectId, shouldHydrateCache: shouldHydrateBoardWorkflowsCache });
+  } = useBoardWorkflows({ projectId });
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
     return document.getElementById("header-workflow-slot");
@@ -670,7 +653,17 @@ export function ListView({
   }, [selectedWorkflowId]);
 
   const listColumns = useMemo<BoardWorkflowColumn[]>(() => {
-    if (!workflowMode || !selectedWorkflow) return LEGACY_LIST_COLUMNS;
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, R8):
+    `LEGACY_LIST_COLUMNS` is DELETED. It synthesised trait flags onto the six
+    hardcoded legacy column ids (`intake: column === "triage"`, `hold: column ===
+    "todo"`, …) — the same defect U10 removed from Board's aggregate lane union,
+    surviving in the ListView copy. It only ever fed this arm, which the skeleton
+    gate below makes unreachable: that gate returns unless a lane resolved, and a
+    resolved lane always yields a non-null `selectedWorkflow`. Empty columns render
+    nothing, matching what the skeleton already shows.
+    */
+    if (!workflowMode || !selectedWorkflow) return [];
     if (!isAllWorkflowsSelected || !boardWorkflows) {
       return selectedWorkflow.columns.filter((column) => !column.flags.hiddenFromBoard);
     }
@@ -2665,12 +2658,15 @@ export function ListView({
     </>
   );
 
-  const shouldGateLegacyList = boardWorkflows === null
-    ? (workflowColumnsEnabled === true || settingsLoaded === false)
-    : boardWorkflows.flagEnabled === true && boardWorkflows.workflows.length === 0;
-
-  if (shouldGateLegacyList) {
-    return renderListWorkflowSkeleton(boardWorkflows?.flagEnabled === true);
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Behaviour-identical to the former `shouldGateLegacyList`, with the two retired
+  flag reads spelled out of it: the null arm was always true (literal prop), and
+  the loaded arm's `flagEnabled === true` conjunct is a server constant. The
+  argument distinguishes "loaded but no lane" from "still loading".
+  */
+  if (boardWorkflows === null || boardWorkflows.workflows.length === 0) {
+    return renderListWorkflowSkeleton(boardWorkflows !== null);
   }
 
   return (

@@ -512,8 +512,15 @@ interface TaskWorkflowMetadata {
   currentColumnFlags?: TaskContextMenuColumnFlags;
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The `payload.flagEnabled !== true` early return is DELETED. The server hardcodes
+that field to `true`, so the guard could only ever suppress this modal's workflow
+section on a malformed payload — a retired kill switch, not a real precondition.
+The `!workflow || !name` guard below is the one that actually handles a payload
+without resolvable workflow metadata.
+*/
 function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<Task, "id" | "column">): TaskWorkflowMetadata | null {
-  if (payload.flagEnabled !== true) return null;
   const workflowId = payload.taskWorkflowIds[task.id] ?? payload.defaultWorkflowId;
   const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
   const name = workflow?.name?.trim();

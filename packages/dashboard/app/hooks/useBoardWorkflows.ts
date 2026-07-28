@@ -31,11 +31,6 @@ Per-consumer subscription semantics are preserved: each call to this hook instal
 
 export interface UseBoardWorkflowsParams {
   projectId?: string;
-  /**
-   * Gate cache hydration. Board passes `workflowColumnsEnabled === true || settingsLoaded === false`
-   * to avoid flashing the legacy board; Planning has no such gate and leaves this at the default `true`.
-   */
-  shouldHydrateCache?: boolean;
   fetchBoardWorkflows?: typeof defaultFetchBoardWorkflows;
   subscribeSse?: typeof defaultSubscribeSse;
   readBoardWorkflowsCache?: typeof defaultReadBoardWorkflowsCache;
@@ -76,7 +71,6 @@ export interface UseBoardWorkflowsResult {
 export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWorkflowsResult {
   const {
     projectId,
-    shouldHydrateCache = true,
     fetchBoardWorkflows = defaultFetchBoardWorkflows,
     subscribeSse = defaultSubscribeSse,
     readBoardWorkflowsCache = defaultReadBoardWorkflowsCache,
@@ -86,7 +80,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   } = params;
 
   const [boardWorkflowsState, setBoardWorkflowsState] = useState<{ projectId?: string; payload: BoardWorkflowsPayload } | null>(() => {
-    const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
+    const cached = readBoardWorkflowsCache(projectId);
     return cached ? { projectId, payload: cached } : null;
   });
   const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
@@ -143,14 +137,14 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   // Stale-response guard: a monotonic sequence ref drops out-of-order responses.
   const boardWorkflowsFetchSeqRef = useRef(0);
 
-  // Re-hydrate from the per-project cache on project change (and gate change).
+  // Re-hydrate from the per-project cache on project change.
   useEffect(() => {
-    const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
+    const cached = readBoardWorkflowsCache(projectId);
     const storedSelection = readBoardWorkflowViewSelection(projectId);
     storedSelectionRef.current = storedSelection;
     setSelectedWorkflowIdState(storedSelection);
     setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
-  }, [projectId, shouldHydrateCache, readBoardWorkflowsCache]);
+  }, [projectId, readBoardWorkflowsCache]);
 
   const refreshBoardWorkflows = useCallback((options?: { forceFresh?: boolean }) => {
     const seq = ++boardWorkflowsFetchSeqRef.current;
@@ -211,8 +205,15 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     };
   }, [projectId, refreshBoardWorkflows, subscribeSse]);
 
-  const flagOn = boardWorkflows?.flagEnabled === true;
-  const workflowMode = flagOn && Boolean(boardWorkflows?.workflows.length);
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Workflow mode is now "this project resolved at least one lane", nothing else.
+  The former `flagEnabled === true` conjunct is DELETED: the server hardcodes that
+  field to `true` (`buildBoardWorkflowsPayload`), so it could only ever narrow the
+  result to itself. Reading it kept a retired kill switch alive on the client, one
+  stale payload away from silently reverting every consumer to the legacy board.
+  */
+  const workflowMode = Boolean(boardWorkflows?.workflows.length);
 
   const workflowOptions = useMemo<BoardWorkflowDefinition[]>(() => {
     if (!workflowMode || !boardWorkflows) return [];

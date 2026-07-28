@@ -128,7 +128,6 @@ function renderBoard(tasks: Task[]) {
       onToggleAutoMerge={vi.fn()}
       planAutoApproveEnabled={false}
       onTogglePlanAutoApprove={vi.fn()}
-      workflowColumnsEnabled
       settingsLoaded
     />,
   );
@@ -149,7 +148,6 @@ function renderList(tasks: Task[]) {
       addToast={vi.fn()}
       globalPaused={false}
       onNewTask={vi.fn()}
-      workflowColumnsEnabled
       settingsLoaded
     />,
   );

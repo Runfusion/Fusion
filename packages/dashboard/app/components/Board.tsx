@@ -1,5 +1,4 @@
 import type { Task, TaskDetail, Column as ColumnType, ColumnId, TaskCreateInput, GithubIssueAction, MergeResult } from "@fusion/core";
-import { COLUMNS, DEFAULT_COLUMN, isColumn } from "@fusion/core";
 import { sortTasksForDisplayColumn, type DoneColumnSortMode } from "./taskSorting";
 import { Column } from "./Column";
 import "./Lane.css";
@@ -102,17 +101,8 @@ interface BoardProps {
   /** Opens the workflow editor to create a new workflow. */
   onCreateWorkflow?: () => void;
   /** Already-resolved app setting for whether workflow lanes should be used. */
-  workflowColumnsEnabled?: boolean;
-  /** Whether app settings have loaded; false gates the legacy board until the workflow flag is known. */
-  settingsLoaded?: boolean;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
-}
-
-
-function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
-  if (previous.length !== next.length) return false;
-  return previous.every((task, index) => task === next[index]);
 }
 
 let boardWasPreviouslyInactive = false;
@@ -167,7 +157,7 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   );
 }
 
-export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
   FNXC:DoneColumnSorting 2026-06-29-16:57:
@@ -201,15 +191,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   });
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
-  const tasksByColumnCacheRef = useRef<Record<ColumnType, Task[]>>({
-    triage: [],
-    todo: [],
-    "in-progress": [],
-    "in-review": [],
-    done: [],
-    archived: [],
-  });
-
   useEffect(() => {
     if (!workflowControlsInHeader || typeof document === "undefined") {
       setHeaderWorkflowSlot(null);
@@ -249,41 +230,14 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     });
   }, [onLoadArchivedTasks]);
 
-  // Tasks are already server-filtered when searchQuery is active (via useTasks hook).
-  // Client-side filtering is removed - tasks prop is used directly.
-  // Keep per-column array identities stable for unchanged columns so React.memo(Column)
-  // can skip sibling rerenders during unrelated task updates.
-  const tasksByColumn = useMemo(() => {
-    const nextGrouped: Record<ColumnType, Task[]> = {
-      triage: [],
-      todo: [],
-      "in-progress": [],
-      "in-review": [],
-      done: [],
-      archived: [],
-    };
-
-    for (const task of tasks) {
-      const column = isColumn(task.column) ? task.column : DEFAULT_COLUMN;
-      const bucket = nextGrouped[column] ?? nextGrouped[DEFAULT_COLUMN];
-      bucket.push(task);
-    }
-
-    const previousGrouped = tasksByColumnCacheRef.current;
-    const stableGrouped = {} as Record<ColumnType, Task[]>;
-
-    for (const column of COLUMNS) {
-      const sortedTasks = column === "done"
-        ? sortTasksForDisplayColumn(nextGrouped[column], column, doneSortMode)
-        : sortTasksForDisplayColumn(nextGrouped[column], column);
-      stableGrouped[column] = areTaskArraysEqual(previousGrouped[column], sortedTasks)
-        ? previousGrouped[column]
-        : sortedTasks;
-    }
-
-    tasksByColumnCacheRef.current = stableGrouped;
-    return stableGrouped;
-  }, [tasks, doneSortMode]);
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, R8):
+  `tasksByColumn` and its stable-identity cache ref are DELETED with the legacy
+  single-lane board that was their only consumer. Both hardcoded the six legacy
+  column ids as object literals, so they could not have bucketed a workflow-defined
+  column at all. The workflow board buckets from each lane's own column ids
+  (`selectedWorkflowTasks` / `aggregateBoardColumns`) and keeps its own memoization.
+  */
 
   /*
   FNXC:BoardNavigation 2026-06-30-17:42:
@@ -386,15 +340,17 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     };
   }, []);
 
-  // ── U9 multi-lane board (flag-gated) ──────────────────────────────────────
+  // ── U9 multi-lane board ───────────────────────────────────────────────────
   /*
   FNXC:BoardWorkflows 2026-06-20-08:58:
-  Workflow-columns-enabled users must never see the legacy single-lane board while board-workflows metadata is still loading. Hydrate metadata from the project-scoped session cache, reset it on project switches, and show a neutral skeleton while settings or uncached workflow metadata are unknown.
+  Operators must never see a partial board while board-workflows metadata is still loading. Hydrate metadata from the project-scoped session cache, reset it on project switches, and show a neutral skeleton while uncached workflow metadata is unknown.
 
   FNXC:Workflows 2026-06-22-17:00:
-  The board-workflows fetch/cache/SSE/selection loop now lives in `useBoardWorkflows`, shared verbatim with the Planning header slot. Board gates cache hydration on `workflowColumnsEnabled === true || settingsLoaded === false` so workflow-columns users never flash the legacy board, and consumes the exposed raw state setter for optimistic task→workflow assignment. When the flag is OFF the server returns `{ flagEnabled: false }` and we render the legacy single-lane board below.
+  The board-workflows fetch/cache/SSE/selection loop lives in `useBoardWorkflows`, shared verbatim with the Planning header slot, and Board consumes the exposed raw state setter for optimistic task→workflow assignment.
+
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  The `shouldHydrateCache` gate is DELETED. It read `workflowColumnsEnabled === true || settingsLoaded === false`, and every call site passed `workflowColumnsEnabled` as a literal `true` (`MainContent`), so the expression was unconditionally true — identical to the hook's default. Both props are gone with it; Board no longer needs settings loaded at all to decide what to render.
   */
-  const shouldHydrateBoardWorkflowsCache = workflowColumnsEnabled === true || settingsLoaded === false;
   const {
     boardWorkflows,
     workflowMode,
@@ -404,7 +360,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,
-  } = useBoardWorkflows({ projectId, shouldHydrateCache: shouldHydrateBoardWorkflowsCache });
+  } = useBoardWorkflows({ projectId });
   const draggingTaskIdRef = useRef<string | null>(null);
 
   const handlePromote = useCallback(async (taskId: string, options?: { force?: boolean }) => {
@@ -889,12 +845,21 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   // `task.issueInfo`, `task.githubTracking.issue`) and live WebSocket `badge:updated`
   // messages. We do NOT eagerly call `/api/github/batch-status` on board load.
 
-  const shouldGateLegacyBoard = boardWorkflows === null
-    ? (workflowColumnsEnabled === true || settingsLoaded === false)
-    : boardWorkflows.flagEnabled === true && boardWorkflows.workflows.length === 0;
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Show the skeleton until lanes resolve. Behaviour is unchanged, only the spelling:
+  the null arm was `workflowColumnsEnabled === true || settingsLoaded === false`
+  (always true — MainContent passed the literal `true`), and the loaded arm's
+  `flagEnabled === true` conjunct was a server constant. `empty` distinguishes
+  "still loading" (no payload) from "loaded, but this project resolved no lane",
+  which is what the former `flagEnabled` read was standing in for.
 
-  if (shouldGateLegacyBoard) {
-    return <BoardWorkflowSkeleton empty={boardWorkflows?.flagEnabled === true} />;
+  Note the retained failure behaviour: a board-workflows fetch that never succeeds
+  leaves `boardWorkflows === null` and holds the skeleton. That was already true
+  before this deletion — the legacy board below was NOT the fetch-failure fallback.
+  */
+  if (boardWorkflows === null || boardWorkflows.workflows.length === 0) {
+    return <BoardWorkflowSkeleton empty={boardWorkflows !== null} />;
   }
 
   if (workflowMode && selectedWorkflow) {
@@ -1140,59 +1105,21 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     );
   }
 
-  return (
-    <>
-      <main className="board" id="board" ref={setBoardRef}>
-        {COLUMNS.map((col) => (
-          <Column
-            key={col}
-            column={col}
-            tasks={tasksByColumn[col]}
-            projectId={projectId}
-            maxConcurrent={maxConcurrent}
-            showWorktreeGrouping={showWorktreeGrouping}
-            onMoveTask={onMoveTask}
-            onPauseTask={onPauseTask}
-            onUnpauseTask={onUnpauseTask}
-            onResetTask={onResetTask}
-            onDuplicateTask={onDuplicateTask}
-            onMergeTask={onMergeTask}
-            onOpenDetail={onOpenDetail}
-            onPlanningMode={onPlanningMode}
-            onOpenRefine={onOpenRefine}
-            onOpenGroupModal={onOpenGroupModal}
-            addToast={addToast}
-            globalPaused={globalPaused}
-            onUpdateTask={onUpdateTask}
-            onRetryTask={onRetryTask}
-            onArchiveTask={onArchiveTask}
-            onUnarchiveTask={onUnarchiveTask}
-            onRevertTask={onRevertTask}
-            onDeleteTask={onDeleteTask}
-            allTasks={tasks}
-            availableModels={availableModels}
-            onOpenDetailWithTab={onOpenDetailWithTab}
-            favoriteProviders={favoriteProviders}
-            favoriteModels={favoriteModels}
-            onToggleFavorite={onToggleFavorite}
-            onToggleModelFavorite={onToggleModelFavorite}
-            isSearchActive={isSearchActive}
-            taskStuckTimeoutMs={taskStuckTimeoutMs}
-            onOpenMission={onOpenMission}
-            lastFetchTimeMs={lastFetchTimeMs}
-            taskCardFieldDefs={taskCardFieldDefs}
-            blockerFanoutMap={blockerFanoutMap}
-            prAuthAvailable={prAuthAvailable}
-            autoMerge={autoMerge}
-            mergeStrategy={mergeStrategy}
-            {...(col === "triage" ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-            {...(col === "triage" ? { onQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
-            {...(col === "in-review" ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-            {...(col === "done" ? { onArchiveAllDone, doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
-            {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived: onLoadMoreArchivedTasks } : {})}
-          />
-        ))}
-      </main>
-    </>
-  );
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, R8):
+  The legacy single-lane board is DELETED. It mapped the hardcoded `COLUMNS` enum
+  and was the last board surface deriving its column set from the legacy vocabulary
+  rather than from each card's own workflow — an R8 violation that survived U10.
+
+  It was also unreachable. The skeleton gate above returns unless
+  `boardWorkflows.workflows.length > 0`, which is exactly what makes `workflowMode`
+  true; and `useBoardWorkflows` resolves `selectedWorkflow` to `workflowOptions[0]`
+  when neither the stored nor the default selection matches, so it is non-null
+  whenever a lane exists. The workflow branch above is therefore always taken.
+
+  This arm remains only to narrow `selectedWorkflow` without a non-null assertion.
+  Rendering the skeleton rather than throwing keeps a hypothetical unreachable
+  state a blank frame instead of a crashed board.
+  */
+  return <BoardWorkflowSkeleton empty={false} />;
 }

@@ -210,6 +210,7 @@ vi.mock("../TaskDetailModal", () => ({
 }));
 
 import { fetchTaskDetail, batchUpdateTaskModels, fetchBoardWorkflows, fetchNodes, refreshPrStatus, updateTask } from "../../api";
+import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
 import { readAppFile } from "../../test/cssFixture";
 
 const mockConfirm = vi.fn();
@@ -404,11 +405,76 @@ function mockDesktopViewport() {
   }));
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The default workflow's real lane set, used both as the resolved fetch value and as
+the first-paint session-cache seed. Its six column ids are the same ones the deleted
+`LEGACY_LIST_COLUMNS` fallback synthesized, so existing per-test assertions carry
+over — the difference is that they now assert against columns resolved from a
+workflow rather than from the hardcoded legacy enum.
+*/
+const DEFAULT_LANE_PAYLOAD = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [
+    {
+      id: "builtin:coding",
+      name: "Coding",
+      columns: [
+        { id: "triage", name: "Planning", flags: { intake: true } },
+        { id: "todo", name: "Todo", flags: { hold: true } },
+        { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+        { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+        { id: "archived", name: "Archived", flags: { archived: true } },
+      ],
+    },
+  ],
+  taskWorkflowIds: {},
+};
+
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+File-level, so it applies to EVERY describe here — several have their own
+`beforeEach` and would otherwise fall back to the loading skeleton.
+
+First-paint parity with production: `useBoardWorkflows` hydrates from the
+project-scoped session cache in its `useState` initializer, so lanes are present on
+the FIRST synchronous render. Seeding only the resolved fetch value is not enough —
+`mockResolvedValue` settles a microtask later, and this file's assertions are
+overwhelmingly synchronous `render(...)` + `getBy...`.
+*/
+beforeEach(() => {
+  window.sessionStorage.clear();
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache(TEST_PROJECT_ID, DEFAULT_LANE_PAYLOAD);
+  // Lanes are cached per project, so seed every project id this file renders —
+  // including `undefined`, which the cache stores under its "default" key and which
+  // a few cases reach by re-rendering <ListView> without a projectId.
+  writeBoardWorkflowsCache(undefined, DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache("project-a", DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache("project-b", DEFAULT_LANE_PAYLOAD);
+});
+
 describe("ListView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchNodes).mockImplementation(() => new Promise(() => {}));
-    vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    This default used to be a NEVER-RESOLVING promise. With `workflowColumnsEnabled`
+    left unset, ListView's old gate evaluated to false, so `boardWorkflows` stayed
+    null and every test in this file rendered `LEGACY_LIST_COLUMNS` — the synthesized
+    legacy-enum column set. Production never reached that state: MainContent passed
+    `workflowColumnsEnabled` as a literal `true`, which held the skeleton until lanes
+    resolved. So this file's coverage was pointed at a configuration that could not
+    occur, and a real regression in the workflow list would not have failed it.
+
+    Resolve the DEFAULT workflow's real lane set instead. The column ids are the same
+    six the legacy fallback synthesized, so per-test assertions carry over unchanged —
+    what changes is that they now assert against columns resolved from a workflow.
+    Tests that need a different lane shape still override this mock locally.
+    */
     vi.mocked(fetchTaskDetail).mockResolvedValue({
       ...createMockTask(),
       prompt: "# Detail",
@@ -845,7 +911,7 @@ describe("ListView", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Move to In Progress" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Move to In progress" })).toBeInTheDocument();
     expect(failedRow).not.toHaveClass("list-row--selected");
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(fetchTaskDetail).not.toHaveBeenCalled();
@@ -922,7 +988,14 @@ describe("ListView", () => {
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-030"]') as HTMLElement, { clientX: 40, clientY: 50 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
-    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", null);
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    Was `null`. That was the LEGACY value: `getTaskPlanningWorkflowId` only returns
+    null when `workflowMode` is false, which production never was. With lanes
+    resolved it returns the task's workflow (here the default), so Planning Mode is
+    seeded with the right workflow — the behaviour operators have always had.
+    */
+    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", "builtin:coding");
     expect(onOpenDetail).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-031"]') as HTMLElement, { clientX: 40, clientY: 50 });
@@ -999,7 +1072,7 @@ describe("ListView", () => {
     const onOpenDetail = vi.fn();
     const tasks = [createMockTask({ id: "FN-012", title: "Custom complete", column: "complete" as any, status: "done" })];
 
-    renderListView({ tasks, onOpenDetail, workflowColumnsEnabled: true, settingsLoaded: true });
+    renderListView({ tasks, onOpenDetail });
 
     await screen.findByText("Custom complete");
     const row = document.querySelector('.list-row[data-id="FN-012"]') as HTMLElement;
@@ -2371,16 +2444,16 @@ describe("ListView", () => {
     // Use getAllByText and check length since column names appear in both drop zones and badges
     expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In progress").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
     // Check that badges have the correct styling by querying within the table
     const table = document.querySelector(".list-table");
     expect(table?.textContent).toContain("Planning");
     expect(table?.textContent).toContain("Todo");
-    expect(table?.textContent).toContain("In Progress");
-    expect(table?.textContent).toContain("In Review");
+    expect(table?.textContent).toContain("In progress");
+    expect(table?.textContent).toContain("In review");
     expect(table?.textContent).toContain("Done");
   });
 
@@ -2599,8 +2672,8 @@ describe("ListView", () => {
 
     expect(screen.getByText("Planning")).toBeDefined();
     expect(screen.getByText("Todo")).toBeDefined();
-    expect(screen.getByText("In Progress")).toBeDefined();
-    expect(screen.getByText("In Review")).toBeDefined();
+    expect(screen.getByText("In progress")).toBeDefined();
+    expect(screen.getByText("In review")).toBeDefined();
     expect(screen.getByText("Done")).toBeDefined();
   });
 
@@ -2814,8 +2887,8 @@ describe("ListView", () => {
     // Check that section headers are rendered with column names
     expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In progress").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -2929,7 +3002,7 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    expect(getSectionTaskIds("In Review")).toEqual(["FN-301", "FN-300"]);
+    expect(getSectionTaskIds("In review")).toEqual(["FN-301", "FN-300"]);
   });
 
   it("maintains sort order within each section", () => {
