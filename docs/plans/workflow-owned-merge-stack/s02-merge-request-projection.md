@@ -1,7 +1,8 @@
 ---
 title: "S02: merge request projection onto work items"
 type: refactor
-status: draft-stack-handoff
+status: landed-unwired
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S02
 milestone: "Foundation"
@@ -11,11 +12,18 @@ stack_base: feature/workflow-owned-merge-retry-scheduling-plan
 
 # S02: merge request projection onto work items
 
+## Measured State (2026-07-28, U9 pre-flight)
+
+`projectMergeRequestToWorkflowWorkItem` is implemented in `packages/core/src/task-store/workflow-workitems-ops.ts` and has **zero production callers**. The projection exists; nothing invokes it.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
+
 ## Stack Role
 
-This draft PR reserves the S02 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+This slot was drafted 2026-06-09 as a handoff artifact. It is **no longer**
+only that — see the Measured State block above for what has actually landed.
 
 ## Milestone
 

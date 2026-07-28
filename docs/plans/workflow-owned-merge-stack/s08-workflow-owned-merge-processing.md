@@ -1,7 +1,8 @@
 ---
 title: "S08: workflow-owned merge queue processing"
 type: refactor
-status: draft-stack-handoff
+status: not-started
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S08
 milestone: "Gate B"
@@ -10,6 +11,14 @@ stack_base: feature/workflow-owned-merge-s07-completion-handoff-merge-work
 ---
 
 # S08: workflow-owned merge queue processing
+
+## Measured State (2026-07-28, U9 pre-flight)
+
+`ProjectEngine.mergeQueue` + `drainMergeQueue` remain the live merge pump.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
 
 ## Stack Role
 

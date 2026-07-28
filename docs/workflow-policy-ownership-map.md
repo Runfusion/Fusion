@@ -62,6 +62,39 @@ mutating git state:
   semantics and the shared-branch member integration exception.
 - Run-audit correlation for git operations and recovery facts.
 
+## Measured Wiring State (2026-07-28, U9 pre-flight)
+
+The S02–S08 substrate is further along than the slice docs claim, but a large part
+of it is **built and not driven**. Measured against `main` at `46f35323c`. Recorded
+here because "the code exists and its tests pass" reads as landed, and for four of
+these that is not the same as running.
+
+| Capability | Implementation | Production callers | Reality |
+|---|---|---|---|
+| S1 work-item schema + store API | `0031_workflow_task_continuations.sql`, `store.ts` | live | **Wired.** Drives the plan-review continuation path. |
+| S02 merge-request projection | `projectMergeRequestToWorkflowWorkItem` | **none** | Built, never invoked. |
+| S03 generic scheduler claim | `claimDueWorkflowWorkItem` (`workflow-work-scheduler.ts`) | only the S05 processor, which is itself unwired | Built, never invoked. |
+| S04 built-in IR merge regions | `merge-gate`, `merge-retry`, `manual-merge-hold`, `merge-attempt`, `recovery-router` in the coding IR | n/a — declarations | **Landed.** Node *config* is unread; see `u9-merge-region-node-config-authority.test.ts`. |
+| S05 runtime work-item driver | `WorkflowTaskRuntime.runWorkItem`, `processDueWorkflowWorkItem` | **none** (exported from `index.ts` only) | Built, never invoked. |
+| S06 git/merge capabilities | — | — | Not started. Merge runs through `merger.ts`. |
+| S07 completion handoff creates merge work | — | — | Not started. |
+| S08 workflow-owned merge processing | — | — | Not started. `ProjectEngine.mergeQueue` is the live pump. |
+
+**The consequence that matters for U9.** `WorkflowWorkItemKind` is
+`task | merge | retry | manual-hold | recovery`. The only live pump is
+`InProcessRuntime.drainWorkflowContinuations`, and it filters `kinds: ["task"]`.
+The generic processor that would claim the other four kinds has no production
+caller. So the entire merge-lane work-item vocabulary is **dormant: zero writers
+and zero readers.**
+
+This is *not* a live defect — verified that nothing in production writes a
+non-`task` kind (the only two writers, `plan-review-continuation.ts` and
+`workflow-column-boundary-hooks.ts`, both go through
+`replaceActiveTaskWorkflowContinuation`). Nothing is stranded today. But S07 is the
+slice that starts writing `merge` work items, and if it lands before the generic
+pump is wired, those items are created and never claimed — a card that reaches the
+merge boundary and silently stops. **S07 must not land before S03/S05 are driven.**
+
 ## Deletion Gates
 
 - No production caller may start checkout, branch integration, squash, or finalize

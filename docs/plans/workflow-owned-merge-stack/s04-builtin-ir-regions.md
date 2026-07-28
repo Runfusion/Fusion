@@ -1,7 +1,8 @@
 ---
 title: "S04: built-in merge retry recovery IR regions"
 type: refactor
-status: draft-stack-handoff
+status: landed
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S04
 milestone: "Gate A"
@@ -11,11 +12,18 @@ stack_base: feature/workflow-owned-merge-s03-generic-scheduler-claim
 
 # S04: built-in merge retry recovery IR regions
 
+## Measured State (2026-07-28, U9 pre-flight)
+
+The merge/retry/manual-hold/branch-group/recovery regions are **present** in `packages/core/src/builtin-coding-workflow-ir.ts` (`merge-gate`, `merge-retry`, `manual-merge-hold`, `merge-attempt`, `recovery-router`). Do not re-implement. Caveat: the declared node *config* (`maxAttempts`, `release`, `maxReworkCycles`) is read by nothing — pinned by `u9-merge-region-node-config-authority.test.ts` in the merge gate.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
+
 ## Stack Role
 
-This draft PR reserves the S04 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+This slot was drafted 2026-06-09 as a handoff artifact. It is **no longer**
+only that — see the Measured State block above for what has actually landed.
 
 ## Milestone
 

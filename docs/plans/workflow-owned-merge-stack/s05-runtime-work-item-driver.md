@@ -1,7 +1,8 @@
 ---
 title: "S05: runtime work-item driver"
 type: refactor
-status: draft-stack-handoff
+status: landed-unwired
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S05
 milestone: "Runtime"
@@ -11,11 +12,18 @@ stack_base: feature/workflow-owned-merge-s04-builtin-ir-regions
 
 # S05: runtime work-item driver
 
+## Measured State (2026-07-28, U9 pre-flight)
+
+`WorkflowTaskRuntime.runWorkItem` and `processDueWorkflowWorkItem` are implemented; the processor is exported from `packages/engine/src/index.ts` and has **zero production callers**. The only live pump, `InProcessRuntime.drainWorkflowContinuations`, filters `kinds: ["task"]` and does not use this path.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
+
 ## Stack Role
 
-This draft PR reserves the S05 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+This slot was drafted 2026-06-09 as a handoff artifact. It is **no longer**
+only that — see the Measured State block above for what has actually landed.
 
 ## Milestone
 
