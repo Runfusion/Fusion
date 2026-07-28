@@ -11,6 +11,7 @@
 
 import { TaskStore } from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
+import {readTaskRow as readTaskRowAsync} from "./async-persistence.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
 import { type DistributedTaskIdAllocator } from "../distributed-task-id.js";
@@ -717,13 +718,34 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
     const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
-    if (!(await store.workflowColumnsFlagOn())) {
-      return { enabledWorkflowSteps };
-    }
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The early return on the raw `workflowColumns` flag is DELETED. It read a key no
+    production writer sets, so switching a task's workflow NEVER reconciled its
+    column: the card kept sitting in its old column even when the new workflow does
+    not declare that column, and the `reconciliation` field this function promises in
+    its return type was never populated for a real project.
+
+    Operator-visible consequence, deliberate: switching a task to a workflow that does
+    not declare its current column now moves the card into that workflow's resolved
+    target column (`resolveSwitchReconciliation`), and API/dashboard callers start
+    receiving the `reconciliation` summary they already have handling for. A card whose
+    column IS declared by the new workflow is preserved in place, unchanged.
+    */
     const newIr = await resolveWorkflowIrForTask(store, taskId);
-    const current = store.readTaskFromDb(taskId, { includeDeleted: false });
-    if (!current) return { enabledWorkflowSteps };
-    const fromColumn = current.column;
+    /*
+    FNXC:PostgresCutover 2026-07-28-00:00 (U12):
+    ASYNC read, not `store.readTaskFromDb`. The synchronous reader resolves through
+    `TaskStore.db`, which THROWS under the PostgreSQL runtime ("SQLite Database is not
+    available in backend mode"). The old flag gate returned before ever reaching this
+    line, so un-gating the switch reconciliation surfaced a path that could not run at
+    all in the production backend — the flag was hiding an unported read, not just a
+    disabled feature. Caught by the production-shape tests in
+    `__tests__/postgres/workflow-reconciliation-production-shape.pg.test.ts`.
+    */
+    const currentRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (!currentRow) return { enabledWorkflowSteps };
+    const fromColumn = String(currentRow.column);
     const decision = resolveSwitchReconciliation(newIr, fromColumn);
     if (!decision.preserved && decision.targetColumn !== fromColumn) {
       await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
