@@ -14,6 +14,8 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
+import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
+import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -6916,10 +6918,14 @@ export class TaskExecutor {
   private async runImplementationPhase(
     task: Task,
     prepared?: PreparedWorktree,
-  ): Promise<{ taskDone: boolean; modifiedFiles: string[] }> {
-    let captured: { taskDone: boolean; modifiedFiles: string[] } = { taskDone: false, modifiedFiles: [] };
+  ): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> {
+    let captured: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit } = { taskDone: false, modifiedFiles: [] };
     const graphCompletion: GraphCompletionCallback = (info) => {
-      captured = { taskDone: true, modifiedFiles: info.modifiedFiles };
+      captured = { ...captured, taskDone: true, modifiedFiles: info.modifiedFiles };
+    };
+    /* Recorded independently of `graphCompletion`: the out-of-band exits never call it. */
+    const reportExit: ImplementationExitReporter = (exit) => {
+      captured = { ...captured, exit };
     };
     const executionTask = prepared
       ? {
@@ -6928,7 +6934,7 @@ export class TaskExecutor {
           branch: prepared.branchName || task.branch,
         }
       : task;
-    await this.runImplementation(executionTask, graphCompletion);
+    await this.runImplementation(executionTask, graphCompletion, reportExit);
     return captured;
   }
 
@@ -7753,7 +7759,7 @@ export class TaskExecutor {
         if (typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)) {
           this.graphSeamThinkingLevel.set(seamTask.id, seamThinkingLevel as ThinkingLevel);
         }
-        let result: { taskDone: boolean; modifiedFiles: string[] };
+        let result: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit };
         try {
           result = await this.runImplementationPhase(seamTask);
         } finally {
@@ -7780,6 +7786,29 @@ export class TaskExecutor {
         compensating classifiers are the acceptance test — they become unreachable, and then
         deletable, exactly when the last out-of-band transition is gone.
         */
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-28-20:25 (U8 / R4, R5):
+        Announce the exit on the U3 lifecycle bus. Until this, the two out-of-band review
+        handoffs left NO trace anywhere that the executor — not the graph — moved the card;
+        they surfaced as an ordinary `implementation-incomplete` failure that
+        `handleGraphFailure` then quietly compensated for. An operator could not tell the two
+        apart, and neither could a test.
+
+        Emission is deliberately AFTER the phase and BEFORE the return, and it changes nothing:
+        the outcome/value below are byte-identical to what this seam returned before, for every
+        exit, which `executor-implementation-exit-events.test.ts` pins by driving each exit and
+        asserting the seam's return. Per R5 an exit id is a REACTION — dropping every subscriber
+        must change no execution outcome, and that is asserted too.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "NodeCompleted",
+          taskId: seamTask.id,
+          at: new Date().toISOString(),
+          runId: this.getRunContextFor(seamTask.id)?.runId,
+          nodeId: typeof governingNodeId === "string" ? governingNodeId : "execute",
+          outcome: result.taskDone ? "success" : "failure",
+          ...(result.exit ? { exit: result.exit } : {}),
+        });
         if (result.taskDone) {
           return { outcome: "success", value: "implemented" };
         }
@@ -11602,6 +11631,16 @@ export class TaskExecutor {
     an implementation pass whose completion nothing owns can no longer be constructed.
     */
     graphCompletion: GraphCompletionCallback,
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-28-20:15 (U8 / R4, R5):
+    Optional exit reporter. `graphCompletion` can only say "done"; the endings it cannot express
+    are the ones the executor transitions itself (see `executor/implementation-exit.ts`). This
+    names them so they are OBSERVABLE before they are moved — it changes no routing and nothing
+    branches on it, by R5: an exit id is a reaction, and a dropped reaction must never cost a
+    state change. Optional so the ~22 uninstrumented dispositions stay silent rather than
+    forcing a 3k-line diff; the ownership ledger is the record of that gap, not this callback.
+    */
+    reportImplementationExit?: ImplementationExitReporter,
   ): Promise<void> {
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
@@ -12552,6 +12591,7 @@ export class TaskExecutor {
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
             const liveModified = (await this.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
+            reportImplementationExit?.("complete-from-live-files");
             graphCompletion({ modifiedFiles: liveModified });
             return;
           } else {
@@ -13405,6 +13445,7 @@ export class TaskExecutor {
               FN-6644/FN-6641: the graceful-session-exit handoff must also record durable completed-finalize state because a later teardown can re-mark the abort as `hard-cancel`. The classifier uses that durable handoff marker, not the volatile provenance alone, to keep completed no-commit tasks from being re-parked failed.
               */
               this.markCompletionFinalized(task.id);
+              reportImplementationExit?.("review-handoff-paused-after-completion");
               await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
               this.signalTaskComplete(task);
@@ -13472,6 +13513,7 @@ export class TaskExecutor {
             // at the implementation-complete boundary and hand control back.
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            reportImplementationExit?.("complete");
             graphCompletion({ modifiedFiles });
             return;
           } else {
@@ -13536,6 +13578,7 @@ export class TaskExecutor {
                 // the task in review without setting status=failed; otherwise the
                 // merge/review queue deadlocks on a task that is both in-review and
                 // failed.
+                reportImplementationExit?.("review-handoff-pending-review");
                 await this.handoffTaskToReview(task, "executor-exit-while-review-pending");
                 pendingReviewParked = true;
                 break;
@@ -13754,6 +13797,7 @@ export class TaskExecutor {
               // executeWorkflowGraph, KTD-5) — nothing to gate before handoff.
               this.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
+              reportImplementationExit?.("complete-after-retry");
               graphCompletion({ modifiedFiles });
               return;
             } else if (terminallyParked) {
@@ -13987,7 +14031,8 @@ export class TaskExecutor {
           FN-6644/FN-6641: the finally-block handoff must record durable completed-finalize state because a later teardown can overwrite provenance to `hard-cancel`. The classifier must still resolve that completed no-commit tail failure benignly without weakening genuine pause or active hard-cancel behavior.
           */
           this.markCompletionFinalized(task.id);
-          await this.handoffTaskToReview(task, "paused-after-completion");
+          reportImplementationExit?.("review-handoff-paused-after-completion");
+              await this.handoffTaskToReview(task, "paused-after-completion");
           this.signalTaskComplete(task);
         } else if (finalizationDecision === "blocked") {
           await this.persistTokenUsage(task.id);

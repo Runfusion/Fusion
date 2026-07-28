@@ -72,6 +72,15 @@ export interface NodeCompletedEvent extends WorkflowLifecycleEventBase {
   type: "NodeCompleted";
   nodeId: string;
   outcome: string;
+  /*
+  FNXC:WorkflowEvents 2026-07-28-20:20 (U8 / R4, R5):
+  Optional finer-grained ending, for nodes whose routing outcome is coarser than the ways they
+  can actually end. The execute seam is the motivating case: `success | failure` cannot express
+  "the executor finalized this card to review itself", so that ending was invisible. A CLOSED
+  enum id (see `engine/executor/implementation-exit.ts`), never prose — this key is added to the
+  allow-list deliberately, which is the point of the allow-list.
+  */
+  exit?: string;
 }
 
 /** A run parked at a seam it cannot cross yet (capacity, manual hold). */
@@ -146,7 +155,7 @@ const COMMON_REQUIRED_EVENT_KEYS = ["type", "taskId", "at"] as const;
 const ALLOWED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]> = {
   TaskTransitioned: [...COMMON_EVENT_KEYS, "from", "to", "nodeId", "moveSource"],
   NodeEntered: [...COMMON_EVENT_KEYS, "nodeId", "column"],
-  NodeCompleted: [...COMMON_EVENT_KEYS, "nodeId", "outcome"],
+  NodeCompleted: [...COMMON_EVENT_KEYS, "nodeId", "outcome", "exit"],
   RunSuspended: [...COMMON_EVENT_KEYS, "nodeId", "reason", "fromColumn", "toColumn"],
   RunResumed: [...COMMON_EVENT_KEYS, "nodeId", "releasedBy"],
 };
