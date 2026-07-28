@@ -53,7 +53,6 @@ import {
   findNearDuplicates,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
-  isWorkflowColumnsEnabled,
   resolveWorkflowIrForTask,
   workflowHasColumn,
   columnHasFlag,
@@ -1002,8 +1001,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // any of these tasks. One batched query (cheap; short-circuits when the
       // table is empty). The payload is otherwise byte-identical.
       try {
-        const settings = await scopedStore.getSettingsFast();
-        if (isWorkflowColumnsEnabled(settings) && tasks.length > 0) {
+        // FNXC:WorkflowColumns 2026-07-27-09:52 (U2 / R9): the
+        // `isWorkflowColumnsEnabled` conjunct is deleted (literal `true`), so
+        // branch-progress enrichment is gated only on there being tasks.
+        if (tasks.length > 0) {
           const byTask = await scopedStore.getBranchProgressByTask(tasks.map((t) => t.id));
           if (byTask.size > 0) {
             tasks = tasks.map((task) => {
@@ -1108,11 +1109,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.get("/tasks/board-workflows", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      // FNXC:WorkflowColumns 2026-07-27-09:53 (U2 / R9): the flag-OFF
+      // `{ flagEnabled: false }` short-circuit is deleted — unreachable behind a
+      // literal `true`. `buildBoardWorkflowsPayload` still emits `flagEnabled: true`
+      // for shipped clients that branch on it.
       const settings = await scopedStore.getSettingsFast();
-      if (!isWorkflowColumnsEnabled(settings)) {
-        res.json({ flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} });
-        return;
-      }
       // Resolve over the same (non-archived) board list the client renders.
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       const taskIds = tasks.map((t) => t.id);
@@ -1841,10 +1842,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/promote", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      // FNXC:WorkflowColumns 2026-07-27-09:54 (U2 / R9): the
+      // "Workflow columns are not enabled" rejection is deleted — its gate was a
+      // literal `true`, so promote never took it.
       const settings = await scopedStore.getSettingsFast();
-      if (!isWorkflowColumnsEnabled(settings)) {
-        throw badRequest("Workflow columns are not enabled");
-      }
       const existing = await scopedStore.getTask(req.params.id);
       const rootDir = scopedStore.getRootDir();
       const allocateWorktree = existing

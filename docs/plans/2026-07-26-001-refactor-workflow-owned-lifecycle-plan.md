@@ -26,7 +26,7 @@ This is a program, not a PR. It is phased so every phase lands green on its own 
 
 The workflow describes the lifecycle; the engine decides it. Wherever they disagree, the engine wins silently.
 
-**Columns are decided by string literals, not by the workflow.** ~207 production sites compare `task.column` against hardcoded ids. A guard that stops matching does not fail — it disables a recovery path invisibly. Measured against a clean baseline this session:
+**Columns are decided by string literals, not by the workflow.** **535** production code lines reference a lifecycle column literal (comments excluded), measured per-file during Phase B. The `~207` figure below counts only the guard/write/dashboard categories from the original session measurement — the *full* literal surface is 2.5x that, which is why Phase B is sliced rather than run as one unit. A guard that stops matching does not fail — it disables a recovery path invisibly. Measured against a clean baseline this session:
 
 | Category | Count | Failure mode when the column moves underneath it |
 |---|---:|---|
@@ -34,6 +34,17 @@ The workflow describes the lifecycle; the engine decides it. Wherever they disag
 | Writes (`moveTask(id, "todo", …)`) | 43 | Move a card into a column no workflow declares |
 | Dashboard literals | 59 | Phantom column, illegal move menus, cards rendered nowhere |
 | Other reads / typing | ~23 | Mixed |
+
+Per-file census taken during Phase B (code lines only), which is the number to plan slices against:
+
+| Unit | Files | Sites |
+|---|---|---:|
+| U4 | `self-healing.ts` | 203 |
+| U5 | `executor.ts` 171, `scheduler.ts` 55, `replan-target.ts` 20, `merger-ai.ts` 5, `hold-release.ts` 4, `mesh-lease-manager.ts` 4, `task-agent-sync.ts` 3 | 262 |
+| U6 | `moves.ts` 34, `default-workflow-hooks.ts` 13, `board-config.ts` 9, `blocker-fanout.ts` 6, `task-priority.ts` 5, `dependency-blocked-todo-report.ts` 2, `stale-paused-todo.ts` 1 | 70 |
+| | **Total** | **535** |
+
+At even 40% true-guard density that is ~200 red-green cycles, each needing a test that fails before conversion. Phase B therefore lands as slices — B1 policy modules, B2 small movers, B3 self-healing (sub-split per sweep), B4 executor + scheduler — with `moves.ts` and `default-workflow-hooks.ts` held back behind the move-path convergence decision.
 
 **Every lane has two owners.** Triage runs specification while the graph declares `plan`/`plan-review` nodes for the same work. The executor holds implementation, retry, completion, and merge-boundary policy in imperative branches while the graph declares nodes for those seams. The merger owns merge policy, retry, and recovery routing that the IR also expresses. This dual ownership is what produced the FN-8504 race (a store-open sweep clearing a live planner's status), the done-laundering incident, and the compensating sweeps written to paper over both.
 
@@ -93,8 +104,16 @@ Triage discovers and seeds; the executor supplies primitives and node runners; t
 **KTD-5. Adopt the existing workflow-owned merge design; do not redesign it.**
 `docs/plans/2026-06-09-003-refactor-workflow-owned-merge-full-migration-slices-plan.md` (status `active`) already specifies the merge lane's target state and slices it S02–S08 in `docs/plans/workflow-owned-merge-stack/` — all still `draft-stack-handoff`. Its target state ("workflow IR/runtime owns merge policy, retry policy, scheduling policy, recovery routing, and git operation flow; the engine keeps substrate") is exactly this program's R4 for the merge lane. U9 sequences and lands those slices rather than authoring a parallel design.
 
-**KTD-6. Delete the parity machinery rather than update it.**
-`isWorkflowColumnsEnabled` returns a literal `true` with 8 live branches reading it. `workflow-parity.ts` asserts the default workflow's adjacency equals the legacy `VALID_TRANSITIONS`. Once the default deliberately diverges, that assertion is not stale — it is wrong, and updating it would re-encode the shape we chose to break.
+**KTD-6. Delete the parity machinery rather than update it — but only what is provably dead.**
+`isWorkflowColumnsEnabled` returns a literal `true` with 8 live branches reading it. `workflow-parity.ts` asserts the default workflow's adjacency equals the legacy `VALID_TRANSITIONS`; once the default deliberately diverges, that assertion is not stale — it is wrong, and updating it would re-encode the shape we chose to break. Both are safe deletions.
+
+> **CORRECTION (2026-07-27, Phase A escalation).** This KTD originally listed a third deletion — the "flag-off inline move path" in `packages/core/src/task-store/moves.ts` — on the claim that `default-workflow-hooks.ts` had superseded it. **That is backwards.** The inline branch is gated on `isWorkflowColumnsCompatibilityFlagEnabled` (`store.ts:38`), which reads the RAW `experimentalFeatures.workflowColumns` key — a *different* function from the always-true public helper. No production code writes that key, so the flag reads false and **the inline branch is the live move path for essentially every project, while `default-workflow-hooks.ts` is the dead one.** `moves.ts:637` states this outright. Deleting the inline branch would have swapped every project onto an untravelled code path and called it a cleanup.
+>
+> Two consequences bind the rest of this program:
+> - The convergence is its own unit with an equivalence proof (**U2b**), and it **blocks Phase B**. Nothing downstream may assume the trait-hook path runs until it lands.
+> - **U3's event emit point must attach to the LIVE inline path.** Wiring it into `default-workflow-hooks.ts` would produce a seam that never fires, and — because subscribers are non-authoritative by design — nothing would fail a test.
+>
+> The delete-only Execution note is what caught this: the unit required stopping on any behavior change rather than resolving it. Keep that note on every deletion unit.
 
 **KTD-7. The IR change lands LAST.**
 The instinct is to change the workflow first — ten lines, gate goes green. That was measured this session: the merge gate passed with 82 guards no longer matching. Conversion first, ownership second, shape last.
@@ -187,6 +206,7 @@ flowchart TD
     subgraph A["Phase A — Foundation"]
         U1[U1 Lifecycle-column seam] --> U2[U2 Delete parity cruft]
         U2 --> U3[U3 Event bus seam]
+        U3 --> U2b[U2b Converge move paths]
     end
     subgraph B["Phase B — Vocabulary"]
         U4[U4 self-healing] & U5[U5 executor/scheduler/release] & U6[U6 core store + policy]
@@ -197,6 +217,7 @@ flowchart TD
     subgraph D["Phase D — Shape"]
         U10[U10 Dashboard] --> U11[U11 Merge Todo into Planning]
     end
+    U2b -->|gates| B
     A --> B --> C --> D --> U12[U12 Migration + ratchet + docs]
 ```
 
@@ -238,7 +259,9 @@ flowchart TD
 
 **Files:** `packages/core/src/workflow-columns-settings.ts` (delete), `packages/core/src/workflow-parity.ts` (delete), `packages/core/src/index.ts`, `packages/core/src/index.gate.ts`, `packages/engine/src/self-healing.ts`, `packages/engine/src/scheduler.ts`, `packages/engine/src/merge-trait.ts`, `packages/dashboard/src/routes/board-workflows.ts`, `packages/dashboard/src/routes/register-task-workflow-routes.ts`, `packages/core/src/store.ts`, `packages/engine/src/__tests__/legacy-tombstones.test.ts`
 
-**Approach:** `isWorkflowColumnsEnabled` returns a literal `true` — every `if (!flag)` branch is unreachable, every `if (flag)` branch unconditional. Delete the function, inline the surviving side. Delete `workflow-parity.ts` (U11 deliberately breaks the equality it asserts) and the flag-off inline move side effects that `default-workflow-hooks.ts` already shadows. Extend the tombstone ratchet.
+**Approach:** `isWorkflowColumnsEnabled` returns a literal `true` — every `if (!flag)` branch is unreachable, every `if (flag)` branch unconditional. Delete the function, inline the surviving side. Delete `workflow-parity.ts` (U11 deliberately breaks the equality it asserts). Extend the tombstone ratchet.
+
+**Scope correction (2026-07-27):** the third deletion this unit originally carried — the flag-off inline move path — is NOT dead; it is the live path. See KTD-6's correction. It moves to **U2b** and must not be touched here. `moves.ts` is out of scope for this unit entirely.
 
 **Execution note:** Delete-only. Any behavior change found while removing a branch means the branch was **not** dead — stop and treat it as a finding.
 
@@ -249,6 +272,37 @@ flowchart TD
 - Board-workflow route responses byte-identical for a default-workflow project.
 
 **Verification:** Modules gone, ratchet covers them, `pnpm test:gate` and move-hook suites green with no expectation edits.
+
+---
+
+### U2b. Converge the two move paths (blocks Phase B)
+
+**Goal:** One authoritative move-side-effect implementation, chosen deliberately and proven equivalent — not deleted on an assumption.
+
+**Requirements:** R6, R9, R12 · **Dependencies:** U2, **U3**
+
+**Files:** `packages/core/src/task-store/moves.ts`, `packages/core/src/default-workflow-hooks.ts`, `packages/core/src/store.ts` (`isWorkflowColumnsCompatibilityFlagEnabled`), `packages/core/src/__tests__/moves.test.ts`, `packages/core/src/__tests__/default-workflow-hooks.test.ts`
+
+**Ordering with U3.** *(PR #2466 review — greptile P1.)* U3 attaches the event emit point to the LIVE inline path, and this unit replaces or deletes one of the two implementations — so a naive convergence would silently carry the emit point away with it, leaving no transition events and nothing failing. U3 therefore lands FIRST and this unit inherits a hard obligation: **the emit point survives convergence, on the surviving path, emitting the same events in the same order.** That is a named test scenario below, not a review checkbox.
+
+**Approach:** Two implementations of the same side effects coexist: the inline branch in `moves.ts` (LIVE — the compat flag reads false because nothing writes it) and the trait hooks in `default-workflow-hooks.ts` (DEAD in practice). Characterize the live path first, prove equivalence behavior by behavior, then make one authoritative and delete the other along with the compat flag.
+
+Behaviors to pin before anything moves: timing / `cumulativeActiveMs` accounting; reopen field and step resets; in-review auto-merge handoff preparation and merge-queue enqueue; abort-on-exit including `userPaused` for user-source moves only; the legacy bare-`Error` contract for legacy columns; and workflow-adjacency resolution for a non-legacy source column (FN-7591, and the Coding (Ideas) `ideas` column that `VALID_TRANSITIONS` cannot key).
+
+**Execution note:** Characterization-first, and equivalence is a *proof obligation*, not a code review. If any behavior cannot be shown equivalent, stop and escalate with the specific divergence — do not reconcile it silently. This is the unit where "the tests pass" is least trustworthy, because both paths have tests and only one of them runs.
+
+**Exercising both paths.** *(PR #2466 review.)* Only one implementation runs in production, so equivalence cannot be observed by running the suite normally. Tests must force each path explicitly: drive the inline branch with the compatibility flag absent (production shape) and the hooks path with `experimentalFeatures.workflowColumns: true`, through a single shared fixture so both run the same behavior cases. If forcing the flag is not sufficient to reach both implementations, add a test-only selector rather than asserting equivalence from reading the code.
+
+**Test scenarios:**
+- Each characterized behavior produces identical observable results on **both** paths — same fixture, flag forced each way — not merely on whichever path the suite happens to take.
+- The U3 emit point still fires after convergence: same events, same order, same payloads, on the surviving path.
+- A legacy-column rejection still throws the legacy bare `Error`, not `TransitionRejectionError`.
+- A move out of a non-legacy source column resolves targets from the task's own workflow adjacency and is permitted.
+- `userPaused` is cleared on a user-source move and preserved on an engine-source move.
+- In-review entry prepares auto-merge handoff and enqueues the merge queue exactly once.
+- After convergence, the compat flag is gone and no code path branches on it.
+
+**Verification:** One move implementation remains; the equivalence evidence is recorded per behavior in the PR; `pnpm test:gate` green.
 
 ---
 
@@ -531,6 +585,7 @@ The measurable goal is that the executor stops deciding *what happens next* — 
 | **Ordering temptation.** Doing U11 first makes everything "work" and hides dead guards. | KTD-7 and the phase graph put U11 in Phase D; its tests are the last commit. |
 | **Program scale.** ~48k lines across the four lane services. | Phases land independently green; U8 explicitly lands as several commits; no phase both converts ownership and changes shape. |
 | **Ownership moves break crash recovery.** Two owners currently cover each other's gaps. | U7/U8/U9 are characterization-first: capture current recovery behavior as tests before moving ownership. |
+| **A "dead" branch turns out to be live.** Measured once already: the flag-off move path is the live one. | Every deletion unit keeps the delete-only Execution note — stop and escalate on any behavior change rather than resolving it. U2b converges the pair with an equivalence proof instead of a deletion. |
 | **Event seam becomes a second source of truth.** The failure mode that motivated the program. | KTD-3 is enforced by test: dropping every subscriber must change no lifecycle outcome (U3, U8). |
 | **The merge stack is stale.** Drafted 2026-06-09; the graph has moved. | U9 re-validates each slice against `main` before landing. |
 | **Existing boards show cards in a vanished column.** | Shipped `reconcileUndeclaredTaskColumns`; U12 covers pause, unresolvable-workflow, and idempotency. |

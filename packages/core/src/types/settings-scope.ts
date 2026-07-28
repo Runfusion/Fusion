@@ -1837,19 +1837,14 @@ export interface ProjectSettings {
    *  Default: 24 * 60 * 60_000. */
   backlogPressureAlertCooldownMs?: number;
   /** Enables dependency-blocked todo backlog-health reporting. Default: true. */
-  dependencyBlockedTodoReportEnabled?: boolean;
   /** Blocker age in milliseconds below which dependency-blocked todo groups are fresh.
    *  Default: 30 * 60_000 (30 minutes). */
-  dependencyBlockedTodoFreshAgeMs?: number;
   /** Blocker age in milliseconds at or above which dependency-blocked todo groups are stale.
    *  Default: 4 * 60 * 60_000 (4 hours). */
-  dependencyBlockedTodoStaleAgeMs?: number;
   /** Minimum dependency-blocked todo count required to include a blocker group.
    *  Default: 1. */
-  dependencyBlockedTodoMinCount?: number;
   /** Minimum cooldown in milliseconds between dependency-blocked todo insight emissions.
    *  Default: 6 * 60 * 60_000. */
-  dependencyBlockedTodoReportCooldownMs?: number;
   /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
    *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
    *  Valid range: 600000 (10 minutes) to 2592000000 (30 days).
