@@ -36,6 +36,7 @@ import {
 import {
   resolveLifecycleColumns,
   resolveWorkflowIrForTask,
+  type Settings,
   type Task,
   type TaskStore,
   type WorkflowIr,
@@ -59,8 +60,16 @@ export interface SurfacingSpec {
   logPrefix: string;
   /** The lifecycle role this sweep watches, resolved per task. */
   role: "hold" | "review";
-  /** Synchronous eligibility filter; async proof lives in `isEligibleAsync`. */
-  isEligible(task: Task): boolean;
+  /*
+  Synchronous eligibility filter; async proof lives in `isEligibleAsync`.
+
+  Takes SETTINGS because some eligibility is settings-dependent — notably
+  `allowsAutoMergeProcessing`, one of the six safeguards. The first cut of this
+  interface omitted settings, which is precisely how that gate got dropped during
+  the migration while the signal kept asserting `autoMerge: true`: the code
+  claimed an eligibility it no longer checked.
+  */
+  isEligible(task: Task, settings: Settings): boolean;
   /** Optional async eligibility (merge-lane ownership, liveness proofs). */
   isEligibleAsync?(task: Task): Promise<boolean>;
   /*
@@ -91,6 +100,8 @@ export interface SurfacingRunnerDeps {
   tasks: readonly Task[];
   /** The operator setting this sweep's threshold DEFERS to when unset. */
   inheritedThresholdMs: number;
+  /** Full settings, so settings-dependent safeguards stay reachable. */
+  settings: Settings;
   /** Engine activation floor, forwarded to every signal (see `evaluate`). */
   activation: { engineActiveSinceMs?: number; engineActivationGraceMs?: number };
   cycleStartMs: number;
@@ -170,7 +181,7 @@ export async function runSurfacingSweep(spec: SurfacingSpec, deps: SurfacingRunn
   for (const task of deps.tasks) {
     try {
       if (task.deletedAt) continue;
-      if (!spec.isEligible(task)) continue;
+      if (!spec.isEligible(task, deps.settings)) continue;
 
       const resolved = await resolveTaskThreshold(deps.store, task, spec, deps.inheritedThresholdMs, irCache);
       if (!resolved) continue;

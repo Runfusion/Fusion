@@ -8057,6 +8057,7 @@ export class SelfHealingManager {
         store: this.store,
         tasks,
         inheritedThresholdMs,
+        settings,
         cycleStartMs: Date.now(),
         activation: {
           engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -8110,7 +8111,17 @@ export class SelfHealingManager {
         role: "review",
         /* Unlike the paused sweeps this one watches ACTIVE review work, so a
            paused card is excluded rather than targeted. */
-        isEligible: (task) =>
+        isEligible: (task, settings) =>
+          /*
+          FNXC:WorkflowRecoveryPolicy 2026-07-28-01:20 (PR #2487 review, P1):
+          `allowsAutoMergeProcessing` is one of the SIX SAFEGUARDS —
+          `autoMerge:false` is terminal-until-human. The migration dropped this
+          gate while still passing `autoMerge: true` to the signal below, so the
+          code asserted an eligibility it no longer checked and the sweep treated
+          auto-merge-disabled tasks (and manually-opened-PR tasks) as eligible.
+          The `autoMerge: true` argument is only sound BECAUSE this gate proves it.
+          */
+          allowsAutoMergeProcessing(task, settings) &&
           task.paused !== true &&
           task.id !== activeMergeTaskId &&
           !executingTaskIds.has(task.id),

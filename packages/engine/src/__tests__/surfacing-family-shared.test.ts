@@ -259,6 +259,23 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
       expect(await run(h.manager)).toBe(0);
     });
 
+    it("SAFEGUARD user-pause: surfaces a user-paused card, because surfacing is observational", async () => {
+      /*
+      Re-ratified invariant: user-pause gates lifecycle MUTATION, not observation.
+      The runner writes a task-log entry and mutates no lifecycle field, so a
+      user-paused card is still reported — which for the two paused sweeps is
+      their entire purpose. Asserted here so the scoping cannot be re-broadened
+      without a family-wide failure.
+      */
+      const h = harness(
+        [makeTask(spec.column, spec.task({ userPaused: true } as Partial<Task>))],
+        { [spec.thresholdKey]: CUSTOMIZED_MS },
+        ir("todo", "in-review"),
+      );
+
+      expect(await run(h.manager)).toBe(1);
+    });
+
     it("skips a soft-deleted card", async () => {
       const h = harness(
         [makeTask(spec.column, spec.task({ deletedAt: new Date(NOW).toISOString() } as Partial<Task>))],
@@ -267,6 +284,104 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
       );
 
       expect(await run(h.manager)).toBe(0);
+    });
+  });
+
+  /*
+  FNXC:WorkflowRecoveryPolicy 2026-07-28-01:35 (PR #2487 review — SAFEGUARD AUDIT):
+  The auto-merge safeguard applies to the sweep that watches ACTIVE review work.
+  The two paused sweeps target cards the engine is deliberately NOT processing, so
+  auto-merge eligibility is not theirs to consult; `surfaceInReviewStalled` is the
+  one that asserts `autoMerge: true` to its signal, and that assertion is only
+  sound because the gate below proves it.
+  */
+  describe("surfaceInReviewStalled — auto-merge safeguard (the dropped P1)", () => {
+    const review = "in-review";
+    const activeTask = () => makeTask(review, { paused: false } as Partial<Task>);
+
+    it("does NOT surface when global auto-merge is off with no per-task override", async () => {
+      const h = harness(
+        [activeTask()],
+        { inReviewStalledThresholdMs: CUSTOMIZED_MS, autoMerge: false },
+        ir("todo", review),
+      );
+
+      expect(await h.manager.surfaceInReviewStalled()).toBe(0);
+      expect(h.logEntry).not.toHaveBeenCalled();
+    });
+
+    it("DOES surface when a per-task override re-enables auto-merge", async () => {
+      /* The discriminator: without it, "never surface when autoMerge is off"
+         would pass by the sweep being broken rather than gated. */
+      const h = harness(
+        [makeTask(review, { paused: false, autoMerge: true } as Partial<Task>)],
+        { inReviewStalledThresholdMs: CUSTOMIZED_MS, autoMerge: false },
+        ir("todo", review),
+      );
+
+      expect(await h.manager.surfaceInReviewStalled()).toBe(1);
+    });
+
+    it("surfaces normally when global auto-merge is on", async () => {
+      const h = harness(
+        [activeTask()],
+        { inReviewStalledThresholdMs: CUSTOMIZED_MS, autoMerge: true },
+        ir("todo", review),
+      );
+
+      expect(await h.manager.surfaceInReviewStalled()).toBe(1);
+    });
+  });
+
+  /*
+  SAFEGUARD AUDIT — merge-proof. The stalled sweep must not report a card the
+  merge lane is actively working: doing so tells an operator work is stalled while
+  it is in fact in flight.
+  */
+  describe("surfaceInReviewStalled — merge-lane proofs", () => {
+    const review = "in-review";
+
+    it("does NOT surface the task currently being merged", async () => {
+      const task = makeTask(review, { id: "FN-M", paused: false } as Partial<Task>);
+      const logEntry = vi.fn().mockResolvedValue(undefined);
+      const selection = { workflowId: WF, stepIds: [] };
+      const store = {
+        getSettings: vi.fn().mockResolvedValue({ inReviewStalledThresholdMs: CUSTOMIZED_MS, autoMerge: true }),
+        listTasks: vi.fn(async () => [task]),
+        getTask: vi.fn(async () => task),
+        logEntry,
+        recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+        getTaskWorkflowSelection: vi.fn(() => selection),
+        getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
+        getWorkflowDefinition: vi.fn(async () => ({ ir: ir("todo", review) })),
+      } as unknown as TaskStore;
+      const manager = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getActiveMergeTaskId: () => "FN-M",
+      } as never);
+
+      expect(await manager.surfaceInReviewStalled()).toBe(0);
+    });
+
+    it("does NOT surface a task that is actively executing", async () => {
+      const task = makeTask(review, { id: "FN-E", paused: false } as Partial<Task>);
+      const selection = { workflowId: WF, stepIds: [] };
+      const store = {
+        getSettings: vi.fn().mockResolvedValue({ inReviewStalledThresholdMs: CUSTOMIZED_MS, autoMerge: true }),
+        listTasks: vi.fn(async () => [task]),
+        getTask: vi.fn(async () => task),
+        logEntry: vi.fn().mockResolvedValue(undefined),
+        recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+        getTaskWorkflowSelection: vi.fn(() => selection),
+        getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
+        getWorkflowDefinition: vi.fn(async () => ({ ir: ir("todo", review) })),
+      } as unknown as TaskStore;
+      const manager = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: () => new Set(["FN-E"]),
+      } as never);
+
+      expect(await manager.surfaceInReviewStalled()).toBe(0);
     });
   });
 });
