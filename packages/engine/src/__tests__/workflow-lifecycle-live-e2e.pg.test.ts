@@ -52,91 +52,9 @@ import {
 import { WorkflowGraphTaskRunner, type WorkflowColumnBoundaryHooks } from "../workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "../workflow-column-boundary-hooks.js";
 import { runHoldReleaseSweep } from "../hold-release.js";
+import { DEFAULT_VOCAB, RENAMED_VOCAB, HOLD_STALENESS_MS, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { reconcileRecovery } from "../recovery-reconciler.js";
-
-/** The four lifecycle roles this program's guards are supposed to resolve by TRAIT, not by id. */
-interface Vocabulary {
-  readonly hold: string;
-  readonly wip: string;
-  readonly review: string;
-  readonly complete: string;
-}
-
-/** The legacy ids. A guard keyed on a string literal passes here for the wrong reason. */
-const DEFAULT_VOCAB: Vocabulary = {
-  hold: "todo",
-  wip: "in-progress",
-  review: "in-review",
-  complete: "done",
-};
-
-/** No id overlaps the legacy enum. A guard keyed on a string literal goes silent here. */
-const RENAMED_VOCAB: Vocabulary = {
-  hold: "backlog",
-  wip: "building",
-  review: "checking",
-  complete: "shipped",
-};
-
-/**
- * ONE workflow shape, two vocabularies. Structurally identical down to node ids and edges so a
- * behavioral delta between the two runs can only come from the column ids.
- *
- * The shape is the lifecycle spine: a hold column that the scheduler releases on capacity, a WIP
- * column that holds the slot, a review column, and a terminal complete column.
- */
-function lifecycleIr(v: Vocabulary, id: string): WorkflowIr {
-  return {
-    version: "v2",
-    id,
-    name: `lifecycle-${id}`,
-    columns: [
-      {
-        id: v.hold,
-        name: "Hold",
-        traits: [{ trait: "hold", config: { release: "capacity" } }],
-        /* U4 workflow-declared recovery policy (#2478). Declared on the HOLD column of both
-           vocabularies from the one builder, so the reconciler's role resolution is exercised
-           against a renamed column with nothing else differing. */
-        recovery: { stalenessMs: HOLD_STALENESS_MS, onStale: { action: "surface", code: "e2e-stale-hold" } },
-      },
-      {
-        id: v.wip,
-        name: "Wip",
-        traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } }, { trait: "timing" }],
-      },
-      {
-        id: v.review,
-        name: "Review",
-        traits: [{ trait: "human-review" }, { trait: "merge-blocker" }],
-      },
-      { id: v.complete, name: "Complete", traits: [{ trait: "complete" }] },
-    ],
-    nodes: [
-      { id: "start", kind: "start", column: v.hold },
-      { id: "plan", kind: "prompt", column: v.hold, config: { seam: "planning" } },
-      { id: "exec", kind: "prompt", column: v.wip, config: { seam: "execute" } },
-      { id: "review", kind: "prompt", column: v.review, config: { seam: "review" } },
-      /* A real merge-class node. The IR validator REFUSES a `merge-blocker` column with no
-         reachable merge-class node ("the gate can never clear without one") — discovered by this
-         file, and worth keeping: it means the review column here is a genuinely gated one rather
-         than a decorative label. `merge-gate` itself is pure policy (reads autoMerge, emits
-         auto-on/auto-off) so it needs no git. */
-      { id: "merge-gate", kind: "merge-gate", column: v.review, config: { gate: "auto-merge" } },
-      { id: "end", kind: "end", column: v.complete },
-    ],
-    edges: [
-      { from: "start", to: "plan" },
-      { from: "plan", to: "exec", condition: "success" },
-      { from: "exec", to: "review", condition: "success" },
-      { from: "review", to: "merge-gate", condition: "success" },
-      { from: "merge-gate", to: "end", condition: "success" },
-    ],
-  } as WorkflowIr;
-}
-
-const HOLD_STALENESS_MS = 60 * 60_000;
 
 const OK = { outcome: "success" as const };
 
@@ -760,6 +678,9 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
   - recovery-reconciler.ts column-declared policy lookup       (table row, returned-decision — WEAKER)
   - hold-release.ts        isHeldTask / the capacity release   (spine)
   - the graph column boundary + store.moveTask + the post-commit bus (spine)
+  - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
+    (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
+    INDEPENDENTLY — the mergeColumn one needed its own case, see below)
 
 FINDING — AN UNREACHABLE EXPORT. `resolveRoleRecovery` (recovery-reconciler.ts:194) is the ONLY
 use of `resolveLifecycleColumns` in that file, and it has NO production caller: `decideRecovery`
@@ -772,7 +693,6 @@ by the U4 slice, and guessing which is a decision for its author.
 NOT PROVEN end to end — real callers this suite does not reach:
   - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
-  - auto-merge-finalization.ts:20-22  completeColumn / mergeColumn / isCompleteColumn
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
   - self-healing.ts:713,6732 resolveReboundTarget (two distinct rebound paths)
   - mesh-lease-manager.ts:61 resolveReboundTarget
@@ -782,8 +702,21 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
 
 WHY, and what each would take:
-  - The merge/rebound family (merger, merger-ai, auto-merge-finalization, the executor rebound path,
-    mesh-lease-manager) needs a REAL git worktree, branch, and squash. This suite deliberately has
+  - The merge/rebound family (merger, merger-ai, the executor rebound path, mesh-lease-manager)
+    needs a REAL git worktree, branch, and squash.
+
+    CORRECTION (2026-07-28): this bullet used to include auto-merge-finalization, and that was
+    too broad. `finalizeProvenAutoMergeTask` needs NO git — the merge proof is a field on the
+    row — so it was reachable all along and is now covered. The lesson is worth keeping: "needs
+    a real-git lane" was inferred from the family the code sits in rather than from what the
+    function actually touches, and that inference parked reachable coverage for a whole slice.
+    Re-check the remaining entries the same way before assuming they need the lane.
+
+    A second correction from the same slice: `resolveMergeOrchestrationColumn` was FIRST claimed
+    as covered because it sits in the same resolver as the other two. Mutation-testing it showed
+    all cases passing with it hardcoded — it changes only whether finalization records a
+    column-mismatch REPAIR, never where the card lands. It needed a dedicated audit-row
+    assertion. Sitting next to covered code is not coverage. This suite deliberately has
     none — `merge-gate` is pure policy and the `merge` seam is scripted. They need an engine-slow
     real-git lane, not another table row.
   - The dashboard sites need an HTTP route test with a live store: reachable, different lane.
