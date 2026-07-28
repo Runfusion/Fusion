@@ -34,8 +34,12 @@ Every test here was written against the literal implementation and observed FAIL
 floor: `builtin:coding` resolves hold -> `todo` and wip -> `in-progress`, and an unresolvable
 workflow keeps the legacy literals, so both must be byte-identical after the conversion.
 
-Roles resolve through U1's `resolveTaskLifecycleColumns` (first column carrying each trait) —
-not a new rule.
+Roles resolve per WORKFLOW, never per role: a resolvable IR uses `resolveLifecycleColumns` for
+wip and KTD-10's `resolveReboundTarget` (hold -> intake -> first) for the requeue target, so it
+can only ever be handed a column it declares. The legacy literals survive for exactly one case —
+a workflow that cannot be read at all — which keeps pre-conversion behavior. See the
+"never given a column it does not declare" block at the bottom for why the first cut's per-role
+`?? "todo"` was wrong.
 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
@@ -74,6 +78,40 @@ function defaultIr(): WorkflowIr {
       { id: "todo", label: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "in-progress", label: "In Progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+    ],
+  } as unknown as WorkflowIr;
+}
+
+/**
+ * A VALID workflow that declares a wip column but NO hold column. `resolveReboundTarget`'s
+ * KTD-10 ordering (hold -> intake -> first) resolves the requeue target to the declared intake
+ * column; nothing may substitute the literal `todo`, which this workflow does not declare.
+ */
+function noHoldIr(): WorkflowIr {
+  return {
+    version: "v2",
+    id: WF,
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "inbox", label: "Inbox", traits: [{ trait: "intake" }] },
+      { id: "building", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  } as unknown as WorkflowIr;
+}
+
+/** A VALID workflow that declares NO wip column at all — nothing can prove a card "advanced". */
+function noWipIr(): WorkflowIr {
+  return {
+    version: "v2",
+    id: WF,
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "inbox", label: "Inbox", traits: [{ trait: "intake" }] },
+      { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
     ],
   } as unknown as WorkflowIr;
 }
@@ -285,11 +323,15 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
     );
   });
 
-  it("does NOT fire for a card sitting in the workflow's wip column", async () => {
+  it("does NOT fire for a card sitting in the workflow's wip column — it terminalizes instead", async () => {
     /*
     The guard must stay narrow. A card still in the implementation column with no self-requeue
     marker is a genuine execute failure and belongs to the terminal sink — widening the gate to
     "any column" would swallow real failures as benign recoveries.
+
+    FNXC PR #2497 review (coderabbit): asserting only the ABSENCE of the recovery log cannot
+    distinguish "took the terminal path" from "did nothing and returned", which is precisely the
+    silent-swallow failure mode this whole file exists to catch. Assert the terminal outcome.
     */
     const { executor, store, task } = harness({ ir: renamedIr(), task: { column: "building" } });
 
@@ -301,6 +343,10 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       undefined,
       undefined,
     );
+    expect(task).toMatchObject({
+      status: "failed",
+      error: "Workflow graph terminated with failure at node 'execute'",
+    });
   });
 
   it("still honours the in-process self-requeue marker when the workflow cannot be resolved", async () => {
@@ -320,5 +366,77 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       undefined,
       undefined,
     );
+  });
+});
+
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-28-14:20 (U8 / R3, PR #2497 review — greptile P1):
+The first cut resolved PER ROLE with a literal fallback (`columns?.hold ?? "todo"`), which
+conflated "no workflow resolved" with "this workflow declares no hold column". The second case
+is a valid workflow, and substituting `todo` there invents a column it does not declare — which
+node escalation then PERSISTS. These cases pin the per-workflow fallback: a resolved workflow
+may only ever be given a column it actually declares, and a role it does not declare fails
+closed toward a visible failure rather than a guess.
+*/
+describe("a resolved workflow is never given a column it does not declare", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("node escalation requeues to the declared intake column when the workflow has no hold column", async () => {
+    const { executor, task } = harness({
+      ir: noHoldIr(),
+      task: { column: "building" },
+      settings: { executorModelEscalationEnabled: true, executorEscalationNodeId: "cursor-node" },
+      entries: TOOL_ERRORS,
+    });
+
+    await (executor as any).handleGraphFailure(task, stepExecuteFailure());
+
+    /* KTD-10 ordering falls through hold -> intake. `todo` is not in this workflow. */
+    expect(task).toMatchObject({ nodeId: "cursor-node", column: "inbox", executorEscalationAttempted: true });
+    expect(task.column).not.toBe("todo");
+  });
+
+  it("the dispatch-loop gate does not match the literal todo for a workflow that lacks it", async () => {
+    /*
+    A card parked in `todo` under a workflow that does not declare it is a stray row, not
+    evidence that this workflow's inner executor self-requeued. Before the per-workflow
+    fallback the gate matched it and reported a benign recovery for a run that had none.
+    */
+    const { executor, store, task } = harness({ ir: noHoldIr(), task: { column: "todo" } });
+
+    await (executor as any).handleGraphFailure(task, executeNodeFailure());
+
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("executor recovery preserved"),
+      undefined,
+      undefined,
+    );
+  });
+
+  it("a workflow with no wip column terminalizes visibly instead of claiming the card advanced", async () => {
+    /*
+    The fail-closed direction that matters. With no declared wip column there is no evidence the
+    card moved past implementation, so the "already advanced — no further action needed" branch
+    must NOT fire; the operator has to see the failure.
+    */
+    const { executor, store, task } = harness({ ir: noWipIr(), task: { column: "drafting" } });
+
+    await (executor as any).handleGraphFailure(task, stepExecuteFailure());
+
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("already advanced"),
+      undefined,
+      undefined,
+    );
+    expect(task).toMatchObject({
+      status: "failed",
+      error: "Workflow graph terminated with failure at node 'steps#0:step-execute'",
+    });
   });
 });

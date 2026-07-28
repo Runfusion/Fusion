@@ -14,7 +14,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveTaskLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -10789,16 +10789,48 @@ export class TaskExecutor {
       doomed run. Nothing failed; the retry budgets, the escalation, and the bounded
       terminalization simply never ran.
 
-      Resolve ONCE per failure and thread the pair through the ladder. Both fall back to the
-      legacy literal when the workflow cannot be resolved, so an unresolvable workflow keeps
-      exactly its pre-conversion behavior rather than guessing (KTD-2 conservative default).
-      One IR read per graph failure: this is a terminal recovery path, not an enumeration loop.
+      Resolve ONCE per failure and thread the pair through the ladder. One IR read per graph
+      failure: this is a terminal recovery path, not an enumeration loop.
+
+      FNXC:WorkflowExecutionOwnership 2026-07-28-14:05 (U8 / R3, PR #2497 review — greptile P1):
+      THE FALLBACK IS PER-WORKFLOW, NEVER PER-ROLE. The first cut wrote `columns?.hold ?? "todo"`,
+      which conflates two different situations: "no workflow could be resolved" and "this
+      workflow resolved fine and simply declares no hold column". Only the first justifies the
+      legacy literal. For the second, substituting `todo` invents a column the workflow does not
+      declare — and node-target escalation then PERSISTS it, stranding the card somewhere the
+      board cannot route and defeating the scheduler node re-resolution the escalation exists
+      for. U1 returns `undefined` per missing role precisely so a caller cannot borrow an
+      unrelated column; `?? "todo"` threw that guarantee away one line after asking for it.
+
+      So:
+        - IR unresolvable          -> the legacy literals, i.e. exactly pre-conversion behavior.
+        - IR resolved              -> `resolveReboundTarget` (KTD-10: hold -> intake -> first
+                                      column), which can only ever name a DECLARED column, and
+                                      `undefined` for wip when the workflow declares none.
+
+      A `wipColumn` of `undefined` is not a wildcard — every gate below treats "I cannot prove
+      where the wip column is" as "do not take the shortcut", so an unprovable card terminalizes
+      VISIBLY rather than being swallowed by the already-advanced branch. Fail closed toward the
+      operator seeing the failure.
+
+      The two literals that remain are ONLY the unresolvable-workflow fallback, and they are the
+      same pre-conversion values `resolveReboundColumnFor` already falls back to at its ~16
+      executor call sites — this adds no new rule and no new reachable-by-a-valid-workflow
+      literal. They are legacy-compat for a task whose workflow cannot be read at all, and they
+      belong to the same sweep that retires `resolveReboundColumnFor`'s own `?? "todo"` when U11
+      removes the column; they are deliberately NOT a per-role default, which is what made the
+      first cut wrong.
       */
-      const lifecycleColumns = await resolveTaskLifecycleColumns(this.store, task.id);
-      const wipColumn = lifecycleColumns?.wip ?? "in-progress";
-      const holdColumn = lifecycleColumns?.hold ?? "todo";
+      let lifecycleIr: WorkflowIr | undefined;
+      try {
+        lifecycleIr = await resolveWorkflowIrForTask(this.store, task.id);
+      } catch {
+        lifecycleIr = undefined;
+      }
+      const wipColumn = lifecycleIr ? resolveLifecycleColumns(lifecycleIr)?.wip : "in-progress";
+      const holdColumn = lifecycleIr ? resolveReboundTarget(lifecycleIr) : "todo";
       const executeNodeSelfRequeued = failedNode === "execute" && this.graphExecuteSelfRequeued.has(task.id);
-      if (failedNode === "execute" && (live.column === holdColumn || executeNodeSelfRequeued)) {
+      if (failedNode === "execute" && ((holdColumn !== undefined && live.column === holdColumn) || executeNodeSelfRequeued)) {
         /*
         FNXC:WorkflowLifecycle 2026-06-23-12:03:
         The graph execute node delegates to the authoritative executor. If that inner executor requeues the task to todo for self-heal/retry, the outer graph failure must not override it by parking the task in review.
@@ -10897,7 +10929,14 @@ export class TaskExecutor {
       if (await this.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue)) {
         return;
       }
-      if (live.column !== wipColumn) {
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-28-14:10 (U8 / R3, PR #2497 review):
+      `wipColumn === undefined` means the workflow declares no implementation column, so there
+      is no evidence the card "already advanced" past one. Swallowing the failure on a guess is
+      the exact silent-loss this conversion exists to remove — require a KNOWN wip column before
+      taking the benign shortcut.
+      */
+      if (wipColumn !== undefined && live.column !== wipColumn) {
         const benignMessage = `Workflow graph run ended after task already advanced to '${live.column}' — no further action needed`;
         executorLog.log(`${task.id}: ${benignMessage}`);
         await this.store.logEntry(task.id, benignMessage, undefined, this.getRunContextFor(task.id));
@@ -10989,7 +11028,21 @@ export class TaskExecutor {
           */
           const escalationTarget = resolveExecutorEscalationTarget(settings);
           const hasModelTarget = escalationTarget.provider !== undefined && escalationTarget.modelId !== undefined;
-          const hasNodeTarget = escalationTarget.nodeId !== undefined;
+          /*
+          FNXC:WorkflowExecutionOwnership 2026-07-28-14:15 (U8 / R3, PR #2497 review — greptile P1):
+          A node escalation is a REQUEUE: it parks the card back in the hold lane so the
+          scheduler re-resolves the effective node. Without a declared requeue target there is
+          nowhere legal to put it, and persisting an invented column is worse than not
+          escalating — the card lands where the board cannot route it and the node is never
+          dispatched. Degrade to the no-node-target shape (in-place retry, which is already how
+          an enabled escalation with no usable target behaves) rather than writing an
+          undeclared column.
+          */
+          const nodeTargetRequeueColumn = escalationTarget.nodeId !== undefined ? holdColumn : undefined;
+          const hasNodeTarget = escalationTarget.nodeId !== undefined && nodeTargetRequeueColumn !== undefined;
+          if (escalationTarget.nodeId !== undefined && nodeTargetRequeueColumn === undefined) {
+            await this.store.logEntry(task.id, "Node escalation downgraded to an in-place retry — this task's workflow declares no column to requeue into", undefined, this.getRunContextFor(task.id));
+          }
           let claimedEscalation = false;
           let priorEscalationRetryCount = 0;
           /*
@@ -11009,7 +11062,7 @@ export class TaskExecutor {
             priorEscalationRetryCount = current.consecutiveToolFailureRetryCount ?? 0;
             return {
               ...(hasModelTarget ? { modelProvider: escalationTarget.provider, modelId: escalationTarget.modelId } : {}),
-              ...(hasNodeTarget ? { nodeId: escalationTarget.nodeId, column: holdColumn } : {}),
+              ...(hasNodeTarget ? { nodeId: escalationTarget.nodeId, column: nodeTargetRequeueColumn } : {}),
               executorEscalationAttempted: true,
               /* FNXC:ExecutorEscalation 2026-07-16-22:40: Invalidate the exhausted run cursor before releasing the claim so concurrent stale handlers cannot park or audit the alternate execution; the alternate captures its own cursor at startup. */
               toolFailureDetectorLogCursor: null,
