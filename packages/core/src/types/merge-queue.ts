@@ -105,6 +105,20 @@ export interface WorkflowWorkItemTransitionPatch {
   lastError?: string | null;
   blockedReason?: string | null;
   now?: string;
+  /*
+  FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+  Compare-and-set guard. When set, the transition is applied ONLY if the row's
+  state read INSIDE the transaction still equals this value; otherwise it is a
+  no-op that returns the current row unchanged (no write, no run-audit row).
+
+  Why this exists: a caller that decided from a due-poll SNAPSHOT and then writes
+  unconditionally can clobber a newer state another node reached in between —
+  resetting a `running` claim back to `runnable` (double-claim) is the concrete
+  case. The terminal-state check below already refuses cancelled/succeeded/failed,
+  so `running` was the unguarded gap. Callers that legitimately force a state
+  (the executor's own lifecycle writes) simply omit this and behave as before.
+  */
+  expectedState?: WorkflowWorkItemState;
 }
 
 export interface WorkflowWorkItemDueFilter {

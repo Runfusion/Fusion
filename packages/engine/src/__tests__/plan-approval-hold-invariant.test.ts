@@ -45,6 +45,24 @@ accepts either and a status-only check would silently miss the other:
 
 Each test below FAILS on the pre-fix code — the fix is a guard, and a guard that
 cannot be shown to fail on the original defect is not a guard.
+
+──────────────────────────────────────────────────────────────────────────────
+ADDED IN REVIEW ROUND 1 (PR #2491), because correctly HOLDING a card is not free:
+
+  4. `resolveParkedContinuationDeferral` — the due poll is a FIFO batch, and a
+     skipped item stays `runnable` and due, so it re-fills a slot every pass.
+     Before the guard an approval-held item was DISPATCHED and so never
+     accumulated; parking it correctly means 20 parked cards would starve every
+     newer plan-review continuation. This starvation is INTRODUCED by the guard,
+     so it is fixed here, not filed.                            [describe #4]
+  5. `drainDuePlanningContinuations` — the pass that APPLIES the deferral. The
+     loop was extracted from a private runtime method for this test to exist at
+     all; deleting the `defer(...)` call now fails. The deferral also carries the
+     state the poll OBSERVED as a compare-and-set, so it cannot reset a claim
+     another node took mid-pass (`running` was not covered by the store's
+     terminal-state check). The store-side guard is proven against real
+     PostgreSQL in `packages/core/src/__tests__/workflow-work-item-cas.test.ts`.
+                                                                [describe #5]
 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr, WorkflowWorkItem } from "@fusion/core";
@@ -56,9 +74,11 @@ import {
   seedPreReleasePlanReviewContinuation,
 } from "../plan-review-continuation.js";
 import {
+  drainDuePlanningContinuations,
   PARKED_CONTINUATION_DEFER_MS,
   resolveParkedContinuationDeferral,
   resolvePlanningContinuationCandidate,
+  type DuePlanningContinuationDrainDeps,
 } from "../runtimes/in-process-runtime.js";
 import { schedulerLog } from "../logger.js";
 
@@ -427,5 +447,113 @@ describe("#4 an operator-parked item leaves the due window instead of starving t
 
     expect(resolved.kind).toBe("orphan");
     expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #5 — the drain PASS itself: the deferral is applied, and it is a compare-and-set
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:PlanApprovalHold 2026-07-27-22:10 (U7, PR #2491 review — CodeRabbit + greptile P1):
+#4 tests the deferral DECISION; these test that the pass actually applies it, which
+is the half that was unprovable while the loop lived inside a private method of a
+class whose construction attaches to the real project registry. Deleting the
+`defer(...)` call from the pass now fails here.
+
+The CAS case is the greptile P1 half: a blind write would reset a claim another node
+took between the due poll and the write. The store's terminal-state check already
+refuses cancelled/succeeded/failed, so `running` was the unguarded gap — deferral is
+a fairness optimization and must never disturb live work to get it.
+*/
+function drainHarness(
+  items: WorkflowWorkItem[],
+  tasks: Record<string, Task>,
+): {
+  deps: DuePlanningContinuationDrainDeps;
+  dispatched: string[];
+  deferred: Array<{ itemId: string; expectedState: string; retryAfter: string }>;
+  cancelled: Array<{ itemId: string; reason: string }>;
+} {
+  const dispatched: string[] = [];
+  const deferred: Array<{ itemId: string; expectedState: string; retryAfter: string }> = [];
+  const cancelled: Array<{ itemId: string; reason: string }> = [];
+  return {
+    dispatched,
+    deferred,
+    cancelled,
+    deps: {
+      listDue: async () => items,
+      getTask: async (taskId) => tasks[taskId],
+      cancelOrphan: async (item, reason) => { cancelled.push({ itemId: item.id, reason }); },
+      defer: async (d) => { deferred.push(d); },
+      dispatch: (task, item) => { dispatched.push(`${task.id}@${item.id}`); },
+      nowMs: () => Date.parse("2026-07-27T12:00:00.000Z"),
+      warn: () => {},
+    },
+  };
+}
+
+describe("#5 the drain pass applies the deferral and never starves a ready card", () => {
+  it("defers the approval-parked item, dispatches the actionable one, and does not cancel either", async () => {
+    const parked = dueItem({ id: "wi-parked", taskId: "FN-PARKED" });
+    const ready = dueItem({ id: "wi-ready", taskId: "FN-READY" });
+    const h = drainHarness([parked, ready], {
+      "FN-PARKED": task({ id: "FN-PARKED", status: "awaiting-approval" }),
+      "FN-READY": task({ id: "FN-READY" }),
+    });
+
+    await drainDuePlanningContinuations(h.deps);
+
+    // The parked card leaves the due window; the ready card behind it still runs.
+    expect(h.deferred.map((d) => d.itemId)).toEqual(["wi-parked"]);
+    expect(h.dispatched).toEqual(["FN-READY@wi-ready"]);
+    expect(h.cancelled).toEqual([]);
+  });
+
+  it("carries the OBSERVED state as the compare-and-set guard, so a claim taken mid-pass is not reset", async () => {
+    // The due poll returns `runnable`; the write must be conditional on exactly
+    // that, so a concurrent `running` claim makes the store's CAS a no-op.
+    const parked = dueItem({ id: "wi-parked", taskId: "FN-PARKED", state: "runnable" });
+    const h = drainHarness([parked], {
+      "FN-PARKED": task({ id: "FN-PARKED", status: "awaiting-approval" }),
+    });
+
+    await drainDuePlanningContinuations(h.deps);
+
+    expect(h.deferred).toHaveLength(1);
+    expect(h.deferred[0].expectedState).toBe("runnable");
+    expect(Date.parse(h.deferred[0].retryAfter)).toBe(
+      Date.parse("2026-07-27T12:00:00.000Z") + PARKED_CONTINUATION_DEFER_MS,
+    );
+  });
+
+  it("cancels an orphan WITHOUT deferring it — a terminal item must not be written back as runnable", async () => {
+    const orphan = dueItem({ id: "wi-orphan", taskId: "FN-GONE" });
+    const h = drainHarness([orphan], {});
+
+    await drainDuePlanningContinuations(h.deps);
+
+    expect(h.cancelled).toEqual([{ itemId: "wi-orphan", reason: "task-not-found" }]);
+    expect(h.deferred).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it("a getTask throw is an orphan, not an aborted pass — later items still dispatch (FN-8470/FN-8471)", async () => {
+    const bad = dueItem({ id: "wi-bad", taskId: "FN-THROWS" });
+    const ready = dueItem({ id: "wi-ready", taskId: "FN-READY" });
+    const h = drainHarness([bad, ready], { "FN-READY": task({ id: "FN-READY" }) });
+    const deps: DuePlanningContinuationDrainDeps = {
+      ...h.deps,
+      getTask: async (taskId) => {
+        if (taskId === "FN-THROWS") throw new Error("soft-deleted, no archive snapshot");
+        return task({ id: "FN-READY" });
+      },
+    };
+
+    await drainDuePlanningContinuations(deps);
+
+    expect(h.cancelled).toEqual([{ itemId: "wi-bad", reason: "task-not-found" }]);
+    expect(h.dispatched).toEqual(["FN-READY@wi-ready"]);
   });
 });

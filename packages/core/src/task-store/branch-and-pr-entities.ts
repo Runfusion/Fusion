@@ -1099,6 +1099,11 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
       const existing = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
       if (!existing) throw new Error(`Workflow work item ${id} not found`);
       const fromState = store.normalizeWorkflowWorkItemState(existing.state);
+      // FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+      // Mirrors the async path's compare-and-set no-op so the two cannot drift.
+      if (patch.expectedState !== undefined && fromState !== patch.expectedState) {
+        return store.rowToWorkflowWorkItem(existing);
+      }
       if (store.isTerminalWorkflowWorkItemState(fromState) && fromState !== state) {
         throw new Error(`Workflow work item ${id} is terminal (${fromState}) and cannot transition to ${state}`);
       }
