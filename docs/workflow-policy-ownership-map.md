@@ -83,17 +83,42 @@ these that is not the same as running.
 **The consequence that matters for U9.** `WorkflowWorkItemKind` is
 `task | merge | retry | manual-hold | recovery`. The only live pump is
 `InProcessRuntime.drainWorkflowContinuations`, and it filters `kinds: ["task"]`.
-The generic processor that would claim the other four kinds has no production
-caller. So the entire merge-lane work-item vocabulary is **dormant: zero writers
-and zero readers.**
+The generic processor that would claim the other four kinds
+(`processDueWorkflowWorkItem`) has no production caller.
 
-This is *not* a live defect — verified that nothing in production writes a
-non-`task` kind (the only two writers, `plan-review-continuation.ts` and
-`workflow-column-boundary-hooks.ts`, both go through
-`replaceActiveTaskWorkflowContinuation`). Nothing is stranded today. But S07 is the
-slice that starts writing `merge` work items, and if it lands before the generic
-pump is wired, those items are created and never claimed — a card that reaches the
-merge boundary and silently stops. **S07 must not land before S03/S05 are driven.**
+**Non-`task` work items are already being written, and nothing claims them.**
+`createCompletionHandoffWorkflowWork` (`workflow-workitems-ops.ts:68`) writes
+`kind: "merge"` when auto-merge is on and `kind: "manual-hold"` when it is off. It
+is called from the LIVE handoff-to-review path (`moves.ts:438` and `:1150`), inside
+the move transaction. The kind is computed into a variable
+(`autoMerge ? "merge" : "manual-hold"`), which is why a literal grep for
+`kind: "merge"` finds nothing — an earlier revision of this section wrongly
+concluded there were zero writers on exactly that basis.
+
+So the current state is:
+
+| | State |
+|---|---|
+| Writers of `merge` / `manual-hold` | **Live** — every task that reaches review writes one |
+| Claimers | **None** — the only pump filters `kinds: ["task"]` |
+| Reconcilers | **None** — self-healing's continuation check also filters `kinds: ["task"]` (`self-healing.ts:6575`) |
+| Only terminalization | The NEXT `createCompletionHandoffWorkflowWork` for the same task cancels prior ones as `superseded-by-completion-handoff` |
+
+These rows therefore **accumulate in a non-terminal state** (`runnable` /
+`manual-required`), one per task that reaches review, cleared only if that same task
+hands off again.
+
+**This does not stall any merge.** The actual merge is enqueued by
+`enqueueMergeQueueInTransaction` in the same transaction, and the legacy
+`ProjectEngine.mergeQueue` pump still drives it. The work items are parallel
+bookkeeping that nothing consumes yet — accumulating dead rows, not stuck cards.
+
+**What this means for S07.** S07 does not introduce the writer; the writer is
+already here. What S07 changes is making those items *authoritative* for the merge
+lane. Until the generic pump (S03/S05) is actually driven, promoting these rows from
+bookkeeping to authority converts a benign row leak into cards that reach the merge
+boundary and stop. **S07 must not land before S03/S05 are driven** — and the
+pre-existing unclaimed rows need a reconcile/backfill decision as part of that work.
 
 ## Deletion Gates
 

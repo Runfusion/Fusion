@@ -22,9 +22,8 @@ Status corrected from `draft-stack-handoff`, which was accurate when drafted on
 
 ## Stack Role
 
-This draft PR reserves the S08 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+Not started. `ProjectEngine.mergeQueue` + `drainMergeQueue` remain the live merge
+pump; this slot remains the plan of record for replacing them.
 
 ## Milestone
 

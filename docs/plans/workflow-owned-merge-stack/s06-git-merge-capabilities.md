@@ -22,9 +22,8 @@ Status corrected from `draft-stack-handoff`, which was accurate when drafted on
 
 ## Stack Role
 
-This draft PR reserves the S06 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+Not started. Merge still runs through `merger.ts`; this slot remains the plan of
+record for extracting those procedures into workflow node capabilities.
 
 ## Milestone
 
