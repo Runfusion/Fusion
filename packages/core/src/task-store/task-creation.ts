@@ -24,6 +24,8 @@ import {getErrorMessage} from "../error-message.js";
 import {generateTaskLineageId} from "../task-lineage.js";
 import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
+import {resolveWorkflowIrById} from "../workflow-ir-resolver.js";
+import {columnsWithFlag} from "../workflow-lifecycle-traits.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
@@ -57,6 +59,36 @@ function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   store.db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_proposal_claim_id ON tasks(proposalClaimId) WHERE proposalClaimId IS NOT NULL",
   );
+}
+
+
+/*
+FNXC:MergedPlanningColumn 2026-07-28-12:55 (U11 precondition):
+The intake column used to be resolved ONLY as a by-product of materializing workflow steps, so a
+create that supplied `enabledWorkflowSteps` without an explicit `workflowId` took neither
+materialization branch and fell through to the hard-coded `|| "triage"`. On Coding (Ideas) that
+lands the card in a column the workflow does not declare — a phantom lane, today.
+
+U11 makes it the DEFAULT workflow's problem: once `triage` is deleted, every create down this path
+lands in an undeclared column AND (because `isIntakeColumn` keys on the same literal) gets
+`generateSpecifiedPrompt` instead of the bootstrap seed. Triage admits a card for planning only
+when its PROMPT.md reads as a seed, so the card would sit in Planning forever with no log line in
+any lane — FN-8587's failure mode, for every new card.
+
+Resolution is deliberately SIDE-EFFECT-FREE: it reads the default workflow's IR and asks which
+column carries `intake`. It must not call `materializeDefaultWorkflowSteps`, which persists step
+rows the caller explicitly opted out of by supplying its own `enabledWorkflowSteps`.
+Unresolvable workflow returns undefined and the caller keeps its existing legacy fallback.
+*/
+async function resolveDefaultWorkflowIntakeColumn(store: TaskStore): Promise<string | undefined> {
+  try {
+    const workflowId = await store.getDefaultWorkflowId();
+    if (!workflowId) return undefined;
+    const ir = await resolveWorkflowIrById(store, workflowId);
+    return columnsWithFlag(ir, "intake")[0];
+  } catch {
+    return undefined;
+  }
 }
 
 export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
@@ -194,10 +226,17 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
           });
         }
       }
-    } else if (input.enabledWorkflowSteps.length === 0) {
-      // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
-      // optional-step selection must hydrate back as [], not undefined.
-      resolvedWorkflowSteps = [];
+    } else {
+      // Caller supplied its own optional-step toggles, so no materialization branch ran and
+      // `resolvedEntryColumn` was left undefined — the gap that dropped the card into the
+      // hard-coded `|| "triage"`. The toggles are the caller's; the INTAKE COLUMN is still the
+      // project default workflow's, so resolve it without materializing steps.
+      resolvedEntryColumn = await resolveDefaultWorkflowIntakeColumn(store);
+      if (input.enabledWorkflowSteps.length === 0) {
+        // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
+        // optional-step selection must hydrate back as [], not undefined.
+        resolvedWorkflowSteps = [];
+      }
     }
 
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:20:
@@ -671,10 +710,16 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
           });
         }
       }
-    } else if (Array.isArray(input.enabledWorkflowSteps) && input.enabledWorkflowSteps.length === 0) {
-      // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
-      // optional-step selection must hydrate back as [], not undefined.
-      resolvedWorkflowSteps = [];
+    } else if (input.enabledWorkflowSteps !== undefined) {
+      // Mirror of the backend path: the caller owns the optional-step toggles, so no
+      // materialization branch ran and `resolvedEntryColumn` was left undefined. The INTAKE
+      // COLUMN is still the project default workflow's — resolve it without materializing steps.
+      resolvedEntryColumn = await resolveDefaultWorkflowIntakeColumn(store);
+      if (input.enabledWorkflowSteps.length === 0) {
+        // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
+        // optional-step selection must hydrate back as [], not undefined.
+        resolvedWorkflowSteps = [];
+      }
     }
 
     let createdTask: Task;

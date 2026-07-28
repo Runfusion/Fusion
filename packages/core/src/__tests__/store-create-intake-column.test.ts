@@ -44,6 +44,41 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(task.column).toBe("ideas");
   });
 
+  /*
+  FNXC:MergedPlanningColumn 2026-07-28-12:40 (U11 precondition):
+  The intake column is resolved ONLY inside the two `materializeWorkflowSteps` branches. A create
+  that supplies `enabledWorkflowSteps` without an explicit `workflowId` takes NEITHER branch, so
+  `resolvedEntryColumn` stays undefined and `column:` falls through to the hard-coded `|| "triage"`.
+
+  Today that lands a Coding (Ideas) card in `triage` — a column that workflow does not declare —
+  so the card is created straight into a phantom lane. U11 makes this the DEFAULT workflow's
+  problem too: once `triage` is deleted, every create down this path lands in an undeclared column
+  and, because `isIntakeColumn` keys on the same literal, also gets `generateSpecifiedPrompt`
+  instead of the bootstrap seed. Triage's discovery admits a card only when its PROMPT.md reads as
+  a seed, so the card would sit in Planning forever with no log line in any lane — FN-8587's exact
+  failure mode, for every new card rather than one edge case.
+  */
+  it("lands a Coding (Ideas) task in ideas even when enabledWorkflowSteps is supplied", async () => {
+    const store = h.store();
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    const task = await store.createTask({
+      description: "ideas task created with explicit optional-group toggles",
+      enabledWorkflowSteps: [],
+    });
+    expect(task.column).toBe("ideas");
+  });
+
+  it("writes a bootstrap PROMPT.md for that same create (so triage can still discover it)", async () => {
+    const store = h.store();
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    const task = await store.createTask({
+      description: "ideas task created with explicit optional-group toggles",
+      enabledWorkflowSteps: [],
+    });
+    const prompt = await readFile(join(store.getTasksDir(), task.id, "PROMPT.md"), "utf-8");
+    expect(prompt).toBe(buildBootstrapPrompt(task.id, task.title, task.description));
+  });
+
   it("lands a Coding (Ideas) task in ideas when it is the project default workflow", async () => {
     const store = h.store();
     await store.setDefaultWorkflowId("builtin:coding-ideas");
