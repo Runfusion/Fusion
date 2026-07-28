@@ -98,11 +98,36 @@ function isDerivedThroughResolver(expr, resolverLocals) {
  */
 export function findViolationsInSource(file, text) {
   const violations = [];
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-23:30 (PR #2488 review):
+  Parse failure is detected via `parseDiagnostics`, NOT via a try/catch.
+  `ts.createSourceFile` is error-TOLERANT: given `function )( {` it returns a
+  source file carrying diagnostics rather than throwing, so the catch this
+  replaced was unreachable and the "unparseable" rule could never fire. That made
+  the guard's own fail-closed claim overstated in exactly the way this PR is
+  about — a check advertising a capability it did not have. A file whose syntax
+  did not parse yields a partial AST, so its `??` nodes and sink calls may simply
+  be absent: reporting it clean would be reporting "not inspected" as "inspected".
+  The defensive catch is kept for a genuine internal error, but detection is the
+  diagnostics check.
+  */
   let sf;
   try {
     sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   } catch (err) {
-    return [{ file, line: 0, rule: "unparseable", text: String(err && err.message) }];
+    return [{ file, line: 0, rule: "unparseable", text: `parser threw: ${String(err && err.message)}` }];
+  }
+  const parseErrors = sf.parseDiagnostics ?? [];
+  if (parseErrors.length > 0) {
+    const first = ts.flattenDiagnosticMessageText(parseErrors[0].messageText, " ");
+    return [
+      {
+        file,
+        line: 0,
+        rule: "unparseable",
+        text: `${parseErrors.length} syntax error(s), first: ${first} — a file that did not parse was NOT inspected`,
+      },
+    ];
   }
 
   const lineOf = (node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;

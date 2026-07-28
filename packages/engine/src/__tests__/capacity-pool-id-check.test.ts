@@ -128,7 +128,19 @@ describe("check-capacity-pool-id ratchet — forms it must NOT flag", () => {
 });
 
 describe("check-capacity-pool-id ratchet — it fails CLOSED", () => {
-  it("reports an unparseable source rather than skipping it", async () => {
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-23:30 (PR #2488 review):
+  These were ONE test titled "unparseable" that actually simulated a read()
+  throw and asserted "unreadable" — it never reached the parse path at all. A
+  test that misreports its own subject is this PR's entire failure mode in
+  miniature, so they are split and each now exercises the path it names.
+
+  Writing the second one surfaced a real defect: `ts.createSourceFile` is
+  error-TOLERANT and does not throw on malformed syntax, so the try/catch it was
+  meant to cover was unreachable and the "unparseable" rule could never fire.
+  Detection now reads `parseDiagnostics`.
+  */
+  it("reports an UNREADABLE file rather than skipping it", async () => {
     const { findViolations } = await import("../../../../scripts/lib/capacity-pool-id-check.mjs");
     const out = (findViolations([
       {
@@ -140,5 +152,26 @@ describe("check-capacity-pool-id ratchet — it fails CLOSED", () => {
     ]) as Array<{ rule: string }>).map((v) => v.rule);
     // "could not inspect" must never render as "inspected and clean".
     expect(out).toContain("unreadable");
+  });
+
+  it("reports an UNPARSEABLE file — real malformed syntax, reaching the parse check", () => {
+    /* Genuinely malformed TypeScript. A partial AST can silently lack the `??`
+       nodes and sink calls the rules look for, so "parsed badly" must not read
+       as "inspected and clean". */
+    const malformed = `
+      const x = { unclosed: (((  ;
+      function )( {
+    `;
+    const out = (findViolationsInSource("packages/core/src/malformed.ts", malformed) as Array<{ rule: string }>).map(
+      (v) => v.rule,
+    );
+    expect(out).toContain("unparseable");
+  });
+
+  it("does NOT report well-formed source as unparseable", () => {
+    /* The negative half: a diagnostics-based check that fired on valid syntax
+       would be noise, and noise gets suppressed. */
+    const fine = `const poolId = resolveCapacityPoolId(selection?.workflowId);`;
+    expect(rules(fine)).toEqual([]);
   });
 });

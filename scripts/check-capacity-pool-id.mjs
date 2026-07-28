@@ -22,7 +22,11 @@ try {
     .split("\n")
     .map((f) => f.trim())
     .filter(Boolean)
-    .filter((f) => !f.includes("__tests__") && !f.endsWith(".test.ts"));
+    // Test sources are excluded using the repo's own guideline shape — the
+    // `{test,spec}.{ts,tsx}` family — because the earlier `.test.ts`-only suffix
+    // would have scanned a `.spec.ts` sitting directly under `packages/<pkg>/src/`
+    // as production source and flagged its fixtures as real violations.
+    .filter((f) => !f.includes("__tests__") && !/\.(test|spec)\.tsx?$/.test(f));
 } catch (err) {
   // FAIL CLOSED: if we cannot even enumerate the files, we have checked nothing.
   console.error(`check-capacity-pool-id: could not list files — ${err?.message ?? err}`);
