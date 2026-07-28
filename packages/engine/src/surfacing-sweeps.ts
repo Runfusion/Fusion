@@ -95,6 +95,19 @@ export interface SurfacingSpec {
   describe(task: Task, signal: SurfacingSignal, thresholdMs: number): string;
 }
 
+/**
+ * One shared pass over the board for the whole surfacing family: a single task
+ * snapshot, a single IR cache, and a single cycle clock. See the rationale on
+ * `openSurfacingCycle` in self-healing.ts — the three sweeps partition the task
+ * space, so sharing a snapshot cannot let one observe another's writes.
+ */
+export interface SurfacingCycle {
+  settings: Settings;
+  tasks: Task[];
+  irCache: Map<string, WorkflowIr>;
+  cycleStartMs: number;
+}
+
 export interface SurfacingRunnerDeps {
   store: TaskStore;
   tasks: readonly Task[];

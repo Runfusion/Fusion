@@ -288,6 +288,55 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
   });
 
   /*
+  FNXC:WorkflowRecoveryPolicy 2026-07-28-03:20 (PR #2487 review — shared cycle):
+  The three sweeps now share ONE task snapshot and ONE IR cache per cycle. That is
+  only safe because they PARTITION the task space: no card is visible to two of
+  them, so none can observe staleness another introduced.
+
+  Asserted directly rather than argued, so a future sweep that widens its
+  eligibility into another's territory fails here instead of silently sharing a
+  stale snapshot.
+  */
+  describe("the family partitions the task space (what makes one shared snapshot safe)", () => {
+    const CARDS = [
+      { label: "paused card in the hold column", column: "todo", paused: true },
+      { label: "paused card in the review column", column: "in-review", paused: true },
+      { label: "active card in the review column", column: "in-review", paused: false },
+    ] as const;
+
+    it.each(CARDS)("$label is claimed by exactly ONE sweep", async (card) => {
+      const claims: string[] = [];
+      for (const spec of FAMILY) {
+        const h = harness(
+          [makeTask(card.column, { paused: card.paused } as Partial<Task>)],
+          {
+            [spec.thresholdKey]: CUSTOMIZED_MS,
+            autoMerge: true,
+          },
+          ir("todo", "in-review"),
+        );
+        const n = await (h.manager as unknown as Record<string, () => Promise<number>>)[spec.name]();
+        if (n > 0) claims.push(spec.name);
+      }
+      expect(claims).toHaveLength(1);
+    });
+
+    it("a card in a non-role column is claimed by NONE of them", async () => {
+      const claims: string[] = [];
+      for (const spec of FAMILY) {
+        const h = harness(
+          [makeTask("building", { paused: true } as Partial<Task>)],
+          { [spec.thresholdKey]: CUSTOMIZED_MS, autoMerge: true },
+          ir("todo", "in-review"),
+        );
+        const n = await (h.manager as unknown as Record<string, () => Promise<number>>)[spec.name]();
+        if (n > 0) claims.push(spec.name);
+      }
+      expect(claims).toEqual([]);
+    });
+  });
+
+  /*
   FNXC:WorkflowRecoveryPolicy 2026-07-28-01:35 (PR #2487 review — SAFEGUARD AUDIT):
   The auto-merge safeguard applies to the sweep that watches ACTIVE review work.
   The two paused sweeps target cards the engine is deliberately NOT processing, so

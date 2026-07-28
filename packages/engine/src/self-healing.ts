@@ -97,7 +97,7 @@ import {
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
-import { runSurfacingSweep, hours } from "./surfacing-sweeps.js";
+import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweeps.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
 import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
 
@@ -1515,6 +1515,7 @@ export class SelfHealingManager {
     }
 
     // Each recovery step is isolated — one failure doesn't prevent subsequent steps.
+    const startupSurfacing = this.surfacingCycleMemo();
     const steps: Array<{ name: string; fn: () => Promise<unknown> }> = [
       // FNXC:LegacyAdoption 2026-07-19-04:20 (U9b / KTD-8): adoption runs FIRST. Every step
       // below reasons about `task.status` and column, so a pre-cutover row must be adopted
@@ -1596,9 +1597,11 @@ export class SelfHealingManager {
       { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
       { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches().then(() => undefined) },
       { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
-      { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled().then(() => undefined) },
-      { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews().then(() => undefined) },
-      { name: "surface-stale-paused-todos", fn: () => this.surfaceStalePausedTodos().then(() => undefined) },
+      /* One shared cycle for the family — see `openSurfacingCycle`. Opened
+         lazily and awaited by all three, so the board is read once. */
+      { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled(startupSurfacing()).then(() => undefined) },
+      { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews(startupSurfacing()).then(() => undefined) },
+      { name: "surface-stale-paused-todos", fn: () => this.surfaceStalePausedTodos(startupSurfacing()).then(() => undefined) },
       { name: "audit-no-commits-expected-candidates", fn: () => this.auditNoCommitsExpectedCandidates().then(() => undefined) },
     ];
 
@@ -2812,6 +2815,7 @@ export class SelfHealingManager {
         await this.reconcileStrandedHoldContinuations();
       } else {
         // Batch 2 — Task recovery (operations are independent of each other)
+        const maintenanceSurfacing = this.surfacingCycleMemo();
         const batch2Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
           {
             name: "recover-active-mission-validations",
@@ -2944,9 +2948,10 @@ export class SelfHealingManager {
           { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
           { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches() },
           { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
-          { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled() },
-          { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews() },
-          { name: "surface-stale-paused-todos", fn: () => this.surfaceStalePausedTodos() },
+          /* One shared cycle for the family — see `openSurfacingCycle`. */
+          { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled(maintenanceSurfacing()) },
+          { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews(maintenanceSurfacing()) },
+          { name: "surface-stale-paused-todos", fn: () => this.surfaceStalePausedTodos(maintenanceSurfacing()) },
           { name: "surface-db-corruption", fn: () => this.surfaceDbCorruption() },
           { name: "audit-no-commits-expected-candidates", fn: () => this.auditNoCommitsExpectedCandidates() },
         ];
@@ -8043,22 +8048,72 @@ export class SelfHealingManager {
   Surfacing is OBSERVATIONAL, so per the re-ratified invariant it reports on
   user-paused cards — which is the entire point of the two paused sweeps.
   */
+  /*
+  FNXC:WorkflowRecoveryPolicy 2026-07-28-03:10 (PR #2487 review — shared cycle):
+  ONE task snapshot and ONE workflow-IR cache shared across the three surfacing
+  sweeps.
+
+  Consolidating them onto a single runner made a pre-existing redundancy visible
+  for the first time: each sweep issued its own unfiltered non-slim `listTasks`
+  AND re-resolved every task's workflow from a fresh Map, and all three run
+  back-to-back in both startup recovery and the maintenance batch. That is three
+  full board reads and three IR resolutions per cycle where one of each suffices.
+
+  WHY SHARING A SNAPSHOT IS SAFE HERE, and it is a property rather than a hope:
+  the three sweeps PARTITION the task space, so no card is ever visible to two of
+  them and none can observe staleness another introduced.
+
+    surfaceStalePausedTodos    hold column   AND paused === true
+    surfaceStalePausedReviews  review column AND paused === true
+    surfaceInReviewStalled     review column AND paused !== true
+
+  A card sits in exactly one column, so hold and review are exclusive; within
+  review, `paused` splits the remaining two. `surfacing-family-shared.test.ts`
+  asserts this partition directly, so a future sweep that widens its eligibility
+  into another's territory fails rather than silently sharing a stale snapshot.
+
+  The sweeps are read-mostly regardless: they append a task-log entry under their
+  own distinct `logPrefix` and mutate no column or lifecycle field, and the
+  at-most-once dedup matches on that prefix, so one sweep's entry is invisible to
+  another's suppression check.
+  */
+  /** A once-only opener: the first caller starts the cycle, the rest await it. */
+  private surfacingCycleMemo(): () => Promise<SurfacingCycle | null> {
+    let pending: Promise<SurfacingCycle | null> | undefined;
+    return () => (pending ??= this.openSurfacingCycle());
+  }
+
+  private async openSurfacingCycle(): Promise<SurfacingCycle | null> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return null;
+    return {
+      settings,
+      tasks: await this.store.listTasks({ slim: false }),
+      irCache: new Map(),
+      cycleStartMs: Date.now(),
+    };
+  }
+
   private async runSurfacing(
     spec: Parameters<typeof runSurfacingSweep>[0],
     thresholdKey: "stalePausedTodoThresholdMs" | "stalePausedReviewThresholdMs" | "inReviewStalledThresholdMs",
     label: string,
+    cycle?: SurfacingCycle | null | Promise<SurfacingCycle | null>,
   ): Promise<number> {
     try {
-      const settings = await this.store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return 0;
+      /* A caller running the family together supplies the shared cycle; a
+         standalone call (tests, a single registry entry) opens its own. */
+      const active = cycle !== undefined ? await cycle : await this.openSurfacingCycle();
+      if (!active) return 0;
+      const { settings, tasks, irCache, cycleStartMs } = active;
       const inheritedThresholdMs = Number(settings[thresholdKey] ?? 0);
-      const tasks = await this.store.listTasks({ slim: false });
       return await runSurfacingSweep(spec, {
         store: this.store,
         tasks,
         inheritedThresholdMs,
         settings,
-        cycleStartMs: Date.now(),
+        cycleStartMs,
+        irCache,
         activation: {
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
@@ -8070,7 +8125,7 @@ export class SelfHealingManager {
     }
   }
 
-  async surfaceStalePausedTodos(): Promise<number> {
+  async surfaceStalePausedTodos(cycle?: SurfacingCycle | null | Promise<SurfacingCycle | null>): Promise<number> {
     return this.runSurfacing(
       {
         logPrefix: "Stale paused todo surfaced",
@@ -8083,10 +8138,11 @@ export class SelfHealingManager {
       },
       "stalePausedTodoThresholdMs",
       "Stale paused todo surfacing",
+      cycle,
     );
   }
 
-  async surfaceStalePausedReviews(): Promise<number> {
+  async surfaceStalePausedReviews(cycle?: SurfacingCycle | null | Promise<SurfacingCycle | null>): Promise<number> {
     return this.runSurfacing(
       {
         logPrefix: "Stale paused review surfaced",
@@ -8099,10 +8155,11 @@ export class SelfHealingManager {
       },
       "stalePausedReviewThresholdMs",
       "Stale paused review surfacing",
+      cycle,
     );
   }
 
-  async surfaceInReviewStalled(): Promise<number> {
+  async surfaceInReviewStalled(cycle?: SurfacingCycle | null | Promise<SurfacingCycle | null>): Promise<number> {
     const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
     const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
     return this.runSurfacing(
@@ -8143,6 +8200,7 @@ export class SelfHealingManager {
       },
       "inReviewStalledThresholdMs",
       "In-review stalled surfacing",
+      cycle,
     );
   }
 
