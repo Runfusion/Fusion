@@ -858,7 +858,12 @@ describe("Cross-platform agent-browser install workflow", () => {
     expect(content).toContain("pnpm pack --pack-destination");
     expect(content).toContain('dependencies["agent-browser"]');
     expect(content).toContain("agent-browser-version.txt");
-    expect(content).toContain("actions/upload-artifact@v4");
+    /*
+    FNXC:CI 2026-07-28-01:35:
+    Dependabot PR #2444 bumps actions/upload-artifact 4→7 on the agent-browser install workflow.
+    Gate pin must track the workflow pin; download-artifact stays at v4 until a paired bump.
+    */
+    expect(content).toContain("actions/upload-artifact@v7");
     expect(content).toContain("actions/download-artifact@v4");
     expect(content).toContain("Packed Fusion manifest lost the exact agent-browser pin");
     expect(content).toContain("Packed Fusion manifest lost the agent-browser bin");
