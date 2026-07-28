@@ -244,6 +244,35 @@ export interface TriageProcessorOptions {
  * transparently restarted, so dashboard setting changes take effect without
  * an engine restart.
  */
+/**
+ * FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4 — workflow-owned lifecycle):
+ * What a finalize pass actually did with the card. Three states, because "did it
+ * work?" is not a yes/no question here and collapsing it to one is what produced
+ * the bugs this type exists to remove:
+ *
+ *   released — the card crossed into the hold column, or was already resting there
+ *              (plan-in-place). It is the graph's now. This is the ONLY state that
+ *              means "a specification handoff happened".
+ *   parked   — finalize reached a deliberate disposition that is terminal for now:
+ *              awaiting manual plan approval, a duplicate decision, an operator
+ *              pause, a deleted duplicate. A human or a later event owns the card;
+ *              an automated retry would fight that decision.
+ *   withheld — finalize could not complete the handoff. The card still holds a
+ *              finished spec in the planner column and nothing is waiting on a
+ *              human, so the CALLER'S retry budget is the correct owner.
+ *
+ * The distinction that matters: `parked` and `withheld` both mean "not released",
+ * but only `withheld` should be retried. Treating them alike either strands a card
+ * that needed a retry or overwrites an operator's park with `needs-replan`.
+ */
+export type PlanningHandoffOutcome = "released" | "parked" | "withheld";
+
+/** Mutable report threaded through finalize's many exits. See the rationale on
+ *  `finalizeApprovedTask` for why this is a report object and not a return value. */
+export interface PlanningHandoffReport {
+  outcome: PlanningHandoffOutcome;
+}
+
 export class TriageProcessor {
   private running = false;
   private polling = false;
@@ -1114,13 +1143,29 @@ export class TriageProcessor {
       }
     }
 
-    await this.finalizeApprovedTask(task, written, settings, {
+    const report = await this.finalizeApprovedTask(task, written, settings, {
       recoveryLogAction: approvalRequired
         ? "Auto-recovered specified task stuck in planning — awaiting manual approval"
         : "Auto-recovered specified task stuck in planning — moved to todo",
     });
 
-    return true;
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4):
+    Report what finalize ACTUALLY did. This used to `return true` unconditionally,
+    which meant a finalize that could not hand the card off still reported recovery
+    as successful — and `handleStuckAbortRequeue` treats `true` as "done, stop here".
+    So a card whose release move was refused by the planning-stage guard (FN-8361),
+    or whose store could not perform the move at all, was left holding a finished
+    spec in the planner column with its stuck-retry budget silently skipped: nothing
+    re-planned it and nothing escalated it.
+
+    `parked` still returns TRUE, and that is the whole reason this is three states
+    rather than a boolean. An awaiting-approval park is a successful outcome of
+    recovery — the card is exactly where the operator's pending decision put it.
+    Returning false there would send the stuck handler down its draft path and stamp
+    `needs-replan` over a plan a human is in the middle of reviewing.
+    */
+    return report.outcome !== "withheld";
   }
 
   private async readNonEmptyPromptDraft(taskId: string, context: string): Promise<string | undefined> {
@@ -3199,18 +3244,34 @@ export class TriageProcessor {
       recoveryLogAction?: string;
       preservePromptContent?: boolean;
     } = {},
-  ): Promise<void> {
+  ): Promise<PlanningHandoffReport> {
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
     Mark the card finalizing for the whole Plan Review → column handoff so stuck-kill
     eviction and poll rediscovery cannot start a concurrent planner (FN-1312).
     */
     this.finalizing.add(task.id);
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4 — workflow-owned lifecycle):
+    Finalize has ~25 exit points and previously returned `void`, so no caller could
+    tell "the card was handed off" from "finalize gave up". Both callers then assumed
+    success: `specifyTask` announced completion unconditionally, and
+    `recoverApprovedTask` returned `true` unconditionally.
+
+    A mutable report rather than a return value at each exit, deliberately: threading
+    a return through every one of those exits is 25 chances to mis-classify a branch,
+    and mis-classifying is what turns a truthfulness fix into a lifecycle bug. The
+    default is `parked`, which is exactly today's observable behavior at every exit —
+    so this plumbing is inert everywhere except the two sites explicitly marked
+    below. Adding a state to an exit is then a deliberate, reviewable act.
+    */
+    const report: PlanningHandoffReport = { outcome: "parked" };
     try {
-      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options);
+      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options, report);
     } finally {
       this.finalizing.delete(task.id);
     }
+    return report;
   }
 
   /*
@@ -3285,6 +3346,7 @@ export class TriageProcessor {
       recoveryLogAction?: string;
       preservePromptContent?: boolean;
     } = {},
+    report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<void> {
     let written = writtenInput;
     // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
@@ -3840,6 +3902,10 @@ export class TriageProcessor {
         // cannot even be attempted the card stays in the planner column with a finished spec, so
         // never let that be silent.
         planLog.warn(`${task.id}: planning handoff skipped — store does not expose moveTaskIf; card left in ${task.column}`);
+        // FNXC:PlanningHandoffOutcome 2026-07-28-09:20: WITHHELD, not parked — the card
+        // holds a finished spec in the planner column and nothing is waiting on a human,
+        // so a caller's retry budget is the correct owner of what happens next.
+        report.outcome = "withheld";
         return;
       }
       const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
@@ -3848,9 +3914,20 @@ export class TriageProcessor {
           `${task.id}: planning handoff to todo REFUSED by the planning-stage guard `
           + `(column=${release.task?.column ?? "unknown"}, status=${release.task?.status ?? "null"}). Card left in ${task.column}.`,
         );
+        // FNXC:PlanningHandoffOutcome 2026-07-28-09:20: same class as above (FN-8361).
+        report.outcome = "withheld";
         return;
       }
     }
+
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20:
+    The handoff is complete: the card either crossed into the hold column or was
+    already resting there (plan-in-place). Set BEFORE the terminal status clear and
+    the log lines, because the release is what makes the card the graph's — a failure
+    in the bookkeeping that follows does not un-hand-off a card that has already moved.
+    */
+    report.outcome = "released";
 
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
