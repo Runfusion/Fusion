@@ -33,6 +33,7 @@ import { type TaskRow } from "./persistence.js";
 import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
@@ -549,16 +550,35 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
     Selection upsert must include projectId — PK is (projectId, taskId) and the authoritative read pins projectId.
     */
     const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
-    await layer.db
-      .insert(schema.project.taskWorkflowSelection)
-      .values({ projectId, taskId, workflowId, stepIds, updatedAt })
-      .onConflictDoUpdate({
-        target: [
-          schema.project.taskWorkflowSelection.projectId,
-          schema.project.taskWorkflowSelection.taskId,
-        ],
-        set: { workflowId, stepIds, updatedAt },
-      });
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process race):
+    The selection write now runs in a transaction that first takes the per-task
+    advisory lock, because the in-transaction capacity gate in `moves.ts` reads this
+    row and enforces a limit against it. Without a lock BOTH sides take, the gate
+    could read the selection, this write could land, and the move would commit the
+    task under a workflow whose pool was never the one checked.
+
+    `selectTaskWorkflow` already wraps this call in `store.withTaskLock`, which is
+    an IN-PROCESS mutex — it serializes one TaskStore instance and gives nothing
+    across nodes. Multi-node is several nodes against one central PostgreSQL
+    database, so the cross-process window is a supported deployment shape.
+
+    Acquisition order is advisory-lock-then-row-write on both sides, so the two
+    paths cannot deadlock against each other.
+    */
+    await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+      await tx
+        .insert(schema.project.taskWorkflowSelection)
+        .values({ projectId, taskId, workflowId, stepIds, updatedAt })
+        .onConflictDoUpdate({
+          target: [
+            schema.project.taskWorkflowSelection.projectId,
+            schema.project.taskWorkflowSelection.taskId,
+          ],
+          set: { workflowId, stepIds, updatedAt },
+        });
+    });
     return;
 }
 

@@ -30,6 +30,7 @@ import {makeTransitionRejection, makeTransitionPending} from "../transition-type
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
+import {acquireTaskAdvisoryXactLock} from "./task-advisory-lock.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../task-merge.js";
@@ -1029,6 +1030,31 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       `workflowIr` remains the input to transition VALIDATION, which is a different
       question asked at a different time and is unchanged.
       */
+      /*
+      FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process race):
+      Take the per-task advisory lock BEFORE reading the selection.
+
+      A consistent snapshot alone fixed only the INTRA-process split. The read was
+      still unlocked: `transactionImmediate` runs at READ COMMITTED, where a plain
+      SELECT takes no row lock, so another TaskStore on another node sharing the
+      same central database could change this task's workflow selection right after
+      the read. The move would then enforce the OLD workflow's pool and limit while
+      committing the task under the NEW one — the gate leaking at exactly the moment
+      operators start trusting it.
+
+      `withTaskLock`, which the selection writer holds, does NOT help here: it is an
+      in-process promise chain, so it serializes one store instance and nothing
+      across nodes. Multi-node is several nodes against one PostgreSQL database, so
+      this is a supported deployment shape, not a hypothetical.
+
+      With the lock held for the rest of this transaction, the selection cannot
+      change until the move commits or rolls back — so the pool id and limit
+      enforced below are the ones the commit lands under. The matching acquire is in
+      `writeTaskWorkflowSelectionImpl`; both go through
+      `acquireTaskAdvisoryXactLock` so neither side can restate the key differently
+      (the failure mode that made the R1 sentinel unbindable).
+      */
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
       const capacityWorkflowId = await readTaskWorkflowSelectionInTransaction(tx, layer.projectId, id);
       const capacityPoolId = resolveCapacityPoolId(capacityWorkflowId);
       const capacityIr = await resolveWorkflowIrForSelectedWorkflowId(store, capacityWorkflowId);

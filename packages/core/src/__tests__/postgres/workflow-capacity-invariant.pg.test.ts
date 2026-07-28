@@ -46,6 +46,7 @@ radius is reported for an operator decision first.
 */
 
 import { afterEach, beforeEach, expect, it, beforeAll, afterAll } from "vitest";
+import { taskAdvisoryLockKey } from "../../task-store/task-advisory-lock.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
@@ -300,5 +301,149 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       "capacity-exhausted",
     );
     expect((await store.getTask(contender.id))?.column).toBe("todo");
+  });
+
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process selection race):
+  THE LOCK RATCHET. Fails if the capacity read moves back outside the lock.
+
+  The snapshot fix closed the INTRA-process split (one read feeding both the limit
+  and the pool key). It did nothing about the CROSS-process one: the read ran at
+  READ COMMITTED, where a plain SELECT takes no row lock, so another TaskStore on
+  another node sharing the same central database could change this task's workflow
+  selection immediately after the read. The move would enforce the OLD workflow's
+  pool and limit while committing the task under the NEW one.
+
+  `withTaskLock` — which the selection writer holds — cannot cover this: it is an
+  in-process promise chain over a Map, so it serializes one store instance and
+  nothing across nodes. Multi-node is several nodes against ONE PostgreSQL
+  database, so this is a supported deployment shape.
+
+  HOW THIS PROVES THE LOCK rather than racing it. A raw admin connection stands in
+  for the other node — more faithful than a second TaskStore, because it bypasses
+  every in-process lock by construction. It takes the SAME per-task advisory lock
+  and HOLDS it in an open transaction. The move must then block: if
+  `moves.ts` no longer acquires the lock before its capacity read, the move settles
+  immediately while the other node holds it, and the "still pending" assertion
+  fails. Releasing the lock lets the move proceed and be correctly refused.
+
+  The key comes from the exported `taskAdvisoryLockKey`, NOT a literal restated
+  here. A guard that restates the convention it is checking is how the R1 sentinel
+  survived: both ends had the shared constant available and one still wrote its own.
+  */
+  it("RATCHET: the capacity read is taken UNDER the per-task lock, not merely inside the transaction", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await setPath("inline");
+
+    const holder = await store.createTask({ description: "xproc holder" });
+    await store.selectTaskWorkflow(holder.id, "builtin:coding");
+    await store.moveTask(holder.id, "todo");
+    await store.moveTask(holder.id, "in-progress");
+
+    const contender = await store.createTask({ description: "xproc contender" });
+    await store.selectTaskWorkflow(contender.id, "builtin:coding");
+    await store.moveTask(contender.id, "todo");
+
+    const projectId = h.layer().projectId;
+    const lockKey = taskAdvisoryLockKey(projectId, contender.id);
+    const other = h.adminSql();
+
+    /*
+    "Another node" grabs the per-task lock and holds it in an open transaction.
+    `acquired` is resolved from INSIDE that transaction, after the lock statement
+    returns, so the assertion below cannot run before the lock is genuinely held —
+    a sleep here would make this test pass whenever the machine was slow.
+    */
+    let signalAcquired!: () => void;
+    const acquired = new Promise<void>((r) => { signalAcquired = r; });
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((r) => { releaseLock = r; });
+
+    const otherNodeHoldsLock = other.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      signalAcquired();
+      await lockHeld;
+    });
+    await acquired;
+
+    let settled = false;
+    const move = store
+      .moveTask(contender.id, "in-progress")
+      .then(() => { settled = true; return null; }, (e: unknown) => { settled = true; return e as Error; });
+
+    /*
+    try/finally so a FAILING assertion still releases the lock and settles the
+    holding transaction. Without it the reverted-code run leaves an open
+    transaction behind and postgres reports an unhandled CONNECTION_CLOSED at
+    teardown — noise that vitest itself warns can produce false positives in
+    sibling tests. A ratchet must fail cleanly, not destabilise the run it fails in.
+    */
+    let error: Error | null;
+    try {
+      // Give the move ample opportunity to run to completion if it is NOT blocked.
+      await new Promise((r) => setTimeout(r, 750));
+      expect(
+        settled,
+        "the move completed while another node held the per-task lock — the capacity read is not under the lock",
+      ).toBe(false);
+    } finally {
+      releaseLock();
+      await otherNodeHoldsLock.catch(() => undefined);
+      error = await move;
+    }
+
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect((await store.getTask(contender.id))?.column).toBe("todo");
+  });
+
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process selection race):
+  THE OTHER HALF. Mutual exclusion needs BOTH sides to take the lock, and the
+  move-side ratchet above cannot detect a writer that skips it: with only the move
+  locking, another node's selection write still lands mid-gate and the leak stands.
+  A one-sided lock is a lock that does not work, so it gets its own proof.
+  */
+  it("RATCHET: the selection WRITER also takes the per-task lock", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "writer-lock task" });
+
+    const lockKey = taskAdvisoryLockKey(h.layer().projectId, task.id);
+    const other = h.adminSql();
+
+    let signalAcquired!: () => void;
+    const acquired = new Promise<void>((r) => { signalAcquired = r; });
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((r) => { releaseLock = r; });
+
+    const otherNodeHoldsLock = other.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      signalAcquired();
+      await lockHeld;
+    });
+    await acquired;
+
+    let settled = false;
+    const write = store
+      .selectTaskWorkflow(task.id, "builtin:coding-ideas")
+      .then(() => { settled = true; }, () => { settled = true; });
+
+    try {
+      await new Promise((r) => setTimeout(r, 750));
+      expect(
+        settled,
+        "the selection write completed while another node held the per-task lock — the writer is unlocked",
+      ).toBe(false);
+    } finally {
+      releaseLock();
+      await otherNodeHoldsLock.catch(() => undefined);
+      await write;
+    }
+
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas");
   });
 });
