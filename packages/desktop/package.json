@@ -47,7 +47,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitest/coverage-v8": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.25.12",
