@@ -34,6 +34,8 @@ import {
   formatAssignedTasksWakeDeltaSection,
   resolveEffectiveSettingsById,
   resolveEffectivePlannerHeartbeatPatrolEnabled,
+  resolveReboundTarget,
+  resolveWorkflowIrForTask,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -97,6 +99,28 @@ import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./hea
 import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./room-ambiguity.js";
 import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./room-coordination.js";
 import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./task-agent-sync.js";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-09:25 (U11 conversion):
+Where a worktree-acquisition failure requeues the card. KTD-10 ordering via
+`resolveReboundTarget` (hold -> intake -> first column) — the same helper
+self-healing and mesh-lease-manager use for "requeue a recovered card", so the
+recovery paths cannot drift apart.
+
+This matters beyond renamed workflows: U11 DELETES the `todo` column from the
+builtin workflows, after which the old literal would requeue every
+acquisition-failed card into a column that no longer exists.
+
+Fail-soft to the legacy id: a requeue must not be abandoned because a workflow
+lookup failed, or the card is left holding a worktree it could not acquire.
+*/
+async function resolveHeartbeatReboundColumn(taskStore: TaskStore, taskId: string): Promise<string> {
+  try {
+    return resolveReboundTarget(await resolveWorkflowIrForTask(taskStore, taskId)) ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
 import { classifyReportHealth } from "./reports-health.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./session-token-usage.js";
 
@@ -2848,11 +2872,11 @@ export class HeartbeatMonitor {
                  * reassigned and retried from scratch, defeating the terminal-
                  * failure intent of this fix (FN-7721).
                  */
-                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true, preserveStatus: true });
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true, preserveStatus: true });
                 this.onTaskAcquisitionExhausted?.(taskDetail.id, exhaustionMessage);
               } else {
                 await taskStore.updateTask(taskDetail.id, { recoveryRetryCount: attemptsSoFar });
-                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true });
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true });
               }
             }
             await this.completeRun(agentId, run.id, {
