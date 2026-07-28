@@ -170,3 +170,135 @@ describe("workflow graph entry contract — the executor honors it", () => {
     expect(calls).not.toContain("planning-session");
   });
 });
+
+/*
+FNXC:MergedPlanningColumn 2026-07-28-11:20 (U11):
+The entry contract under the MERGED planning column — one column carrying `intake` + `hold`, which
+is what U11 leaves behind once `triage` is deleted and `todo` becomes "Planning".
+
+This is the interaction the earlier, reverted attempt at this merge got wrong, so it is pinned
+BEFORE the IR changes. `resolveColumnResumeNode` walks forward from `start` and returns the first
+node whose column index is `>= ` the card's. Collapsing two pre-implementation columns into one
+changes those indices for EVERY node, so the two positions that matter are:
+
+  - the merged column itself must still enter the specification phase (not skip past it), and
+  - a card past it must STILL never re-enter a planning node — the backward drag that aborts a live
+    session via `abort-on-exit` and stranded cards last time.
+
+Differential against the split shape: the same graph under both vocabularies must produce the same
+ROLE-level answer. The merged shape legitimately returns `start` rather than `plan` for a planning
+card — `start` is the first node in that column once the columns collapse — which is equivalent only
+because `start` is a passthrough with a single success edge into the specification node. That
+equivalence is asserted, not assumed.
+*/
+describe("workflow graph entry contract — merged intake+hold planning column (U11)", () => {
+  const SPLIT_COLUMNS = [
+    { id: "triage", name: "Planning", traits: [{ trait: "intake" }] },
+    { id: "todo", name: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }, { trait: "reset-on-entry" }] },
+    { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "in-review", name: "In review", traits: [{ trait: "merge-blocker" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ];
+
+  const MERGED_COLUMNS = [
+    {
+      id: "todo",
+      name: "Planning",
+      traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }, { trait: "reset-on-entry" }],
+    },
+    { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "in-review", name: "In review", traits: [{ trait: "merge-blocker" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ];
+
+  /** Same node graph under both vocabularies; only `start`'s column differs. */
+  function shapedIr(columns: unknown[], startColumn: string): WorkflowIr {
+    return {
+      version: "v2",
+      id: "wf-shape",
+      name: "shape",
+      columns,
+      nodes: [
+        { id: "start", kind: "start", column: startColumn },
+        { id: "plan", kind: "prompt", column: "todo" },
+        { id: "plan-review", kind: "optional-group", column: "todo" },
+        { id: "plan-replan", kind: "prompt", column: "todo" },
+        { id: "parse", kind: "prompt", column: "in-progress" },
+        { id: "review", kind: "prompt", column: "in-review" },
+        { id: "merge-gate", kind: "merge-gate", column: "in-review" },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "plan", condition: "success" },
+        { from: "plan", to: "plan-review", condition: "success" },
+        { from: "plan-review", to: "parse", condition: "success" },
+        { from: "plan-review", to: "plan-replan", condition: "failure" },
+        { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
+        { from: "parse", to: "review", condition: "success" },
+        { from: "review", to: "merge-gate", condition: "success" },
+        { from: "merge-gate", to: "end", condition: "success" },
+      ],
+    } as unknown as WorkflowIr;
+  }
+
+  const splitIr = shapedIr(SPLIT_COLUMNS, "triage");
+  const mergedIr = shapedIr(MERGED_COLUMNS, "todo");
+
+  it("enters the specification phase for a card in the merged planning column", () => {
+    const resumed = resolveColumnResumeNode(mergedIr, "todo");
+
+    // `start` is a passthrough; what matters is that the card is NOT dropped past specification.
+    expect(resumed?.id).toBe("start");
+    expect(resumed?.column).toBe("todo");
+    // The failure this guards: entering at `parse` would put an unspecified card into
+    // implementation with no plan.
+    expect(resumed?.id).not.toBe("parse");
+  });
+
+  it("reaches the specification node from the merged column's entry point in one hop", () => {
+    /*
+    The merged shape answers `start` where the split shape answers `plan`. That is equivalent ONLY
+    because `start` leads to the specification node by a single unconditional success edge. Assert
+    that rather than trusting it — if a node is ever inserted between them, the two shapes stop
+    being equivalent and this fails.
+    */
+    const entry = resolveColumnResumeNode(mergedIr, "todo")!;
+    const successors = mergedIr.edges.filter((edge) => edge.from === entry.id && edge.condition === "success");
+
+    expect(successors).toHaveLength(1);
+    expect(successors[0]!.to).toBe(resolveColumnResumeNode(splitIr, "todo")?.id);
+  });
+
+  it("NEVER re-plans a card past the merged column — the drag that aborts a live session", () => {
+    const resumed = resolveColumnResumeNode(mergedIr, "in-progress");
+
+    expect(resumed?.id).toBe("parse");
+    expect(resumed?.column).toBe("in-progress");
+    expect(["start", "plan", "plan-review", "plan-replan"]).not.toContain(resumed?.id);
+  });
+
+  it("re-enters a review-column card at the first review node under the merged shape", () => {
+    const resumed = resolveColumnResumeNode(mergedIr, "in-review");
+
+    expect(resumed?.id).toBe("review");
+    // Entering at the merge region instead would silently skip review.
+    expect(resumed?.id).not.toBe("merge-gate");
+  });
+
+  it("produces the same role-level answer as the split shape at every position past planning", () => {
+    for (const column of ["in-progress", "in-review", "done"]) {
+      expect(resolveColumnResumeNode(mergedIr, column)?.id).toBe(resolveColumnResumeNode(splitIr, column)?.id);
+    }
+  });
+
+  it("still resumes a card stranded in the DELETED triage column without dropping it", () => {
+    /*
+    R7 / migration case: rows persisted in `triage` outlive the column. `resolveColumnResumeNode`
+    returns undefined for a column the IR does not declare, and the executor's caller falls back to
+    the start node — so the card re-enters at the top of the pipeline rather than being stranded.
+    Pinned because "undefined" here is only safe while that fallback exists.
+    */
+    expect(resolveColumnResumeNode(mergedIr, "triage")).toBeUndefined();
+    expect(mergedIr.nodes.find((node) => node.kind === "start")?.id).toBe("start");
+  });
+});
