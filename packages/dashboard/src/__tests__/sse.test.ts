@@ -422,6 +422,43 @@ describe("automation store SSE events", () => {
   });
 });
 
+describe("createSSE connection log severity", () => {
+  /*
+  FNXC:EngineDiagnostics 2026-07-26-08:17:
+  Connect/disconnect fires on every tab/reconnect. Must stay off the default TUI pane unless FUSION_DEBUG=sse.
+  */
+  const originalDebug = process.env.FUSION_DEBUG;
+
+  afterEach(() => {
+    if (originalDebug === undefined) delete process.env.FUSION_DEBUG;
+    else process.env.FUSION_DEBUG = originalDebug;
+  });
+
+  it("does not console.log +/- connection when FUSION_DEBUG is unset", () => {
+    delete process.env.FUSION_DEBUG;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const connection = openSseConnection("client-severity-quiet");
+    disconnectSSEClient("client-severity-quiet");
+    const spam = logSpy.mock.calls
+      .map((call) => String(call[0] ?? ""))
+      .filter((line) => line.includes("[sse] + connection") || line.includes("[sse] - connection"));
+    expect(spam).toEqual([]);
+    logSpy.mockRestore();
+    connection.req.emit("close");
+  });
+
+  it("emits +/- connection when FUSION_DEBUG=sse", () => {
+    process.env.FUSION_DEBUG = "sse";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    openSseConnection("client-severity-debug");
+    disconnectSSEClient("client-severity-debug");
+    const lines = logSpy.mock.calls.map((call) => String(call[0] ?? ""));
+    expect(lines.some((line) => line.includes("[sse] + connection"))).toBe(true);
+    expect(lines.some((line) => line.includes("[sse] - connection"))).toBe(true);
+    logSpy.mockRestore();
+  });
+});
+
 describe("createSSE client cleanup", () => {
   it("disconnectSSEClient closes and unregisters the matching stream", () => {
     const baseline = getActiveSSEConnections();

@@ -1,4 +1,5 @@
 import type { Task } from "@fusion/core";
+import { isOverdue } from "./dataFreshness";
 
 const NON_STUCK_STATUSES = new Set(["failed", "stuck-killed"]);
 
@@ -32,10 +33,15 @@ export function isTaskStuck(task: Task, taskStuckTimeoutMs: number | undefined, 
     return false;
   }
 
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-10:16:
+  The clock choice moved to `isOverdue` (utils/dataFreshness.ts) so the same rule serves every
+  staleness verdict in the client and `dataAsOfMs` cannot be omitted at a call site. Behavior is
+  unchanged: `dataAsOfMs ?? Date.now()`, strict `>` against a threshold already proven positive above,
+  and an unparseable `updatedAt` (NaN) still yields false.
+  */
   const updatedAt = new Date(task.updatedAt).getTime();
-  // Use dataAsOfMs if provided, otherwise fall back to current time
-  const now = dataAsOfMs ?? Date.now();
-  return now - updatedAt > taskStuckTimeoutMs;
+  return isOverdue(updatedAt, taskStuckTimeoutMs, dataAsOfMs);
 }
 
 /**

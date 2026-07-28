@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-issue-image-attachments");
 import { runGhAsync, isGhAvailable, isGhAuthenticated, type TaskStore } from "@fusion/core";
 
 /*
@@ -294,7 +297,7 @@ export async function importIssueImageAttachments(
       attached++;
     } catch (err) {
       failed++;
-      console.warn(
+      severityAuditLog.warn(
         `[fusion:issue-import] Skipping image ${url} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }

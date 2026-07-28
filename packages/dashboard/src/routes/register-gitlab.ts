@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-gitlab");
 import { badRequest, unauthorized, ApiError } from "../api-error.js";
 import { resolveGitlabAuth } from "../gitlab-auth.js";
 import {
@@ -124,7 +127,7 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     try {
       imageBodies.push(...(await client.listNotes(noteResource, noteProject, args.item.iid)));
     } catch (error) {
-      console.warn(
+      severityAuditLog.warn(
         `[fusion:gitlab-import] Could not fetch notes for ${args.resourceType} #${args.item.iid}; importing description images only: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -151,7 +154,7 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     } catch (error) {
       // FNXC:IssueImportAttachments 2026-07-15-14:10: The task and files are
       // already durable; an audit-write failure must not make import retry collide.
-      console.warn(`[fusion:gitlab-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+      severityAuditLog.warn(`[fusion:gitlab-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

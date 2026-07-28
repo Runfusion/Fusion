@@ -121,7 +121,8 @@ function deregister(entry: RegistryEntry, result: SupervisedExit): void {
   clearLifetimeTimer(entry);
   if (typeof entry.pid === "number") {
     registry.delete(entry.pid);
-    log.log(`child pid=${entry.pid} exited naturally code=${result.code ?? "null"} signal=${result.signal ?? "null"}`);
+    // FNXC:EngineDiagnostics 2026-07-26-09:45: natural close pairs with spawn chatter — debug-only.
+    log.debug(`child pid=${entry.pid} exited naturally code=${result.code ?? "null"} signal=${result.signal ?? "null"}`);
   }
 }
 
@@ -299,7 +300,11 @@ export function superviseSpawn(
 
   if (typeof child.pid === "number") {
     registry.set(child.pid, entry);
-    log.log(`spawned pid=${child.pid} pgid=${entry.pgid ?? "n/a"} command=${command}`);
+    /*
+    FNXC:EngineDiagnostics 2026-07-26-09:45:
+    Every supervised subprocess (verification, scripts, tools) logged spawn+exit at info and flooded the TUI. Keep on debug (FUSION_DEBUG=process-supervisor). Terminations, lifetime kills, and missing-pid stay warn.
+    */
+    log.debug(`spawned pid=${child.pid} pgid=${entry.pgid ?? "n/a"} command=${command}`);
   } else {
     log.warn(`spawned child without pid for command=${command}`);
   }

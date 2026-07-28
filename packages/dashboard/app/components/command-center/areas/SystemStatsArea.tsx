@@ -11,6 +11,7 @@ import {
   type SystemStatsResponse,
 } from "../../../api";
 import { useNodes } from "../../../hooks/useNodes";
+import { useVisibilityAwarePoll } from "../../../hooks/visibilitySuspension";
 import { Bar, type BarDatum } from "../charts/Bar";
 import { RadialGauge } from "../charts/RadialGauge";
 import { Sparkline } from "../charts/Sparkline";
@@ -166,13 +167,19 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
 
   useEffect(() => {
     void loadStats();
-    const timer = window.setInterval(() => {
-      void loadStats();
-    }, SYSTEM_STATS_POLL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
   }, [loadStats]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:26:
+  System telemetry sampling is suspended while the document is hidden. This poll both fetches and appends a
+  rolling sample every cycle, so in the background it burned network AND grew memory — the two conditions
+  that make iOS Safari/PWA and Chrome Android discard the tab and reload it white-splash on return. Sampling
+  resumes with one immediate reading when the tab becomes visible; the gap in the rolling series is expected.
+  */
+  const pollSystemStats = useCallback(() => {
+    void loadStats();
+  }, [loadStats]);
+  useVisibilityAwarePoll(pollSystemStats, SYSTEM_STATS_POLL_MS);
 
   useEffect(() => {
     setSelectedNodeId((current) => (current && nodes.some((node) => node.id === current) ? current : null));

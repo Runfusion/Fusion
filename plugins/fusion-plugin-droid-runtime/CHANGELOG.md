@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.58-beta.5
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.74.0-beta.5
+
+## 0.1.58-beta.4
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.74.0-beta.4
+
 ## 0.1.58-beta.3
 
 ### Patch Changes

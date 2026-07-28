@@ -46,7 +46,6 @@
   min-height: 480px;
   max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
   overflow: hidden;
-  resize: both;
 }
 
 /*

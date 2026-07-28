@@ -22,6 +22,7 @@ resolves to the same columns the old literals named):
 import type { WorkflowIr, WorkflowIrColumn } from "./workflow-ir-types.js";
 import type { TraitFlags } from "./trait-types.js";
 import { getTraitRegistry } from "./trait-registry.js";
+import { resolveWorkflowIrForTask, type WorkflowIrResolverStore } from "./workflow-ir-resolver.js";
 
 /** The v2 column list, or [] for a v1/column-less IR. */
 function columnsOf(ir: WorkflowIr): WorkflowIrColumn[] {
@@ -83,4 +84,117 @@ export function resolveReboundTarget(ir: WorkflowIr): string | undefined {
   const intake = columns.find((c) => registry.resolveColumnFlags(c).intake === true);
   if (intake) return intake.id;
   return columns[0].id;
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-09:10 (U1 / KTD-2 — workflow-owned lifecycle):
+THE lifecycle-column resolution seam. ~207 production sites decide the lifecycle by
+comparing `task.column` against a hardcoded id ("todo", "in-progress", …). Those guards
+do not FAIL when the column moves underneath them — they silently stop matching, which
+disables a recovery path with a green suite. Phases B–D convert those sites onto the two
+functions below, so conversion is mechanical rather than a per-site IR plumbing exercise.
+
+Why a single struct rather than six separate lookups: most call sites need two or three
+lifecycle columns at once (a sweep gated on the hold column that rebounds into it, a
+release path comparing hold against wip). Resolving them together keeps one IR read and
+one cache entry per workflow.
+
+Trait → role mapping (the trait vocabulary is the source of truth, not these names):
+  intake   → `intake`             where new cards land
+  hold     → `hold`               passive dwell with a release condition (capacity)
+  wip      → `countsTowardWip`    occupies an implementation slot
+  review   → `mergeOrchestration` the merge/PR orchestration lane
+  complete → `complete`           terminal success
+  archived → `archived`           globally archived
+
+CONSERVATIVE-ON-UNRESOLVABLE (deliberate): a v1 / column-less IR resolves to `undefined`
+for the WHOLE struct, not to a struct of undefined roles. The distinction matters — a
+caller must be able to tell "this workflow declares no hold column" (hold: undefined,
+struct present) apart from "this workflow has no column vocabulary at all" (undefined).
+The first is a real workflow shape to honor; the second means the caller has no basis to
+decide and must skip-and-log rather than guess a legacy literal.
+*/
+export interface LifecycleColumns {
+  /** Where new cards land. */
+  intake: string | undefined;
+  /** Passive dwell column with a release condition (capacity hold). */
+  hold: string | undefined;
+  /** Occupies an implementation/WIP slot. */
+  wip: string | undefined;
+  /** The merge/PR orchestration lane. */
+  review: string | undefined;
+  /** Terminal-success column. */
+  complete: string | undefined;
+  /** Globally archived column. */
+  archived: string | undefined;
+}
+
+/** The trait carrying each lifecycle role. Declared once so the roles and the
+ *  trait vocabulary cannot drift apart silently. */
+const LIFECYCLE_ROLE_FLAGS: Record<keyof LifecycleColumns, keyof TraitFlags> = {
+  intake: "intake",
+  hold: "hold",
+  wip: "countsTowardWip",
+  review: "mergeOrchestration",
+  complete: "complete",
+  archived: "archived",
+};
+
+/**
+ * Resolve an IR's lifecycle columns by trait — the FIRST column carrying each
+ * trait, in declared column order. A role no column carries is `undefined`
+ * (never substituted from an unrelated column).
+ *
+ * Returns `undefined` for a v1 / column-less IR: there is no column vocabulary
+ * to resolve, so the caller has no workflow-derived answer to act on.
+ */
+export function resolveLifecycleColumns(ir: WorkflowIr): LifecycleColumns | undefined {
+  const columns = columnsOf(ir);
+  if (columns.length === 0) return undefined;
+  const registry = getTraitRegistry();
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-15:40 (U1, PR #2467 review):
+  Resolve each column's flags ONCE. A per-role `columns.find(...)` re-resolved
+  every column's traits per role — up to 6N resolutions — and this function is
+  not memoized, so a Phase B sweep sharing an IR cache across 400 cards would
+  still pay it per card (the cache holds the IR, not the resolved struct).
+  */
+  const resolved = columns.map((c) => ({ id: c.id, flags: registry.resolveColumnFlags(c) }));
+  const first = (flag: keyof TraitFlags): string | undefined =>
+    resolved.find((c) => c.flags[flag] === true)?.id;
+  return {
+    intake: first(LIFECYCLE_ROLE_FLAGS.intake),
+    hold: first(LIFECYCLE_ROLE_FLAGS.hold),
+    wip: first(LIFECYCLE_ROLE_FLAGS.wip),
+    review: first(LIFECYCLE_ROLE_FLAGS.review),
+    complete: first(LIFECYCLE_ROLE_FLAGS.complete),
+    archived: first(LIFECYCLE_ROLE_FLAGS.archived),
+  };
+}
+
+/**
+ * Store-aware form: resolve a TASK's lifecycle columns through its workflow
+ * selection.
+ *
+ * `cache` is CALLER-OWNED on purpose. A self-healing pass over 400 cards spanning
+ * three workflows must read three IRs, not 400 — the caller allocates one map per
+ * sweep and hands it to every resolution in that pass (the shape the periodic
+ * sweep's existing `irCache` already uses). A module-level cache would instead
+ * have to guess when a mid-flight workflow edit invalidates it.
+ *
+ * Returns `undefined` when the workflow cannot be resolved to a column
+ * vocabulary — callers keep conservative behavior (skip and log) rather than
+ * falling back to a legacy literal.
+ */
+export async function resolveTaskLifecycleColumns(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<LifecycleColumns | undefined> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache);
+    return resolveLifecycleColumns(ir);
+  } catch {
+    return undefined;
+  }
 }

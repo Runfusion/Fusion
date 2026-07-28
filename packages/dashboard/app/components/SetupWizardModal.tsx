@@ -8,6 +8,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { openExternalUrl } from "../utils/open-external";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { suggestProjectName } from "../utils/projectDetection";
+import { FloatingWindow } from "./FloatingWindow";
 
 /*
 FNXC:TaskPrefix 2026-06-24-19:00:
@@ -449,7 +450,21 @@ export function SetupWizardModal({
   const modalClassName = `modal setup-wizard-modal${state.step === "agent" ? " setup-wizard-modal--agent" : ""}`;
 
   return (
-    <div className="modal-overlay open setup-wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+    <FloatingWindow
+      windowKey="setup-wizard" modal
+      title={t("setup.welcomeToFusion", "Welcome to Fusion")}
+      ariaLabelledBy="wizard-title"
+      onClose={() => {}}
+      hideHeader
+      dragHandleSelector=".setup-wizard-modal .setup-wizard-header"
+      className="floating-window--setup-wizard"
+      defaultSize={{ width: 760, height: 680 }}
+      minSize={{ width: 480, height: 360 }}
+      persistGeometryKey="floating-window:setup-wizard"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+    >
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: The first-run wizard remains blocking, while its reflowable steps use shared tablet geometry and suspend it for sheet viewports. */}
       <div className={modalClassName}>
         {/* Header */}
         <div className="setup-wizard-header">
@@ -1000,6 +1015,6 @@ export function SetupWizardModal({
           </Suspense>
         </ErrorBoundary>
       )}
-    </div>
+    </FloatingWindow>
   );
 }

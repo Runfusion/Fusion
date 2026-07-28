@@ -123,6 +123,11 @@ import { activeSessionRegistry } from "./active-session-registry.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
 
+/*
+FNXC:EngineDiagnostics 2026-07-26-10:10:
+Merger intermediate plumbing (per-file auto-resolve, fetch/rebase/checkout bookkeeping, verification skip/pass, attempt N/3 start, merge details stored, fast-forward continue paths, staging allowlists, no-op already-merged) is debug-only (FUSION_DEBUG=merger). Keep log/warn/error for outcomes operators act on: conflict AI, autostash recovery, push results, verification-fix attempts, commits landing, route selection, completeTask, and real failures.
+*/
+
 // FNXC:CodeOrganization 2026-07-15-12:00:
 // Domain satellites re-exported so existing merger.js import paths stay stable.
 export {
@@ -764,7 +769,7 @@ async function runDeterministicVerification(
 
   // Nothing to verify
   if (!testCommand && !buildCommand) {
-    mergerLog.log(`${taskId}: no verification commands configured — skipping`);
+    mergerLog.debug(`${taskId}: no verification commands configured — skipping`);
     return result;
   }
 
@@ -790,7 +795,7 @@ async function runDeterministicVerification(
     if (cacheHit) {
       const sha7 = treeSha.slice(0, 7);
       const msg = `Skipping deterministic verification — cached pass for tree ${sha7} (recorded at ${cacheHit.recordedAt}, by ${cacheHit.taskId ?? "unknown"})`;
-      mergerLog.log(`${taskId}: ${msg}`);
+      mergerLog.debug(`${taskId}: ${msg}`);
       await store.logEntry(taskId, msg);
       await store.appendAgentLog(taskId, msg, "status", undefined, "merger");
       const syntheticResult: VerificationCommandResult = {
@@ -812,7 +817,7 @@ async function runDeterministicVerification(
   const testSourceLabel = (testSource === "inferred" || testSource === "inferred-scoped") ? ` [${testSource}]` : "";
   const buildSourceLabel = buildSource === "inferred" ? " [inferred]" : "";
 
-  mergerLog.log(
+  mergerLog.debug(
     `${taskId}: running deterministic verification` +
     (hasTestCommand ? ` [test:${testSourceLabel} ${normalizedTestCommand}]` : "") +
     (hasBuildCommand ? ` [build:${buildSourceLabel} ${normalizedBuildCommand}]` : ""),
@@ -1009,7 +1014,8 @@ async function runDeterministicVerification(
     }
   }
 
-  mergerLog.log(`${taskId}: deterministic verification passed`);
+  // FNXC:EngineDiagnostics 2026-07-26-09:33: merge verification success/cache bookkeeping is expected steady-state; failures stay error/warn.
+  mergerLog.debug(`${taskId}: deterministic verification passed`);
   await store.logEntry(taskId, "Deterministic merge verification passed");
   await store.appendAgentLog(taskId, "Deterministic merge verification passed", "status", undefined, "merger");
 
@@ -1017,7 +1023,7 @@ async function runDeterministicVerification(
   if (treeSha) {
     try {
       await store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
-      mergerLog.log(`${taskId}: Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
+      mergerLog.debug(`${taskId}: Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
       await store.logEntry(taskId, `Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
     } catch (err) {
       mergerLog.warn(`${taskId}: could not record verification cache pass: ${String(err)}`);
@@ -2194,7 +2200,7 @@ export async function dropAutostashBySha(
   for (let attempt = 0; attempt < 5; attempt++) {
     const ref = await findStashRefBySha(rootDir, sha);
     if (!ref) {
-      mergerLog.log(`${taskId}: autostash ${sha.slice(0, 7)} no longer in stash list (already dropped)`);
+      mergerLog.debug(`${taskId}: autostash ${sha.slice(0, 7)} no longer in stash list (already dropped)`);
       return { dropped: true };
     }
 
@@ -2211,7 +2217,7 @@ export async function dropAutostashBySha(
       continue;
     }
     if (refSha !== sha) {
-      mergerLog.log(`${taskId}: autostash ${sha.slice(0, 7)} shifted off ${ref} (now ${refSha.slice(0, 7)}); re-resolving`);
+      mergerLog.debug(`${taskId}: autostash ${sha.slice(0, 7)} shifted off ${ref} (now ${refSha.slice(0, 7)}); re-resolving`);
       continue;
     }
 
@@ -3664,7 +3670,7 @@ export async function commitOrAmendMergeWithFixes(
     const cap = (arr: string[], n = 20) =>
       arr.length <= n ? arr.join(", ") : `${arr.slice(0, n).join(", ")} ... (+${arr.length - n} more)`;
 
-    mergerLog.log(
+    mergerLog.debug(
       `${taskId}: staging allowlist — squash: [${cap([...squashStaged])}], fixModified: [${cap([...fixModifiedFiles])}]`,
     );
 
@@ -3761,7 +3767,7 @@ export async function commitOrAmendMergeWithFixes(
       // HEAD), then ancestor short-circuit (branch already reachable from
       // integration target via a different commit path), then squash-restore.
       if (trailerOnHead) {
-        mergerLog.log(
+        mergerLog.debug(
           `${taskId}: HEAD already carries Fusion-Task-Id trailer — treating in-merge fix finalize as no-op success`,
         );
         return { ok: true, reason: "head-task-trailer" };
@@ -3791,7 +3797,7 @@ export async function commitOrAmendMergeWithFixes(
         branchAlreadyOnIntegrationTarget &&
         (branchTipCarriesTaskTrailer || branchTip.length === 0)
       ) {
-        mergerLog.log(`${taskId}: branch already on integration target (ancestor) — no-op success`);
+        mergerLog.debug(`${taskId}: branch already on integration target (ancestor) — no-op success`);
         return { ok: true, reason: "branch-already-merged" };
       }
 
@@ -3831,7 +3837,7 @@ export async function commitOrAmendMergeWithFixes(
             for (const sha of recentShas) {
               const pid = await commitPatchId(rootDir, sha);
               if (pid === branchPatchId) {
-                mergerLog.log(
+                mergerLog.debug(
                   `${taskId}: branch content already on integration target (equivalent patch-id with ${sha}) — no-op success`,
                 );
                 return { ok: true, reason: "branch-already-merged" };
@@ -3886,7 +3892,7 @@ export async function commitOrAmendMergeWithFixes(
       });
       if (restoredStagedOut.trim().length === 0) {
         if (squashRestoreReportedUpToDate && (branchTipCarriesTaskTrailer || branchTip.length === 0)) {
-          mergerLog.log(`${taskId}: squash-restore reported already up to date; treating as branch-already-merged`);
+          mergerLog.debug(`${taskId}: squash-restore reported already up to date; treating as branch-already-merged`);
           return { ok: true, reason: "branch-already-merged" };
         }
 
@@ -3905,7 +3911,7 @@ export async function commitOrAmendMergeWithFixes(
             baseCommitSha: preAttemptHeadSha,
           });
           if (landed) {
-            mergerLog.log(
+            mergerLog.debug(
               `${taskId}: recovered finalize no-content as already-landed branch=${branch} tip=${branchTip.slice(0, 8)} integrationTarget=${preAttemptHeadSha.slice(0, 8)} via=${landed.strategy}`,
             );
             await auditor?.database({
@@ -3929,7 +3935,7 @@ export async function commitOrAmendMergeWithFixes(
         return { ok: false, reason: "fix-produced-no-content" };
       }
 
-      mergerLog.log(`${taskId}: restored squash state after no-op verification fix; proceeding to commit`);
+      mergerLog.debug(`${taskId}: restored squash state after no-op verification fix; proceeding to commit`);
     }
 
     // Build the message from the actual commit content rather than the
@@ -6008,7 +6014,7 @@ async function pullWithRebaseAndResolveConflicts(
       maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
       encoding: "utf-8",
     });
-    mergerLog.log(`${taskId}: git pull --rebase succeeded for ${remote}/${branch}`);
+    mergerLog.debug(`${taskId}: git pull --rebase succeeded for ${remote}/${branch}`);
     return;
   } catch (pullError: unknown) {
     const conflictedFiles = await getConflictedFiles(rootDir);
@@ -6123,7 +6129,7 @@ export async function pushToRemoteAfterMerge(
   }
 
   const { remote, branch } = target;
-  mergerLog.log(`${taskId}: push-after-merge enabled; syncing ${remote}/${branch}`);
+  mergerLog.debug(`${taskId}: push-after-merge enabled; syncing ${remote}/${branch}`);
 
   try {
     throwIfAborted(options?.signal, taskId);
@@ -7782,7 +7788,7 @@ export async function aiMergeTask(
       stdio: "pipe",
     }).trim();
     if (reuseTaskWorktreeMerge) {
-      mergerLog.log(
+      mergerLog.debug(
         `${taskId}: reusing task worktree — detaching HEAD at '${mergeTarget.branch}' before merge (${mergeTarget.source})`,
       );
       await execAsync(`git checkout --detach "${mergeTarget.branch}"`, {
@@ -7790,7 +7796,7 @@ export async function aiMergeTask(
       });
       await audit.git({ type: "branch:checkout", target: mergeTarget.branch });
     } else if (currentBranch !== mergeTarget.branch) {
-      mergerLog.log(`${taskId}: rootDir on '${currentBranch}', checking out '${mergeTarget.branch}' before merge (${mergeTarget.source})`);
+      mergerLog.debug(`${taskId}: rootDir on '${currentBranch}', checking out '${mergeTarget.branch}' before merge (${mergeTarget.source})`);
       await execAsync(`git checkout "${mergeTarget.branch}"`, {
         cwd: rootDir,
       });
@@ -7987,7 +7993,7 @@ export async function aiMergeTask(
       throwIfAborted(options.signal, taskId);
       await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
       rebaseHappened = true;
-      mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`);
+      mergerLog.debug(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`);
       await store.appendAgentLog(
         taskId,
         `Pre-merge rebase: ${branch} → local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`,
@@ -8014,12 +8020,12 @@ export async function aiMergeTask(
   if (settings.worktreeRebaseBeforeMerge !== false) {
     try {
       if (!integrationRemote) {
-        mergerLog.log(`${taskId}: no integration remote resolvable — skipping remote rebase stage (local-base stage may still run)`);
+        mergerLog.debug(`${taskId}: no integration remote resolvable — skipping remote rebase stage (local-base stage may still run)`);
       } else if (!worktreePath) {
         mergerLog.warn(`${taskId}: no worktreePath — skipping remote rebase stage`);
       } else {
         throwIfAborted(options.signal, taskId);
-        mergerLog.log(`${taskId}: fetching ${integrationRemote} before merge`);
+        mergerLog.debug(`${taskId}: fetching ${integrationRemote} before merge`);
         await execAsync(`git fetch ${quoteArg(integrationRemote)}`, { cwd: rootDir });
 
         try {
@@ -8027,7 +8033,7 @@ export async function aiMergeTask(
           throwIfAborted(options.signal, taskId);
           await execAsync(`git rebase ${quoteArg(remoteRef)}`, { cwd: worktreePath });
           rebaseHappened = true;
-          mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
+          mergerLog.debug(`${taskId}: rebased ${branch} onto ${remoteRef}`);
           await store.appendAgentLog(
             taskId,
             `Pre-merge rebase: ${branch} → ${remoteRef}`,
@@ -8150,7 +8156,7 @@ export async function aiMergeTask(
           );
           preferMainRebaseFailureMessage = undefined;
           rebaseHappened = true;
-          mergerLog.log(
+          mergerLog.debug(
             `${taskId}: Layer 1 recovery — rebased ${branch} --onto ${rebaseTarget.slice(0, 8)} dropping commits up to dep tip ${depTip.slice(0, 8)} (executionStartBranch=${task.executionStartBranch})`,
           );
           await store.logEntry(
@@ -8270,7 +8276,7 @@ export async function aiMergeTask(
               throw replayErr;
             }
           } else {
-            mergerLog.log(
+            mergerLog.debug(
               `${taskId}: Layer 2 found no duplicate-content commits to drop (window=500)`,
             );
           }
@@ -8496,7 +8502,7 @@ export async function aiMergeTask(
 
   // Log what verification commands will be used
   if (effectiveTestCommand || effectiveBuildCommand) {
-    mergerLog.log(
+    mergerLog.debug(
       `${taskId}: merge verification commands` +
       (effectiveTestCommand ? ` [test: ${effectiveTestCommand} (${effectiveTestSource || "explicit"})]` : "") +
       (effectiveBuildCommand ? ` [build: ${effectiveBuildCommand} (${effectiveBuildSource || "explicit"})]` : ""),
@@ -8504,7 +8510,7 @@ export async function aiMergeTask(
   }
 
   const mergeAttempt = async (attemptNum: 1 | 2 | 3): Promise<boolean> => {
-    mergerLog.log(`${taskId}: merge attempt ${attemptNum}/3...`);
+    mergerLog.debug(`${taskId}: merge attempt ${attemptNum}/3...`);
     const attemptLabel = attemptNum === 1
       ? "Attempt 1: AI merge"
       : attemptNum === 2
@@ -8737,7 +8743,7 @@ export async function aiMergeTask(
               // message deterministically from branch step commits.
               const authorArg = getCommitAuthorArg(settings);
               const { stdout: finalizeHeadOut } = await execAsync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf-8" });
-              mergerLog.log(`${taskId}: in-merge fix entering with preAttemptHeadSha=${preAttemptHeadSha}, currentHead=${finalizeHeadOut.trim()}`);
+              mergerLog.debug(`${taskId}: in-merge fix entering with preAttemptHeadSha=${preAttemptHeadSha}, currentHead=${finalizeHeadOut.trim()}`);
               const finalized = await commitOrAmendMergeWithFixes(
                 rootDir,
                 taskId,
@@ -8886,7 +8892,7 @@ export async function aiMergeTask(
           if (fixSuccess) {
             const authorArg = getCommitAuthorArg(settings);
             const { stdout: finalizeHeadOut } = await execAsync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf-8" });
-            mergerLog.log(`${taskId}: in-merge fix entering with preAttemptHeadSha=${preAttemptHeadSha}, currentHead=${finalizeHeadOut.trim()}`);
+            mergerLog.debug(`${taskId}: in-merge fix entering with preAttemptHeadSha=${preAttemptHeadSha}, currentHead=${finalizeHeadOut.trim()}`);
             const finalized = await commitOrAmendMergeWithFixes(
               rootDir,
               taskId,
@@ -9195,7 +9201,7 @@ export async function aiMergeTask(
       }
     } else if (auditSha && postMergeAuditMode === "off") {
       await store.appendAgentLog(taskId, "post-merge audit skipped (mode=off)", "status", undefined, "merger");
-      mergerLog.log(`${taskId}: post-merge audit skipped (mode=off)`);
+      mergerLog.debug(`${taskId}: post-merge audit skipped (mode=off)`);
     }
     if (isEmptyCommit) {
       mergerLog.warn(
@@ -9251,7 +9257,7 @@ export async function aiMergeTask(
           landedFilesAttributionRestricted = capture.landedFilesAttributionRestricted;
           landedFilesCaptureFallback = capture.landedFilesCaptureFallback;
           if (capture.noOpVerifiedShortCircuit) {
-            mergerLog.log(`${taskId}: rebase-strategy landed-files capture: zero own commits — verified-short-circuit`);
+            mergerLog.debug(`${taskId}: rebase-strategy landed-files capture: zero own commits — verified-short-circuit`);
           }
         } else {
           const { stdout: landedFilesOutput } = await execAsync(`git show --name-only --format= ${quoteArg(recordedSha)}`, {
@@ -9354,7 +9360,7 @@ export async function aiMergeTask(
         });
       }
     }
-    mergerLog.log(`${taskId}: merge details stored (commitSha: ${recordedSha?.slice(0, 8) ?? "<deferred>"})`);
+    mergerLog.debug(`${taskId}: merge details stored (commitSha: ${recordedSha?.slice(0, 8) ?? "<deferred>"})`);
 
     // Surface the high-level outcome on the agent-log timeline so users can
     // see the merge's strategy, attempt count, and final commit at a glance.
@@ -9548,7 +9554,7 @@ export async function aiMergeTask(
   if (worktreePath && existsSync(worktreePath)) {
     const otherUser = await findWorktreeUser(store, worktreePath, taskId);
     if (otherUser) {
-      mergerLog.log(`Worktree retained — still needed by ${otherUser}`);
+      mergerLog.debug(`Worktree retained — still needed by ${otherUser}`);
       result.worktreeRemoved = false;
     } else if (options.pool && settings.recycleWorktrees) {
       if (activeSessionRegistry.isPathActive(worktreePath)) {
@@ -9853,7 +9859,7 @@ export async function tryFastForwardFromOrigin(
   try {
     await execAsync(`git fetch ${quoteArg(remote)} ${quoteArg(currentBranch)}`, { cwd: rootDir });
   } catch (err) {
-    mergerLog.log(`${taskId}: pre-merge fetch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    mergerLog.debug(`${taskId}: pre-merge fetch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
@@ -9876,15 +9882,15 @@ export async function tryFastForwardFromOrigin(
 
   if (behind === 0) return; // already up to date
   if (ahead > 0) {
-    mergerLog.log(`${taskId}: local ${currentBranch} has ${ahead} unpushed commit(s); skipping fast-forward`);
+    mergerLog.debug(`${taskId}: local ${currentBranch} has ${ahead} unpushed commit(s); skipping fast-forward`);
     return;
   }
 
   try {
     await execAsync(`git merge --ff-only ${quoteArg(remoteRef)}`, { cwd: rootDir });
-    mergerLog.log(`${taskId}: fast-forwarded ${currentBranch} by ${behind} commit(s) from ${remote}`);
+    mergerLog.debug(`${taskId}: fast-forwarded ${currentBranch} by ${behind} commit(s) from ${remote}`);
   } catch (err) {
-    mergerLog.log(`${taskId}: fast-forward failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    mergerLog.debug(`${taskId}: fast-forward failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -10214,7 +10220,7 @@ export async function executeMergeAttempt(
         ).trim() === "0";
 
         if (squashIsEmpty) {
-          mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
+          mergerLog.debug(`${taskId}: squash merge staged nothing — already merged`);
           aiTracker.mergeWasEmpty = true;
           // Run deterministic verification (nothing staged but still verify)
           if (testCommand || buildCommand) {
@@ -10248,7 +10254,7 @@ export async function executeMergeAttempt(
       ).trim() === "0";
 
       if (squashIsEmpty) {
-        mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
+        mergerLog.debug(`${taskId}: squash merge staged nothing — already merged`);
         aiTracker.mergeWasEmpty = true;
         // Run deterministic verification (nothing staged but still verify)
         if (testCommand || buildCommand) {
@@ -10419,7 +10425,7 @@ export async function executeMergeAttempt(
         `git commit --amend ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
         { cwd: rootDir, env: mergerCommitEnv() },
       );
-      mergerLog.log(`${taskId}: rewrote AI-authored merge commit message with deterministic body`);
+      mergerLog.debug(`${taskId}: rewrote AI-authored merge commit message with deterministic body`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       mergerLog.warn(`${taskId}: failed to canonicalize merge commit message (${msg}) — keeping AI-written message`);
@@ -10485,7 +10491,7 @@ export async function attemptWithSideStrategy(
 ): Promise<boolean> {
   const { rootDir, branch, taskId } = params;
 
-  mergerLog.log(`${taskId}: attempting merge with -X ${side} strategy`);
+  mergerLog.debug(`${taskId}: attempting merge with -X ${side} strategy`);
 
   try {
     throwIfAborted(params.options.signal, taskId);
@@ -10759,7 +10765,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     },
   };
 
-  mergerLog.log(`${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`);
+  // FNXC:EngineDiagnostics 2026-07-26-10:10: routine finalize bookkeeping; conflict/AI outcomes log elsewhere.
+  mergerLog.debug(`${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`);
 
   const agentLogger = new AgentLogger({
     store,
@@ -10900,7 +10907,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
     // Attempt prompting with fresh session (first attempt).
     // Log message distinguishes fresh-session start from compaction recovery path.
-    mergerLog.log(`${taskId}: starting fresh merge agent session`);
+    mergerLog.debug(`${taskId}: starting fresh merge agent session`);
 
     try {
       await withRateLimitRetry(async () => {
@@ -10990,7 +10997,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       // If build command was configured, agent should have committed or reported failure
       if (!buildCommand) {
         throwIfAborted(options.signal, taskId);
-        mergerLog.log("Agent didn't commit — committing with fallback message");
+        mergerLog.debug("Agent didn't commit — committing with fallback message");
         // Body cascade: branch's commit log → AI summary of diff stat →
         // diff stat itself → synthetic placeholder. Guarantees the merge
         // commit carries a non-empty body even when the AI agent didn't

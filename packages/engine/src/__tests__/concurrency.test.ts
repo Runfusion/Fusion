@@ -1083,6 +1083,178 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(started).toEqual(["old", "other-project"]);
   });
 
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-09:45:
+  Regression for the planning-starvation half of the FN-8600 incident: a card sat "Queued to plan"
+  while capacity was free, because admitOldest only ever evaluated candidates[0]. When the oldest
+  candidate's lane declines the handoff, younger work in another lane must still be admitted.
+
+  Invariant under test (not just the reported repro): a declining candidate is SKIPPED, not
+  vetoing; age order is still respected among the candidates that can start; the declined
+  candidate's reservation and host slot are fully returned; and a single call still admits at most
+  one task.
+  */
+  it("skips candidates whose lane declines and admits the next oldest instead", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const semaphore = new AgentSemaphore(4);
+    const started: string[] = [];
+
+    const admitted = await coordinator.admitOldest({
+      projectId: "project-a",
+      maxConcurrent: 4,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [
+        // Oldest, but its lane cannot start it (e.g. a merge id no longer queued).
+        {
+          taskId: "FN-OLDEST", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+          start: async () => { started.push("FN-OLDEST"); return false; },
+        },
+        // Also declines — proves the walk continues past more than one.
+        {
+          taskId: "FN-MIDDLE", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z",
+          start: async () => { started.push("FN-MIDDLE"); return false; },
+        },
+        // The planning candidate that was starving behind them.
+        {
+          taskId: "FN-PLANNING", projectId: "project-a", createdAt: "2026-01-03T00:00:00.000Z",
+          start: async () => { started.push("FN-PLANNING"); },
+        },
+        // Younger still: must NOT be admitted, so skipping never becomes overtaking.
+        {
+          taskId: "FN-YOUNGEST", projectId: "project-a", createdAt: "2026-01-04T00:00:00.000Z",
+          start: async () => { started.push("FN-YOUNGEST"); },
+        },
+      ],
+    });
+
+    expect(admitted).toBe("FN-PLANNING");
+    expect(started).toEqual(["FN-OLDEST", "FN-MIDDLE", "FN-PLANNING"]);
+    // Exactly one host slot is held — by the admitted task, not the decliners.
+    expect(semaphore.activeCount).toBe(1);
+
+    coordinator.releaseReservation("FN-PLANNING");
+    semaphore.release();
+    expect(semaphore.activeCount).toBe(0);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-10:35:
+  Compatibility shims have no `tryAcquire`, so they never take a host slot. Releasing one anyway
+  returns capacity nobody held — `returnSlot` decrements `_active` and drains a waiter regardless.
+  Walking past decliners would repeat that once per decliner, so N decliners could free N phantom
+  slots and push concurrency past maxConcurrent.
+  */
+  it("does not release phantom host slots when the semaphore shim cannot reserve", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const releases: number[] = [];
+    // A pre-tryAcquire shim: release only, no tryAcquire.
+    const shim = { release: () => { releases.push(1); } };
+
+    const admitted = await coordinator.admitOldest({
+      projectId: "project-shim",
+      maxConcurrent: 4,
+      claimed: () => 0,
+      semaphore: shim as unknown as Parameters<ProjectAdmissionCoordinator["admitOldest"]>[0]["semaphore"],
+      refresh: async () => [
+        { taskId: "FN-A", projectId: "project-shim", createdAt: "2026-01-01T00:00:00.000Z", start: async () => false },
+        { taskId: "FN-B", projectId: "project-shim", createdAt: "2026-01-02T00:00:00.000Z", start: async () => false },
+        { taskId: "FN-C", projectId: "project-shim", createdAt: "2026-01-03T00:00:00.000Z", start: async () => undefined },
+      ],
+    });
+
+    expect(admitted).toBe("FN-C");
+    // Two decliners must not have produced two unmatched releases.
+    expect(releases).toHaveLength(0);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-11:05:
+  The triage and scheduler lanes set `reserve: () => registerPreHeldExecutorSlot(id)`. If a decline
+  unwinds the semaphore but not that registration, the id stays in the module-global pre-held set
+  with no backing acquire — the next pass's `takePreHeldExecutorSlot` then runs a full top-level
+  session without acquiring a slot and releases one it never held, leaving `_active` permanently
+  below the live agent count and the global cap silently breached.
+  */
+  it("drops a declined candidate's pre-held executor slot, not just the semaphore slot", async () => {
+    clearPreHeldExecutorSlotsForTests();
+    const coordinator = new ProjectAdmissionCoordinator();
+    const semaphore = new AgentSemaphore(4);
+
+    const admitted = await coordinator.admitOldest({
+      projectId: "project-prehold",
+      maxConcurrent: 4,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [
+        {
+          taskId: "FN-DECLINE", projectId: "project-prehold", createdAt: "2026-01-01T00:00:00.000Z",
+          reserve: () => registerPreHeldExecutorSlot("FN-DECLINE"),
+          start: async () => false,
+        },
+        {
+          taskId: "FN-TAKES", projectId: "project-prehold", createdAt: "2026-01-02T00:00:00.000Z",
+          reserve: () => registerPreHeldExecutorSlot("FN-TAKES"),
+          start: async () => undefined,
+        },
+      ],
+    });
+
+    expect(admitted).toBe("FN-TAKES");
+    // The decliner must leave nothing behind that a later pass could "take".
+    expect(hasPreHeldExecutorSlot("FN-DECLINE")).toBe(false);
+    // Only the admitted candidate still holds a slot.
+    expect(semaphore.activeCount).toBe(1);
+    expect(hasPreHeldExecutorSlot("FN-TAKES")).toBe(true);
+
+    dropPreHeldExecutorSlot("FN-TAKES", semaphore);
+    expect(semaphore.activeCount).toBe(0);
+    clearPreHeldExecutorSlotsForTests();
+  });
+
+  it("returns the reservation and host slot when a candidate's start() throws", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const semaphore = new AgentSemaphore(2);
+
+    await expect(coordinator.admitOldest({
+      projectId: "project-throw",
+      maxConcurrent: 4,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [{
+        taskId: "FN-BOOM", projectId: "project-throw", createdAt: "2026-01-01T00:00:00.000Z",
+        start: async () => { throw new Error("lane exploded"); },
+      }],
+    })).rejects.toThrow("lane exploded");
+
+    // A thrown lane must not strand capacity.
+    expect(semaphore.activeCount).toBe(0);
+  });
+
+  it("stops the walk when the host semaphore is exhausted rather than spinning candidates", async () => {
+    const coordinator = new ProjectAdmissionCoordinator();
+    const semaphore = new AgentSemaphore(1);
+    // Exhaust the host semaphore so no candidate can acquire a slot.
+    expect(semaphore.tryAcquire()).toBe(true);
+    const started: string[] = [];
+
+    const admitted = await coordinator.admitOldest({
+      projectId: "project-a",
+      maxConcurrent: 4,
+      claimed: () => 0,
+      semaphore,
+      refresh: async () => [
+        { taskId: "FN-1", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("FN-1"); } },
+        { taskId: "FN-2", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("FN-2"); } },
+      ],
+    });
+
+    expect(admitted).toBeUndefined();
+    expect(started).toEqual([]);
+    expect(semaphore.activeCount).toBe(1);
+    semaphore.release();
+  });
+
   it("releases a rejected handoff and retains an accepted reservation until lane transfer", async () => {
     const coordinator = new ProjectAdmissionCoordinator();
     const semaphore = new AgentSemaphore(1);

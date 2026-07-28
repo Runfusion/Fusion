@@ -62,6 +62,14 @@ describe("fn_task_logs_read", () => {
     expect(text).toContain("\n\n[");
   });
 
+  it("caps long logs while retaining the paging header and narrowing hint", async () => {
+    const { store } = storeWith([entry("x".repeat(20_000), "tool_result")]);
+    const result = await run(createTaskLogsReadTool(store, TASK_ID), { limit: 1 });
+    expect(result.content[0].text.length).toBeLessThanOrEqual(12_000);
+    expect(result.content[0].text).toContain("Agent log: 1/1 entries");
+    expect(result.content[0].text).toContain("smaller limit, offset, or type filter");
+  });
+
   it("requires task_id in chat and reads the named task", async () => {
     const { store, getAgentLogs } = storeWith([entry("chat", "status")]);
     const tool = createChatTaskLogsReadTool(store);

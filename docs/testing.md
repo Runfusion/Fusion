@@ -523,3 +523,15 @@ Use the exact heading `## Symptom Verification` and include all three required c
 - [ ] **Assertion it is gone** — final verification reproduces the original failure condition and asserts it no longer occurs via a real automated test.
 
 Symptom-based acceptance is mandatory for bug fixes: reproduce the original failure, prove it is gone, and keep the invariant covered across the `## Surface Enumeration` checklist. Green build/tests alone are insufficient when they do not exercise the reported symptom.
+
+### Chromium touch hit-testing
+
+Touch-resize regressions use the dashboard Vite fixture and Chromium CDP `Input.dispatchTouchEvent` start/move/end events. Run the dedicated `dashboard-browser-touch` Vitest project with:
+
+```bash
+pnpm --filter @fusion/dashboard test:touch-geometry
+```
+
+The shared task-modal/FloatingWindow lane in `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` covers 768px and wider tablets, a 767px phone sheet, and true phones on an ephemeral Vite port (`port: 0`); it must never bind port 4040. This is required where `elementFromPoint` and real touch hit testing matter; jsdom pointer dispatch does not provide layout hit testing.
+
+This repository has no Playwright test runner: Vitest runs `playwright-core` as the Chromium CDP driver. Do not use `--project chromium` or `browserName` guidance from FN-8605/FN-8607. The lane finds an already-installed browser via `FUSION_BROWSER_SMOKE_BROWSER`, `CHROME_BIN`, or platform candidates, and skips with an explicit reason when none is available; it never downloads a browser. `FUSION_DASHBOARD_DEEP=1` does not collect this spec a second time — the dedicated project remains its only collection lane.

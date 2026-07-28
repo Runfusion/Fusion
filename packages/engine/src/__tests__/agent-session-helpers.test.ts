@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_TOOL_OUTPUT_MAX_CHARS } from "@fusion/core";
 import {
   extractRuntimeHint,
   extractRuntimeModel,
@@ -18,6 +19,7 @@ import {
   resolveValidatorSessionModel,
   resolveValidatorThinkingLevel,
   resolveValidatorFallbackThinkingLevel,
+  createResolvedAgentSession,
   wrapCustomToolsForPluginRuntime,
 } from "../agent-session-helpers.js";
 
@@ -619,6 +621,24 @@ describe("non-heartbeat project model override precedence invariant", () => {
 describe("createResolvedAgentSession", () => {
   beforeEach(() => {
     resolveRuntimeMock.mockReset();
+  });
+
+  it("resolves the merged tool-output setting once before forwarding to runtime sessions", async () => {
+    const createSessionMock = vi.fn().mockResolvedValue({ session: { prompt: vi.fn() }, sessionFile: "session.json" });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: { id: "pi", name: "Default PI Runtime", createSession: createSessionMock, promptWithFallback: vi.fn(), describeModel: vi.fn(() => "mock/model") },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    for (const [settings, expected] of [
+      [{ agentToolOutputMaxChars: 500 }, 500],
+      [{ agentToolOutputMaxChars: 0 }, null],
+      [{}, DEFAULT_TOOL_OUTPUT_MAX_CHARS],
+    ] as const) {
+      await createResolvedAgentSession({ sessionPurpose: "executor", cwd: "/tmp/project", systemPrompt: "system", settings });
+      expect(createSessionMock).toHaveBeenLastCalledWith(expect.objectContaining({ toolOutputMaxChars: expected }));
+    }
   });
 
   it("forwards taskEnv unchanged to runtime session factory", async () => {

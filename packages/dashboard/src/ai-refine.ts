@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-ai-refine");
 /**
  * AI Text Refinement Service
  *
@@ -193,7 +196,7 @@ function cleanupExpiredRateLimits(): void {
   }
 
   if (cleanedRateLimits > 0) {
-    console.log(`[ai-refine] Cleanup: removed ${cleanedRateLimits} rate limit entries`);
+    severityAuditLog.debug(`[ai-refine] Cleanup: removed ${cleanedRateLimits} rate limit entries`);
   }
 }
 

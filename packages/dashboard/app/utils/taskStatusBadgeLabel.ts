@@ -50,5 +50,16 @@ export function getTaskStatusBadgeLabel(
   if (status === "needs-replan") {
     return t("tasks.statusReplan", "Revising");
   }
+  /*
+  FNXC:TaskStatusBadge 2026-07-26-14:05:
+  "planning" is an engine token, not operator copy, and it was only ever hidden because U12's
+  workflow-step override happened to cover the same cards. Now that the Plan Review gate has its own
+  badge, callers suppress the step-name override while that badge renders — which uncovered the raw
+  lowercase token underneath. Map it to the same "Planning" copy the transient-planner badge already
+  uses so the two paths cannot read differently.
+  */
+  if (status === "planning") {
+    return t("tasks.statusPlanning", "Planning");
+  }
   return status;
 }

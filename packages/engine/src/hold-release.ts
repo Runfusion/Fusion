@@ -47,6 +47,8 @@ import {
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
+  isWorkflowOptionalGroupEnabled,
+  resolveEffectiveAutoMerge,
   type TaskStore,
   type Task,
   type WorkflowIr,
@@ -57,6 +59,13 @@ import {
 import { readFile } from "node:fs/promises";
 import { schedulerLog } from "./logger.js";
 import { getPromptPath } from "./spec-staleness.js";
+import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
+import { evaluateStrandedHoldContinuation } from "./plan-review-continuation.js";
+
+// FNXC:StrandedHoldContinuation 2026-07-26-14:15:
+// A genuine stranded-plan fault is warned once per held location; ordinary
+// unplanned cards remain quiet even when the release sweep revisits them.
+const strandedHoldWarningMemo = new Set<string>();
 
 /** A reservation handle returned by {@link HoldReleaseDeps.reserveSlot}. The
  *  sweep calls `release()` if the subsequent move rejects on capacity. */
@@ -86,6 +95,8 @@ export interface HoldReleaseDeps {
   /** Allocate a worktree path for a release into a processing column (passed
    *  through to `moveTask`'s `allocateWorktree`). */
   allocateWorktree?: (task: Task, reservedNames: Set<string>) => string | null;
+  /** Optional third leg of the canonical liveness triple for diagnostics. */
+  isTaskActive?: (taskId: string) => boolean;
 }
 
 /** Outcome of one sweep pass (for tests + observability). */
@@ -168,8 +179,33 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   capacity boundary. Releasing first would skip the gate. This does not fire
   when Plan Review already lives in a WIP column.
   */
+  /*
+  FNXC:PlanReview 2026-07-26-14:05:
+  The gate is PLAN-IN-PLACE only: it applies when Plan Review runs in the very column the card is
+  held in (Coding (Ideas) / the benchmark's Plan Review in Todo), which is the same condition the
+  other two consumers of this resolver already require (`seedPreReleasePlanReviewContinuation`,
+  `evaluateStrandedHoldContinuation`). Without the column check, moving the default workflow's Plan
+  Review out of the wip column into the planning column turned "non-wip" into "pre-release" for every
+  card in Todo — including cards whose graph never routes through Todo at all — and the capacity
+  sweep stopped releasing them (no continuation for a boundary they never reach). A review node in an
+  upstream column the card has already left is not something this sweep gates on.
+  */
+  /*
+  FNXC:PlanReview 2026-07-26-17:10:
+  The gate also requires Plan Review to be ENABLED for this task. It exists to stop a card entering
+  implementation before its plan gate ran; a task whose plan-review group is toggled OFF has no such
+  gate, and holding it produced a deadlock — nothing would ever record the evidence the hold was
+  waiting for.
+  */
   const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
-  if (preReleaseReview) {
+  const preReleaseReviewEnabled = preReleaseReview
+    ? isWorkflowOptionalGroupEnabled(
+      task.enabledWorkflowSteps,
+      preReleaseReview.id,
+      (preReleaseReview.config as { defaultOn?: boolean } | undefined)?.defaultOn ?? false,
+    )
+    : false;
+  if (preReleaseReview && preReleaseReviewEnabled && preReleaseReview.column === task.column) {
     // Compatibility for tasks planned before durable continuations existed and
     // for narrow store adapters that expose only the legacy review result.
     const legacyPassed = task.workflowStepResults?.some(
@@ -177,7 +213,11 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
     );
     if (!legacyPassed) {
       if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
-      const continuations = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
+      // FNXC:StrandedHoldContinuation 2026-07-26-15:45:
+      // FN-8592 defines graph idleness over every active continuation kind;
+      // filtering to task continuations would allow a live non-task run to be
+      // mistaken for an idle graph and receive a duplicate plan-review seed.
+      const continuations = await store.listWorkflowWorkItemsForTask(task.id);
       const active = continuations.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
       // Readiness is represented by the graph's durable boundary continuation,
       // not by a special-case review result. Optional groups that are disabled
@@ -281,6 +321,20 @@ function resolveReleaseTarget(ir: WorkflowIr, fromColumn: string, preferCapacity
 
 // ── Dependency satisfaction (KTD-5 + FN-5719 dual-accept) ─────────────────────
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-00:20 (Phase B / slice B2) DELIBERATE-LITERAL:
+Reviewed as a U5 conversion candidate and deliberately NOT converted. This is the LEGACY
+half of the FN-5719 dual-accept pair in `dependencySatisfied` below: the trait half already
+handles renamed workflows, and this half exists specifically to honor the pre-trait
+completion signal and to log a `merge:dependency-parity-diff` audit event when the two
+disagree. Converting it to traits would make both halves compute the same answer — deleting
+the compatibility signal AND the divergence detector in one move, while looking like a
+cleanup. The literal IS the semantic here.
+
+Its removal is the dual-accept window CLOSING, which is U12's call, not a Phase B refactor.
+Recorded for the U12 literal ratchet's allowlist; that ratchet does not exist in the tree
+yet, so grep `DELIBERATE-LITERAL` to enumerate the sites it must admit.
+*/
 /** Legacy completion signal: dependency's column is a terminal/handoff column. */
 function legacyDependencySatisfied(dep: Task): boolean {
   return dep.column === "done" || dep.column === "in-review" || dep.column === "archived";
@@ -630,7 +684,46 @@ async function issueRelease(
   FN-7648's invariant still holds for every non-operator release.
   */
   if (targetIsProcessing && !options.allowUnplanned && (await isUnplannedForExecution(store, task, ir))) {
-    schedulerLog.log(`Hold release for ${task.id} blocked — card is unplanned and cannot enter processing column ${target}`);
+    /*
+    FNXC:StrandedHoldContinuation 2026-07-26-14:15:
+    Before FN-8592 this was an undeduplicated `schedulerLog.log`, not debug.
+    A real-spec card with no continuation is a repairable fault, so warn only
+    when the exact shared predicate confirms every guard; ordinary unplanned
+    and capacity-held cards remain quiet. Global/Engine pause participates in
+    the predicate and suppresses this warning.
+    */
+    try {
+      const column = findColumn(ir, task.column);
+      const tasksDir = typeof store.getTasksDir === "function" ? store.getTasksDir() : undefined;
+      if (column && tasksDir) {
+        let promptContent: string | null = null;
+        try { promptContent = await readFile(getPromptPath(tasksDir, task.id), "utf8"); } catch { /* missing prompt is a quiet non-candidate */ }
+        const settings = await store.getSettings();
+        const continuations = await store.listWorkflowWorkItemsForTask(task.id);
+        const live = activeSessionRegistry.pathsForTask(task.id).some((path) => activeSessionRegistry.isPathActive(path)) || executingTaskLock.has(task.id) || deps.isTaskActive?.(task.id) === true;
+        const stranded = evaluateStrandedHoldContinuation({
+          task,
+          columnFlags: resolveColumnFlags(column),
+          ir,
+          continuations,
+          stepResults: task.workflowStepResults,
+          effectiveSettings: { autoMerge: resolveEffectiveAutoMerge(task, settings) },
+          enginePaused: settings.globalPause === true || settings.enginePaused === true,
+          promptContent,
+          live,
+          stalenessMs: deps.now() - new Date(task.columnMovedAt ?? task.updatedAt).getTime(),
+          graceMs: 60_000,
+        });
+        const key = `${task.id}:${task.column}`;
+        if (stranded.stranded && !strandedHoldWarningMemo.has(key)) {
+          strandedHoldWarningMemo.add(key);
+          schedulerLog.warn(`Stranded hold continuation for ${task.id} in ${task.column}; self-healing reconciliation will re-seed Plan Review`);
+        }
+      }
+    } catch {
+      // Diagnostics must never widen the release gate or prevent its normal refusal.
+    }
+    schedulerLog.debug(`Hold release for ${task.id} blocked — card is unplanned and cannot enter processing column ${target}`);
     return false;
   }
 
@@ -676,8 +769,9 @@ async function issueRelease(
   } catch (error) {
     if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
       // Lost the in-txn race for the slot — release the reservation, stay held.
+      // FNXC:EngineDiagnostics 2026-07-26-08:17: capacity races re-hit every sweep while full; same class as deferred-no-slot → debug.
       reservation?.release();
-      schedulerLog.log(`Hold release for ${task.id} rejected on capacity for ${target} — staying held`);
+      schedulerLog.debug(`Hold release for ${task.id} rejected on capacity for ${target} — staying held`);
       return false;
     }
     // Any other failure: release the reservation and let the card stay held.

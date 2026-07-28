@@ -16,6 +16,7 @@ import type {Task, Column, RunMutationContext, RunAuditEventInput} from "../type
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
+import {deriveFallbackTaskTitle} from "../ai-summarize.js";
 import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -34,26 +35,42 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
     }
 
     const now = new Date().toISOString();
-    let sourceLabel: string;
-    if (sourceTask.title?.trim()) {
-      sourceLabel = sourceTask.title.trim();
-    } else {
-      const firstLine = sourceTask.description
-        .split("\n")
-        .map((line: string) => line.trim())
-        .find((line: string) => line.length > 0);
-      sourceLabel = firstLine ? firstLine.replace(/\s+/g, " ") : sourceTask.id;
-    }
+    /*
+    FNXC:RefinementTitle 2026-07-26-20:10:
+    A refinement is titled by the operator's OWN feedback, exactly as a newly created task is
+    titled by its description — not "Refinement: <source title>".
+    Requirement it fixes: ten refinements of one task all rendered the identical title, so the
+    board could not distinguish them and the only text that says what each one actually asks for
+    was buried in the description. The title is the card's scarcest surface; spending it on the
+    parent's name made every sibling look the same.
+    Provenance is NOT lost — it moves to affordances that do not consume the title: the
+    `task_refine` source chip on the card, the parent link in the detail view, and the
+    `Refines: <id>` line kept in the description plus the real `dependencies` edge.
+    `deriveFallbackTaskTitle` is the same deterministic, never-LLM derivation other titleless
+    rows use (first meaningful line, markdown stripped, truncated at a word boundary), so a
+    refinement reads like any other card rather than inventing its own truncation rule.
+    */
+    const refinementTitle = deriveFallbackTaskTitle(feedback.trim());
 
     /*
      * FNXC:WorkflowOptionalSteps 2026-07-16-00:00:
      * FN-8188 requires refinements to inherit create-time default-workflow seeding so
      * default-on optional groups, including plan-review and code-review, gate them
      * exactly as they gate newly created tasks.
+     *
+     * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+     * That inheritance is now overridable by the project `refinementTaskWorkflowId`
+     * setting (Settings -> Project General). Unset keeps FN-8188's behavior; a pinned
+     * id, or the operator's mirrored Board lane, seeds the refinement from THAT
+     * workflow instead. The override resolver already degrades a stale/missing/fragment
+     * id to `undefined`, so this branch falls back to the project default unchanged.
      */
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
     try {
-      const inherited = await store.materializeDefaultWorkflowSteps();
+      const override = await store.resolveOriginWorkflowOverrideId("refinement");
+      const inherited = override
+        ? await store.materializeExplicitWorkflowSteps(override)
+        : await store.materializeDefaultWorkflowSteps();
       if (inherited) {
         pendingWorkflowSelection = inherited;
       }
@@ -67,9 +84,11 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
     const newTask = await store.createTaskWithDistributedReservation({ description: feedback.trim() }, {
       createTaskWithId: async (newId) => {
         // FN-5077: keep deterministic "Refinement" fallback when normalized refinement label is unusable (null).
-        const normalizedTitle = normalizeTitleForTaskId(`Refinement: ${sourceLabel}`, newId);
+        // The id-token strip matters more now that the title comes from free-typed feedback, which
+        // routinely names the task being refined ("FN-1234 still drops the badge").
+        const normalizedTitle = normalizeTitleForTaskId(refinementTitle, newId);
         if (normalizedTitle.changed) {
-          const removed = extractTaskIdTokens(`Refinement: ${sourceLabel}`).filter((token) => token !== newId.toUpperCase());
+          const removed = extractTaskIdTokens(refinementTitle).filter((token) => token !== newId.toUpperCase());
           storeLog.log(`[title-id-drift] normalized title for ${newId}: removed=[${removed.join(",")}]`);
         }
         const sourceGithubLinked = sourceTask.githubTracking?.enabled === true || Boolean(sourceTask.githubTracking?.issue);
@@ -178,16 +197,18 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * Replace with async store.getTask() calls.
        */
       const assertTaskExists = async (dependencyId: string) => {
-        if (store.backendMode) {
-          try {
-            await store.getTask(dependencyId);
-          } catch {
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Map only not-found/deleted errors to "Dependency task not found"; rethrow transport and other PostgreSQL failures.
+        */
+        try {
+          await store.getTask(dependencyId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/not found|TaskDeleted|deleted/i.test(msg)) {
             throw new Error(`Dependency task ${dependencyId} not found`);
           }
-          return;
-        }
-        if (!store.readTaskFromDb(dependencyId)) {
-          throw new Error(`Dependency task ${dependencyId} not found`);
+          throw err;
         }
       };
       const assertUnique = (dependencies: readonly string[]) => {
@@ -287,10 +308,17 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        * to resolve unresolved dependency and current blocker columns.
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
-        if (store.backendMode) {
-          try { return await store.getTask(depId); } catch { return null; }
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Treat not-found as null; rethrow unexpected PostgreSQL failures.
+        */
+        try {
+          return await store.getTask(depId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/not found|TaskDeleted|deleted/i.test(msg)) return null;
+          throw err;
         }
-        return store.readTaskFromDb(depId) ?? null;
       };
 
       const allDepTasks = await Promise.all(nextDependencies.map(readDepTask));

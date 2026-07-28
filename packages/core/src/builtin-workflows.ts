@@ -246,7 +246,13 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
   const hasCodeReview = workflowNodes.some((node) => node.id === "code-review");
   const remediationNodes = hasPlanReview || hasBrowserVerification || hasCodeReview
     ? [
-        ...(hasPlanReview ? [planReplanNode("triage")] : []),
+        /*
+         * FNXC:PlanReviewStep 2026-07-27-06:10 (PR #2462 review):
+         * Replan lands in the PLANNING column ("todo" for linear built-ins, where `plan` and the
+         * column-inherited `plan-review` both sit), not in intake. Routing a Plan Review failure to
+         * `triage` moved the card backward out of the planning lane for a loop that never leaves it.
+         */
+        ...(hasPlanReview ? [planReplanNode("todo")] : []),
         ...(hasBrowserVerification ? [browserVerificationRemediationNode("in-progress")] : []),
         ...(hasCodeReview ? [codeReviewRemediationNode("in-progress")] : []),
       ]
@@ -300,7 +306,7 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
   });
   /*
    * FNXC:Workflows 2026-06-28-00:00:
-   * Linear built-ins must mirror BUILTIN_CODING_WORKFLOW_IR column traits because the post-cutover hold/release sweep is the only todo→in-progress dispatcher. Both formerly-v1 linear graphs (quick-fix, review-heavy, design) and v2-only compound-engineering need todo hold(capacity), in-progress wip, and in-review merge traits or their cards strand in Todo.
+   * Linear built-ins must mirror BUILTIN_CODING_WORKFLOW_IR column traits because the post-cutover hold/release sweep is the only hold→in-progress dispatcher. Both formerly-v1 linear graphs (quick-fix, review-heavy, design) and v2-only compound-engineering need a hold(capacity) column, in-progress wip, and in-review merge traits or their cards strand before implementation.
    */
   const ir = parseWorkflowIr({
     version: "v2",
@@ -309,8 +315,14 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     nodes: assignLinearNodeColumns(nodes),
     edges,
   });
-  if (ir.version !== "v2" || !ir.columns.find((column) => column.id === "todo")?.traits.some((trait) => trait.trait === "hold")) {
-    throw new Error(`linear built-in workflow '${spec.id}' must synthesize a hold-capacity todo column`);
+  /*
+   * FNXC:WorkflowColumns 2026-07-26-18:30:
+   * The hold column is resolved by TRAIT, not by the id "todo" — the canonical column set merged
+   * Todo into Planning, and the invariant that matters is that a hold-capacity column exists at all
+   * (the post-cutover hold/release sweep is the only thing that dispatches into wip).
+   */
+  if (ir.version !== "v2" || !ir.columns.some((column) => column.traits.some((trait) => trait.trait === "hold"))) {
+    throw new Error(`linear built-in workflow '${spec.id}' must synthesize a hold-capacity column`);
   }
   // Attach the moved-key settings catalog (U1/U3, R4) so every built-in workflow
   // carries its declarations through the resolver path (resolveWorkflowIrById →
@@ -345,7 +357,14 @@ function withEngineeringOptionalGroups(
    */
   return [
     ...nodes.slice(0, executeIndex),
-    planReviewOptionalGroupNode("in-progress", { defaultOn: options.planReviewDefaultOn ?? true }),
+    /*
+     * FNXC:PlanReviewStep 2026-07-26-14:05:
+     * No explicit column: linear built-ins plan in the hold column (`todo`, plan-in-place), so the
+     * inserted Plan Review group INHERITS the planning column from the node before `execute` via
+     * assignLinearNodeColumns. That keeps Plan Review in the planning lane (where the dashboard
+     * renders its card badge) without dragging these graphs backward into `triage`.
+     */
+    planReviewOptionalGroupNode(undefined, { defaultOn: options.planReviewDefaultOn ?? true }),
     nodes[executeIndex],
     browserVerificationOptionalGroupNode("in-progress", { defaultOn: options.browserVerificationDefaultOn ?? false }),
     codeReviewOptionalGroupNode("in-progress", { defaultOn: options.codeReviewDefaultOn ?? true }),
@@ -595,7 +614,9 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           },
         },
       },
-      planReviewOptionalGroupNode("in-progress"),
+      // FNXC:PlanReviewStep 2026-07-26-14:05: column-inherited so Plan Review stays in this linear
+      // graph's planning column (`todo`) rather than the implementation column.
+      planReviewOptionalGroupNode(),
       {
         id: "execute",
         kind: "prompt",

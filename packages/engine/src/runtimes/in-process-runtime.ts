@@ -9,6 +9,7 @@ import type {
   AgentHeartbeatRun,
   PluginStore,
   PluginLoader,
+  PluginLoaderOptions,
   MessageStore,
   RoutineStore,
   GithubIssueAction,
@@ -19,8 +20,6 @@ import type {
 import {
   AsyncCentralClaimStore,
   ChatStore,
-  computeWorkflowIrPin,
-  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   isEphemeralAgent,
   resolveWorkflowIrForTask,
 } from "@fusion/core";
@@ -61,9 +60,42 @@ import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
-import { resolvePreReleasePlanReviewNode } from "../hold-release.js";
+import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
+
+/**
+ * FNXC:PluginMcpServers 2026-07-23-12:00:
+ * FN-8596 keeps cross-root MCP discovery private to its throwaway loader. This
+ * exported production seam lets regression tests prove runtime construction
+ * cannot reintroduce shared lifecycle registration or state persistence.
+ */
+export function createDiscoveryPluginLoaderOptions(
+  scopedStore: { getPluginStore(): unknown },
+): PluginLoaderOptions {
+  return {
+    pluginStore: scopedStore.getPluginStore() as PluginStore,
+    taskStore: scopedStore as TaskStore,
+    lifecycleScope: "isolated",
+    persistRuntimeState: false,
+  };
+}
+
+export function createRuntimePluginMcpProviderOptions(input: {
+  hostRootDir: string;
+  hostLoader: Pick<PluginLoader, "getPluginMcpServers">;
+  PluginLoaderClass: new (options: PluginLoaderOptions) => PluginLoader;
+}): {
+  hostRootDir: string;
+  hostLoader: Pick<PluginLoader, "getPluginMcpServers">;
+  createScopedLoader: (store: { getPluginStore(): unknown }) => PluginLoader;
+} {
+  return {
+    hostRootDir: input.hostRootDir,
+    hostLoader: input.hostLoader,
+    createScopedLoader: (scopedStore) => new input.PluginLoaderClass(createDiscoveryPluginLoaderOptions(scopedStore)),
+  };
+}
 
 export const CLI_AGENT_AWAITING_INPUT_EVENT = "cli-agent-awaiting-input" as const;
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
@@ -293,6 +325,8 @@ export class InProcessRuntime
    */
   private cliAgentRuntime?: BootstrappedCliAgentRuntime;
   private usageLimitPauser?: UsageLimitPauser;
+  /** FNXC:PlanReviewLease 2026-07-26-20:42: cluster node id stamped onto review-gate leases; undefined until start() resolves it, or if resolution fails. */
+  private localNodeId?: string;
   private selfHealingManager?: SelfHealingManager;
   private leaseManager?: MeshLeaseManager;
   private leaseCentralClaimStore?: AsyncCentralClaimStore;
@@ -318,6 +352,8 @@ export class InProcessRuntime
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
   private messageStore?: MessageStore;
+  /** FNXC:TaskDeleteNotice 2026-07-26-16:10: identity-guarded teardown for the delete-notice mailbox seam. */
+  private unregisterTaskDeleteNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
   private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
@@ -396,6 +432,7 @@ export class InProcessRuntime
         // the engine owns the result's shutdown() for process teardown.
         createTaskStoreForBackend,
         createProjectScopedPluginMcpProvider,
+        registerTaskDeleteNoticeMailbox,
       } = await import("@fusion/core");
       if (this.config.externalTaskStore) {
         this.taskStore = this.config.externalTaskStore;
@@ -453,6 +490,18 @@ export class InProcessRuntime
 
       this.messageStore = new MessageStoreClass(null, { asyncLayer: messageLayer });
 
+      /*
+      FNXC:TaskDeleteNotice 2026-07-26-16:10:
+      Core owns the delete path but has no mailbox, so it exposes a store-scoped seam and the
+      runtime supplies the MessageStore. Registering here (rather than process-globally) keeps one
+      project's "a task was deleted by someone who is not you" notice out of another project's
+      inbox. A store with no registration degrades to no notice — never to a failed delete.
+      */
+      this.unregisterTaskDeleteNoticeMailbox = registerTaskDeleteNoticeMailbox(
+        this.taskStore,
+        this.messageStore,
+      );
+
       await yieldEventLoop();
 
       // 2. Initialize Plugin system (PluginStore + PluginLoader + PluginRunner)
@@ -484,14 +533,13 @@ export class InProcessRuntime
        * resolveMcpServersForStore consumes this filtered seam across every AI
        * lane; it never sees PluginRunner's raw contribution list.
        */
-      const projectScopedPluginMcpProvider = createProjectScopedPluginMcpProvider({
-        hostRootDir: this.config.workingDirectory,
-        hostLoader: this.pluginLoader,
-        createScopedLoader: (scopedStore) => new PluginLoaderClass({
-          pluginStore: scopedStore.getPluginStore() as PluginStore,
-          taskStore: scopedStore as TaskStore,
+      const projectScopedPluginMcpProvider = createProjectScopedPluginMcpProvider(
+        createRuntimePluginMcpProviderOptions({
+          hostRootDir: this.config.workingDirectory,
+          hostLoader: this.pluginLoader,
+          PluginLoaderClass,
         }),
-      });
+      );
       (this.taskStore as TaskStore & { getProjectScopedPluginMcpServers?: () => Promise<ReturnType<PluginRunner["getPluginMcpServers"]>> }).getProjectScopedPluginMcpServers = () => projectScopedPluginMcpProvider.get(this.taskStore);
       /*
        * FNXC:PluginMcpServers 2026-07-22-15:35:
@@ -834,6 +882,13 @@ export class InProcessRuntime
 
       const prNodeGithubOps = this.config.prNodeGithubOps;
       const executorOptions: TaskExecutorOptions = {
+        /*
+        FNXC:PlanReviewLease 2026-07-26-21:12:
+        Getter, not a value: `this.localNodeId` is resolved later in start() (it needs an async
+        CentralCore read), so capturing it here would freeze `undefined` and silently disable lease
+        attribution. Reading it lazily at runner-construction time picks up the resolved id.
+        */
+        getLocalNodeId: () => this.localNodeId,
         semaphore: this.projectSemaphore,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
@@ -1106,31 +1161,7 @@ export class InProcessRuntime
               const live = await this.taskStore.getTask(t.id);
               if (!live || live.paused || live.userPaused) return;
               const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
-              const planReview = resolvePreReleasePlanReviewNode(ir);
-              if (!planReview || planReview.column !== live.column) return;
-
-              /*
-              FNXC:PlanReview 2026-07-21-12:20:
-              Specification completion creates a planning continuation only
-              when the review node belongs to the card's current column and no
-              active continuation already owns the task.
-              */
-              const active = await this.taskStore.listWorkflowWorkItemsForTask(live.id, { kinds: ["task"] });
-              if (!active.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) {
-                await this.taskStore.replaceActiveTaskWorkflowContinuation({
-                  runId: `${live.id}:planning-continuation:${planReview.id}:${active.length}`,
-                  taskId: live.id,
-                  nodeId: planReview.id,
-                  kind: "task",
-                  state: "runnable",
-                  stableWorkflowRunId: `${live.id}:${ir.name}`,
-                  continuationSequence: active.length,
-                  waitReason: "planning",
-                  sourceColumn: live.column,
-                  targetColumn: live.column,
-                  irHash: computeWorkflowIrPin(ir, planReview.id).irHash,
-                });
-              }
+              await seedPreReleasePlanReviewContinuation(this.taskStore, live, ir);
               this.kickWorkflowContinuationProcessor();
             })().catch((error) => {
               runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
@@ -1194,8 +1225,26 @@ export class InProcessRuntime
         if (!chatLayer2) throw new Error("Self-healing ChatStore requires the project PostgreSQL AsyncDataLayer");
         this.chatStore ??= new ChatStore(chatLayer2);
       }
+      /*
+      FNXC:PlanReviewLease 2026-07-26-20:40:
+      Resolve this engine's cluster node id once at start so review-gate leases can be attributed.
+      Attribution is what lets self-healing tell "a lease my own dead process left behind" from "a
+      peer node's lease that is genuinely running" — the former is reclaimed immediately, the latter
+      keeps the 15-minute staleness floor. Fail-soft: on any error the id stays undefined, leases are
+      written unattributed, and floor-only semantics (the pre-existing behavior) apply.
+      */
+      let localNodeId: string | undefined;
+      try {
+        const registeredNodes = await this.centralCore.listNodes();
+        localNodeId = registeredNodes.find((node) => node.type === "local")?.id;
+      } catch (error) {
+        runtimeLog.warn(`Could not resolve local node id for review-gate lease attribution: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      this.localNodeId = localNodeId;
+
       this.selfHealingManager = new SelfHealingManager(this.taskStore, {
         rootDir: this.config.workingDirectory,
+        localNodeId,
         agentStore: this.agentStore,
         isWorktreeResumeReserved: this.cliAgentRuntime?.isWorktreeResumeReserved,
         recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
@@ -1435,6 +1484,10 @@ export class InProcessRuntime
     */
     const backendShutdown = this.backendShutdown;
     this.backendShutdown = undefined;
+    // FNXC:TaskDeleteNotice 2026-07-26-16:10: drop the mailbox seam first so a stopping runtime
+    // cannot keep writing notices; the unregister is identity-guarded against a newer runtime.
+    this.unregisterTaskDeleteNoticeMailbox?.();
+    this.unregisterTaskDeleteNoticeMailbox = undefined;
     let stopError: Error | undefined;
     try {
       if (this.workflowContinuationTimer) {

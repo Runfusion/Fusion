@@ -411,6 +411,35 @@ Artifact-registration mail messages now render metadata-driven media and produci
   padding-left: var(--space-lg);
 }
 
+/*
+FNXC:Mailbox 2026-07-26-14:39:
+Markdown links in mailbox message bodies must use theme tokens: browser default blue
+and visited purple clash with dark themes and violate the dashboard token system.
+*/
+.mailbox-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: var(--space-2xs);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.mailbox-markdown a:visited {
+  color: var(--accent);
+}
+
+.mailbox-markdown a:hover {
+  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  text-decoration-color: var(--accent);
+}
+
+.mailbox-markdown a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 .mailbox-markdown :not(pre) > code {
   padding: 0 var(--space-xs);
   border-radius: var(--radius-sm);

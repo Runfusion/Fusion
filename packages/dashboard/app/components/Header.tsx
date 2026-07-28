@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
 import { ProjectSelector as StandaloneProjectSelector } from "./ProjectSelector";
+import { useProjectBookmarks } from "../hooks/useProjectBookmarks";
 import type { ProjectInfo } from "../api";
 import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { NodeStatusIndicator } from "./NodeStatusIndicator";
@@ -211,6 +212,73 @@ export function Header({
     [availableNodes]
   );
   const showNodeSelector = remoteNodes.length > 0;
+  const { bookmarkedIds, toggleBookmark, isBookmarked } = useProjectBookmarks();
+  /*
+  FNXC:ProjectSelector 2026-08-26-00:00:
+  Mobile project switching must separate favorites at the top while sharing the desktop localStorage bookmark store. Preserve the incoming order within each section so grouping never changes the project's canonical ordering.
+  */
+  const mobileProjectGroups = useMemo(() => {
+    const favorites = projects.filter((project) => bookmarkedIds.has(project.id));
+    const others = projects.filter((project) => !bookmarkedIds.has(project.id));
+    return { favorites, others };
+  }, [bookmarkedIds, projects]);
+
+  /*
+  FNXC:ProjectSelector 2026-08-26-00:00:
+  Mobile rows use the same localStorage bookmark toggle as desktop. Stop propagation so bookmarking never selects a project or closes the switcher.
+  */
+  const renderMobileProjectItem = (project: ProjectInfo) => {
+    const isCurrent = currentProject?.id === project.id;
+    const bookmarked = isBookmarked(project.id);
+    const statusColor = PROJECT_STATUS_CONFIG[project.status]?.color;
+    return (
+      <button
+        key={project.id}
+        className={`mobile-project-switch-item${isCurrent ? " mobile-project-switch-item--current" : ""}`}
+        onClick={() => {
+          onSelectProject?.(project);
+          setIsMobileProjectSwitchOpen(false);
+        }}
+        role="option"
+        aria-selected={isCurrent}
+        data-testid={`mobile-project-switch-item-${project.id}`}
+      >
+        <span
+          className="mobile-project-switch-dot"
+          style={{ backgroundColor: statusColor || "var(--text-muted)" }}
+        />
+        <div className="mobile-project-switch-info">
+          <span className="mobile-project-switch-name">{project.name}</span>
+          <span className="mobile-project-switch-path">
+            {getTrailingPath(project.path, 2)}
+          </span>
+        </div>
+        <span
+          role="button"
+          tabIndex={0}
+          className={`mobile-project-switch-bookmark${bookmarked ? " bookmarked" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleBookmark(project.id);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              toggleBookmark(project.id);
+            }
+          }}
+          aria-label={bookmarked
+            ? t("projectSelector.removeBookmark", "Remove bookmark")
+            : t("projectSelector.addBookmark", "Bookmark project")}
+          data-testid={`mobile-bookmark-toggle-${project.id}`}
+        >
+          <Star size={14} fill={bookmarked ? "currentColor" : "none"} />
+        </span>
+        {isCurrent && <Check size={14} className="mobile-project-switch-check" />}
+      </button>
+    );
+  };
 
   const hasViewOverflowItems = useMemo(() => {
     return !!(
@@ -418,35 +486,27 @@ export function Header({
                 aria-label={t("header.selectProject", "Select project")}
                 data-testid="mobile-project-switch-dropdown"
               >
-                {projects.map((project) => {
-                  const isCurrent = currentProject?.id === project.id;
-                  const statusColor = PROJECT_STATUS_CONFIG[project.status]?.color;
-                  return (
-                    <button
-                      key={project.id}
-                      className={`mobile-project-switch-item${isCurrent ? " mobile-project-switch-item--current" : ""}`}
-                      onClick={() => {
-                        onSelectProject(project);
-                        setIsMobileProjectSwitchOpen(false);
-                      }}
-                      role="option"
-                      aria-selected={isCurrent}
-                      data-testid={`mobile-project-switch-item-${project.id}`}
-                    >
-                      <span
-                        className="mobile-project-switch-dot"
-                        style={{ backgroundColor: statusColor || "var(--text-muted)" }}
-                      />
-                      <div className="mobile-project-switch-info">
-                        <span className="mobile-project-switch-name">{project.name}</span>
-                        <span className="mobile-project-switch-path">
-                          {getTrailingPath(project.path, 2)}
-                        </span>
-                      </div>
-                      {isCurrent && <Check size={14} className="mobile-project-switch-check" />}
-                    </button>
-                  );
-                })}
+                {mobileProjectGroups.favorites.length > 0 && (
+                  <div data-testid="mobile-project-switch-favorites">
+                    <div className="mobile-project-switch-section-label">
+                      {t("header.favoriteProjects", "Favorites")}
+                    </div>
+                    {mobileProjectGroups.favorites.map(renderMobileProjectItem)}
+                  </div>
+                )}
+                {mobileProjectGroups.favorites.length > 0 && mobileProjectGroups.others.length > 0 && (
+                  <>
+                    <div className="mobile-project-switch-divider" />
+                    <div className="mobile-project-switch-section-label">
+                      {t("header.allProjects", "All projects")}
+                    </div>
+                  </>
+                )}
+                {mobileProjectGroups.others.length > 0 && (
+                  <div data-testid="mobile-project-switch-others">
+                    {mobileProjectGroups.others.map(renderMobileProjectItem)}
+                  </div>
+                )}
                 {onViewAllProjects && (
                   <>
                     <div className="mobile-project-switch-divider" />

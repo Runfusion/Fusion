@@ -75,6 +75,10 @@ export type OverseerTaskRef = Pick<
   | "workflowTransitionNotification"
   | "updatedAt"
   | "columnMovedAt"
+  // FNXC:WorkflowReviewGates 2026-07-26-16:35: the in-review stages (reviewer AND merger) need the
+  // pre-merge gate's pending lease to anchor their stall check on when the GATE started, not when
+  // the card entered the column. See `reviewGateStallReason`.
+  | "workflowStepResults"
 >;
 
 /**
@@ -177,6 +181,50 @@ export function resolveExecutorStuckAfterMs(raw: unknown): number {
   return DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS;
 }
 
+/*
+FNXC:WorkflowReviewGates 2026-07-26-16:50:
+Gate-anchored stall detection for the in-review stages. Neither the `reviewer` nor the `merger`
+branch had ANY time-based check — both fell through to `progressing` unconditionally. That was
+tolerable while the pre-merge gates ran in `in-progress` (the FN-7743 executor check covered them),
+but Code Review / Browser Verification now run with the card in `in-review`, so a hung gate that
+never posts a verdict produced no stall signal at all, however long it hung.
+
+Applied to BOTH in-review stages deliberately: `resolveWatchedStage` maps a plain in-review card
+with no `reviewState` to `merger`, not `reviewer`, so a task running its first gate usually lands
+in the merger branch. The pending pre-merge lease is the authoritative "a gate is running" fact
+regardless of which sub-stage was inferred.
+
+Anchored on the gate's own `startedAt`, never `columnMovedAt`: the latter conflates "entered
+review" with "gate started" and would fire during a legitimate human merge-wait — the false
+positive that would make the signal untrustworthy. Only engages while a pre-merge result is
+actually `pending`; a card whose gates have settled and is awaiting a human merge stays
+`progressing`.
+
+Reuses the resolved `executorStuckAfterMs` threshold — this is a hung agent session, the same
+failure the executor check covers, so it needs no second setting. The reason is bucketed to whole
+hours so the FN-7577 `stage|signal|reason` feed dedup stays effective (it must never embed a
+changing millisecond value). A missing/malformed timestamp degrades to no signal; never fabricate a
+stall. The FN-7514 human-control guard still runs upstream, so `autoMerge:false` rows stay
+human-owned regardless of what this returns.
+*/
+function reviewGateStallReason(
+  task: Partial<OverseerTaskRef>,
+  stallInput: ExecutorStallSignalInput,
+): string | undefined {
+  if (!(stallInput.executorStuckAfterMs > 0)) return undefined;
+  const pendingGate = task.workflowStepResults?.find((result) => {
+    const phase = result.phase || "pre-merge";
+    return phase === "pre-merge" && result.status === "pending" && Boolean(result.startedAt);
+  });
+  if (!pendingGate?.startedAt) return undefined;
+  const gateStartedMs = Date.parse(pendingGate.startedAt);
+  if (!Number.isFinite(gateStartedMs)) return undefined;
+  const inactiveMs = stallInput.now() - gateStartedMs;
+  if (inactiveMs < stallInput.executorStuckAfterMs) return undefined;
+  const inactiveHours = Math.max(1, Math.floor(inactiveMs / 3_600_000));
+  return `Review gate running for over ${inactiveHours}h with no verdict`;
+}
+
 function deriveSignalAndSources(
   taskId: string,
   stage: OverseerWatchedStage,
@@ -250,6 +298,15 @@ function deriveSignalAndSources(
           sources: [{ kind: "review-comment", ref: reviewState?.items?.[0]?.id ?? taskId }],
         };
       }
+      const reviewerGateStall = reviewGateStallReason(task, stallInput);
+      if (reviewerGateStall) {
+        return {
+          signal: "stuck",
+          reason: reviewerGateStall,
+          sources: [{ kind: "review-comment", ref: reviewState?.items?.[0]?.id ?? taskId }],
+        };
+      }
+
       return {
         signal: "progressing",
         reason: "Review in progress",
@@ -270,6 +327,16 @@ function deriveSignalAndSources(
           signal: "awaiting-human",
           reason: "Held awaiting manual merge decision",
           sources: [{ kind: "merge-error", ref: task.workflowTransitionNotification.transitionId ?? taskId }],
+        };
+      }
+      // A plain in-review card with no reviewState resolves HERE, not to `reviewer`
+      // (see resolveWatchedStage), so this is the branch a running first gate lands in.
+      const mergerGateStall = reviewGateStallReason(task, stallInput);
+      if (mergerGateStall) {
+        return {
+          signal: "stuck",
+          reason: mergerGateStall,
+          sources: [{ kind: "merge-error", ref: taskId }],
         };
       }
       return {

@@ -1,6 +1,4 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
-import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
-
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
 import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
@@ -123,17 +121,29 @@ export function getInReviewStallDeadlockCopy(task: Pick<Task, "pausedReason" | "
   return hasDeadlockLog ? IN_REVIEW_STALL_DEADLOCK_COPY : undefined;
 }
 
+/*
+FNXC:InReviewStallBadge 2026-07-26-18:05:
+Badge suppression list. A suppressed code still computes and stores `task.inReviewStall` — only the
+visual affordance is withheld — so the Review tab, run-audit, and self-healing continue to see it.
+
+- `no-worktree-no-merge-confirmed`: never surfaced as a badge.
+- `merge-blocker`: operator-requested removal. A pre-merge check reporting a blocker is the ordinary
+  in-review resting state rather than an exceptional one, so badging it marked routine cards as
+  abnormal. Previously suppressed only while `isActiveMergeStatus(task.status)` held; that carve-out
+  is gone because the code is now suppressed unconditionally.
+
+The other codes (transient-merge-status-no-owner, merge-retries-exhausted, non-retryable-provider-error)
+still badge — they report genuinely stuck states needing an operator.
+*/
+const BADGE_SUPPRESSED_CODES: ReadonlySet<InReviewStallCode> = new Set([
+  "no-worktree-no-merge-confirmed",
+  "merge-blocker",
+]);
+
 export function shouldShowInReviewStallBadge(task: Pick<Task, "column" | "paused" | "inReviewStall" | "status">): boolean {
   if (task.column !== "in-review" || task.paused === true || task.inReviewStall == null) {
     return false;
   }
 
-  if (task.inReviewStall.code === "no-worktree-no-merge-confirmed") {
-    return false;
-  }
-
-  return !(
-    task.inReviewStall.code === "merge-blocker" &&
-    isActiveMergeStatus(task.status)
-  );
+  return !BADGE_SUPPRESSED_CODES.has(task.inReviewStall.code);
 }

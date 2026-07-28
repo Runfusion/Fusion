@@ -5,12 +5,13 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { isFullScreenSheetViewport, isShortViewport } from "../hooks/useViewportMode";
+import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import "./FloatingWindow.css";
 
@@ -58,6 +59,16 @@ export interface FloatingWindowProps {
    * Persistent task/terminal pop-outs must omit this so page clicks do not close them.
    */
   closeOnOutsidePointerDown?: boolean;
+  /** Mouse-only handlers for hosts whose historical backdrop dismissal cannot use pointer-down semantics. */
+  backdropMouseHandlers?: {
+    onMouseDown?: (event: ReactMouseEvent<HTMLDivElement>) => void;
+    onMouseUp?: (event: ReactMouseEvent<HTMLDivElement>) => void;
+    onClick?: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  };
+  /** Render as a blocking dialog instead of the default coexisting utility window. */
+  modal?: boolean;
+  /** Optional legacy hook for callers whose overlay is asserted by existing tests. */
+  testId?: string;
   /*
   FNXC:FloatingWindow 2026-07-18-00:00:
   Quick Chat must hide without unmounting so its active session, messages, and scroll position
@@ -72,6 +83,12 @@ export interface FloatingWindowProps {
   layer?: "utility" | "task-detail";
   // FNXC:FloatingWindow 2026-07-11-11:30: accessible name for the dialog overlay so headerless windows (e.g. artifact viewers with their own header chrome) stay queryable/announcable by label.
   ariaLabel?: string;
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-14:09:
+  Headerless migrated dialogs may own a step-dependent title inside custom chrome. Forward its
+  id to the shared dialog so screen readers retain that live name instead of a stale seed title.
+  */
+  ariaLabelledBy?: string;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -99,9 +116,14 @@ const FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR = [
   ".node-picker-dropdown--portal",
   ".agent-picker-dropdown--portal",
   ".priority-picker-dropdown--portal",
+  ".activity-view-menu",
 ].join(", ");
 
 /*
+FNXC:ModalTouchGeometry 2026-08-13-12:00:
+FN-8619: Task Detail's body-portaled activity-view menu is a logical child of its modal.
+Treating it as safe prevents a preference-enabled outside pointer-down from closing the host.
+
 FNXC:FloatingWindow 2026-07-13-08:01:
 FN-7943: Quick Chat's outside-pointer dismissal must treat body-portaled dropdowns as logical children of the FloatingWindow. Keep this selector in sync with the sibling FN-7916 ChatThinkingLevelControl and FN-2860 QuickEntryBox portal guards so model, thinking-level, agent, dependency, node, and priority selections do not dismiss the host chat window while bare-page clicks still close it.
 */
@@ -193,11 +215,23 @@ export function FloatingWindow({
   suspendGeometryPersistenceOnMobile = false,
   suspendGeometryPersistenceOnShortViewport = false,
   closeOnOutsidePointerDown = false,
+  backdropMouseHandlers,
+  modal = false,
+  testId,
   hidden = false,
   layer = "utility",
   ariaLabel,
+  ariaLabelledBy,
 }: FloatingWindowProps) {
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
+  const viewportMode = useViewportMode();
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-12:19:
+  Tablet touch geometry must use FN-8602's physical-screen-aware discriminator, not a bare
+  coarse-pointer query. Phones remain full-screen sheets and desktop hybrids retain their exact
+  mouse geometry; a known touch tablet at 768px is the one surface that receives enlarged targets.
+  */
+  const hasTabletTouchGeometry = isTabletTouchViewport(viewportMode);
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
   /*
   FNXC:ModalGeometryPersistence 2026-07-16-00:40:
@@ -221,6 +255,29 @@ export function FloatingWindow({
     initialGeometry.current!.size
   );
   const [position, setPosition] = useState<FloatingWindowPosition>(() => initialGeometry.current!.position);
+  const geometryIdentityRef = useRef({ windowKey, persistGeometryKey });
+
+  /*
+  FNXC:ModalTouchGeometry 2026-07-27-20:00:
+  A project-scoped floating host can stay mounted while its window/storage identity changes.
+  Reload that identity's geometry before passive persistence runs so Terminal never copies one
+  project's geometry into another project's key.
+  */
+  useLayoutEffect(() => {
+    const previousIdentity = geometryIdentityRef.current;
+    if (previousIdentity.windowKey === windowKey && previousIdentity.persistGeometryKey === persistGeometryKey) return;
+
+    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
+    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize) : defaultPositionFor(windowKey, fallbackSize);
+    const nextGeometry = geometryPersistenceSuspended
+      ? { size: fallbackSize, position: fallbackPosition }
+      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
+    geometryIdentityRef.current = { windowKey, persistGeometryKey };
+    initialGeometry.current = nextGeometry;
+    setSize(nextGeometry.size);
+    setPosition(nextGeometry.position);
+  }, [defaultPosition, defaultSize, geometryPersistenceSuspended, persistGeometryKey, resolvedMinSize, windowKey]);
+
   const claimFrontZ = useCallback(() => (layer === "task-detail" ? nextTaskDetailFloatingZ() : nextFloatingZ()), [layer]);
   const readCurrentZ = useCallback(() => (layer === "task-detail" ? currentTaskDetailFloatingZ() : currentFloatingZ()), [layer]);
   /*
@@ -267,8 +324,23 @@ export function FloatingWindow({
 
   const handleDragPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if ((event.target as HTMLElement).closest("button")) return;
+      /*
+      FNXC:ModalTouchGeometry 2026-07-26-13:35:
+      FN-8606 sheet callers must expose neither movable geometry nor resize chrome on phone and
+      short viewports. Do not begin a delegated or built-in header drag while persistence is
+      suspended; CSS alone cannot prevent the panel-level pointer handler from receiving touches.
+      */
+      /* FNXC:ModalTouchGeometry 2026-07-26-14:20: Delegated headers commonly contain links (for example Settings' GitHub/Discord actions), which must retain native activation rather than starting a window drag. */
+      if (geometryPersistenceSuspended || (event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]")) return;
       event.preventDefault();
+      event.stopPropagation();
+      /*
+      FNXC:ModalTouchGeometry 2026-07-26-12:19:
+      A drag owns one captured pointer until matching up/cancel or unmount. Tear down any
+      interrupted gesture before claiming this header so touch scroll, outside dismissal, and a
+      second finger cannot retain listeners, selection suppression, or stale animation frames.
+      */
+      dragTeardownRef.current?.();
       bringToFront();
       const captureTarget = event.currentTarget;
       const pointerId = event.pointerId;
@@ -285,6 +357,7 @@ export function FloatingWindow({
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
         latest = { x: startPosition.x + moveEvent.clientX - startX, y: startPosition.y + moveEvent.clientY - startY };
         if (frame) return;
         frame = requestAnimationFrame(() => {
@@ -298,7 +371,9 @@ export function FloatingWindow({
         captureTarget.removeEventListener("pointerup", handlePointerUp);
         captureTarget.removeEventListener("pointercancel", handlePointerUp);
       };
-      function handlePointerUp() {
+      function handlePointerUp(upEvent: PointerEvent) {
+        if (upEvent.pointerId !== pointerId) return;
+        upEvent.preventDefault();
         if (frame) cancelAnimationFrame(frame);
         setPosition(clampPosition(latest, currentSize));
         document.body.style.userSelect = previousUserSelect;
@@ -317,7 +392,7 @@ export function FloatingWindow({
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerUp);
     },
-    [bringToFront, position, size]
+    [bringToFront, geometryPersistenceSuspended, position, size]
   );
 
   const handlePanelPointerDown = useCallback(
@@ -330,10 +405,34 @@ export function FloatingWindow({
     [dragHandleSelector, handleDragPointerDown, hideHeader]
   );
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-12:34:
+  Headerless FloatingWindows delegate dragging to caller-owned headers (notably task-detail
+  pop-outs). The resolved element, rather than only FloatingWindow's optional built-in header,
+  must receive the shared tablet touch marker and hit-area class so every drag path has the same
+  >=44px contract without a second gesture implementation.
+  */
+  useLayoutEffect(() => {
+    if (!hasTabletTouchGeometry || !hideHeader || !dragHandleSelector) return;
+    const delegatedHandle = panelRef.current?.querySelector<HTMLElement>(dragHandleSelector);
+    if (!delegatedHandle) return;
+
+    const previousTarget = delegatedHandle.getAttribute("data-resize-hit-target");
+    delegatedHandle.classList.add("floating-window__delegated-drag-handle");
+    delegatedHandle.setAttribute("data-resize-hit-target", "true");
+
+    return () => {
+      delegatedHandle.classList.remove("floating-window__delegated-drag-handle");
+      if (previousTarget === null) delegatedHandle.removeAttribute("data-resize-hit-target");
+      else delegatedHandle.setAttribute("data-resize-hit-target", previousTarget);
+    };
+  }, [children, dragHandleSelector, hasTabletTouchGeometry, hideHeader]);
+
   const handleResizePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, direction: ResizeDirection) => {
       event.preventDefault();
       event.stopPropagation();
+      dragTeardownRef.current?.();
       bringToFront();
       const captureTarget = event.currentTarget;
       const pointerId = event.pointerId;
@@ -351,6 +450,7 @@ export function FloatingWindow({
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
         const nextSize = clampSize(
@@ -379,7 +479,9 @@ export function FloatingWindow({
         captureTarget.removeEventListener("pointerup", handlePointerUp);
         captureTarget.removeEventListener("pointercancel", handlePointerUp);
       };
-      function handlePointerUp() {
+      function handlePointerUp(upEvent: PointerEvent) {
+        if (upEvent.pointerId !== pointerId) return;
+        upEvent.preventDefault();
         if (frame) cancelAnimationFrame(frame);
         setSize(latestSize);
         setPosition(clampPosition(latestPosition, latestSize));
@@ -434,6 +536,18 @@ export function FloatingWindow({
       const panel = panelRef.current;
       if (panel?.contains(target)) return;
 
+      /*
+      FNXC:ModalTouchGeometry 2026-07-28-14:30:
+      FN-8607 modal hosts make the overlay pointer-active to block the application beneath.
+      The host also carries role="dialog", so it would otherwise match the portal-safe dialog
+      selector below and suppress its own backdrop dismissal. Only the host itself is outside;
+      nested portaled dialog surfaces remain safe.
+      */
+      if (target === panel?.parentElement) {
+        onClose();
+        return;
+      }
+
       const targetElement = target instanceof Element ? target : target.parentNode instanceof Element ? target.parentNode : null;
       if (targetElement?.closest(FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR)) return;
 
@@ -464,6 +578,32 @@ export function FloatingWindow({
     }
   }, [geometryPersistenceSuspended, hidden, persistGeometryKey, position, size]);
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-18:42:
+  FN-8607 migrates former blocking dialogs into the shared geometry host. Modal callers opt into
+  a real backdrop and keyboard focus boundary; utility windows retain the historical click-through
+  behavior by default so this does not change existing multi-window surfaces.
+  */
+  useEffect(() => {
+    if (!modal || hidden || typeof document === "undefined") return;
+    const panel = panelRef.current;
+    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panel?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute("hidden"));
+      if (focusable.length === 0) { event.preventDefault(); panel.focus(); return; }
+      const current = document.activeElement;
+      const index = focusable.indexOf(current as HTMLElement);
+      if (event.shiftKey && (index <= 0 || !panel.contains(current))) { event.preventDefault(); focusable.at(-1)?.focus(); }
+      else if (!event.shiftKey && index === focusable.length - 1) { event.preventDefault(); focusable[0]?.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.removeEventListener("keydown", onKeyDown); priorFocus?.focus(); };
+  }, [hidden, modal]);
+
   const panelStyle = {
     left: `${position.x}px`,
     top: `${position.y}px`,
@@ -484,29 +624,40 @@ export function FloatingWindow({
   */
   return createPortal(
     <div
-      className={`floating-window-overlay${hidden ? " floating-window-overlay--hidden" : ""}`}
+      className={`floating-window-overlay${modal ? " floating-window-overlay--modal" : ""}${hidden ? " floating-window-overlay--hidden" : ""}`}
       role="dialog"
-      aria-modal="false"
+      aria-modal={modal ? "true" : "false"}
       aria-hidden={hidden || undefined}
       aria-label={ariaLabel}
-      data-testid={`floating-window-overlay-${windowKey}`}
+      aria-labelledby={ariaLabelledBy}
+      data-testid={testId ?? `floating-window-overlay-${windowKey}`}
+      {...backdropMouseHandlers}
+      // FNXC:ModalTouchGeometry 2026-08-13-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}
     >
       <div
         ref={panelRef}
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${className ? ` ${className}` : ""}`}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={bringToFront}
         onPointerDown={handlePanelPointerDown}
         onFocusCapture={bringToFront}
+        tabIndex={modal ? -1 : undefined}
       >
-        {RESIZE_DIRECTIONS.map((direction) => (
+        {/*
+        FNXC:ModalTouchGeometry 2026-07-26-16:54:
+        Phone and short-viewport callers opt into a full-screen sheet. Do not merely hide resize
+        handles with CSS there: removing them from the accessibility tree ensures those sheets
+        expose no floating-window affordance or touch gesture surface.
+        */}
+        {!geometryPersistenceSuspended && RESIZE_DIRECTIONS.map((direction) => (
           <div
             key={direction}
             className={`floating-window__resize-handle floating-window__resize-handle--${direction}`}
             data-testid={`floating-window-resize-${direction}`}
+            {...(hasTabletTouchGeometry ? { "data-resize-hit-target": "true" } : {})}
             role="separator"
             aria-label="Resize floating window"
             onPointerDown={(event) => handleResizePointerDown(event, direction)}
@@ -516,6 +667,7 @@ export function FloatingWindow({
           <div
             className="floating-window__header"
             data-testid={`floating-window-drag-handle-${windowKey}`}
+            {...(hasTabletTouchGeometry ? { "data-resize-hit-target": "true" } : {})}
             onPointerDown={handleDragPointerDown}
           >
             <div className="floating-window__title">{title}</div>

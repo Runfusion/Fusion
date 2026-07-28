@@ -14,7 +14,7 @@ import {
 } from "../api";
 import { persistNodeProjectPathMappings } from "../api-node";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 export interface UseNodesResult {
   nodes: NodeInfo[];
@@ -44,7 +44,6 @@ export function useNodes(): UseNodesResult {
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
   const nodesRef = useRef(nodes);
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -133,20 +132,17 @@ export function useNodes(): UseNodesResult {
     };
   }, [refresh, shouldSuppressVisibilityResumeError, t]);
 
-  useEffect(() => {
-    if (loading) return;
+  /*
+  FNXC:MobileTabRetention 2026-07-26-16:05:
+  This 10s node-registry poll was NOT visibility-gated: the `visibilitychange` listener above only ADDS a
+  refresh on the visible edge and never cleared the interval, so a backgrounded tab kept fetching the node
+  list every 10 seconds. Background network work is the primary signal iOS Safari / iOS PWA / Chrome Android
+  use to discard a tab, producing the white-splash reload on return.
 
-    intervalRef.current = setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [loading, refresh]);
+  `refreshOnVisible: false` because the debounced, instrumented listener above already owns the visible-edge
+  refresh; letting the helper refresh too would fetch twice on one edge.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: !loading, refreshOnVisible: false });
 
   const register = useCallback(async (input: NodeOnboardingInput): Promise<NodeInfo> => {
     const { projectMappings, ...nodeInput } = input;

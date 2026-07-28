@@ -224,12 +224,12 @@ plus a per-provider read-modify-merge (FileAuthStorageBackend.persistProviderCha
 refreshOAuthTokenWithLock re-read the file under a lock and spread
 {...currentData, [provider]: credential} rather than flushing a whole-file in-memory
 snapshot). packages/engine/package.json already pins this at
-"@earendil-works/pi-coding-agent": "0.82.0" (exact matched runtime pair; locked per-provider
+"@earendil-works/pi-coding-agent": "0.82.1" (exact matched runtime pair; locked per-provider
 merge requires >=0.80.3) — do not downgrade below 0.80.x, and re-verify this comment against
 dist/core/auth-storage.js if the pin is ever lowered. See
 
 FNXC:ProviderAuth 2026-07-24-12:00:
-FN-8564 retains Fusion's credential-store adapter on Pi 0.82.0. The release adds Kimi Code and
+FN-8564 retains Fusion's credential-store adapter on Pi 0.82.x. The release adds Kimi Code and
 OpenRouter OAuth, so new upstream login providers must still use the same queued, cross-process
 credential persistence contract rather than bypassing Fusion auth storage.
 packages/engine/src/__tests__/auth-storage-concurrency.test.ts for the regression coverage.

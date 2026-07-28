@@ -89,6 +89,8 @@ export interface AgentRuntimeOptions {
   tools?: "coding" | "readonly";
   /** Additional custom tools to merge with the base toolset */
   customTools?: ToolDefinition[];
+  /** Per-result shared tool-output cap. `null` disables the wrapper; undefined uses the built-in default. */
+  toolOutputMaxChars?: number | null;
   /** Callback for text output from the agent */
   onText?: (delta: string) => void;
   /** Callback for thinking/thought output from the agent */

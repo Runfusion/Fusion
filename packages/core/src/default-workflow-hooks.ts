@@ -71,6 +71,16 @@ export interface DefaultWorkflowMoveContext {
   fromColumn: string;
   toColumn: string;
   moveSource: "user" | "engine" | "scheduler";
+  /*
+  FNXC:WorkflowReviewGates 2026-07-26-14:20:
+  Provenance of the move, distinct from `moveSource` (which only says user/engine/scheduler).
+  `"workflow-graph"` is set at exactly one call site — the graph column boundary in
+  `executor.buildColumnBoundaryHooks` — so it uniquely identifies a graph-owned lifecycle crossing
+  as opposed to an operator reopen, a merge bounce, or a self-healing rebound. Needed because the
+  pre-merge review gates now live in `in-review`, making graph-owned `in-review -> in-progress`
+  routine; see `applyReopenFieldClears`.
+  */
+  workflowMoveSource?: string;
   /** True when guards + abort-on-exit are bypassed (engine/recovery, KTD-9). */
   bypassGuards: boolean;
   movedAt: string;
@@ -98,7 +108,23 @@ export interface DefaultWorkflowMoveContext {
 // the resolved onEnter/onExit hook bodies for the default workflow's traits.
 
 /** `timing` trait (in-progress): accumulate active ms on exit, stamp timing on
- *  entry. */
+ *  entry.
+ *
+ *  FNXC:WorkflowReviewGates 2026-07-26-16:20:
+ *  SCOPE: `cumulativeActiveMs` measures time in WIP columns only — it is a sum of `in-progress`
+ *  segments, closed on each exit. Since the pre-merge review gates moved into `in-review`, gate
+ *  runtime is NOT included: the segment closes when the card crosses into review, and no new
+ *  segment opens until remediation re-enters `in-progress`. Read it as "implementation time",
+ *  not "wall clock from start to merge" — consumers that want the latter must use
+ *  `executionStartedAt`/`executionCompletedAt`, which still span the whole run and therefore
+ *  legitimately diverge from this sum.
+ *  Deliberately NOT fixed by adding the `timing` trait to `in-review`: that column also holds the
+ *  arbitrary human merge-wait, so counting it would overstate active time by hours of idle
+ *  latency — a worse distortion than omitting the gate's own minutes. Attributing gate runtime
+ *  properly needs node-scoped timing (a separate field), not a column trait.
+ *  Consumers of this scope: `packages/core/src/productivity-analytics.ts`,
+ *  `packages/core/src/task-timing.ts`, and the dashboard duration displays.
+ */
 export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, fromColumn, toColumn } = ctx;
   if (fromColumn === "in-progress" && toColumn !== "in-progress") {
@@ -202,9 +228,31 @@ export function applyInReviewEnterEffects(ctx: DefaultWorkflowMoveContext): void
 /** Reopen-from-review/done field clears (branch/summary/workflowStepResults). */
 export function applyReopenFieldClears(ctx: DefaultWorkflowMoveContext): void {
   const { task, fromColumn, toColumn } = ctx;
+  /*
+  FNXC:WorkflowReviewGates 2026-07-26-14:25:
+  The GRAPH's own in-review -> in-progress crossing must NOT wipe `workflowStepResults`.
+  Since the pre-merge review gates moved into `in-review`, entering the paired remediation node
+  (in-progress) is a routine graph-owned crossing that happens immediately after the gate wrote its
+  `failed` result — so the ungated clear destroyed the remediation input. Three concrete breakages:
+    - `routeRetryableRemediationGraphFailureToPreMergeFix` and `recoverFailedPreMergeWorkflowStep`
+      select via `latestFailedPreMergeWorkflowStep` and silently no-op on an empty array, so the
+      auto-recovery for a parked remediation failure never fires.
+    - `getTaskMergeBlocker` reads pending/failed results; an empty array makes both branches
+      vacuously false, so a card can return to `in-review` and be MERGEABLE with its gate never
+      re-run. That is a safety regression, not just lost history.
+    - FN-7727 `priorAttempts` history restarts at attempt zero every remediation cycle.
+  Scoped deliberately to the graph-owned in-progress crossing: operator board drags, the in-review
+  comment re-engagement, merge bounces, and every `-> todo`/`-> triage` rebound still clear, so the
+  executor's documented bounce invariant ("moveTask(in-review->todo) already clears ALL results")
+  survives unchanged.
+  */
+  const graphOwnedReviewToWip = ctx.workflowMoveSource === "workflow-graph"
+    && fromColumn === "in-review"
+    && toColumn === "in-progress";
   if (
-    (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage")) ||
-    (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage"))
+    !graphOwnedReviewToWip
+    && ((fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage"))
+      || (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage")))
   ) {
     task.workflowStepResults = undefined;
   }

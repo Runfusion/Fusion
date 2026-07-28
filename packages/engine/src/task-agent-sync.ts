@@ -1,4 +1,5 @@
-import type { Agent, AgentHeartbeatRun, AgentStore, Task, TaskStore } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
+import type { Agent, AgentHeartbeatRun, AgentStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 export const PARKED_AGENT_LINK_FRESH_RUN_MS = 5 * 60_000;
 
@@ -7,6 +8,65 @@ export interface AgentTaskLinkExecutionProof {
   hasActiveExecution: boolean;
   shouldPreserveParkedLink: boolean;
   runAgeMs: number;
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
+The roles at which an agent's task link is CLEARED: terminal (`complete`,
+`archived`) plus parked (`hold`, `intake`). Legacy default = the ids the builtin
+coding workflow gives those four roles, used when the workflow cannot be
+resolved — the conservative choice, since it preserves today's behavior exactly
+rather than guessing a role for an unknown column.
+*/
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
+The legacy PARKED ids — the builtin coding workflow's `hold` and `intake`
+columns. Exported because `isParkedTaskColumn` defaults to it for callers that
+cannot resolve a workflow.
+*/
+export const LEGACY_PARKED_COLUMNS: readonly string[] = ["todo", "triage"];
+
+/* Terminal (`complete`, `archived`) plus parked. Derived from the parked list
+   rather than restated so the two legacy sets cannot drift apart. */
+const LEGACY_CLEAR_COLUMNS: readonly string[] = ["done", "archived", ...LEGACY_PARKED_COLUMNS];
+
+interface LinkSyncColumnRoles {
+  /** Columns whose arrival clears the link (terminal + parked). */
+  clear: readonly string[];
+  /** The subset that is merely parked, where live execution proof preserves it. */
+  parked: readonly string[];
+}
+
+const LEGACY_COLUMN_ROLES: LinkSyncColumnRoles = {
+  clear: LEGACY_CLEAR_COLUMNS,
+  parked: LEGACY_PARKED_COLUMNS,
+};
+
+/**
+ * Resolve the clearing/parked column roles for a task's own workflow, falling
+ * back to the legacy literal sets when the workflow has no column vocabulary.
+ *
+ * Fail-soft on purpose: this handler runs off a `task:moved` event and its only
+ * job is link hygiene. A resolution failure must not throw into the emitter, and
+ * degrading to the legacy sets keeps the builtin workflow correct while leaving
+ * a renamed workflow no worse off than before this conversion.
+ */
+async function resolveLinkSyncColumnRoles(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<LinkSyncColumnRoles> {
+  const lifecycle = await resolveTaskLifecycleColumns(store, taskId, cache);
+  if (!lifecycle) return LEGACY_COLUMN_ROLES;
+
+  const parked = [lifecycle.hold, lifecycle.intake].filter((c): c is string => typeof c === "string");
+  const terminal = [lifecycle.complete, lifecycle.archived].filter((c): c is string => typeof c === "string");
+  const clear = [...terminal, ...parked];
+
+  // A v2 workflow declaring none of the four roles yields an empty clear set,
+  // which would silently disable link hygiene entirely. Prefer the legacy sets.
+  if (clear.length === 0) return LEGACY_COLUMN_ROLES;
+  return { clear, parked };
 }
 
 export function hasFreshActiveHeartbeatRun(
@@ -22,8 +82,24 @@ export function hasFreshActiveHeartbeatRun(
   };
 }
 
-export function isParkedTaskColumn(task: Pick<Task, "column"> | null | undefined): boolean {
-  return task?.column === "todo" || task?.column === "triage";
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
+"Parked" is the HOLD and INTAKE roles — a card resting before or between work,
+not a card at the literal ids `todo`/`triage` (those are merely what the builtin
+coding workflow calls those two columns). Under a renamed workflow the literal
+check silently returned false for every card, which disabled the parked-link
+preservation branch below rather than erroring.
+
+`parkedColumns` defaults to the legacy pair so every caller that cannot resolve
+a workflow is byte-identical (R11 keeps `todo`/`triage` legal column ids).
+Callers that can resolve pass the task's `hold` and `intake` roles.
+*/
+export function isParkedTaskColumn(
+  task: Pick<Task, "column"> | null | undefined,
+  parkedColumns: readonly string[] = LEGACY_PARKED_COLUMNS,
+): boolean {
+  if (!task?.column) return false;
+  return parkedColumns.includes(task.column);
 }
 
 export function evaluateParkedAgentTaskLink(options: {
@@ -32,6 +108,15 @@ export function evaluateParkedAgentTaskLink(options: {
   activeRun?: AgentHeartbeatRun | null;
   hasActiveAgentExecution?: (agentId: string) => boolean;
   now?: number;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
+  The task's resolved parked (`hold` + `intake`) columns. Defaults to the legacy
+  pair so existing callers are byte-identical. Without this the preservation
+  branch consulted the legacy ids even when the CALLER had already resolved a
+  renamed workflow — turning a stale-link bug into a dropped-link bug, since the
+  card would be treated as unparked and its live agent link cleared.
+  */
+  parkedColumns?: readonly string[];
 }): AgentTaskLinkExecutionProof {
   const { hasFreshRun, runAgeMs } = hasFreshActiveHeartbeatRun(options.activeRun, options.now);
   const hasActiveExecution = options.hasActiveAgentExecution?.(options.agent.id) === true;
@@ -42,7 +127,9 @@ export function evaluateParkedAgentTaskLink(options: {
   return {
     hasFreshRun,
     hasActiveExecution,
-    shouldPreserveParkedLink: isParkedTaskColumn(options.linkedTask) && (hasFreshRun || hasActiveExecution),
+    shouldPreserveParkedLink:
+      isParkedTaskColumn(options.linkedTask, options.parkedColumns ?? LEGACY_PARKED_COLUMNS) &&
+      (hasFreshRun || hasActiveExecution),
     runAgeMs,
   };
 }
@@ -56,13 +143,27 @@ export interface AttachAgentLinkSyncOptions {
   logger?: LoggerLike;
 }
 
-const CLEAR_COLUMNS = new Set(["done", "archived", "todo", "triage"]);
-
 export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => void {
   const logger: LoggerLike = opts.logger ?? console;
 
   const handler = async ({ task, from, to }: { task: { id: string }; from: string; to: string }) => {
-    if (!CLEAR_COLUMNS.has(to)) {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
+    Resolve the roles from the moved task's OWN workflow rather than matching
+    `to` against a fixed id set. Previously a move into a renamed terminal
+    column matched nothing and this handler returned early — so the agent kept a
+    `taskId` pointing at a finished card and stayed `running`, with no error and
+    no failing test. The IR read happens before the agent listing so an
+    unresolvable workflow still degrades to the legacy sets rather than throwing.
+    */
+    let roles: LinkSyncColumnRoles;
+    try {
+      roles = await resolveLinkSyncColumnRoles(opts.store, task.id);
+    } catch {
+      roles = LEGACY_COLUMN_ROLES;
+    }
+
+    if (!roles.clear.includes(to)) {
       return;
     }
 
@@ -71,13 +172,14 @@ export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => voi
       const linkedAgents = agents.filter((agent) => agent.taskId === task.id);
 
       for (const agent of linkedAgents) {
-        if (to === "todo" || to === "triage") {
+        if (roles.parked.includes(to)) {
           const activeRun = await opts.agentStore.getActiveHeartbeatRun?.(agent.id);
           const proof = evaluateParkedAgentTaskLink({
             agent,
             linkedTask: { column: to } as Pick<Task, "column">,
             activeRun,
             hasActiveAgentExecution: opts.hasActiveAgentExecution,
+            parkedColumns: roles.parked,
           });
           if (proof.shouldPreserveParkedLink) {
             continue;

@@ -274,7 +274,11 @@ export class StuckTaskDetector {
   start(): void {
     if (this.interval) return;
     this.interval = setInterval(() => {
-      stuckLog.log("Running periodic stuck task check (polling)");
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-08:20:
+      The poll tick fires every pollIntervalMs with no state change. Logging it at info filled the TUI with steady-state "Running periodic stuck task check" lines. Keep on debug (FUSION_DEBUG=stuck-detector); real stuck detections and check errors stay on log/warn/error.
+      */
+      stuckLog.debug("Running periodic stuck task check (polling)");
       this.checkStuckTasks().catch((err) => {
         stuckLog.error("Error checking stuck tasks:", err);
       });
@@ -387,8 +391,12 @@ export class StuckTaskDetector {
           this.pushToolFingerprint(entry, fingerprint);
         }
       }
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-08:14:
+      Text/tool heartbeats fire many times per session. These sampled "Activity recorded" lines are steady-state liveness chatter and filled the TUI log pane; keep them on debug (FUSION_DEBUG=stuck-detector). Real stuck detections and track/untrack state changes stay on log/warn/error.
+      */
       if (entry.activitySinceProgress <= 3 || entry.activitySinceProgress % 50 === 0) {
-        stuckLog.log(
+        stuckLog.debug(
           `Activity recorded for ${taskId} (sinceProgress=${entry.activitySinceProgress}` +
           `${toolName ? `, tools=${entry.toolFingerprints.length}` : ""})`,
         );
@@ -458,7 +466,8 @@ export class StuckTaskDetector {
     entry.verificationActiveCount++;
     const deadline = now + Math.max(0, timeoutMs) + VERIFICATION_DEADLINE_GRACE_MS;
     entry.verificationDeadlineAt = Math.max(entry.verificationDeadlineAt ?? 0, deadline);
-    stuckLog.log(`Verification started for ${taskId} (active=${entry.verificationActiveCount})`);
+    // FNXC:EngineDiagnostics 2026-07-26-09:33: start/end brackets every fn_run_verification — steady-state liveness, not operator events.
+    stuckLog.debug(`Verification started for ${taskId} (active=${entry.verificationActiveCount})`);
   }
 
   /**
@@ -479,7 +488,7 @@ export class StuckTaskDetector {
     if (entry.verificationActiveCount === 0) {
       entry.verificationDeadlineAt = null;
     }
-    stuckLog.log(`Verification ended for ${taskId} (active=${entry.verificationActiveCount})`);
+    stuckLog.debug(`Verification ended for ${taskId} (active=${entry.verificationActiveCount})`);
   }
 
   /**

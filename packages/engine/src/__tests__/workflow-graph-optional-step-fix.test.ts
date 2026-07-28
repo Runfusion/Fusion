@@ -68,7 +68,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     });
 
     expect(scheduled).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage", { preserveWorktree: true });
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
       status: "needs-replan",
       recoveryRetryCount: 1,
@@ -319,7 +319,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage", { preserveWorktree: true });
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", {
       status: "needs-replan",
@@ -361,7 +361,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         nodeId: "plan-review",
       });
 
-      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage", { preserveWorktree: true });
       expect(abortSpy).not.toHaveBeenCalled();
       expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
     } finally {
@@ -447,7 +447,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       maxRevisions: "unbounded",
     })).resolves.toBe(true);
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage", { preserveWorktree: true });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       "Plan Review failed — moved to triage for automatic replan (attempt 15/unbounded)",

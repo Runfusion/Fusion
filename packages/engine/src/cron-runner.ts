@@ -373,7 +373,8 @@ export class CronRunner {
 
         // Skip if already executed this tick (de-duplication across scopes)
         if (executedIds.has(schedule.id)) {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — already executed from another scope this tick`);
+          // FNXC:EngineDiagnostics 2026-07-26-08:17: multi-scope de-dupe/claim-loss skips are expected steady-state; keep executing lines at info.
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — already executed from another scope this tick`);
           continue;
         }
         executedIds.add(schedule.id);
@@ -381,7 +382,7 @@ export class CronRunner {
         // Log which scope this schedule is from
         const scheduleScope = schedule.scope ?? "project";
         if (scheduleScope !== this.scope && this.scope !== "all") {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — belongs to ${scheduleScope} scope, not polling`);
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — belongs to ${scheduleScope} scope, not polling`);
           continue;
         }
 
@@ -406,7 +407,7 @@ export class CronRunner {
          */
         const claimed = await this.automationStore.claimDueSchedule(schedule.id, schedule.nextRunAt);
         if (!claimed) {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — claim lost to another poller`);
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — claim lost to another poller`);
           continue;
         }
 

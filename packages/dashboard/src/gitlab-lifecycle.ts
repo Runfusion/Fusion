@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-gitlab-lifecycle");
 import type { GlobalSettings, ProjectSettings, Task, TaskGitLabTrackedItem, TaskStore } from "@fusion/core";
 import { GitLabClient } from "./gitlab.js";
 import { resolveGitlabAuth } from "./gitlab-auth.js";
@@ -50,7 +53,7 @@ export async function safeLogGitLabEntry(store: TaskStore, taskId: string, messa
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes(`Task ${taskId} not found`)) {
-      console.warn(`[gitlab-lifecycle] Unable to write log entry for deleted task ${taskId}: ${message}`);
+      severityAuditLog.warn(`[gitlab-lifecycle] Unable to write log entry for deleted task ${taskId}: ${message}`);
       return;
     }
     throw error;

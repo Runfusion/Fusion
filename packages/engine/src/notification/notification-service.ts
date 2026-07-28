@@ -150,7 +150,7 @@ export class NotificationService {
     this.options.messageStore?.on("message:sent", this.handleMessageSent);
     this.started = true;
     this.chatStore?.on("chat:room:message:added", this.handleRoomMessageAdded);
-    schedulerLog.log("NotificationService started");
+    schedulerLog.debug("NotificationService started");
   }
 
   async stop(): Promise<void> {
@@ -179,7 +179,7 @@ export class NotificationService {
     await this.dispatcher.shutdownAll();
     this.started = false;
 
-    schedulerLog.log("NotificationService stopped");
+    schedulerLog.debug("NotificationService stopped");
   }
 
   private handleTaskCreated = (task: Task): void => {
@@ -306,7 +306,7 @@ export class NotificationService {
       const transientClass = classifyTransientMergeError(task.error);
       if (transientClass) {
         this.failureNotificationSuppressedCount += 1;
-        schedulerLog.log(
+        schedulerLog.debug(
           `[notify] ${task.id} transient merge failure (${transientClass}) — suppressed notification (self-heal in flight)`,
         );
         return;
@@ -569,19 +569,19 @@ export class NotificationService {
       await this.syncNtfyProvider(settings);
 
       if (isEnabled && !wasEnabled) {
-        schedulerLog.log("NotificationService ntfy enabled");
+        schedulerLog.debug("NotificationService ntfy enabled");
       } else if (!isEnabled && wasEnabled) {
-        schedulerLog.log("NotificationService ntfy disabled");
+        schedulerLog.debug("NotificationService ntfy disabled");
       } else if (settings.ntfyTopic !== previous.ntfyTopic) {
-        schedulerLog.log("NotificationService ntfy topic updated");
+        schedulerLog.debug("NotificationService ntfy topic updated");
       } else if (settings.ntfyBaseUrl !== previous.ntfyBaseUrl) {
-        schedulerLog.log("NotificationService ntfy base URL updated");
+        schedulerLog.debug("NotificationService ntfy base URL updated");
       } else if (settings.ntfyAccessToken !== previous.ntfyAccessToken) {
-        schedulerLog.log("NotificationService ntfy access token updated");
+        schedulerLog.debug("NotificationService ntfy access token updated");
       } else if (settings.ntfyDashboardHost !== previous.ntfyDashboardHost) {
-        schedulerLog.log("NotificationService ntfy dashboard host updated");
+        schedulerLog.debug("NotificationService ntfy dashboard host updated");
       } else if (JSON.stringify(settings.ntfyEvents) !== JSON.stringify(previous.ntfyEvents)) {
-        schedulerLog.log("NotificationService ntfy events updated");
+        schedulerLog.debug("NotificationService ntfy events updated");
       }
     }
 
@@ -592,7 +592,7 @@ export class NotificationService {
       JSON.stringify(settings.webhookEvents) !== JSON.stringify(previous.webhookEvents)
     ) {
       await this.syncWebhookProvider(settings);
-      schedulerLog.log("WebhookNotificationProvider config updated");
+      schedulerLog.debug("WebhookNotificationProvider config updated");
     }
   };
 
@@ -843,7 +843,7 @@ export class NotificationService {
       this.refreshFailureNotificationSettings(settings);
       await this.syncNtfyProvider(settings);
       await this.syncWebhookProvider(settings);
-      schedulerLog.log(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
+      schedulerLog.debug(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
     })();
 
     try {
@@ -905,7 +905,7 @@ export class NotificationService {
     this.pendingFailureStartTimes.delete(taskId);
     const elapsedMs = typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : 0;
     this.failureNotificationSuppressedCount += 1;
-    schedulerLog.log(`NotificationService.maybeNotify suppressed transient failed key=${taskId}:failed (${reason}, ${elapsedMs}ms)`);
+    schedulerLog.debug(`NotificationService.maybeNotify suppressed transient failed key=${taskId}:failed (${reason}, ${elapsedMs}ms)`);
   }
 
   private async fireDeferredFailureNotification(taskId: string): Promise<void> {
@@ -924,7 +924,7 @@ export class NotificationService {
 
     if (task.status !== "failed") {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
+      schedulerLog.debug(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
       return;
     }
 
@@ -936,7 +936,7 @@ export class NotificationService {
     const transientClassAtDispatch = classifyTransientMergeError(task.error);
     if (transientClassAtDispatch) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(
+      schedulerLog.debug(
         `[notify] ${taskId} transient merge failure (${transientClassAtDispatch}) at dispatch time — suppressed notification (self-heal in flight)`,
       );
       return;
@@ -947,14 +947,14 @@ export class NotificationService {
     // idempotency; never let this delayed generic event become a second alert.
     if (describeTaskWedge(task)) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} classified terminal wedge at dispatch time — suppressed generic failed notification`);
+      schedulerLog.debug(`[notify] ${taskId} classified terminal wedge at dispatch time — suppressed generic failed notification`);
       return;
     }
 
     const isTerminal = task.paused === true || task.column === "in-review";
     if (this.failureNotificationMode === "terminal-only" && !isTerminal) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);
+      schedulerLog.debug(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);
       return;
     }
 
@@ -1100,12 +1100,12 @@ export class NotificationService {
      */
     const key = metadataDedupeKey.length > 0 ? metadataDedupeKey : `${taskId}:${eventType}`;
     if (this.notifiedEvents.has(key)) {
-      schedulerLog.log(`NotificationService.maybeNotify suppressed duplicate key=${key}`);
+      schedulerLog.debug(`NotificationService.maybeNotify suppressed duplicate key=${key}`);
       return;
     }
 
     this.notifiedEvents.add(key);
-    schedulerLog.log(`NotificationService.maybeNotify dispatching key=${key}`);
+    schedulerLog.debug(`NotificationService.maybeNotify dispatching key=${key}`);
     this.dispatcher.dispatch(eventType, payload).then((results) => {
       if (results.some((result) => result.success)) {
         return;

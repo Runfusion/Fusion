@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-async-events");
 /**
  * Async Drizzle goal-citation / usage-event / plugin-activation helpers (U14).
  *
@@ -252,7 +255,7 @@ export async function emitUsageEvent(
     });
     return true;
   } catch (err) {
-    console.warn("[fusion] emitUsageEvent skipped a malformed/failed event:", err);
+    severityAuditLog.warn("[fusion] emitUsageEvent skipped a malformed/failed event:", err);
     return false;
   }
 }

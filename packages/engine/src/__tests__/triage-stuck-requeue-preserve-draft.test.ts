@@ -240,6 +240,19 @@ describe("triage stuck requeue preserves existing PROMPT.md drafts", () => {
     );
   });
 
+  /*
+  FNXC:WorkflowReplan 2026-07-26-08:35:
+  KNOWN COVERAGE GAP (deliberate, documented rather than faked): `handleStuckAbortRequeue` is a THIRD
+  consumer of hasAdvancedPastPlanning, and the durable-park precedence fix flips its branch — a
+  `needs-replan` triage card carrying a sticky execution stamp no longer takes the "preserving
+  released state" short-circuit (which only bumps stuckKillCount and returns, leaving the card parked
+  with no planner) and instead falls through to planning recovery, which restores `needs-replan`.
+  That is the correct direction: the short-circuit was the FN-8594 strand reached by a second path.
+  This harness cannot drive that branch — seeding `status: "needs-replan"` diverges into the
+  surgical-revision seed path before the stuck-abort handler runs — so the verdict for that row shape
+  is pinned in replan-target.test.ts's guard matrix instead. Wiring a real stuck-abort replan case
+  here needs the revision-seed dependencies mocked; do that before touching this branch again.
+  */
   it("resumes from a saved plan task document when PROMPT.md is absent", async () => {
     const planDocument = "# Plan document draft\n\n## Mission\n\nResume from the saved task document.";
     const task = createTask({ id: "FN-7173-PLAN-DOC" });

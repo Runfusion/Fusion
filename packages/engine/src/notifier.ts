@@ -454,7 +454,7 @@ export class NtfyNotifier {
     this.loadConfig(settings);
     this.store.on("settings:updated", this.handleSettingsUpdated);
     await this.notificationService.start();
-    schedulerLog.log("NtfyNotifier started");
+    schedulerLog.debug("NtfyNotifier started");
   }
 
   stop(): void {
@@ -468,7 +468,7 @@ export class NtfyNotifier {
     }
 
     void this.notificationService.stop();
-    schedulerLog.log("NtfyNotifier stopped");
+    schedulerLog.debug("NtfyNotifier stopped");
   }
 
   private handleSettingsUpdated = (data: { settings: Settings; previous: Settings }): void => {

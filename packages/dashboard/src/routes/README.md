@@ -62,6 +62,7 @@ The following is the complete top-level registrar map currently imported by `rou
 - `registerSecretsSyncRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerMeshRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerDiscoveryRoutes` — domain registrar mounted by `createApiRoutes`.
+- `registerUiMetadataRoutes` — static, project-independent dashboard view and settings-section discovery endpoints.
 - `registerSettingsSyncInboundRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerSecretsSyncInboundRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerSetupActivityRoutes` — the late activity feed, concurrency, and setup split export from `register-setup-activity-routes.ts`.
@@ -128,12 +129,13 @@ Express matches in registration order. `create-api-routes-mount-sequence.ts` is 
 50. `registerSecretsSyncRoutes`
 51. `registerMeshRoutes`
 52. `registerDiscoveryRoutes`
-53. `registerSettingsSyncInboundRoutes`
-54. `registerSecretsSyncInboundRoutes`
-55. `registerSetupActivityRoutes`
-56. `registerIntegratedDevServerRouter`
-57. `registerAgentSkillsRoutes`
-58. `registerProxyRoutes`
+53. `registerUiMetadataRoutes`
+54. `registerSettingsSyncInboundRoutes`
+55. `registerSecretsSyncInboundRoutes`
+56. `registerSetupActivityRoutes`
+57. `registerIntegratedDevServerRouter`
+58. `registerAgentSkillsRoutes`
+59. `registerProxyRoutes`
 <!-- mount-sequence:end -->
 
 ## Ordering rules

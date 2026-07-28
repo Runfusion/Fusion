@@ -173,3 +173,47 @@ describe("task-priority", () => {
     expect(typeof core.sortTasksForDisplayColumn).toBe("function");
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:05 (Phase B / U6 — vocabulary conversion):
+RED-GREEN PROOF for `UNBLOCK_ACTIVE_COLUMNS` in `buildUnblockWeightMap`, written
+before the conversion. Same enumeration bug as blocker-fanout's ACTIVE_COLUMNS,
+same fix: active is NOT complete and NOT archived. The module already had a
+`DONE_COLUMNS` set expressing exactly that exclusion for dependency counting, so
+the two halves of one concept were encoded twice and disagreed for any custom
+column — an unblock weight silently scored 0 for a renamed workflow.
+*/
+describe("buildUnblockWeightMap — active is 'not terminal', not an enumeration (U6)", () => {
+  function t(id: string, column: string, dependencies: string[] = []): Task {
+    return {
+      id, column, dependencies,
+      title: id, description: "", priority: "normal", steps: [],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      columnMovedAt: "2026-07-01T00:00:00.000Z",
+    } as unknown as Task;
+  }
+
+  it("weights a blocker with a DEFAULT-workflow active dependent (regression floor)", () => {
+    const weights = buildUnblockWeightMap([t("FN-1", "in-review"), t("FN-2", "todo", ["FN-1"])]);
+    expect(weights.get("FN-1")).toBeGreaterThan(0);
+  });
+
+  it("weights a blocker whose dependent sits in a RENAMED active column", () => {
+    // Against the enumeration this scored 0: `drafting` is in no legacy set, so
+    // the blocker looked like it was unblocking nobody.
+    const weights = buildUnblockWeightMap(
+      [t("FN-1", "editorial-review"), t("FN-2", "drafting", ["FN-1"])],
+      { terminalColumns: new Set(["published", "shelved"]) },
+    );
+    expect(weights.get("FN-1")).toBeGreaterThan(0);
+  });
+
+  it("does NOT weight a dependent sitting in the renamed workflow's terminal column", () => {
+    const weights = buildUnblockWeightMap(
+      [t("FN-1", "editorial-review"), t("FN-2", "published", ["FN-1"])],
+      { terminalColumns: new Set(["published", "shelved"]) },
+    );
+    expect(weights.get("FN-1") ?? 0).toBe(0);
+  });
+});

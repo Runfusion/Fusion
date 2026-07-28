@@ -2,7 +2,9 @@ import { exec } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
+import { createLogger } from "./logger.js";
 
+const log = createLogger("worktree-hooks");
 const execAsync = promisify(exec);
 
 export const DEFAULT_ALLOWED_BRANCH_PATTERNS = ["^fusion/step-\\d+-[a-z0-9-]+$"] as const;
@@ -272,9 +274,7 @@ async function installCommitMsgHook(input: {
   const hookPath = await resolveGitPath(input.worktreePath, "hooks/commit-msg");
   const existing = await fs.readFile(hookPath, "utf-8").catch(() => null);
   if (existing && !existing.includes(COMMIT_MSG_HOOK_MARKER)) {
-    console.warn(
-      `[worktree-hooks] commit-msg hook already exists at ${hookPath}; skipping Fusion trailer hook install for ${input.taskId}`
-    );
+    log.warn(`commit-msg hook already exists at ${hookPath}; skipping Fusion trailer hook install for ${input.taskId}`);
     return;
   }
 
@@ -295,9 +295,7 @@ async function installPrepareCommitMsgEmptyGuard(input: {
   const hookPath = await resolveGitPath(input.worktreePath, "hooks/prepare-commit-msg");
   const existing = await fs.readFile(hookPath, "utf-8").catch(() => null);
   if (existing && !existing.includes(PREPARE_COMMIT_MSG_HOOK_MARKER)) {
-    console.warn(
-      `[worktree-hooks] prepare-commit-msg hook already exists at ${hookPath}; skipping Fusion empty-commit guard install for ${input.taskId}`
-    );
+    log.warn(`prepare-commit-msg hook already exists at ${hookPath}; skipping Fusion empty-commit guard install for ${input.taskId}`);
     return;
   }
 

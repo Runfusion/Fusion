@@ -178,6 +178,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => viewportMode,
   isMobileViewport: () => viewportMode === "mobile",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => viewportMode,
 }));
 vi.mock("lucide-react", async (importOriginal) => {
@@ -320,30 +321,43 @@ describe("SettingsModal", () => {
       expect(await screen.findByText(/Restarting… Your connection will close shortly/)).toBeInTheDocument();
     });
 
-    it("keeps the restart button disabled with manual guidance when unsupported", async () => {
+    /*
+    FNXC:SettingsUpdate 2026-07-25-10:05:
+    Capability is advisory, not a hard block. An unsupported host shows the manual
+    guidance but the button still reaches the server, so the operator gets the real
+    refusal instead of a control that silently does nothing when clicked.
+    */
+    it("shows manual guidance but still surfaces the server refusal when unsupported", async () => {
       mockFetchSystemInfo.mockResolvedValue({ supervised: false, restartSupported: false });
+      mockRequestSystemRestart.mockRejectedValue(new Error("Restart is not available: no supervising parent."));
 
       const restartButton = await renderUpdatedSettings();
 
-      expect(restartButton).toBeDisabled();
-      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument());
+      expect(restartButton).toBeEnabled();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(mockRequestSystemRestart).toHaveBeenCalledWith("settings-update");
+      expect(await screen.findByText(/Restart is not available: no supervising parent\./)).toBeInTheDocument();
     });
 
-    it("keeps the restart button disabled while system information is loading", async () => {
+    it("still allows a restart attempt while system information is loading", async () => {
       mockFetchSystemInfo.mockReturnValue(new Promise(() => {}));
 
       const restartButton = await renderUpdatedSettings();
 
-      expect(restartButton).toBeDisabled();
+      expect(restartButton).toBeEnabled();
+      expect(screen.queryByText(/Needs a supervising parent/)).not.toBeInTheDocument();
     });
 
-    it("fails closed with manual guidance when system information cannot load", async () => {
+    it("shows manual guidance when system information cannot load", async () => {
       mockFetchSystemInfo.mockRejectedValue(new Error("unavailable"));
 
       const restartButton = await renderUpdatedSettings();
 
-      await waitFor(() => expect(restartButton).toBeDisabled());
-      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument());
+      expect(restartButton).toBeEnabled();
     });
 
     it("disables the restart button and shows a spinner while scheduling", async () => {
@@ -374,6 +388,45 @@ describe("SettingsModal", () => {
 
       expect(await screen.findByText(/Restart could not be scheduled/)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    });
+
+    /*
+    FNXC:SettingsUpdate 2026-07-25-10:05:
+    Regression: restart capability is a property of the HOST, not of a particular
+    update check. Clicking "Check for updates" repeatedly (same updateAvailable
+    result each time) used to strand restartSupported at `undefined` — the probe
+    was keyed on updateAvailable flipping — so the post-install "Restart Fusion"
+    button was disabled with "Needs a supervising parent" on a supervised host.
+    The invariant asserted here is: on a supervised host the restart button is
+    enabled after an install regardless of how many checks preceded it.
+    */
+    it("keeps the restart button enabled after repeated update checks", async () => {
+      mockCheckForUpdates.mockResolvedValue(availableUpdate);
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const checkButton = screen.getByRole("button", { name: "Check for updates" });
+      await settingsModalUser.click(checkButton);
+      await screen.findByRole("button", { name: "Update now" });
+      await settingsModalUser.click(checkButton);
+      await screen.findByRole("button", { name: "Update now" });
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "Update now" }));
+
+      const restartButton = await screen.findByRole("button", { name: "Restart Fusion" });
+      await waitFor(() => expect(restartButton).toBeEnabled());
+      expect(screen.queryByText(/Needs a supervising parent/)).not.toBeInTheDocument();
+    });
+
+    it("clears stale unsupported guidance by re-probing after a successful install", async () => {
+      // Mount probe fails (fails closed to "unsupported"); the post-install re-probe
+      // proves the host is supervised after all.
+      mockFetchSystemInfo.mockRejectedValueOnce(new Error("unavailable"));
+
+      const restartButton = await renderUpdatedSettings();
+
+      await waitFor(() => expect(screen.queryByText(/Needs a supervising parent/)).not.toBeInTheDocument());
+      expect(restartButton).toBeEnabled();
     });
 
     it("keeps the retry path and hides restart when update installation fails", async () => {
@@ -471,9 +524,15 @@ describe("SettingsModal", () => {
       viewportOffsetTop: 50,
     });
 
-    const { container } = renderModal();
+    renderModal();
     await waitForSettingsModalReady();
-    const modal = container.querySelector(".settings-modal");
+    /*
+    FNXC:SettingsModalTests 2026-07-28-17:00:
+    FN-8606 migrated the modal branch to the shared FloatingWindow, which portals the
+    `.settings-modal` panel to document.body. Container-scoped queries no longer see it, so
+    resolve the keyboard-styled panel from the document root.
+    */
+    const modal = document.querySelector(".settings-modal");
 
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
@@ -678,11 +737,18 @@ describe("SettingsModal", () => {
 
     it("keeps the overlay and Escape-to-close in modal mode", async () => {
       const onClose = vi.fn();
-      const { container } = renderModal({ onClose });
+      renderModal({ onClose });
       await waitForSettingsModalReady();
 
-      expect(container.querySelector(".settings-modal-overlay")).not.toBeNull();
-      expect(container.querySelector(".settings-modal--embedded")).toBeNull();
+      /*
+      FNXC:SettingsModalTests 2026-07-28-17:00:
+      FN-8606 migrated the modal branch to the shared FloatingWindow: the dialog overlay is now
+      `.floating-window-overlay` portaled to document.body (not the legacy `.settings-modal-overlay`).
+      Escape-to-close is still owned by SettingsModal's own keydown handler, so the dismissal
+      contract is unchanged.
+      */
+      expect(document.querySelector(".floating-window-overlay")).not.toBeNull();
+      expect(document.querySelector(".settings-modal--embedded")).toBeNull();
       fireEvent.keyDown(document, { key: "Escape" });
       expect(onClose).toHaveBeenCalled();
     });
@@ -1992,10 +2058,14 @@ describe("SettingsModal", () => {
       ["footer Close", async (container: HTMLElement) => settingsModalUser.click(container.querySelector(".modal-actions-right button") as HTMLButtonElement)],
       ["header close", async (container: HTMLElement) => settingsModalUser.click(container.querySelector(".modal-close") as HTMLButtonElement)],
       ["Escape", async () => { fireEvent.keyDown(document, { key: "Escape" }); }],
-      ["backdrop", async (container: HTMLElement) => {
-        const overlay = container.querySelector(".settings-modal-overlay") as HTMLElement;
-        fireEvent.mouseDown(overlay);
-        fireEvent.mouseUp(overlay);
+      /*
+      FNXC:SettingsModalTests 2026-07-28-17:00:
+      FN-8606's FloatingWindow migration replaced the click-through backdrop element with an
+      opt-in outside-pointerdown dismissal (see FloatingWindow `closeOnOutsidePointerDown`). Dismiss
+      by firing a document-level pointerdown outside the panel instead of clicking a `.settings-modal-overlay`.
+      */
+      ["backdrop", async () => {
+        fireEvent.pointerDown(document.body);
       }],
     ])("flushes the latest edit through %s without a leave warning", async (path, dismiss) => {
       const onClose = vi.fn();

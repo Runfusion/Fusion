@@ -93,7 +93,7 @@ jobs:
 
       - name: Cache built dist artifacts
         id: dist-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/core/dist
@@ -173,7 +173,7 @@ jobs:
 
       - name: Cache built dist artifacts
         id: dist-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/core/dist
@@ -282,7 +282,7 @@ jobs:
 
       - name: Cache built dist artifacts (incremental)
         id: dist-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/core/dist
@@ -311,7 +311,7 @@ jobs:
       # pr-checks.yml. Restored buildinfo is self-validating — tsc re-checks
       # anything that changed — so restore-keys is correctness-neutral.
       - name: Cache TypeScript incremental buildinfo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/*/dist/.tsbuildinfo

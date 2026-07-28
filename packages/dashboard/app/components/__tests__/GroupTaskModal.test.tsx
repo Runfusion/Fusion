@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GroupTaskModal } from "../GroupTaskModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import { apiGetBranchGroup, apiPromoteBranchGroup, apiAbandonBranchGroup } from "../../api";
 
 type SseSubscription = {
@@ -80,6 +81,14 @@ describe("GroupTaskModal", () => {
     expect(screen.getByText("1 of 2 members finished")).toBeDefined();
     await userEvent.click(screen.getAllByRole("button", { name: "Open task" })[0]);
     expect(onOpenMemberTask).toHaveBeenCalledWith("FN-1");
+  });
+
+  it("uses the production group header for touch drag and resize", async () => {
+    mockedGet.mockResolvedValue({ group: makeGroup() } as Awaited<ReturnType<typeof apiGetBranchGroup>>);
+    render(<GroupTaskModal isOpen onClose={vi.fn()} groupId="BG-1" onOpenMemberTask={vi.fn()} />);
+    await screen.findByText("feature/shared");
+    assertRenderedModalTouchGeometry("group-task", screen.getByRole("heading", { name: "Branch Group BG-1" }).closest(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("group-task", () => render(<GroupTaskModal isOpen onClose={vi.fn()} groupId="BG-1" onOpenMemberTask={vi.fn()} />));
   });
 
   it("hides promote controls until complete", async () => {

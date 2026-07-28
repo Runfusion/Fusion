@@ -19,6 +19,7 @@ import {
   type ChatStreamErrorMeta,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
+import { createResyncRetryRunner } from "./resyncRetry";
 import { getScopedItem, setScopedItem, removeScopedItem } from "../utils/projectStorage";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import type { Agent, ChatInFlightGenerationState, ChatMessage, ChatTag } from "@fusion/core";
@@ -358,13 +359,38 @@ into a partial cache after a later assistant turn. Every client-side transcript 
 ascending createdAt order, with id as a deterministic tie-breaker, so optimistic replacement,
 mid-stream reloads, and SSE echoes cannot move user bubbles past later turns.
 */
+function compareChatMessagesChronologically(a: ChatMessageInfo, b: ChatMessageInfo): number {
+  const createdAtDifference = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+  return Number.isFinite(createdAtDifference) && createdAtDifference !== 0
+    ? createdAtDifference
+    : a.id.localeCompare(b.id);
+}
+
 function sortChatMessagesChronologically(messages: ChatMessageInfo[]): ChatMessageInfo[] {
-  return [...messages].sort((a, b) => {
-    const createdAtDifference = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-    return Number.isFinite(createdAtDifference) && createdAtDifference !== 0
-      ? createdAtDifference
-      : a.id.localeCompare(b.id);
-  });
+  return [...messages].sort(compareChatMessagesChronologically);
+}
+
+/*
+FNXC:MobileTabRetention 2026-07-26-11:15:
+Chat history is user-visible content the reader can still scroll to, so it is NOT capped — silently
+dropping a conversation the user is reading would be a real regression, unlike the disposable log
+tails bounded elsewhere for the same mobile-tab-discard problem.
+What is fixed instead is the per-append cost: appending a message re-sorted the ENTIRE transcript
+(O(n log n) plus a second array copy) on every optimistic send and every SSE frame, which is
+sustained background CPU — itself a discard signal on iOS Safari / Chrome Android — for a stream
+that is already chronological. The transcript is kept sorted by every mutation path, so an append
+whose message already sorts at or after the tail needs no sort at all; only genuinely out-of-order
+arrivals pay for the full sort and keep FN's ChatMessageOrder invariant above intact.
+*/
+export function appendChatMessageChronologically(
+  previous: ChatMessageInfo[],
+  message: ChatMessageInfo,
+): ChatMessageInfo[] {
+  const last = previous[previous.length - 1];
+  if (!last || compareChatMessagesChronologically(last, message) <= 0) {
+    return [...previous, message];
+  }
+  return sortChatMessagesChronologically([...previous, message]);
 }
 
 function reconcileOptimisticSentMessage(previous: ChatMessageInfo[], persisted: ChatMessageInfo): ChatMessageInfo[] {
@@ -375,7 +401,7 @@ function reconcileOptimisticSentMessage(previous: ChatMessageInfo[], persisted: 
     && candidate.sessionId === persisted.sessionId
     && candidate.content.trim() === persisted.content.trim(),
   );
-  if (optimisticIndex < 0) return sortChatMessagesChronologically([...previous, persisted]);
+  if (optimisticIndex < 0) return appendChatMessageChronologically(previous, persisted);
   const next = [...previous];
   next[optimisticIndex] = persisted;
   return sortChatMessagesChronologically(next);
@@ -1450,7 +1476,7 @@ export function useChat(
         content,
         createdAt: new Date().toISOString(),
       };
-      setMessages((prev) => sortChatMessagesChronologically([...prev, userMessage]));
+      setMessages((prev) => appendChatMessageChronologically(prev, userMessage));
 
       // Clear streaming state
       setStreamingText("");
@@ -1498,7 +1524,7 @@ export function useChat(
           streamingMessageIdsRef.current.add(assistantMessage.id);
 
           // Preserve user message and add assistant message
-          setMessages((prev) => sortChatMessagesChronologically([...prev, assistantMessage]));
+          setMessages((prev) => appendChatMessageChronologically(prev, assistantMessage));
 
           setStreamingText("");
           setStreamingThinking("");
@@ -1815,47 +1841,82 @@ export function useChat(
     return () => clearInterval(interval);
   }, [attachIfGenerating, loadMessages, projectId, activeSession, flushPendingMessage]);
 
+  /*
+  FNXC:ChatStreaming 2026-07-26-18:55:
+  Authoritative reconciliation of the LOCAL stream ownership flag against the SERVER's generation
+  state, shared by the resume path and the SSE reconnect path.
+
+  Why the server has to be asked: `streamRef.current` is cleared only by the stream's own
+  onDone/onError. iOS can tear the transport down during a 60s+ background suspend WITHOUT delivering
+  either callback (a hung reader, not a rejected promise), and a stale `streamRef` then means
+  "a stream owns the transcript" forever — every reconnect/resume handler that guards on it becomes a
+  permanent no-op, the transcript stays frozen mid-turn, and the reply never lands. A dead stream must
+  not be able to latch recovery off, and the only proof of death available to the client is the
+  server saying the session is no longer generating.
+
+  Outcomes:
+  - server generating + no local stream -> (re)attach, as before.
+  - server generating + local stream    -> the stream legitimately owns the transcript; leave it.
+  - server idle + local stream          -> the stream is provably dead: close it, drop the streaming
+                                           state it can no longer clear, and reload the transcript.
+  - server idle + no local stream       -> clear a stale "recovery mode" streaming state if any.
+  Rejects on fetch failure so callers can run the shared bounded retry ladder.
+  */
+  const reconcileAttachedStream = useCallback(async () => {
+    const currentSession = activeSessionRef.current;
+    if (!currentSession) return;
+
+    const contextVersionAtStart = projectContextVersionRef.current;
+    const data = await fetchChatSession(currentSession.id, projectId);
+    if (
+      projectContextVersionRef.current !== contextVersionAtStart
+      || activeSessionRef.current?.id !== currentSession.id
+    ) {
+      return;
+    }
+
+    const attachedStream = streamRef.current;
+    if (data.session.isGenerating) {
+      if (attachedStream) return;
+      setStreamingText("");
+      setStreamingThinking("");
+      setStreamingToolCalls([]);
+      setIsStreaming(true);
+      isStreamingRef.current = true;
+      attachIfGenerating(currentSession.id, data.session.inFlightGeneration, { silent: true });
+      return;
+    }
+
+    if (attachedStream) {
+      attachedStream.close();
+      streamRef.current = null;
+      lastAttachedGenerationRef.current = null;
+      cancelStreamingFlushesRef.current?.();
+      cancelStreamingFlushesRef.current = null;
+    }
+
+    if (attachedStream || isStreamingRef.current) {
+      setStreamingText("");
+      setStreamingThinking("");
+      setStreamingToolCalls([]);
+      setIsStreaming(false);
+      isStreamingRef.current = false;
+      flushPendingMessage();
+      void loadMessages(currentSession.id);
+    }
+  }, [attachIfGenerating, flushPendingMessage, loadMessages, projectId]);
+
   useEffect(() => {
+    const resumeReconcile = createResyncRetryRunner({ run: reconcileAttachedStream });
     const unsubscribe = visibilitySuspension.onBecameVisible(() => {
-      const currentSession = activeSessionRef.current;
-      if (!currentSession || streamRef.current) {
-        return;
-      }
-
-      const contextVersionAtStart = projectContextVersionRef.current;
-      void fetchChatSession(currentSession.id, projectId)
-        .then((data) => {
-          if (projectContextVersionRef.current !== contextVersionAtStart || streamRef.current) {
-            return;
-          }
-
-          if (data.session.isGenerating) {
-            setStreamingText("");
-            setStreamingThinking("");
-            setStreamingToolCalls([]);
-            setIsStreaming(true);
-            isStreamingRef.current = true;
-            attachIfGenerating(currentSession.id, data.session.inFlightGeneration, { silent: true });
-            return;
-          }
-
-          if (isStreamingRef.current) {
-            setStreamingText("");
-            setStreamingThinking("");
-            setStreamingToolCalls([]);
-            setIsStreaming(false);
-            isStreamingRef.current = false;
-            flushPendingMessage();
-            void loadMessages(currentSession.id);
-          }
-        })
-        .catch(() => {
-          // Intentionally silent for visibility reconnect path.
-        });
+      resumeReconcile.trigger();
     });
 
-    return unsubscribe;
-  }, [attachIfGenerating, loadMessages, projectId, visibilitySuspension, flushPendingMessage]);
+    return () => {
+      resumeReconcile.dispose();
+      unsubscribe();
+    };
+  }, [reconcileAttachedStream, visibilitySuspension]);
 
   // SSE real-time updates
   useEffect(() => {
@@ -1956,7 +2017,7 @@ export function useChat(
       ) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === message.id)) return prev;
-          return sortChatMessagesChronologically([...prev, message]);
+          return appendChatMessageChronologically(prev, message);
         });
         setStreamingText("");
         setStreamingThinking("");
@@ -1981,7 +2042,7 @@ export function useChat(
             return reconcileOptimisticSentMessage(prev, message);
           }
 
-          return sortChatMessagesChronologically([...prev, message]);
+          return appendChatMessageChronologically(prev, message);
         });
       }
     };
@@ -1992,7 +2053,45 @@ export function useChat(
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     };
 
+    /*
+    FNXC:ChatRealtime 2026-07-26-14:32:
+    Missed-event recovery. Sessions and the open transcript were mutated only by SSE handlers, so any
+    stream gap (error reconnect, or the mobile hidden-tab suspend) left the thread permanently wrong
+    until a manual session switch or reload: messages added while disconnected never appeared, and
+    messages deleted while disconnected kept rendering. On reopen, refetch the session list and — when
+    a session is open and no local stream owns the transcript — reload its messages, which replaces
+    the visible thread with the server's. Skipped while a stream is attached because the streaming
+    path owns the transcript and an authoritative reload mid-turn would fight it (see loadMessages'
+    active-streaming guard).
+
+    FNXC:ChatRealtime 2026-07-26-19:02:
+    CORRECTION to the guard above: `streamRef.current` being set used to mean "skip the reload", full
+    stop, and streamRef is cleared only by the stream's own terminal callbacks. A transport killed
+    during a suspend without a terminal callback therefore latched this resync OFF PERMANENTLY —
+    every later reconnect was a no-op against a frozen transcript. An attached stream is now
+    RECONCILED against the server's generation state (reconcileAttachedStream) instead of blindly
+    trusted; only a stream the server confirms is still generating keeps ownership of the transcript.
+    Failures run the shared bounded retry ladder rather than waiting for a reconnect that may not
+    come. `refreshSessions`/`loadMessages` swallow their own errors (they fall back to cache), so the
+    ladder covers exactly the authoritative session probe — the one call that can report failure.
+    */
+    const resyncChatState = async () => {
+      if (isStale()) return;
+      await refreshSessions();
+      if (isStale()) return;
+      const currentSession = activeSessionRef.current;
+      if (!currentSession) return;
+      if (streamRef.current) {
+        await reconcileAttachedStream();
+        return;
+      }
+      await loadMessages(currentSession.id);
+    };
+
+    const chatResync = createResyncRetryRunner({ run: resyncChatState });
+
     const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: () => chatResync.trigger(),
       events: {
         "chat:session:created": handleChatSessionCreated,
         "chat:session:updated": handleChatSessionUpdated,
@@ -2002,8 +2101,11 @@ export function useChat(
       },
     });
 
-    return unsubscribe;
-  }, [attachIfGenerating, getChatMessagesCacheKey, projectId, flushPendingMessage, refreshSessions]);
+    return () => {
+      chatResync.dispose();
+      unsubscribe();
+    };
+  }, [attachIfGenerating, getChatMessagesCacheKey, loadMessages, projectId, flushPendingMessage, reconcileAttachedStream, refreshSessions]);
 
   // Cleanup on unmount
   useEffect(() => {

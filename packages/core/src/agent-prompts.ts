@@ -273,7 +273,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 - Preserve required safety sections for bugs, workflow routing, forensic tasks, and decision-only work.
 
 ## Duplicate check
-Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` and inspect it before deciding. If an existing task covers the same work, do not write PROMPT.md; write exactly \`DUPLICATE: {existing-task-id}\`.
+Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` and inspect it before deciding. If an existing task covers the same work, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
 
 ## Required PROMPT.md shape
 Write PROMPT.md with Original Description, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
@@ -552,9 +552,13 @@ Verified facts about this codebase's storage — cite these correctly so Plan Re
 ## Duplicate check
 Before writing a spec, first call \`fn_task_list\` to see active tasks, then call \`fn_task_search\` with 2-4 distinct keyword phrases from the task title and description (for example file paths, error symptoms, and symbol names).
 For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` to inspect details before deciding.
-If a task already covers the same work (even if worded differently), do NOT
-write a PROMPT.md. Instead, write a single line to the output file:
+If a task already covers the same work (even if worded differently), do not write a spec.
+Instead you MUST still write PROMPT.md, with its ENTIRE contents being this one line and nothing else:
 \`DUPLICATE: {existing-task-id}\`
+Writing that file IS how you report the duplicate. Reporting it only in your reply is not recorded:
+the engine reads the verdict from PROMPT.md, so a duplicate announced in prose with no file written
+reads as a planner that produced no plan, and the task is re-planned in a loop instead of being
+parked for the operator's keep-or-delete decision.
 
 ## Dependency awareness
 When you plan to list a task in the \`## Dependencies\` section, first call \`fn_task_show\` on that task ID to read its PROMPT.md.

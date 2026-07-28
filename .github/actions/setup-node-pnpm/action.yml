@@ -23,22 +23,37 @@ runs:
     - name: Install pnpm
       uses: pnpm/action-setup@v4
 
+    # Do NOT cache the linked node_modules tree. pnpm builds node_modules from
+    # symlinks/junctions into the content-addressable store, and actions/cache does
+    # not preserve Windows junctions across its tar/restore — a restored tree has
+    # broken peer links (e.g. @vitejs/plugin-react can't resolve its `vite` peer →
+    # ERR_MODULE_NOT_FOUND), which silently broke the Windows release build. The
+    # pnpm *store* is already cached by actions/setup-node (`cache: pnpm`), so
+    # `pnpm install --frozen-lockfile` is fast with a warm store and relinks
+    # correctly per-OS/arch every time (also fixing the prior arch-key and per-job
+    # cache-race issues this node_modules cache was patched for).
+    #
+    # FNXC:CI 2026-07-26-23:05:
+    # skip-install callers (agent-browser pack fixture, version.yml) never create a
+    # pnpm store. setup-node's post-job cache save then fails hard with
+    # "Path Validation Error: Path(s) specified in the action for caching do(es)
+    # not exist" and marks an otherwise-successful pack job failed. Only enable
+    # the pnpm store cache when this composite will actually install.
     - name: Setup Node.js
+      if: ${{ inputs.skip-install != 'true' }}
       uses: actions/setup-node@v5
       with:
         node-version: ${{ inputs.node-version }}
         cache: pnpm
         registry-url: ${{ inputs.registry-url }}
 
-    # Do NOT cache the linked node_modules tree. pnpm builds node_modules from
-    # symlinks/junctions into the content-addressable store, and actions/cache does
-    # not preserve Windows junctions across its tar/restore — a restored tree has
-    # broken peer links (e.g. @vitejs/plugin-react can't resolve its `vite` peer →
-    # ERR_MODULE_NOT_FOUND), which silently broke the Windows release build. The
-    # pnpm *store* is already cached by actions/setup-node above (`cache: pnpm`), so
-    # `pnpm install --frozen-lockfile` is fast with a warm store and relinks
-    # correctly per-OS/arch every time (also fixing the prior arch-key and per-job
-    # cache-race issues this node_modules cache was patched for).
+    - name: Setup Node.js (no pnpm store cache)
+      if: ${{ inputs.skip-install == 'true' }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+        registry-url: ${{ inputs.registry-url }}
+
     - name: Install dependencies
       if: ${{ inputs.skip-install != 'true' }}
       shell: bash

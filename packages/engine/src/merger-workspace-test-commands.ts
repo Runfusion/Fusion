@@ -443,7 +443,7 @@ export function inferDefaultTestCommand(
     try {
       const fileScoped = deriveFileScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
       if (fileScoped) {
-        mergerLog.log(`Scoped verification to changed test files: ${fileScoped}`);
+        mergerLog.debug(`Scoped verification to changed test files: ${fileScoped}`);
         const fileScopedBuildSource = explicitBuildCommand?.trim() ? "explicit" : undefined;
         return { command: fileScoped, testSource: "inferred-scoped", buildSource: fileScopedBuildSource };
       }
@@ -472,7 +472,8 @@ export function inferDefaultTestCommand(
         try {
           const scoped = deriveScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
           if (scoped) {
-            mergerLog.log(
+            // FNXC:EngineDiagnostics 2026-07-26-10:10: package-scoping choice is routine merge bookkeeping.
+            mergerLog.debug(
               `Scoped inferred test command to changed packages: ${scoped}`,
             );
             return { command: scoped, testSource: "inferred-scoped", buildSource };

@@ -37,7 +37,14 @@ vi.mock("../logger.js", () => {
   const probe = process.env.FUSION_TEST_LOG_PROBE === "1"
     ? (...a: unknown[]) => console.error("[probe]", ...a)
     : undefined;
+  /*
+  FNXC:EngineTests 2026-07-26-09:50:
+  Executor construction now emits debug-only dispatch bookkeeping. The rescued
+  fn_task_done invariant suite imports this logger mock, so preserve its full
+  logger contract when it re-enters the default test suite.
+  */
   const createMockLogger = () => ({
+    debug: vi.fn(probe),
     log: vi.fn(probe),
     warn: vi.fn(probe),
     error: vi.fn(probe),

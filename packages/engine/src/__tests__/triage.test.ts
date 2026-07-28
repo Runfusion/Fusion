@@ -8,6 +8,13 @@ import {
   readAttachmentContents,
   computeUserCommentFingerprint,
 } from "../triage.js";
+import {
+  AgentSemaphore,
+  clearPreHeldExecutorSlotsForTests,
+  hasPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
+  registerPreHeldExecutorSlot,
+} from "../concurrency.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile, rm, mkdtemp } from "node:fs/promises";
@@ -6763,6 +6770,120 @@ describe("evictStaleProcessing", () => {
     expect(processor.getProcessingTaskIds().has("FN-1312")).toBe(true);
   });
 
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-14:20:
+  Original symptom: a Todo card sat on the "Queued to plan" badge indefinitely with free
+  concurrency slots, and NEITHER diagnostic explained it — no "Plan throttled by …" log line and no
+  `task:plan-admission-throttled` run-audit row — because the card was still eligible (so the
+  throttle branch never ran) while `admitOldest`'s refresh filtered it out on a stale
+  `coordinatorAdmittedTaskIds` entry left behind by a hung planner promise that eviction reclaimed.
+
+  Invariant under test (not just the reported repro): eviction releases EVERY admission-side claim
+  the evicted planner held — the coordinator admitted marker AND an untransferred pre-held host slot
+  — and does so on the real production candidate source, while a RETAINED (still-live) stale task
+  keeps both claims so eviction can never strip a running planner's capacity.
+  */
+  describe("releases admission claims on eviction", () => {
+    const EVICT_ROOT = "/tmp/root-admission-claims";
+
+    /** The production candidate closure the coordinator actually calls (triage.ts constructor). */
+    function providerRefresh(processor: TriageProcessor): () => Promise<Array<{ taskId: string }>> {
+      const provider = (projectAdmissionCoordinator as any).providers.get(EVICT_ROOT)?.get(`specify:${EVICT_ROOT}`);
+      expect(provider).toBeDefined();
+      return provider.refresh;
+    }
+
+    function triageCard(id: string): Task {
+      return {
+        id,
+        title: "Hung planner",
+        description: "Test",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as Task;
+    }
+
+    afterEach(() => {
+      clearPreHeldExecutorSlotsForTests();
+    });
+
+    it("re-offers the evicted card to admission instead of hiding it forever", async () => {
+      const store = createMockStore({ listTasks: vi.fn().mockResolvedValue([triageCard("FN-HUNG")]) });
+      const processor = new TriageProcessor(store, EVICT_ROOT);
+      (processor as any).running = true;
+      const refresh = providerRefresh(processor);
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      // Exactly the state a coordinator handoff leaves behind: admitted marker + processing claim,
+      // with a promise that never settles so specifyTask's finally never runs.
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+
+      // While the claim is live the card must NOT be re-offered (no concurrent planner).
+      expect(await refresh()).toEqual([]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-HUNG")).toBe(false);
+      expect((await refresh()).map((candidate) => candidate.taskId)).toEqual(["FN-HUNG"]);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("returns an untransferred pre-held host slot to the semaphore", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-HUNG");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+      expect(semaphore.activeCount).toBe(1);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect(hasPreHeldExecutorSlot("FN-HUNG")).toBe(false);
+      expect(semaphore.activeCount).toBe(0);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("keeps both claims for a retained task whose planning session is still live", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-LIVE");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-LIVE");
+      (processor as any).processing.add("FN-LIVE");
+      (processor as any).processingSince.set("FN-LIVE", Date.now());
+      (processor as any).activeSessions.set("FN-LIVE", { dispose: vi.fn() });
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set());
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-LIVE")).toBe(true);
+      expect(hasPreHeldExecutorSlot("FN-LIVE")).toBe(true);
+      expect(semaphore.activeCount).toBe(1);
+
+      (processor as any).unregisterAdmissionProvider?.();
+      semaphore.release();
+    });
+  });
+
   it("includes finalizing and subagent tasks in getProcessingTaskIds even when not in processing", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store, "/tmp/root");
@@ -7051,5 +7172,66 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
     // Done results surface in output with the (done): column label
     expect(text).toContain("FN-DONE");
     expect(text).toContain("(done):");
+  });
+});
+
+/*
+FNXC:TriageStalePlanning 2026-07-26-17:30:
+Regression for the FN-8596 strand: a plan-review REVISE routed to `plan-replan`, triage claimed the
+card with `status:"planning"` and ran the revision, and the session died after writing the revised
+PROMPT.md but before finalizing. The card sat in `triage` with `status:"planning"` and no workflow
+continuation — invisible to rediscovery (it looks claimed) and unrecoverable until an engine
+restart, because the only sweep that clears that status ran at startup.
+
+These cases pin the periodic sweep AND its guards. The guards are the risky half: a sweep that
+clears too eagerly would yank the status out from under a healthy planner and let a second planner
+claim the same card, so "in-process planner" and "recently touched" are asserted as protected.
+*/
+describe("TriageProcessor.sweepStalePlanningStatuses", () => {
+  const NOW = Date.parse("2026-07-26T14:30:00.000Z");
+  const STALE = "2026-07-26T13:53:00.000Z";  // ~37m old, past the 20m floor
+  const FRESH = "2026-07-26T14:29:00.000Z";  // 1m old
+
+  function sweep(store: ReturnType<typeof createMockStore>, tasks: Task[], processing: string[] = []) {
+    const processor = new TriageProcessor(store as never, "/tmp/root");
+    for (const id of processing) (processor as unknown as { processing: Set<string> }).processing.add(id);
+    return (processor as unknown as {
+      sweepStalePlanningStatuses(t: Task[], n: number): Promise<void>;
+    }).sweepStalePlanningStatuses(tasks, NOW);
+  }
+
+  it("clears a stale planning status so triage can re-pick the card", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-8596", status: "planning", updatedAt: STALE })]);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8596", { status: null });
+  });
+
+  it("does not touch a card whose planner is live in this process", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-LIVE", status: "planning", updatedAt: STALE })], ["FN-LIVE"]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("does not touch a recently-touched card (may be another node's live planner)", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-FRESH", status: "planning", updatedAt: FRESH })]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("never disturbs an operator park", async () => {
+    const store = createMockStore();
+    await sweep(store, [
+      createTriageTask({ id: "FN-PAUSED", status: "planning", updatedAt: STALE, userPaused: true } as Partial<Task>),
+    ]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("ignores cards outside the planning columns and non-planning statuses", async () => {
+    const store = createMockStore();
+    await sweep(store, [
+      createTriageTask({ id: "FN-INPROG", column: "in-progress", status: "planning", updatedAt: STALE }),
+      createTriageTask({ id: "FN-OTHER", status: "needs-replan", updatedAt: STALE }),
+    ]);
+    expect(store.updateTask).not.toHaveBeenCalled();
   });
 });

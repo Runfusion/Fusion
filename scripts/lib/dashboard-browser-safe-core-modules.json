@@ -56,6 +56,11 @@
       "verifiedAt": "2026-07-16"
     },
     {
+      "module": "task-delete-attribution",
+      "reason": "2026-07-26: Delete caller-attribution constants and the pure header resolver are shared by the browser client that stamps `x-fusion-client` and the route that reads it; the module has no imports at all.",
+      "verifiedAt": "2026-07-26"
+    },
+    {
       "module": "live-agent-count",
       "reason": "2026-07-21: FN-8453 shares pure workflow-trait-based Running and Waiting predicates with dashboard capacity indicators; its dependency graph has no Node-only modules.",
       "verifiedAt": "2026-07-21"

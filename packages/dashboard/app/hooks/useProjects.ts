@@ -12,7 +12,7 @@ import {
 } from "../api";
 import { SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, clearCache, readCache, writeCache } from "../utils/swrCache";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 export interface UseProjectsResult {
   /** List of all registered projects (local + remote) */
@@ -90,7 +90,6 @@ export function useProjects(): UseProjectsResult {
   });
   const [loading, setLoading] = useState(() => projects.length === 0);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
   const projectsRef = useRef(projects);
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -192,22 +191,19 @@ export function useProjects(): UseProjectsResult {
     };
   }, [projects.length, refresh, shouldSuppressVisibilityResumeError]);
 
-  // Polling for updates
-  useEffect(() => {
-    // Only start polling after initial load completes
-    if (loading) return;
+  /*
+  FNXC:MobileTabRetention 2026-07-26-16:05:
+  This 5s poll was NOT visibility-gated, despite the mobile tab-retention work claiming every polling loop
+  was. The `visibilitychange` listener above only ADDS a refresh on the visible edge; it never cleared the
+  interval, so a backgrounded tab kept issuing a project-list fetch every 5 seconds. `useProjects` is mounted
+  unconditionally for the whole session (App.tsx), so this single loop was enough to keep the page permanently
+  non-idle — the exact signal iOS Safari / iOS PWA / Chrome Android use to discard the tab and force the
+  white-splash reload the whole effort was fixing.
 
-    intervalRef.current = setInterval(() => {
-      refresh();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [loading, refresh]);
+  `refreshOnVisible: false` because the debounced, instrumented listener above already owns the visible-edge
+  refresh; letting the helper refresh too would fetch twice on one edge.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: !loading, refreshOnVisible: false });
 
   const register = useCallback(async (input: ProjectCreateInput): Promise<ProjectInfo> => {
     const project = await registerProject(input);

@@ -32,6 +32,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
   isFullScreenSheetViewport: () => false,
   isShortViewport: () => false,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "desktop",
   getViewportMode: () => "desktop",
   isMobileViewport: () => false,
@@ -94,21 +95,22 @@ describe("SettingsModal CLI Binary visibility", () => {
 
   it("keeps CLI Binary reachable from the Basic-mode desktop nav", async () => {
     const user = userEvent.setup();
-    const { container } = await renderBasicSettings();
+    await renderBasicSettings();
 
     expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
-    expect(container.querySelector(".settings-mobile-section-picker")).toBeNull();
+    // FNXC:SettingsModalTests 2026-07-28-17:20: FN-8606 portals the modal branch (FloatingWindow) to document.body, so modal-internal nodes resolve from the document root, not the render container.
+    expect(document.querySelector(".settings-mobile-section-picker")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /CLI Binary$/ }));
     expect(await screen.findByText(/Installing the global CLI lets you run fn and fusion/)).toBeInTheDocument();
-    expect(container.querySelector(".cli-binary-panel")).toBeTruthy();
+    expect(document.querySelector(".cli-binary-panel")).toBeTruthy();
   });
 
   it("returns CLI Binary for a Basic-mode search and lets operators open it", async () => {
     const user = userEvent.setup();
-    const { container } = await renderBasicSettings();
+    await renderBasicSettings();
 
-    expect(container.querySelector(".settings-mobile-section-picker")).toBeNull();
+    expect(document.querySelector(".settings-mobile-section-picker")).toBeNull();
     await user.type(screen.getByTestId("settings-search-input"), "binary check");
 
     const cliBinaryNav = await screen.findByRole("button", { name: /CLI Binary$/ });

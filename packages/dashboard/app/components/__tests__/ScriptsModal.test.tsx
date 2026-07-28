@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ScriptsModal } from "../ScriptsModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
+import { expectStableTyping } from "./typingStability.test-helpers";
 import type { ScriptEntry } from "../../api";
 
 const mockScripts: Record<string, string> = {
@@ -30,16 +32,30 @@ beforeEach(() => {
 });
 
 describe("ScriptsModal", () => {
-  it("has the 'open' class on the modal overlay when visible", async () => {
+  it("renders inside its FloatingWindow when visible", async () => {
     vi.mocked(fetchScripts).mockResolvedValueOnce(mockScripts);
 
     render(
       <ScriptsModal isOpen={true} onClose={onClose} addToast={addToast} onRunScript={onRunScript} />
     );
 
-    const overlay = screen.getByTestId("scripts-modal");
-    expect(overlay.classList.contains("modal-overlay")).toBe(true);
-    expect(overlay.classList.contains("open")).toBe(true);
+    expect(screen.getByTestId("floating-window-scripts")).toBeInTheDocument();
+  });
+
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard. The FN-8606 floating-window migration made Planning Mode and Settings
+  untypable and no test noticed, because field coverage here uses fireEvent.change, which never needs
+  the input to stay mounted. This asserts the field keeps its DOM node, value, and focus while typed.
+  */
+  it("keeps the script name field mounted and focused while typing", async () => {
+    vi.mocked(fetchScripts).mockResolvedValueOnce(mockScripts);
+    render(<ScriptsModal isOpen={true} onClose={onClose} addToast={addToast} onRunScript={onRunScript} />);
+
+    fireEvent.click(await screen.findByTestId("add-script-btn"));
+    const field = await screen.findByTestId("script-name-input") as HTMLInputElement;
+    await expectStableTyping(field, "lint", () => screen.getByTestId("script-name-input"));
   });
 
   it("does not render when closed", () => {
@@ -410,5 +426,13 @@ describe("ScriptsModal", () => {
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith("A script with this name already exists", "error");
     });
+  });
+});
+
+describe("ScriptsModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<ScriptsModal isOpen onClose={onClose} addToast={addToast} onRunScript={onRunScript} />);
+    assertRenderedModalTouchGeometry("scripts", screen.getByText("Scripts").closest(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("scripts", () => render(<ScriptsModal isOpen onClose={onClose} addToast={addToast} onRunScript={onRunScript} />));
   });
 });

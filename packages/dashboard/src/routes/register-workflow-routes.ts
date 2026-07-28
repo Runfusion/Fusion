@@ -2,6 +2,8 @@ import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIr
 import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon } from "@fusion/core";
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources, validateWorkflowIrDryRun } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
+// FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
+import { rethrowTaskApiError } from "./task-lookup-error.js";
 import { emitWorkflowSseEvent } from "../sse.js";
 import type { ApiRoutesContext } from "./types.js";
 
@@ -687,7 +689,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       res.json({ approved: command });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
-      rethrowAsApiError(err);
+      rethrowTaskApiError(err, req.params.taskId);
     }
   });
 
@@ -740,6 +742,39 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         throw setErr;
       }
       res.json({ workflowId: workflowId ?? null });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+  PUT /api/project/board-selected-workflow — Body: { workflowId: string | null }
+
+  Mirrors the operator's current Board workflow lane into project settings. The Board's
+  own authoritative copy stays in project-scoped localStorage; this mirror exists solely
+  so NON-BROWSER callers (`fn task create`, the `fn_task_create` tool, refinement invoked
+  outside the dashboard) can resolve the "Selected workflow" option, which they cannot
+  read from a browser store.
+  Write-only by design: nothing reads this back into the Board, so a stale or
+  cross-operator value can only affect which workflow a newly created task inherits —
+  never what the operator sees. `null` clears the mirror.
+  Unlike PUT /project/default-workflow this does NOT 404 an unknown id: the lane mirror
+  is a best-effort UI echo, and the consuming resolver already degrades an unresolvable
+  id to "inherit the project default".
+  */
+  router.put("/project/board-selected-workflow", async (req, res) => {
+    try {
+      const { store } = await getProjectContext(req);
+      const workflowId = (req.body ?? {}).workflowId;
+      if (workflowId !== null && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string or null");
+      }
+      const trimmed = typeof workflowId === "string" ? workflowId.trim() : "";
+      // null-as-delete: the settings layer treats null as an explicit clear.
+      await store.updateSettings({ boardSelectedWorkflowId: trimmed || null } as never);
+      res.json({ workflowId: trimmed || null });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);

@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-merge-policy");
 /**
  * Merger strategy, conflict, audit, and auto-recovery policy types + normalizers.
  *
@@ -28,7 +31,7 @@ export function normalizeMergeIntegrationWorktreeMode(
   if (value === "cwd-main") {
     if (!warnedLegacyCwdMain) {
       warnedLegacyCwdMain = true;
-      console.warn("[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch");
+      severityAuditLog.warn("[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch");
     }
     return "cwd-integration-branch";
   }

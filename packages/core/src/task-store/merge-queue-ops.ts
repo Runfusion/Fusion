@@ -7,7 +7,6 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {InvalidMergeQueueLeaseDurationError} from "./errors.js";
 import {existsSync} from "node:fs";
 import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from "../types.js";
 import {assertNotWorkspaceTaskMerge} from "../types.js";
@@ -16,7 +15,6 @@ import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 
@@ -330,110 +328,9 @@ export async function startStepImpl(store: TaskStore, id: string, stepIndex: num
 }
 
 export async function acquireMergeQueueLeaseImpl(store: TaskStore, workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return acquireMergeQueueLeaseAsync(layer, workerId, opts);
-    }
-    if (opts.leaseDurationMs <= 0) {
-      throw new InvalidMergeQueueLeaseDurationError(opts.leaseDurationMs);
-    }
-
-    return store.db.transactionImmediate(() => {
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
-      store.cleanupStaleMergeQueueRows(now);
-
-      let leased: MergeQueueRow | undefined;
-      if (opts.targetTaskId) {
-        leased = store.db.prepare(`
-          UPDATE mergeQueue
-             SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ?
-           WHERE taskId = ?
-             AND EXISTS (
-               SELECT 1
-                 FROM tasks t
-                WHERE t.id = mergeQueue.taskId
-                  AND t.column = 'in-review'
-             )
-             AND (leasedBy IS NULL OR leaseExpiresAt <= ?)
-           RETURNING *
-        `).get(workerId, now, leaseExpiresAt, opts.targetTaskId, now) as MergeQueueRow | undefined;
-
-        if (!leased) {
-          const queueHead = store.db.prepare(`
-            SELECT mq.taskId, mq.leasedBy, t.column
-              FROM mergeQueue mq
-              LEFT JOIN tasks t ON t.id = mq.taskId
-             ORDER BY CASE mq.priority
-                        WHEN 'urgent' THEN 0
-                        WHEN 'high'   THEN 1
-                        WHEN 'normal' THEN 2
-                        WHEN 'low'    THEN 3
-                        ELSE 4
-                      END ASC,
-                      mq.enqueuedAt ASC
-             LIMIT 1
-          `).get() as { taskId: string; leasedBy: string | null; column: string | null } | undefined;
-
-          store.insertRunAuditEventRow({
-            taskId: opts.targetTaskId,
-            domain: "database",
-            mutationType: "mergeQueue:lease-target-unavailable",
-            target: opts.targetTaskId,
-            metadata: {
-              targetTaskId: opts.targetTaskId,
-              workerId,
-              queueHeadTaskId: queueHead?.taskId ?? null,
-              queueHeadLeasedBy: queueHead?.leasedBy ?? null,
-              queueHeadColumn: queueHead?.column ?? null,
-            },
-          });
-          return null;
-        }
-      } else {
-        leased = store.db.prepare(`
-          UPDATE mergeQueue
-             SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ?
-           WHERE taskId = (
-             SELECT mq.taskId
-               FROM mergeQueue mq
-               JOIN tasks t ON t.id = mq.taskId
-              WHERE t.column = 'in-review'
-                AND (mq.leasedBy IS NULL OR mq.leaseExpiresAt <= ?)
-              ORDER BY CASE mq.priority
-                         WHEN 'urgent' THEN 0
-                         WHEN 'high'   THEN 1
-                         WHEN 'normal' THEN 2
-                         WHEN 'low'    THEN 3
-                         ELSE 4
-                       END ASC,
-                       mq.enqueuedAt ASC
-              LIMIT 1
-           )
-           RETURNING *
-        `).get(workerId, now, leaseExpiresAt, now) as MergeQueueRow | undefined;
-
-        if (!leased) {
-          return null;
-        }
-      }
-
-      const entry = store.rowToMergeQueueEntry(leased);
-      store.insertRunAuditEventRow({
-        taskId: entry.taskId,
-        domain: "database",
-        mutationType: "mergeQueue:lease-acquired",
-        target: entry.taskId,
-        metadata: {
-          taskId: entry.taskId,
-          workerId,
-          leaseExpiresAt: entry.leaseExpiresAt,
-          priority: entry.priority,
-        },
-      });
-      return entry;
-    });
-  }
+        const layer = store.asyncLayer!;
+    return acquireMergeQueueLeaseAsync(layer, workerId, opts);
+}
 
 export async function mergeTaskImpl(store: TaskStore, id: string): Promise<MergeResult> {
     return store.withTaskLock(id, async () => {

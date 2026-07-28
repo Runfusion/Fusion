@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBootstrapPrompt,
   buildRefinementSeedPrompt,
+  isTaskAwaitingPlanning,
   isUnplannedSeedPrompt,
 } from "../mesh-task-replication.js";
 import { applyOriginalDescription } from "../original-description-policy.js";
@@ -87,5 +88,48 @@ describe("mesh-task-replication", () => {
         isUnplannedSeedPrompt(buildBootstrapPrompt("FN-2", "Title", "desc"), "FN-1", "Title", "desc"),
       ).toBe(false);
     });
+  });
+});
+
+/*
+FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+`isTaskAwaitingPlanning` is the single answer to "is this plan-in-place card waiting for a PLANNING
+slot?", shared by triage's todo-discovery and the `GET /api/tasks` board enrichment that drives the
+"Queued to plan" / "Ready" badge pair. Before it, the board inferred the answer from `steps.length`
+and disagreed with the engine in both directions.
+
+The three clauses are exactly triage's three todo-discovery branches, so each is pinned here:
+status park, missing spec, and seed-vs-real content. The step count is deliberately NOT an input —
+that is the whole point — so the content cases assert both step shapes.
+*/
+describe("isTaskAwaitingPlanning", () => {
+  const task = (overrides: Partial<{ id: string; title?: string; description: string; status?: string | null }> = {}) => ({
+    id: "FN-1",
+    title: "Title",
+    description: "desc",
+    ...overrides,
+  });
+
+  it("is true for a parked replan regardless of a real spec on disk", () => {
+    expect(isTaskAwaitingPlanning(task({ status: "needs-replan" }), "# FN-1: Title\n\n## Mission\n\nReal spec.\n")).toBe(true);
+  });
+
+  it("is true when PROMPT.md is missing", () => {
+    expect(isTaskAwaitingPlanning(task(), null)).toBe(true);
+  });
+
+  it("is true for either seed shape and false for a real spec", () => {
+    expect(isTaskAwaitingPlanning(task(), buildBootstrapPrompt("FN-1", "Title", "desc"))).toBe(true);
+    expect(isTaskAwaitingPlanning(task(), buildRefinementSeedPrompt("Title", "desc"))).toBe(true);
+    expect(isTaskAwaitingPlanning(task(), "# FN-1: Title\n\n## Steps\n\n1. Do it\n")).toBe(false);
+  });
+
+  it("ignores statuses that are not planning parks", () => {
+    for (const status of [undefined, null, "planning", "executing", "failed"]) {
+      expect(
+        isTaskAwaitingPlanning(task({ status }), "# FN-1: Title\n\n## Steps\n\n1. Do it\n"),
+        String(status),
+      ).toBe(false);
+    }
   });
 });

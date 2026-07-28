@@ -296,7 +296,10 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:coding",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
+      // in the planning lane, so the card crosses into implementation once, via the scheduler.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -323,7 +326,10 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:legacy-coding",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
+      // in the planning lane, so the card crosses into implementation once, via the scheduler.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -334,7 +340,10 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:stepwise-coding",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
+      // in the planning lane, so the card crosses into implementation once, via the scheduler.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -342,10 +351,16 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     leasedGates: ["plan-review", "code-review"],
   },
   {
+    /* FNXC:PlanReviewStep 2026-07-26-14:05: the linear helper's Plan Review group is
+       column-inherited, so like `plan` it lands in the hold column and the card takes the
+       normal capacity release into implementation instead of entering wip straight from
+       intake. Holds even when the gate is default-off (quick-fix) — a disabled optional
+       group is still traversed and still reaches the same capacity boundary. */
     id: "builtin:quick-fix",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -358,7 +373,9 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:review-heavy",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // Plan Review is column-inherited into the hold column — see builtin:quick-fix.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -370,7 +387,9 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:design",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // Plan Review is column-inherited into the hold column — see builtin:quick-fix.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -437,7 +456,10 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     id: "builtin:brainstorming",
     entryColumn: "triage",
     trail: [
-      ["triage", "in-progress", "graph"],
+      // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
+      // in the planning lane, so the card crosses into implementation once, via the scheduler.
+      ["triage", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
@@ -589,7 +611,9 @@ describe("failure parks the card in place (KTD-1)", () => {
   column it never reached, and never back in a hold column.
   */
   const cases: Array<{ id: string; failNodeId: string; expectedColumn: string }> = [
-    { id: "builtin:coding", failNodeId: "plan", expectedColumn: "in-progress" },
+    // FNXC:PlanReviewStep 2026-07-26-17:10: `plan` runs in the planning lane, so a failed plan parks
+    // there — the card never reached implementation.
+    { id: "builtin:coding", failNodeId: "plan", expectedColumn: "todo" },
     { id: "builtin:coding-ideas", failNodeId: "plan", expectedColumn: "todo" },
     { id: "builtin:marketing", failNodeId: "draft", expectedColumn: "drafting" },
     { id: "builtin:lead-generation", failNodeId: "enrich-lead", expectedColumn: "enrichment" },

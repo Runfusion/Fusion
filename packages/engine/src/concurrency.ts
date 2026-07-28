@@ -125,32 +125,77 @@ export class ProjectAdmissionCoordinator {
       // Persisted task rows lag a fire-and-forget lane start, so omitting these
       // reservations lets a second coordinator pass over-admit one project.
       if (candidates.length === 0 || (await params.claimed()) + this.reservationCount(params.projectId) >= params.maxConcurrent) return;
-      const winner = candidates[0];
       // Older test/runtime semaphore wrappers predate tryAcquire. They still
       // exercise project admission, while production semaphores atomically take
       // the host slot here.
       const hasReservableHostSlot = typeof params.semaphore?.tryAcquire === "function";
-      const acquiredHostSlot = hasReservableHostSlot
-        ? params.semaphore!.tryAcquire()
-        : true;
-      if (!acquiredHostSlot) return;
-      // Compatibility-only semaphore shims cannot hold a reservation. Their
-      // lane tests provide claimed() synchronously, while real host semaphores
-      // use this durable marker until take/drop below.
-      if (hasReservableHostSlot) this.reserve(params.projectId, winner.taskId);
-      try {
-        winner.reserve?.();
-        const accepted = await winner.start();
-        if (accepted === false) {
+      /*
+      FNXC:ConcurrencyAdmission 2026-07-26-09:45:
+      Walk PAST a declining candidate instead of ending the pass on it. Previously only
+      `candidates[0]` was ever considered: when the oldest candidate's lane refused the handoff
+      (`start()` returning false — a merge id no longer in the queue, a duplicate/stale planner
+      claim), this returned having admitted nothing, and the next pass re-selected the same
+      still-declining winner. Oldest-first is a FAIRNESS order, not a permission for the oldest
+      candidate to veto every younger lane's work: a lane that cannot start is not consuming
+      capacity, so the slot belongs to the next candidate in age order.
+
+      Ordering is preserved exactly — this only continues down the SAME sorted list, so a candidate
+      is never overtaken by a younger one that could have waited. Still at most ONE admission per
+      call, so no caller's capacity arithmetic changes. Each rejected attempt fully unwinds its own
+      reservation and host slot before the next is tried, which is why the acquire/reserve pair
+      moved inside the loop; a leak here would pin capacity permanently and is exactly the failure
+      this function exists to prevent.
+      */
+      for (const winner of candidates) {
+        const acquiredHostSlot = hasReservableHostSlot
+          ? params.semaphore!.tryAcquire()
+          : true;
+        // The host semaphore is exhausted for everyone, not just this candidate:
+        // trying younger candidates cannot succeed, so stop rather than spin.
+        if (!acquiredHostSlot) return;
+        // Compatibility-only semaphore shims cannot hold a reservation. Their
+        // lane tests provide claimed() synchronously, while real host semaphores
+        // use this durable marker until take/drop below.
+        if (hasReservableHostSlot) this.reserve(params.projectId, winner.taskId);
+        /*
+        FNXC:ConcurrencyAdmission 2026-07-26-10:35:
+        Unwind EXACTLY what this attempt took. Two ways a naive `semaphore.release()` corrupts
+        accounting once declines are routine rather than pass-ending:
+
+        1. Compatibility shims without `tryAcquire` never acquire a slot and never get a reservation,
+           so releasing returns capacity nobody held — `returnSlot` decrements `_active` and drains a
+           waiter regardless. N decliners would free N phantom slots.
+        2. `winner.reserve?.()` is `registerPreHeldExecutorSlot` for the triage and scheduler lanes.
+           Releasing the semaphore without dropping that registration leaves the id in the global
+           pre-held set with no backing acquire; the next pass's `takePreHeldExecutorSlot` then runs a
+           full top-level session without acquiring a slot and releases one it never held, leaving
+           `_active` permanently below the live agent count and the cap silently breached.
+        `dropPreHeldExecutorSlot` performs releaseReservation + release itself, but no-ops when
+        nothing was registered (the merge lane declines without reserving), so that case still needs
+        the explicit unwind.
+        */
+        const releaseAttempt = () => {
+          if (!hasReservableHostSlot) return;
+          if (hasPreHeldExecutorSlot(winner.taskId)) {
+            dropPreHeldExecutorSlot(winner.taskId, params.semaphore);
+            return;
+          }
           this.releaseReservation(winner.taskId);
           params.semaphore?.release();
+        };
+        try {
+          winner.reserve?.();
+          const accepted = await winner.start();
+          if (accepted === false) {
+            releaseAttempt();
+            continue;
+          }
+          admitted = winner.taskId;
           return;
+        } catch (error) {
+          releaseAttempt();
+          throw error;
         }
-        admitted = winner.taskId;
-      } catch (error) {
-        this.releaseReservation(winner.taskId);
-        params.semaphore?.release();
-        throw error;
       }
     })();
     this.draining.set(params.projectId, drain);
@@ -189,6 +234,25 @@ export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
  * zombie in-progress rows kept the idle valve from ever firing) survives this
  * window trivially; a live nested reviewer does not.
  */
+/*
+FNXC:GlobalConcurrencyControls 2026-07-26-11:15:
+Deliberately still 600_000 after an attempt to lower it to 180_000 was reverted under review.
+Motivation for the attempt: an operator-visible "Queued to plan" stall (FN-8600, 2026-07-26) lasted
+~7 minutes, i.e. INSIDE this window, so the valve could not have fired even if leaked capacity was
+the cause. Why it was reverted: nested runs -- the holders the original 600s was justified by -- are
+already excluded from the reclaim floor (`reclaimFloor = bound + nestedActive`), so shortening the
+window does not trade against them. What the window actually protects is a legitimate TOP-LEVEL
+holder that `isRunningAgentTask` does not count: `runWithMergeAdmission` holds its slot for the whole
+merge body (AI arbitration, post-merge audit, recovery dispatch, configured verification), including
+the moments that park the row `paused`/`failed` or finalize it `done` -- all states that predicate
+treats as not-running -- while neither lane's `inFlightCount` knows about a merge-lane slot. Inside a
+shorter window the valve would reconcile that live slot away, `_drain()` would admit a replacement
+over the cap, and the original body's later release would push `_active` permanently BELOW the true
+live count (returnSlot clamps at 0 and never corrects upward) -- trading a bounded, visible stall for
+an unbounded silent cap breach. Lower this only with measured evidence (the existing "recovered stale
+semaphore active count X -> Y" warn gives the excess-duration distribution), or after merge-lane holds
+are added to `inFlightCount` so a merge body can never look like leaked excess.
+*/
 export const STALE_SEMAPHORE_EXCESS_REPAIR_MS = 600_000;
 
 function createAbortError(): Error {

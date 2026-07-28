@@ -79,7 +79,13 @@ function runApp(extraArgs) {
     loader: LOADER,
     entry: ENTRY,
     args: extraArgs,
-  }), { stdio: "inherit", env: { ...process.env, FUSION_RESTART_SUPERVISED: "1" } });
+  }), {
+    stdio: "inherit",
+    // FNXC:SystemPanel 2026-07-25-10:05: stamp the supervisor pid alongside the
+    // flag so the child can tell a real supervising parent from an inherited
+    // copy of the variable (see hasLiveSupervisingParent in commands/dashboard.ts).
+    env: { ...process.env, FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: String(process.pid) },
+  });
   tsx.on("close", (c) => {
     if (c === RESTART_EXIT_CODE) {
       console.log("[fusion:dev] restart requested — restarting…");

@@ -6,6 +6,10 @@ import { basename, dirname, join, relative, resolve, isAbsolute } from "node:pat
 import type { ColumnId, SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
+/*
+FNXC:EngineDiagnostics 2026-07-26-10:25:
+Worktree pool rehydrate-skip / prune-stale / orphan-skip / probe chatter is expected sweep noise — debug (FUSION_DEBUG=worktree-pool). Keep log for actual cleanup (removed orphan, cleaned path) and hard failures.
+*/
 import { isAiMergeContainerDir, isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
@@ -259,6 +263,39 @@ export function hasRequiredWorktreeFiles(worktreePath: string): boolean {
   return existsSync(join(worktreePath, ".git"));
 }
 
+/*
+FNXC:WorktreeLiveness 2026-07-26-08:20:
+SYNC, NON-SPAWNING liveness probe for callers that must not run git — specifically failure/recovery
+paths, where spawning git to decide how to recover from a git failure is both slow and fragile.
+`classifyTaskWorktree` stays the canonical classifier and MUST be preferred wherever an await and a
+subprocess are acceptable (see docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md
+→ Prevention: new worktree-liveness paths should call the shared classifier).
+
+This probe covers the classifier's filesystem gate (the path exists and carries `.git`) plus its
+`repo-root` gate when `rootDir` is supplied. It does NOT cover `unregistered` or
+`outside-work-tree`, so a directory whose `.git` pointer is stale but present still reads as usable
+here. Callers that treat "usable" as permission to reuse a checkout must tolerate that narrower
+guarantee; callers needing the full verdict must await `classifyTaskWorktree`. Keeping the fast
+probe HERE, beside the classifier, is what makes the difference between the two auditable instead
+of a duplicate check growing in an unrelated module.
+
+Pass `rootDir` whenever the caller has it. The project root is a registered git worktree carrying
+`.git`, so without that gate the main checkout reads as a usable TASK worktree — the FN-6861
+acquisition→gate→requeue loop in
+docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md.
+*/
+export function hasUsableWorktreeShape(
+  worktreePath: string | undefined | null,
+  rootDir?: string,
+): boolean {
+  if (!worktreePath) return false;
+  // `.git` under a path that does not exist (or is a file) cannot exist either, so this single
+  // filesystem probe subsumes the directory-existence check.
+  if (!hasRequiredWorktreeFiles(worktreePath)) return false;
+  if (rootDir && isRepoRootPath(rootDir, worktreePath)) return false;
+  return true;
+}
+
 export async function isInsideGitWorkTree(worktreePath: string): Promise<boolean> {
   try {
     const result = await execAsync("git rev-parse --is-inside-work-tree", {
@@ -268,7 +305,7 @@ export async function isInsideGitWorkTree(worktreePath: string): Promise<boolean
     return getExecStdout(result).trim() === "true";
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    worktreePoolLog.log(`isInsideGitWorkTree check failed for ${worktreePath}: ${errorMessage}`);
+    worktreePoolLog.debug(`isInsideGitWorkTree check failed for ${worktreePath}: ${errorMessage}`);
     return false;
   }
 }
@@ -529,7 +566,7 @@ export class WorktreePool {
         return path;
       }
       this.leased.delete(path);
-      worktreePoolLog.log(`Pruned stale entry: ${path}`);
+      worktreePoolLog.debug(`Pruned stale entry: ${path}`);
     }
     return null;
   }
@@ -622,7 +659,7 @@ export class WorktreePool {
   rehydrate(idlePaths: string[]): void {
     for (const path of idlePaths) {
       if (!existsSync(path)) {
-        worktreePoolLog.log(`Rehydrate skipped (not on disk): ${path}`);
+        worktreePoolLog.debug(`Rehydrate skipped (not on disk): ${path}`);
         continue;
       }
       const existingHolder = this.leased.get(path);
@@ -678,7 +715,7 @@ export class WorktreePool {
       await execAsync("git checkout -- .", { cwd: worktreePath });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      worktreePoolLog.log(`git checkout -- . failed (may be clean): ${errorMessage}`);
+      worktreePoolLog.debug(`git checkout -- . failed (may be clean): ${errorMessage}`);
       // May fail if worktree is already clean — that's fine
     }
 
@@ -879,7 +916,7 @@ export async function scanIdleWorktrees(
     if (task.worktree && task.column !== "done" && registeredWorktrees.has(resolve(task.worktree))) {
       activeWorktrees.add(resolve(task.worktree));
     } else if (task.worktree && task.column !== "done") {
-      worktreePoolLog.log(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
+      worktreePoolLog.debug(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
     }
   }
 
@@ -1096,10 +1133,10 @@ export async function reapOrphanWorktrees(
       if (!dotGitPointerIsDangling(dotGit)) {
         // Valid registration, a real .git dir, or a pointer we couldn't positively classify as
         // dangling — leave it; assertValidWorktreeSession handles it on the next agent start.
-        worktreePoolLog.log(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
+        worktreePoolLog.debug(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
         continue;
       }
-      worktreePoolLog.log(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
+      worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
       // fall through to removal
     }
 

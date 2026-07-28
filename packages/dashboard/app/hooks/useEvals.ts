@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { EvalCategoryScore, EvalEvidenceReference, EvalFollowUpSuggestion } from "@fusion/core";
 import { getEval, listEvalRuns, listEvals } from "../api";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const FILTER_DEBOUNCE_MS = 300;
 const POLL_INTERVAL_MS = 15_000;
@@ -196,15 +197,19 @@ export function useEvals(options?: { projectId?: string }) {
     void loadDetail(selectedEvalId);
   }, [loadDetail, selectedEvalId]);
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void refresh();
-      if (selectedEvalId) {
-        void loadDetail(selectedEvalId);
-      }
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:42:
+  The evals list/detail poll is suspended while the document is hidden. Even a view-scoped 15s loop keeps a
+  backgrounded mobile tab "busy" and eligible for OS discard, which surfaces as a white-splash reload when
+  the operator switches back; the hidden -> visible edge polls once so results are fresh on return.
+  */
+  const pollEvals = useCallback(() => {
+    void refresh();
+    if (selectedEvalId) {
+      void loadDetail(selectedEvalId);
+    }
   }, [loadDetail, refresh, selectedEvalId]);
+  useVisibilityAwarePoll(pollEvals, POLL_INTERVAL_MS);
 
   const setSelectedEvalId = useCallback((value: string | null) => {
     selectedEvalIdRef.current = value;

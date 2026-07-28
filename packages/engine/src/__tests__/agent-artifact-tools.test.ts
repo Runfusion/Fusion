@@ -761,6 +761,16 @@ describe("artifact view tool", () => {
     expect(getText(result)).toContain("Inline markdown body");
   });
 
+  it("caps long inline content while retaining artifact identity and a narrowing hint", async () => {
+    const { store, getArtifact } = createMockStore();
+    getArtifact.mockResolvedValue(createMockArtifact({ id: "art-long", content: "x".repeat(20_000) }));
+
+    const result = await runTool(createArtifactViewTool(store), "call-view-long", { id: "art-long" });
+    expect(getText(result).length).toBeLessThanOrEqual(12_000);
+    expect(getText(result)).toContain("Artifact: Implementation notes");
+    expect(getText(result)).toContain("focused artifact read");
+  });
+
   it("renders binary uri artifacts", async () => {
     const { store, getArtifact } = createMockStore();
     getArtifact.mockResolvedValue(createMockArtifact({

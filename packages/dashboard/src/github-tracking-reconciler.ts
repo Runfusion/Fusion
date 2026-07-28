@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-github-tracking-reconciler");
 import type { GlobalSettings, ProjectSettings, TaskSourceIssue, TaskStore } from "@fusion/core";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { GitHubClient } from "./github.js";
@@ -38,7 +41,7 @@ export class GitHubTrackingReconciler {
     try {
       await fn();
     } catch (err) {
-      console.warn(
+      severityAuditLog.warn(
         `[github-tracking-reconcile] ${label} pass failed (other passes still run): ${err instanceof Error ? err.message : String(err)}`,
       );
     }

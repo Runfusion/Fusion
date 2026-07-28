@@ -1068,6 +1068,17 @@ export interface Task {
    * store or task.json. Consumed by FN-7516's `TaskCard` badge.
    */
   plannerOverseerState?: PlannerOverseerRuntimeSnapshot;
+  /**
+   * FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+   * Transient, API-populated answer to "is this plan-in-place card waiting for a PLANNING slot
+   * (rather than a WIP slot)?", derived from PROMPT.md seed-ness via `isTaskAwaitingPlanning` — the
+   * same predicate triage's todo-discovery uses. Attached best-effort to the `GET /api/tasks`
+   * payload for pre-WIP cards only (mirroring the additive `branchProgress` / `plannerOverseerState`
+   * board-payload convention) — NEVER written to the store or task.json, and absent on SSE payloads.
+   * Consumed by TaskCard's "Queued to plan" / "Ready" badge pair, which falls back to its old
+   * step-count heuristic when the field is absent.
+   */
+  awaitingPlanning?: boolean;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */

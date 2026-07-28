@@ -207,6 +207,21 @@ beforeEach(() => {
   clearDaemonAuthEnv();
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
+  /*
+  FNXC:DashboardTests 2026-07-26-13:05:
+  Every test must start as a FRESH TAB. useViewState (and the board scroll snapshot) mirror per-tab
+  state into sessionStorage so an involuntary mobile tab discard/reload restores the operator's real
+  view and scroll position instead of bouncing to the landing view. sessionStorage is per-tab in a
+  browser, but a vitest worker shares ONE jsdom session store across every test in the file — so
+  without this reset, one test's view silently wins over the localStorage view the next test seeds
+  (this leaked into 30+ App/navigation/task-detail cases). Tests that need a mid-test "separate boot"
+  still clear it themselves; seeds written inside a test body are unaffected because this runs first.
+  */
+  try {
+    globalThis.sessionStorage?.clear();
+  } catch {
+    // sessionStorage is absent in the node (non-jsdom) route/server test environment.
+  }
 });
 
 // Clean up after each test

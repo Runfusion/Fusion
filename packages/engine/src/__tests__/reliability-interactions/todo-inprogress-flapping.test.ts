@@ -21,6 +21,21 @@ type MutableSettings = Settings & {
   dispatchOscillationSettleMs?: number;
 };
 
+/*
+FNXC:PlanReviewStep 2026-07-26-17:10:
+The default workflow is plan-in-place: a `todo` card releases only after Plan Review passed, so these
+scheduler fixtures model a card that already cleared the gate (the state every real card is in when
+the capacity sweep sees it). Holding an unreviewed card is the gate working — that path is owned by
+`pre-release-plan-review.test.ts`.
+*/
+const PASSED_PLAN_REVIEW = {
+  workflowStepId: "plan-review",
+  workflowStepName: "Plan Review",
+  status: "passed" as const,
+  source: "node" as const,
+  phase: "pre-merge" as const,
+};
+
 function makeTask(rootDir: string, overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-5941",
@@ -36,6 +51,7 @@ function makeTask(rootDir: string, overrides: Partial<Task> = {}): Task {
     steps: [{ id: "s1", title: "step", status: "in-progress" } as any],
     currentStep: 1,
     log: [],
+    workflowStepResults: [PASSED_PLAN_REVIEW],
     createdAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
     updatedAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
     columnMovedAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),

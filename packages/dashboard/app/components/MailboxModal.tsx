@@ -1,4 +1,5 @@
 import "./MailboxModal.css";
+import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -168,6 +169,109 @@ function buildReplyThread(messages: Message[], selectedMessage: Message): Messag
   return allMessages
     .filter((message) => threadIds.has(message.id))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+/*
+FNXC:Mailbox 2026-07-26-20:10:
+Reply-context rows MUST stay a module-scope component, never one declared inside MailboxModal's render.
+A component declared in render is a fresh element type on every render, so React unmounts and remounts the
+whole recursive reply thread on each parent update — expanded rows lose their DOM identity, in-flight focus
+and scroll position are discarded, and every nested level re-mounts on unrelated mailbox state changes.
+The parent's reply state and handlers arrive through `env` so the element type stays stable.
+(Same defect class as FN-8606's Planning/Settings ModalShell, which made those surfaces untypable.)
+*/
+interface ReplyContextEnv {
+  replyContextCache: ReadonlyMap<string, Message>;
+  replyContextExpanded: Record<string, boolean>;
+  replyContextLoading: Record<string, boolean>;
+  replyContextErrors: Record<string, string>;
+  setReplyExpanded: (key: string, isExpanded: boolean) => void;
+  loadReplyMessage: (messageId: string) => Promise<Message | null>;
+  agentNamesById: ReadonlyMap<string, string>;
+  t: TFunction<"app">;
+}
+
+function ReplyContextExpandable({
+  ownerMessageId,
+  replyToId,
+  initialMessage,
+  ancestorIds,
+  testId,
+  env,
+}: {
+  ownerMessageId: string;
+  replyToId: string;
+  initialMessage?: Message;
+  ancestorIds: Set<string>;
+  testId?: string;
+  env: ReplyContextEnv;
+}) {
+  const { replyContextCache, replyContextExpanded, replyContextLoading, replyContextErrors, setReplyExpanded, loadReplyMessage, agentNamesById, t } = env;
+  const cacheMessage = replyContextCache.get(replyToId) ?? initialMessage;
+  const rowKey = `${ownerMessageId}-${replyToId}`;
+  const isExpanded = Boolean(replyContextExpanded[rowKey]);
+  const isLoadingReply = Boolean(replyContextLoading[replyToId]);
+  const errorMessage = replyContextErrors[replyToId];
+  const hasCycle = ancestorIds.has(replyToId);
+
+  const handleToggle = async () => {
+    if (isExpanded) {
+      setReplyExpanded(rowKey, false);
+      return;
+    }
+    setReplyExpanded(rowKey, true);
+    if (!cacheMessage && !hasCycle) {
+      await loadReplyMessage(replyToId);
+    }
+  };
+
+  const nextAncestorIds = new Set(ancestorIds);
+  nextAncestorIds.add(replyToId);
+
+  return (
+    <div className="mailbox-reply-context-wrapper">
+      <button
+        type="button"
+        className="mailbox-reply-context"
+        onClick={() => {
+          void handleToggle();
+        }}
+        aria-expanded={isExpanded}
+        data-testid={testId}
+      >
+        <span className="mailbox-reply-context__chevron" aria-hidden="true">
+          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+        <span>
+          ↪ {t("mailbox.replyingTo", "Replying to {{preview}}", { preview: cacheMessage ? messagePreview(cacheMessage.content, 60) : `message ${replyToId}` })}
+        </span>
+        {isLoadingReply && <Loader2 size={14} className="spin" />}
+      </button>
+
+      {isExpanded && (
+        <div className="mailbox-reply-context__nested" data-testid={`mailbox-reply-expanded-${replyToId}`}>
+          {errorMessage && <div className="mailbox-reply-context__error">{errorMessage}</div>}
+          {cacheMessage && (
+            <>
+              <div className="mailbox-conversation-msg-header">
+                <span>{participantLabel(cacheMessage.fromId, cacheMessage.fromType, agentNamesById, t)}</span>
+                <span className="mailbox-message-time">{formatTimestamp(cacheMessage.createdAt, t)}</span>
+              </div>
+              <div className="mailbox-conversation-msg-body">{cacheMessage.content}</div>
+              {cacheMessage.metadata?.replyTo?.messageId && !nextAncestorIds.has(cacheMessage.metadata.replyTo.messageId) && (
+                <ReplyContextExpandable
+                  ownerMessageId={cacheMessage.id}
+                  replyToId={cacheMessage.metadata.replyTo.messageId}
+                  ancestorIds={nextAncestorIds}
+                  env={env}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -398,7 +502,17 @@ export function MailboxModal({
       }
     };
 
+    /*
+    FNXC:MailboxModal 2026-07-26-16:20:
+    Resync contract (see SseSubscription in sse-bus.ts). The modal's message lists and unread count are
+    mutated ONLY by these events, and the stream is lossy: an error/heartbeat reconnect or the >=60s
+    hidden-tab suspend drops the socket and /api/events keeps no replay buffer. Without onReconnect a
+    message sent while the phone was backgrounded never appears and the unread badge under-counts until
+    the operator manually switches tabs. `onMailboxUpdate` is the same authoritative reload the events
+    already trigger, so reusing it needs no new endpoint.
+    */
     return subscribeSse(`/api/events${query}`, {
+      onReconnect: onMailboxUpdate,
       events: {
         "message:sent": onMailboxUpdate,
         "message:received": onMailboxUpdate,
@@ -635,97 +749,27 @@ export function MailboxModal({
 
   if (!isOpen) return null;
 
-  const ReplyContextExpandable = ({
-    ownerMessageId,
-    replyToId,
-    initialMessage,
-    ancestorIds,
-    testId,
-  }: {
-    ownerMessageId: string;
-    replyToId: string;
-    initialMessage?: Message;
-    ancestorIds: Set<string>;
-    testId?: string;
-  }) => {
-    const cacheMessage = replyContextCache.get(replyToId) ?? initialMessage;
-    const rowKey = `${ownerMessageId}-${replyToId}`;
-    const isExpanded = Boolean(replyContextExpanded[rowKey]);
-    const isLoadingReply = Boolean(replyContextLoading[replyToId]);
-    const errorMessage = replyContextErrors[replyToId];
-    const hasCycle = ancestorIds.has(replyToId);
-
-    const handleToggle = async () => {
-      if (isExpanded) {
-        setReplyExpanded(rowKey, false);
-        return;
-      }
-      setReplyExpanded(rowKey, true);
-      if (!cacheMessage && !hasCycle) {
-        await loadReplyMessage(replyToId);
-      }
-    };
-
-    const nextAncestorIds = new Set(ancestorIds);
-    nextAncestorIds.add(replyToId);
-
-    return (
-      <div className="mailbox-reply-context-wrapper">
-        <button
-          type="button"
-          className="mailbox-reply-context"
-          onClick={() => {
-            void handleToggle();
-          }}
-          aria-expanded={isExpanded}
-          data-testid={testId}
-        >
-          <span className="mailbox-reply-context__chevron" aria-hidden="true">
-            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </span>
-          <span>
-            ↪ {t("mailbox.replyingTo", "Replying to {{preview}}", { preview: cacheMessage ? messagePreview(cacheMessage.content, 60) : `message ${replyToId}` })}
-          </span>
-          {isLoadingReply && <Loader2 size={14} className="spin" />}
-        </button>
-
-        {isExpanded && (
-          <div className="mailbox-reply-context__nested" data-testid={`mailbox-reply-expanded-${replyToId}`}>
-            {errorMessage && <div className="mailbox-reply-context__error">{errorMessage}</div>}
-            {cacheMessage && (
-              <>
-                <div className="mailbox-conversation-msg-header">
-                  <span>{participantLabel(cacheMessage.fromId, cacheMessage.fromType, agentNamesById, t)}</span>
-                  <span className="mailbox-message-time">{formatTimestamp(cacheMessage.createdAt, t)}</span>
-                </div>
-                <div className="mailbox-conversation-msg-body">{cacheMessage.content}</div>
-                {cacheMessage.metadata?.replyTo?.messageId && !nextAncestorIds.has(cacheMessage.metadata.replyTo.messageId) && (
-                  <ReplyContextExpandable
-                    ownerMessageId={cacheMessage.id}
-                    replyToId={cacheMessage.metadata.replyTo.messageId}
-                    ancestorIds={nextAncestorIds}
-                  />
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    );
+  /*
+  FNXC:Mailbox 2026-07-26-20:10:
+  The reply-context environment is assembled once per render and handed to the module-scope
+  ReplyContextExpandable below, which owns the recursive thread rendering.
+  */
+  const replyContextEnv: ReplyContextEnv = {
+    replyContextCache,
+    replyContextExpanded,
+    replyContextLoading,
+    replyContextErrors,
+    setReplyExpanded,
+    loadReplyMessage,
+    agentNamesById,
+    t,
   };
 
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <div
-      className="modal-overlay open"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      data-testid="mailbox-modal-overlay"
-    >
+    <FloatingWindow windowKey="mailbox" title={t("mailbox.title", "Mailbox")} ariaLabel={t("mailbox.title", "Mailbox")} onClose={onClose} hideHeader dragHandleSelector=".mailbox-modal .modal-header" className="floating-window--mailbox" defaultSize={{ width: 860, height: 680 }} minSize={{ width: 480, height: 360 }} persistGeometryKey="floating-window:mailbox" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown modal testId="mailbox-modal-overlay">
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Mailbox is a long-lived workspace; preserve outside dismissal and keep keyboard positioning inside the hosted panel. */}
       <div className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal">
         {/* Header */}
         <div className="modal-header mailbox-header">
@@ -896,6 +940,7 @@ export function MailboxModal({
                             initialMessage={replyToMessage}
                             ancestorIds={new Set([msg.id])}
                             testId={`mailbox-reply-context-${msg.id}`}
+                            env={replyContextEnv}
                           />
                         )}
                         <MailboxMessageContent
@@ -934,6 +979,7 @@ export function MailboxModal({
                       initialMessage={threadMessages.find((candidate) => candidate.id === selectedMessage.metadata?.replyTo?.messageId)}
                       ancestorIds={new Set([selectedMessage.id])}
                       testId="mailbox-selected-reply-context"
+                      env={replyContextEnv}
                     />
                   )}
                   <MailboxMessageContent
@@ -1213,7 +1259,7 @@ export function MailboxModal({
         </div>
 
       </div>
-    </div>
+    </FloatingWindow>
   );
 }
 

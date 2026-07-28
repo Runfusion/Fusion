@@ -3,12 +3,80 @@ import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueA
 import { normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
-import { clearCache, readCache, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 import { pushTrace } from "../utils/dashboardTraceBuffer";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isLikelyTabSuspensionError } from "./visibilitySuspension";
 
 const loggedTaskCacheHitProjects = new Set<string>();
-const TASK_VIEW_REENTRY_FRESHNESS_MS = SWR_TASKS_MAX_AGE_MS;
+/*
+FNXC:MobileTabDiscard 2026-07-26-10:34:
+In-app task-view re-entry freshness is deliberately NOT the hydration TTL. `SWR_TASKS_MAX_AGE_MS` was
+raised to hours so a discarded mobile tab can repaint its last board instantly; this bound answers a
+different question — "is the LIVE in-memory snapshot recent enough to skip the catch-up fetch when the
+user returns to Board/List within the same page session?" — and must stay short, because task SSE is
+disabled off task-list views and missed events need server confirmation.
+*/
+const TASK_VIEW_REENTRY_FRESHNESS_MS = 60_000;
+
+/*
+FNXC:MobileTabDiscard 2026-07-26-16:40:
+Destroying the task snapshot is only justified when the server actually answered and disagreed with it
+(non-2xx, or a response that would not parse). A transport-level rejection on a waking mobile radio —
+"Load failed" / "Failed to fetch" / an offline navigator — proves nothing about the snapshot's contents.
+
+Before this guard, the mount revalidation's `clearOnError` catch ran on those rejections and both blanked
+the hydrated board and deleted the cache entry, so the NEXT restore also started empty: a suspension
+failure permanently defeated the feature the raised `SWR_TASKS_MAX_AGE_MS` exists to serve. Nine sibling
+hooks (useProjects, useNodes, useMeshState, useExecutorStats, useUsageData, useMeshEngines,
+useManagedDockerNodes, useProjectHealth) already guard this with the same `visibilitySuspension`
+predicate; this reuses it rather than adding a tenth copy.
+
+`navigator.onLine === false` is authoritative for "no request left the device"; `true` is not evidence of
+reachability, so the message check still has to run. `lastRefreshErrorAt` is set either way, so the
+re-entry/visibility retry paths still fire.
+*/
+function didFailureReachServer(error: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return !isLikelyTabSuspensionError(message);
+}
+
+/*
+FNXC:MobileTabDiscard 2026-07-26-10:40:
+Snapshot-write budget. `writeCache` drops any payload over `maxBytes`, and it dropped SILENTLY: a board
+with many long-lived tasks (each carrying an unbounded `log` array) serialized past 500KB, so nothing
+was ever cached and the mobile-discard restore had no snapshot to hydrate from at all — the cache
+appeared to "work" while being a no-op exactly on the boards that need it most. The snapshot is a render
+seed, not a data mirror, so `log` is stripped (the board never renders it; task detail fetches its own),
+and on a still-over-budget payload the row count is shrunk until the write lands.
+*/
+const TASK_CACHE_MAX_BYTES = 500_000;
+const TASK_CACHE_ROW_LIMITS = [500, 250, 100, 50] as const;
+
+function toCachedTaskRow(task: Task): Task {
+  const log = (task as Task & { log?: unknown }).log;
+  if (!Array.isArray(log) || log.length === 0) {
+    return task;
+  }
+  const { log: _droppedLog, ...rest } = task as Task & { log?: unknown };
+  return rest as Task;
+}
+
+/** Persist the board snapshot, shrinking row count until it fits the quota budget. Returns whether anything was written. */
+function writeTaskCacheSnapshot(cacheKey: string, tasks: Task[]): boolean {
+  for (const limit of TASK_CACHE_ROW_LIMITS) {
+    const payload = tasks.length > limit ? tasks.slice(0, limit).map(toCachedTaskRow) : tasks.map(toCachedTaskRow);
+    // `!== false` so a test double that returns undefined is treated as a successful write
+    // rather than driving the shrink loop down to its smallest tier.
+    if (writeCache(cacheKey, payload, { maxBytes: TASK_CACHE_MAX_BYTES }) !== false) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /*
 FNXC:WorkflowColumns 2026-07-19-2b:05 (U12 / R2 / R11):
@@ -100,9 +168,26 @@ function compareTimestamps(a: string | undefined, b: string | undefined): number
   return a.localeCompare(b);
 }
 
+/*
+FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+`awaitingPlanning` is attached by `GET /api/tasks` only — SSE task payloads come straight from the
+store, so a status-only live update would otherwise wipe it and flip TaskCard's badge back to its
+step-count fallback mid-stall. Carry it across same-column updates, but ONLY while the step count is
+unchanged: planning finishing is exactly a step-count change, and a stale `true` surviving that would
+keep claiming "Queued to plan" for a card that is now Ready until the next full board fetch. When it
+is dropped the fallback answers correctly in both directions (steps landed -> Ready, steps cleared ->
+queued), so the degraded state is never the wrong label.
+*/
+function carryAwaitingPlanning(current: Task, incoming: Task): boolean | undefined {
+  if (incoming.awaitingPlanning !== undefined) return incoming.awaitingPlanning;
+  const stepCountUnchanged = (current.steps?.length ?? 0) === (incoming.steps?.length ?? 0);
+  return stepCountUnchanged ? current.awaitingPlanning : undefined;
+}
+
 function mergeSameColumnTask(current: Task, incoming: Task): Task {
   return {
     ...incoming,
+    awaitingPlanning: carryAwaitingPlanning(current, incoming),
     // Preserve stable execution metadata when a same-column live update arrives
     // without the full task payload (common during status/log-only SSE updates).
     columnMovedAt: current.columnMovedAt ?? incoming.columnMovedAt,
@@ -165,14 +250,44 @@ export function useTasks(options?: UseTasksOptions) {
   const projectId = options?.projectId;
   const searchQuery = options?.searchQuery;
   const sseEnabled = options?.sseEnabled ?? true;
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-10:48:
+  First paint after a mobile tab discard must show the last known board, not an empty one. This
+  initializer is the only thing standing between the restore and a blank board, so it hydrates from a
+  snapshot that may be hours old (`SWR_TASKS_MAX_AGE_MS`). That is safe only because hydration is
+  always paired with revalidation: `isStale` starts true (App renders <TopProgressBar visible> off it)
+  and the mount effect below unconditionally issues one `refreshTasks({ clearOnError: true })`.
+
+  FNXC:MobileTabDiscard 2026-07-26-16:40:
+  CORRECTION to the sentence this note used to end with ("whose failure branch CLEARS this cache entry
+  so a wrong snapshot cannot survive into the next restore"): that is true only of a failure that
+  REACHED THE SERVER. A transport-level rejection (suspended tab, offline radio) now leaves the entry
+  and the painted rows alone, because it is not evidence the snapshot is wrong — and deleting on it made
+  every flaky-radio restore blank, permanently. See the catch branch of `refreshTasks`.
+  */
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-14:12:
+  Captured by the `tasks` initializer below and consumed by the `lastFetchTimeMs` ref initializer on
+  the SAME first render, so the hydrated board is described by the snapshot's real write time from its
+  very first paint. A `useRef` initial value is only honored on first render, which is exactly when the
+  `useState` initializer runs — the two stay in lockstep with no effect-ordering gap. Reading the
+  timestamp in an effect instead would be wrong: the value returned to consumers is `.current` read
+  during render, so the first (restore) frame would still ship `undefined`.
+  It is only read when a snapshot actually hydrated, so a cache miss leaves the clock `undefined`.
+  */
+  let hydratedSnapshotSavedAtMs: number | undefined;
   const [tasks, setTasks] = useState<Task[]>(() => {
     if (!projectId) {
       return [];
     }
-    const cachedTasks = readCache<Task[]>(`${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
-    if (Array.isArray(cachedTasks) && cachedTasks.length > 0 && !loggedTaskCacheHitProjects.has(projectId)) {
-      loggedTaskCacheHitProjects.add(projectId);
-      console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
+    const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+    const cachedTasks = readCache<Task[]>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+    if (Array.isArray(cachedTasks)) {
+      hydratedSnapshotSavedAtMs = readCacheSavedAt(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (cachedTasks.length > 0 && !loggedTaskCacheHitProjects.has(projectId)) {
+        loggedTaskCacheHitProjects.add(projectId);
+        console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
+      }
     }
     return Array.isArray(cachedTasks) ? filterActiveTasks(cachedTasks.map(normalizeTask)) : [];
   });
@@ -200,9 +315,54 @@ export function useTasks(options?: UseTasksOptions) {
   const searchQueryRef = useRef(searchQuery);
   const refreshTasksRef = useRef<typeof refreshTasks>(null!);
   const prevSseEnabledRef = useRef(sseEnabled);
-  // Tracks when task data was last confirmed fresh by the server.
-  // Used to prevent false positives in stuck detection when tab has been in background.
-  const lastFetchTimeMs = useRef<number | undefined>(undefined);
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-14:12:
+  "Data as of" clock for everything derived from `tasks` (isTaskStuck / countStuckTasks, TaskCard's
+  isStuck + isAgentActive, Column's activeTaskCount, ExecutorStatusBar's stuck counters, and the
+  taskRecovery affordances). It describes the AGE OF THE ROWS CURRENTLY IN `tasks`, not the age of
+  this hook instance.
+
+  It is seeded from the hydrated snapshot's envelope `savedAt` rather than left `undefined`. When it
+  is `undefined` every consumer falls back to `Date.now()`; combined with the raised
+  `SWR_TASKS_MAX_AGE_MS`, an iOS-PWA restore that hydrated a 2-hour-old board measured hours-old
+  `updatedAt` values against NOW and rendered every in-progress card 'stuck' (and forced
+  isAgentActive false, killing the live pulse) until the mount revalidation resolved — seconds on a
+  waking mobile radio, precisely the restore this cache exists to improve. Seeding makes the first
+  paint honest; `refreshTasks` overwrites it with `Date.now()` the moment real server data lands.
+  */
+  const lastFetchTimeMs = useRef<number | undefined>(hydratedSnapshotSavedAtMs);
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-16:40:
+  True only after a successful full-board fetch has confirmed EVERY row currently in `tasks`. A hydrated
+  snapshot does not confirm anything, so this starts false on mount and is reset to false whenever a
+  project switch repaints from cache.
+
+  It gates the live-update writers of `lastFetchTimeMs` below. Those writers (task:created / task:moved /
+  task:updated, plus `ingestCreatedTasks`) each learn about ONE row, but `lastFetchTimeMs` is read as the
+  as-of time of ALL rows. While a hydrated hours-old board is still waiting for the mount revalidation on
+  a waking radio, a single unrelated task:created event used to stamp the whole board as measured-from-
+  now — re-creating, through a sibling path, the exact "every in-progress card renders stuck" regression
+  the savedAt seeding was added to fix.
+
+  Once a fetch HAS confirmed the board, advancing on a live event stays honest and is deliberately kept:
+  the stream reports every task mutation in the project, so a row that produced no event really has not
+  changed and `now - updatedAt` is its true idle time. Freezing the clock at the last fetch instead would
+  make stuck detection silently stop firing for the rest of a long SSE session (there is no periodic
+  poll in this hook) — a false negative traded for the false positive.
+  */
+  const boardFetchConfirmedRef = useRef(false);
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-16:40:
+  Single seam for the live-update writers of the freshness clock; see `boardFetchConfirmedRef`. Kept as
+  one function so a future fifth writer cannot reintroduce the ungated `lastFetchTimeMs.current =
+  Date.now()` pattern by copy-paste.
+  */
+  const advanceFreshnessClockForLiveUpdate = useCallback(() => {
+    if (!boardFetchConfirmedRef.current) {
+      return;
+    }
+    lastFetchTimeMs.current = Date.now();
+  }, []);
   const lastConfirmedProjectIdRef = useRef<string | undefined>(undefined);
   const lastConfirmedSearchQueryRef = useRef<string | undefined>(undefined);
   const lastConfirmedIncludeArchivedRef = useRef(false);
@@ -297,22 +457,44 @@ export function useTasks(options?: UseTasksOptions) {
         setTasks(normalizedFetchedTasks);
       }
       if (requestProjectId) {
-        const cachedPayload = fetchedTasks.length > 500 ? fetchedTasks.slice(0, 500) : fetchedTasks;
-        writeCache(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`, cachedPayload, { maxBytes: 500_000 });
+        writeTaskCacheSnapshot(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`, fetchedTasks);
       }
       setIsStale(false);
       setLastRefreshErrorAt(null);
       // Record when we received fresh server data for stuck detection
       lastFetchTimeMs.current = Date.now();
+      // FNXC:MobileTabDiscard 2026-07-26-16:40: every row in `tasks` is now server-confirmed, so live
+      // single-row updates may advance the clock from here on.
+      boardFetchConfirmedRef.current = true;
       lastConfirmedProjectIdRef.current = requestProjectId;
       lastConfirmedSearchQueryRef.current = query;
       lastConfirmedIncludeArchivedRef.current = wantArchived;
-    } catch {
+    } catch (error) {
       // Reject if project changed or version is stale
       if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
         return;
       }
       setLastRefreshErrorAt(Date.now());
+      /*
+      FNXC:MobileTabDiscard 2026-07-26-10:52:
+      Load-bearing for the long hydration TTL: a snapshot is only allowed to outlive a tab discard
+      because a failed revalidation deletes it here. Without this, an unverifiable board could be
+      re-hydrated on every subsequent restore for the whole TTL window. Do not weaken.
+
+      FNXC:MobileTabDiscard 2026-07-26-16:40:
+      CORRECTION — the 10:52 note above claimed "a failed revalidation deletes it", and the code did
+      exactly that for EVERY failure. That was wrong, and it broke the case the cache exists for: the
+      mount revalidation runs on a just-woken mobile radio, where the first fetch routinely rejects at
+      the transport layer. Such a rejection carries no information about the snapshot, yet it deleted
+      the entry AND (with `clearOnError`) blanked the freshly hydrated board — so the restore went white
+      and the next restore had nothing left to hydrate. Only a failure that actually reached the server
+      is allowed to destroy the snapshot; see `didFailureReachServer`. Suspension/offline failures leave
+      both the cache and the on-screen rows intact and rely on the retry paths keyed off
+      `lastRefreshErrorAt`.
+      */
+      if (!didFailureReachServer(error)) {
+        return;
+      }
       if (requestProjectId) {
         clearCache(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`);
       }
@@ -458,18 +640,37 @@ export function useTasks(options?: UseTasksOptions) {
       return;
     }
 
-    const cachedTasks = readCache<Task[]>(`${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+    const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+    const cachedTasks = readCache<Task[]>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
     if (Array.isArray(cachedTasks)) {
       if (cachedTasks.length > 0 && !loggedTaskCacheHitProjects.has(projectId)) {
         loggedTaskCacheHitProjects.add(projectId);
         console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
       }
       setTasks(filterActiveTasks(cachedTasks.map(normalizeTask)));
+      /*
+      FNXC:MobileTabDiscard 2026-07-26-14:18:
+      A project switch replaces `tasks` with the new project's snapshot, so the freshness clock must
+      be replaced too — the previous project's fetch time no longer describes these rows. Only set it
+      when a snapshot was actually hydrated: on a cache miss the previous project's rows stay on
+      screen (stale-while-revalidate), and their real fetch time remains the honest answer. This runs
+      before the mount/refresh effect below, so the fetch that resolves next still wins.
+      */
+      lastFetchTimeMs.current = readCacheSavedAt(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      // FNXC:MobileTabDiscard 2026-07-26-16:40: these rows come from cache, not the server — an SSE
+      // event must not stamp them as measured-from-now until this project's fetch confirms them.
+      boardFetchConfirmedRef.current = false;
     }
     setIsStale(true);
   }, [projectId]);
 
   // Fetch initial tasks and recover when the tab becomes visible again.
+  /*
+  FNXC:MobileTabDiscard 2026-07-26-10:55:
+  The mandatory half of stale-while-revalidate. Runs once per mount (and per projectId change) with no
+  freshness shortcut, so a board hydrated from an hours-old snapshot is always corrected by exactly one
+  immediate fetch, and `isStale` marks the window so the revalidating indicator is visible meanwhile.
+  */
   useEffect(() => {
     setIsStale(true);
     void refreshTasks({ clearOnError: true });
@@ -595,7 +796,7 @@ export function useTasks(options?: UseTasksOptions) {
         next[existingIndex] = merged;
         return next;
       });
-      lastFetchTimeMs.current = Date.now();
+      advanceFreshnessClockForLiveUpdate();
     };
 
     const handleMoved = (e: MessageEvent) => {
@@ -630,7 +831,7 @@ export function useTasks(options?: UseTasksOptions) {
         next[existingIndex] = movedTask;
         return next;
       });
-      lastFetchTimeMs.current = Date.now();
+      advanceFreshnessClockForLiveUpdate();
     };
 
     const handleUpdated = (e: MessageEvent) => {
@@ -661,7 +862,7 @@ export function useTasks(options?: UseTasksOptions) {
         next[existingIndex] = merged;
         return next;
       });
-      lastFetchTimeMs.current = Date.now();
+      advanceFreshnessClockForLiveUpdate();
     };
 
     const handleDeleted = (e: MessageEvent) => {
@@ -1105,8 +1306,8 @@ export function useTasks(options?: UseTasksOptions) {
 
       return next;
     });
-    lastFetchTimeMs.current = Date.now();
-  }, []);
+    advanceFreshnessClockForLiveUpdate();
+  }, [advanceFreshnessClockForLiveUpdate]);
 
   return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

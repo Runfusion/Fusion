@@ -45,7 +45,15 @@ export interface McpSessionToolsOptions {
   signal?: AbortSignal;
   clientFactory?: McpClientFactory;
   transportFactory?: McpTransportFactory;
-  logger?: Pick<Console, "log" | "warn">;
+  /**
+   * Optional logger. `debug` is preferred for successful connect chatter
+   * (FUSION_DEBUG=pi when wired to piLog); warn remains for retries/skips.
+   */
+  logger?: {
+    log?: (message: string, ...args: unknown[]) => void;
+    debug?: (message: string, ...args: unknown[]) => void;
+    warn?: (message: string, ...args: unknown[]) => void;
+  };
   closeTimeoutMs?: number;
   /** Maximum fresh-client bootstrap attempts per enabled server. */
   maxAttempts?: number;
@@ -128,7 +136,16 @@ export async function connectMcpSessionTools(
           }
           connected.push(server.name);
           const listedTools = listed.tools ?? [];
-          opts.logger?.log?.(`MCP server connected for pi session: name=${server.name} transport=${server.transport} tools=${listedTools.length} attempt=${attempt}/${maxAttempts}`);
+          /*
+          FNXC:EngineDiagnostics 2026-07-26-09:50:
+          Successful MCP connect fires once per server per session start and is steady-state capability setup, not an operator event. Prefer logger.debug (FUSION_DEBUG=pi when piLog is passed); fall back to log only if the caller has no debug. Retries/skips stay on warn.
+          */
+          const connectMsg = `MCP server connected for pi session: name=${server.name} transport=${server.transport} tools=${listedTools.length} attempt=${attempt}/${maxAttempts}`;
+          if (typeof opts.logger?.debug === "function") {
+            opts.logger.debug(connectMsg);
+          } else {
+            opts.logger?.log?.(connectMsg);
+          }
           for (const tool of listedTools) {
             tools.push(wrapMcpTool(server.name, tool, client, usedToolNames));
           }

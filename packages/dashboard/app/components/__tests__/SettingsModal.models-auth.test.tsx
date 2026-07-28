@@ -162,6 +162,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
 }));
 vi.mock("lucide-react", async (importOriginal) => {
@@ -1129,10 +1130,10 @@ describe("SettingsModal", () => {
         return 1 as unknown as ReturnType<typeof setInterval>;
       });
 
-      const { container } = renderModal();
+      renderModal();
       await waitForSettingsModalReady();
 
-      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      const settingsContent = document.querySelector(".settings-content") as HTMLDivElement;
       expect(settingsContent).toBeInTheDocument();
       const scrollToSpy = vi.fn();
       Object.defineProperty(settingsContent, "scrollTo", {
@@ -1566,10 +1567,10 @@ describe("SettingsModal", () => {
         providers: [{ id: "openai", name: "OpenAI", authenticated: true, type: "api_key" }],
       });
 
-      const { container } = renderModal();
+      renderModal();
       await waitForSettingsModalReady();
 
-      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      const settingsContent = document.querySelector(".settings-content") as HTMLDivElement;
       expect(settingsContent).toBeInTheDocument();
       const scrollToSpy = vi.fn();
       Object.defineProperty(settingsContent, "scrollTo", {
@@ -1593,9 +1594,9 @@ describe("SettingsModal", () => {
       });
       mockSaveApiKey.mockResolvedValueOnce({ success: true, modelsRefreshed: 4 });
 
-      const { container } = renderModal();
+      renderModal();
       await waitForSettingsModalReady();
-      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      const settingsContent = document.querySelector(".settings-content") as HTMLDivElement;
       Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
 
       const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;
@@ -1611,9 +1612,9 @@ describe("SettingsModal", () => {
       });
       mockSaveApiKey.mockResolvedValueOnce({ success: true, modelsRefreshed: 0, refreshReason: "no-models-from-cli" });
 
-      const { container } = renderModal();
+      renderModal();
       await waitForSettingsModalReady();
-      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      const settingsContent = document.querySelector(".settings-content") as HTMLDivElement;
       Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
 
       const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;
@@ -1629,9 +1630,9 @@ describe("SettingsModal", () => {
       });
       mockSaveApiKey.mockResolvedValueOnce({ success: true, refreshError: "spawn opencode ENOENT" });
 
-      const { container } = renderModal();
+      renderModal();
       await waitForSettingsModalReady();
-      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      const settingsContent = document.querySelector(".settings-content") as HTMLDivElement;
       Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
 
       const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;

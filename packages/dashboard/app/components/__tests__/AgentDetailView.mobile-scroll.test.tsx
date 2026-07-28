@@ -232,13 +232,13 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
   it("shows mobile task column context without empty task shells (FN-7139)", async () => {
     mockFetchAgent.mockResolvedValueOnce(createMockAgent({ taskId: "FN-MOBILE", taskColumn: "in-progress" }));
 
-    const { container } = render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    const { baseElement } = render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
       expect(screen.getAllByText((_, el) => el?.textContent === "FN-MOBILE · In Progress").length).toBeGreaterThanOrEqual(2);
     });
-    expect(container.querySelector(".agent-detail-content")).toBeTruthy();
-    expect(container.querySelector(".task-badge")?.textContent).toContain("FN-MOBILE · In Progress");
+    expect(baseElement.querySelector(".agent-detail-content")).toBeTruthy();
+    expect(baseElement.querySelector(".task-badge")?.textContent).toContain("FN-MOBILE · In Progress");
   });
 
   it("tabs accept horizontal touch panning and stay non-shrinking on mobile (FN-6450, FN-6865)", async () => {

@@ -2119,7 +2119,7 @@ describe("ListView", () => {
 
     const row = screen.getByText("FN-7831").closest("tr") as HTMLElement;
     expect(row.className).toContain("agent-active");
-    const badge = within(row).getByText("Reviewing");
+    const badge = within(row).getByText("Plan Review");
     expect(badge.className).toContain("pulsing");
   });
 
@@ -2144,7 +2144,7 @@ describe("ListView", () => {
 
       const card = screen.getByText("FN-7831").closest(".list-card") as HTMLElement;
       expect(card.className).toContain("agent-active");
-      expect(within(card).getByText("Reviewing").className).toContain("pulsing");
+      expect(within(card).getByText("Plan Review").className).toContain("pulsing");
     } finally {
       matchMediaSpy.mockRestore();
     }
@@ -2162,7 +2162,7 @@ describe("ListView", () => {
 
     const row = screen.getByText("FN-8055-paused").closest("tr") as HTMLElement;
     expect(row.className).not.toContain("agent-active");
-    expect(within(row).queryByText("Reviewing")).toBeNull();
+    expect(within(row).queryByText("Plan Review")).toBeNull();
   });
 
   it("does not show the Reviewing badge after Plan Review completes", () => {
@@ -2185,7 +2185,7 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    expect(screen.queryByText("Reviewing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plan Review")).not.toBeInTheDocument();
   });
 
   it("FN-8475 renders Todo planning in desktop table rows without a placeholder", () => {
@@ -2207,7 +2207,8 @@ describe("ListView", () => {
 
       for (const id of ["FN-8475-todo", "FN-8475-active", "FN-8475-triage"]) {
         const row = screen.getByText(id).closest("tr") as HTMLElement;
-        expect(within(row).getByText("planning")).toHaveClass("list-status-badge");
+        // The row also renders the "Planning" COLUMN name, so assert on the badge element itself.
+        expect(row.querySelector(".list-status-badge")).toHaveTextContent("Planning");
         expect(row.querySelector(".list-status-badge")).not.toHaveTextContent("-");
       }
       expect(within(screen.getByText("FN-8475-executing").closest("tr") as HTMLElement).getByText("executing")).toBeInTheDocument();
@@ -2224,7 +2225,7 @@ describe("ListView", () => {
       });
 
       const card = screen.getByText("FN-8475-todo-mobile").closest(".list-card") as HTMLElement;
-      expect(within(card).getByText("planning")).toHaveClass("list-status-badge");
+      expect(card.querySelector(".list-status-badge")).toHaveTextContent("Planning");
     } finally {
       matchMediaSpy.mockRestore();
     }
@@ -5282,7 +5283,7 @@ describe("ListView - Bulk Selection", () => {
       });
 
       for (const id of ["FN-8170-mobile-todo", "FN-8170-mobile-active", "FN-8170-mobile-triage"]) {
-        expect(within(container.querySelector(`[data-id="${id}"]`) as HTMLElement).getByText("planning")).toHaveClass("list-status-badge");
+        expect((container.querySelector(`[data-id="${id}"]`) as HTMLElement).querySelector(".list-status-badge")).toHaveTextContent("Planning");
       }
       expect(within(container.querySelector('[data-id="FN-8170-mobile-executing"]') as HTMLElement).getByText("executing")).toBeInTheDocument();
     });

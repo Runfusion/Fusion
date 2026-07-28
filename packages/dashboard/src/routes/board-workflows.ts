@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-board-workflows");
 /**
  * Board multi-lane payload assembly (U9, R16/R17).
  *
@@ -19,7 +22,6 @@ import {
   BUILTIN_CODING_WORKFLOW_IR,
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
-  isWorkflowColumnsEnabled,
   parseWorkflowIr,
   resolveColumnFlags,
   resolveWorkflowIrById,
@@ -154,9 +156,15 @@ async function describeWorkflow(
 /**
  * Build the board-workflows payload for the given task ids. Resolves each task's
  * workflow selection (null → the default workflow lane) and assembles the
- * deduplicated set of referenced workflow definitions. Returns
- * `{ flagEnabled: false, ... }` (empty maps) when the flag is OFF so the route
- * can return early and the client renders the legacy board.
+ * deduplicated set of referenced workflow definitions.
+ *
+ * FNXC:WorkflowColumns 2026-07-27-09:48 (U2 / R9):
+ * The flag-OFF early return is deleted — its gate (`isWorkflowColumnsEnabled`)
+ * returned a literal `true`, so the empty payload was unreachable. `flagEnabled`
+ * stays on the WIRE as a constant `true` because shipped dashboard clients still
+ * branch on it (Board, ListView, TaskDetailModal, useBoardWorkflows); removing
+ * the field would change the response shape, which this delete-only unit must
+ * not do. U10 retires the field once no client reads it.
  */
 export async function buildBoardWorkflowsPayload(
   store: Pick<TaskStore, "getWorkflowDefinition" | "getTaskWorkflowSelection" | "getSettings" | "listWorkflowDefinitions"> &
@@ -164,16 +172,16 @@ export async function buildBoardWorkflowsPayload(
   taskIds: string[],
   settingsOverride?: Pick<Settings, "experimentalFeatures">,
 ): Promise<BoardWorkflowsPayload> {
-  const settings = settingsOverride ?? (await store.getSettings());
-  const flagEnabled = isWorkflowColumnsEnabled(settings);
-
-  const empty: BoardWorkflowsPayload = {
-    flagEnabled,
-    defaultWorkflowId: DEFAULT_WORKFLOW_LANE_ID,
-    workflows: [],
-    taskWorkflowIds: {},
-  };
-  if (!flagEnabled) return empty;
+  /*
+  FNXC:WorkflowColumns 2026-07-27-09:50 (U2 / R9):
+  `settingsOverride` and the `store.getSettings()` read it defaulted to existed
+  ONLY to feed the deleted flag check — no other field of this payload depends on
+  settings. The parameter stays in the signature (callers pass it positionally
+  and it costs nothing) but is no longer read, so the settings round-trip is gone
+  from the board-load path.
+  */
+  void settingsOverride;
+  const flagEnabled = true;
 
   const taskWorkflowIds: Record<string, string> = {};
   const referenced = new Set<string>();
@@ -206,7 +214,7 @@ export async function buildBoardWorkflowsPayload(
     // Older/partial test stores may not expose definition listing; the referenced
     // workflow set above is still sufficient for task rendering. Production
     // failures are logged so empty workflow definitions do not disappear silently.
-    console.warn("[board-workflows] listWorkflowDefinitions failed; using referenced workflows only", err);
+    severityAuditLog.warn("[board-workflows] listWorkflowDefinitions failed; using referenced workflows only", err);
   }
 
   const workflows: BoardWorkflowDefinition[] = [];

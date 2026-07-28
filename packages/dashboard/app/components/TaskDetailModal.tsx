@@ -3,10 +3,10 @@ import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, Paperclip, Eye, EyeOff } from "lucide-react";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { FloatingWindow } from "./FloatingWindow";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -1390,6 +1390,7 @@ export function TaskDetailContent({
     if (activeTab !== "workflow") return;
 
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    let cancelled = false;
 
     const handleTaskUpdated = (e: MessageEvent) => {
       try {
@@ -1403,22 +1404,58 @@ export function TaskDetailContent({
       }
     };
 
-    return subscribeSse(`/api/events${query}`, {
+    /*
+    FNXC:TaskWorkflowDetails 2026-07-26-16:30:
+    Resync contract (see SseSubscription in sse-bus.ts). After the initial fetch the Workflow tab's step
+    results are replaced ONLY by `task:updated` payloads, and the stream is lossy: an error/heartbeat
+    reconnect or the >=60s hidden-tab suspend drops the socket and /api/events keeps no replay buffer.
+    Missing the gap freezes the rendered step list at its pre-suspend state — a review that failed or a
+    step that finished while the phone was backgrounded still reads as running, which is exactly the
+    surface an operator checks before deciding to intervene. Refetch through the same
+    `fetchWorkflowResults` the load effect uses; deliberately no `setWorkflowResultsLoading(true)` and no
+    list clear, so a reconnect refreshes in place instead of flashing an empty/spinner tab.
+    */
+    const resyncWorkflowResults = () => {
+      void fetchWorkflowResults(task.id, projectId)
+        .then((results) => {
+          if (!cancelled) setWorkflowResults(results);
+        })
+        .catch(() => {
+          // Non-fatal: the tab keeps its last known rows and the next task:updated event corrects them.
+        });
+    };
+
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: resyncWorkflowResults,
       events: { "task:updated": handleTaskUpdated },
     });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [activeTab, task.id, projectId]);
+
+  /*
+  FNXC:TaskCliSession 2026-07-26-16:36:
+  Hoisted out of the load effect so the `cli:session:state` subscription's onReconnect can refetch the
+  SAME authoritative list rather than duplicating the request shape. Returns the most-recent session
+  (the list is store-ordered) or null; the enriched list fields (adapterId / autonomyPosture) exist only
+  here, which is why the SSE handler merges onto this record instead of replacing it.
+  */
+  const fetchLatestCliSession = useCallback(async (): Promise<CliSessionSummaryRecord | null> => {
+    const search = new URLSearchParams({ taskId: task.id });
+    if (projectId) search.set("projectId", projectId);
+    const res = await api<{ sessions: CliSessionSummaryRecord[] }>(`/cli-sessions?${search.toString()}`);
+    const sessions = res.sessions ?? [];
+    return sessions.length > 0 ? sessions[sessions.length - 1] : null;
+  }, [task.id, projectId]);
 
   // Load the CLI agent session for this task (drives the terminal tab + matrix).
   useEffect(() => {
     let cancelled = false;
-    const search = new URLSearchParams({ taskId: task.id });
-    if (projectId) search.set("projectId", projectId);
-    void api<{ sessions: CliSessionSummaryRecord[] }>(`/cli-sessions?${search.toString()}`)
-      .then((res) => {
-        if (cancelled) return;
-        // Most-recent session for the task (the list is store-ordered).
-        const sessions = res.sessions ?? [];
-        setCliSession(sessions.length > 0 ? sessions[sessions.length - 1] : null);
+    void fetchLatestCliSession()
+      .then((session) => {
+        if (!cancelled) setCliSession(session);
       })
       .catch(() => {
         if (!cancelled) setCliSession(null);
@@ -1426,13 +1463,14 @@ export function TaskDetailContent({
     return () => {
       cancelled = true;
     };
-  }, [task.id, projectId]);
+  }, [fetchLatestCliSession]);
 
   // Live CLI session state via SSE — MERGE payload fields onto the record
   // (never wholesale-replace: the list fetch carries enriched fields the SSE
   // payload omits, e.g. adapterId / autonomyPosture).
   useEffect(() => {
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    let cancelled = false;
     const handleCliState = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data) as {
@@ -1473,10 +1511,35 @@ export function TaskDetailContent({
         /* skip malformed events */
       }
     };
-    return subscribeSse(`/api/events${query}`, {
+    /*
+    FNXC:TaskCliSession 2026-07-26-16:40:
+    Resync contract (see SseSubscription in sse-bus.ts). `agentState` is advanced ONLY by
+    `cli:session:state` after the initial list fetch, and the stream is lossy: an error/heartbeat
+    reconnect or the >=60s hidden-tab suspend drops the socket with no replay buffer. A terminal
+    transition landing in that gap is the expensive one — the session shows "busy" forever while the
+    real process is `waitingOnInput` (operator never answers the prompt) or `dead`/`done` (operator
+    waits on a session that already ended). Refetch the list on reconnect and take it as authoritative:
+    unlike the event handler, the list response carries every enriched field, so replacing is safe here.
+    */
+    const resyncCliSession = () => {
+      void fetchLatestCliSession()
+        .then((session) => {
+          if (!cancelled) setCliSession(session);
+        })
+        .catch(() => {
+          // Non-fatal: keep the last known record; the next state event or reopen corrects it.
+        });
+    };
+
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: resyncCliSession,
       events: { "cli:session:state": handleCliState },
     });
-  }, [task.id, projectId]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [task.id, projectId, fetchLatestCliSession]);
 
   // Reset dependency search when dropdown closes
   useEffect(() => {
@@ -4011,7 +4074,7 @@ export function TaskDetailContent({
     >
       <div className="modal-header">
           <div className="detail-title-row">
-            <span className="detail-id">{task.id}</span>
+            <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
             <span className={`detail-column-badge badge-${task.column}`}>
               {columnLabel(task.column)}
             </span>
@@ -6514,6 +6577,7 @@ export function TaskDetailContent({
               projectId={projectId}
               onClose={() => setSelectedSourceAgentId(null)}
               addToast={addToast}
+              floatingWindowKey="agent-detail-task"
             />
           </Suspense>
         )}
@@ -6522,11 +6586,9 @@ export function TaskDetailContent({
 }
 
 export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const viewportMode = useViewportMode();
-  useModalResizePersist(modalRef, true, "task-detail-modal-size");
   useMobileScrollLock(true);
-  const overlayDismissProps = useOverlayDismiss(onClose);
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
   FNXC:TaskDetailSwipeBack 2026-08-07-00:00:
   Gate predictive-back animation through useViewportMode, the same physical-screen-aware
@@ -6535,30 +6597,30 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
   */
   const isMobileTransition = viewportMode === "mobile";
 
-  /*
-  FNXC:TaskModalResize 2026-08-07-00:00:
-  Known touch tablets at the 768px CSS boundary resolve to `tablet` through
-  useViewportMode. Carry that single classification into the modal class so CSS
-  can override phone-sheet rules without a second breakpoint or gesture system.
-  */
-  const isTabletTaskModal = viewportMode === "tablet";
-
   return (
-    <div
-      className="modal-overlay open"
-      {...overlayDismissProps}
-      role="dialog"
-      aria-modal="true"
+    <FloatingWindow
+      windowKey="task-detail"
+      title="Task detail"
+      ariaLabelledBy="task-detail-modal-title"
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".task-detail-content > .modal-header"
+      className="floating-window--task-detail"
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Task Detail shares its layer with Quick Chat and pop-outs so interaction order remains coordinated by floatingWindowStack. */
+      layer="task-detail"
+      defaultSize={{ width: 800, height: 680 }}
+      minSize={{ width: 480, height: 480 }}
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
+      persistGeometryKey="floating-window:task-detail"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
-      <div
-        className={`modal modal-lg task-detail-modal${isTabletTaskModal ? " task-modal--tablet" : ""}${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}
-        ref={modalRef}
-      >
-        <TaskDetailContent
-          {...props}
-          onRequestClose={onClose}
-        />
+      <div className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}>
+        <TaskDetailContent {...props} onRequestClose={onClose} />
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

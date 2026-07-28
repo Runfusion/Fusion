@@ -39,7 +39,7 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Cache iOS DerivedData
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/Library/Developer/Xcode/DerivedData
           key: ${{ runner.os }}-derived-data-${{ hashFiles('packages/mobile/**', 'pnpm-lock.yaml') }}
@@ -120,7 +120,7 @@ jobs:
           java-version: "21"
 
       - name: Cache Android Gradle caches
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.gradle/caches
           key: ${{ runner.os }}-gradle-${{ hashFiles('packages/mobile/android/**/*.gradle*', 'packages/mobile/android/**/gradle-wrapper.properties') }}

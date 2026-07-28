@@ -70,6 +70,11 @@ export interface MobileNavBarProps {
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
   modalOpen?: boolean;
+  /*
+  FNXC:Navigation 2026-07-25-22:57:
+  The project overview has no task tabs to drive, so callers hide the mobile bar rather than rendering a non-functional navigation shell.
+  */
+  hidden?: boolean;
   /** Whether the on-screen mobile keyboard is open */
   keyboardOpen?: boolean;
   // Navigation handlers
@@ -145,6 +150,7 @@ export function MobileNavBar({
   onChangeView,
   footerVisible,
   modalOpen = false,
+  hidden = false,
   keyboardOpen = false,
   onOpenSettings,
   onOpenActivityLog,
@@ -346,6 +352,15 @@ export function MobileNavBar({
   }, [dismissMore, isMoreOpen]);
 
   useLayoutEffect(() => {
+    /*
+    FNXC:Navigation 2026-07-25-22:57:
+    A hidden overview bar must remove its published height as well as its DOM shell; otherwise project content retains dead bottom space.
+    */
+    if (hidden) {
+      document.documentElement.style.removeProperty("--mobile-nav-height");
+      return;
+    }
+
     const navEl = navRef.current;
     if (!navEl || typeof document === "undefined") {
       return;
@@ -377,9 +392,9 @@ export function MobileNavBar({
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
     };
-  }, []);
+  }, [hidden]);
 
-  if (mode !== "mobile" || modalOpen) {
+  if (mode !== "mobile" || modalOpen || hidden) {
     return null;
   }
 

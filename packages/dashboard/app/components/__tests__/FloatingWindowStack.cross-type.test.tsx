@@ -52,7 +52,7 @@ describe("floatingWindowStack (cross-type)", () => {
     expect(Number(dockPanel.style.zIndex)).toBeGreaterThan(Number(fwPanel.style.zIndex));
 
     // Tapping the older FloatingWindow raises it above the dock pop-out — across the type boundary.
-    fireEvent.pointerDown(fwPanel);
+    fireEvent.pointerDown(fwPanel, { pointerType: "touch", pointerId: 1 });
     expect(Number(fwPanel.style.zIndex)).toBeGreaterThan(Number(dockPanel.style.zIndex));
 
     // Tapping the dock pop-out raises it back above the FloatingWindow.

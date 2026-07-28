@@ -16,8 +16,58 @@ export interface SendErrorOptions {
   *message* was logged and `rethrowAsApiError` discarded the stack, leaving the
   full-TaskDetail 500s on /api/tasks/:id (GET/DELETE/PATCH/retry/archive/reset)
   untraceable across releases.
+
+  FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+  That contract was silently defeated on the most common path: `rethrowAsApiError`
+  built a fresh `ApiError(500, error.message)` and dropped the caught error, so the
+  boundary logged the rethrow site's stack (or, for a non-Error throw, no stack at
+  all — observed on GET /api/tasks/FN-8610/runtime-fallback, whose 500 log carried
+  only method/path/statusCode/message). The caught value is now threaded into
+  `ApiError.cause` end-to-end, and the boundary walks the chain so `stack` is the
+  ORIGIN error's stack and `cause` renders the wrappers between origin and boundary.
   */
   error?: unknown;
+}
+
+/*
+FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+Chain-walk bounds. Depth caps a pathological/self-referential wrap; the visited set
+stops a cycle (`a.cause = b; b.cause = a`) from spinning the request thread.
+*/
+const MAX_CAUSE_DEPTH = 8;
+
+/**
+ * FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+ * Flatten an error and its `cause` chain, nearest-wrapper first. Values are returned
+ * as-is (not stringified) so callers decide the log rendering; only Errors and raw
+ * thrown values enter the chain — never arbitrary object payloads.
+ */
+function collectCauseChain(error: unknown): unknown[] {
+  const chain: unknown[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+
+  while (current !== undefined && chain.length < MAX_CAUSE_DEPTH) {
+    if (typeof current === "object" && current !== null) {
+      if (seen.has(current)) break;
+      seen.add(current);
+    }
+    chain.push(current);
+    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
+  }
+
+  return chain;
+}
+
+/**
+ * FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+ * Render one chain link for the log: an Error contributes its stack (message fallback
+ * when a runtime omits `stack`), any other thrown value its `String(...)` form. Keeps
+ * the log context ids/paths/stack-only.
+ */
+function renderChainLink(value: unknown): string {
+  if (value instanceof Error) return value.stack ?? value.message;
+  return String(value);
 }
 
 export class ApiError extends Error {
@@ -52,15 +102,26 @@ export function sendErrorResponse(
     const logger = options?.logger ?? createRuntimeLogger("api:error");
     // FNXC:ApiErrorDiagnostics 2026-07-10-14:00: log the underlying stack and
     // cause (not just the message) so a 500 can be traced to its origin.
+    /*
+    FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+    Walk the whole `cause` chain rather than one level. `stack` reports the DEEPEST
+    Error in the chain — the origin throw site — because the boundary is handed the
+    wrapping `ApiError` whose own stack only names `rethrowAsApiError`. `cause`
+    reports every link past the boundary error so intermediate wrappers survive. An
+    unwrapped Error still logs its own stack and no cause, unchanged from before.
+    */
     const originalError = options?.error;
-    const cause = originalError instanceof Error ? (originalError as { cause?: unknown }).cause : undefined;
+    const chain = collectCauseChain(originalError);
+    const errorLinks = chain.filter((link): link is Error => link instanceof Error);
+    const originError = errorLinks.length > 0 ? errorLinks[errorLinks.length - 1] : undefined;
+    const causeLinks = chain.slice(1);
     logger.error("Request failed", {
       method: request?.method,
       path: request?.originalUrl ?? request?.path,
       statusCode,
       message,
-      stack: originalError instanceof Error ? originalError.stack : undefined,
-      cause: cause instanceof Error ? (cause.stack ?? cause.message) : cause !== undefined ? String(cause) : undefined,
+      stack: originError?.stack,
+      cause: causeLinks.length > 0 ? causeLinks.map(renderChainLink).join("\nCaused by: ") : undefined,
     });
   }
 
@@ -99,38 +160,54 @@ export function catchHandler(fn: AsyncHandler): RequestHandler {
   };
 }
 
-export function badRequest(message: string, details?: Record<string, unknown>): ApiError {
-  return new ApiError(400, message, details);
+/*
+FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+Every factory takes an optional TRAILING `cause` so the hundreds of existing
+single/double-argument call sites across the route registrars stay source-compatible;
+callers that already hold the caught error can pass it and get an origin stack in the
+5xx log for free.
+*/
+
+export function badRequest(message: string, details?: Record<string, unknown>, cause?: unknown): ApiError {
+  return new ApiError(400, message, details, cause);
 }
 
-export function unauthorized(message: string): ApiError {
-  return new ApiError(401, message);
+export function unauthorized(message: string, cause?: unknown): ApiError {
+  return new ApiError(401, message, undefined, cause);
 }
 
-export function notFound(message: string): ApiError {
-  return new ApiError(404, message);
+export function notFound(message: string, cause?: unknown): ApiError {
+  return new ApiError(404, message, undefined, cause);
 }
 
-export function conflict(message: string, details?: Record<string, unknown>): ApiError {
-  return new ApiError(409, message, details);
+export function conflict(message: string, details?: Record<string, unknown>, cause?: unknown): ApiError {
+  return new ApiError(409, message, details, cause);
 }
 
-export function rateLimited(message: string, retryAfter?: number): ApiError {
-  return new ApiError(429, message, { retryAfter });
+export function rateLimited(message: string, retryAfter?: number, cause?: unknown): ApiError {
+  return new ApiError(429, message, { retryAfter }, cause);
 }
 
-export function internalError(message: string): ApiError {
-  return new ApiError(500, message);
+export function internalError(message: string, cause?: unknown): ApiError {
+  return new ApiError(500, message, undefined, cause);
 }
 
+/**
+ * FNXC:ApiErrorDiagnostics 2026-07-26-11:20:
+ * Thread the caught value into the wrapping `ApiError` on BOTH branches. Before this
+ * the caught error was read for its message and then discarded, so the 5xx boundary
+ * logged the stack of the `ApiError` constructed here (or nothing at all for a
+ * non-Error throw). Message, status, and response body are unchanged — this only
+ * adds `cause`.
+ */
 export function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server error"): never {
   if (error instanceof ApiError) {
     throw error;
   }
 
   if (error instanceof Error && error.message) {
-    throw internalError(error.message);
+    throw internalError(error.message, error);
   }
 
-  throw internalError(fallbackMessage);
+  throw internalError(fallbackMessage, error);
 }

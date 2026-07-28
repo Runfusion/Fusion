@@ -51,6 +51,8 @@ import {
   createReadMessagesTool,
   createSendMessageTool,
   createTaskCreateTool,
+  isAgentTaskCreateToolAvailable,
+  isAgentDelegateTaskToolAvailable,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
@@ -1329,15 +1331,29 @@ export class StepSessionExecutor {
                 createTaskLogsReadTool(this.options.store, taskDetail.id),
               ]
             : [];
-          const taskCreateTool = this.options.store
+          /*
+          FNXC:EphemeralAgentTaskCreation 2026-07-26-06:20:
+          Per-step workflow sessions honor the same registration-time Deny as the outer
+          execution session: an ephemeral step worker under `deny` is never handed
+          fn_task_create, rather than being handed a tool that only refuses on call.
+          */
+          const taskCreateTool = this.options.store && isAgentTaskCreateToolAvailable(settings, this.options.callerIsEphemeral)
             ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir, callerIsEphemeral: this.options.callerIsEphemeral, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, messageStore: this.options.messageStore })]
             : [];
 
-          // Agent delegation tools — discover and delegate work to other agents.
+          /*
+          FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
+          fn_delegate_task creates a task through the same primitive as fn_task_create, so the
+          follow-up-task policy withholds it on this lane too. Withheld under `deny` AND
+          `upon_validation`: delegation has no proposal channel, so leaving it available under
+          upon_validation would launder a create past the operator review that policy requires.
+          */
           const delegationTools = this.options.agentStore
             ? [
                 createListAgentsTool(this.options.agentStore),
-                createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId }),
+                ...(isAgentDelegateTaskToolAvailable(settings, this.options.callerIsEphemeral)
+                  ? [createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, callerIsEphemeral: this.options.callerIsEphemeral })]
+                  : []),
                 createTaskAssignTool(this.options.agentStore, this.options.store!),
               ]
             : [];

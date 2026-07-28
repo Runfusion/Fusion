@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-github-tracking-comments");
 import type { GlobalSettings, MergeDetails, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { deriveTitleFromDescription } from "./github-tracking.js";
 import { GitHubClient } from "./github.js";
@@ -214,7 +217,7 @@ export class GitHubTrackingCommentService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes(`Task ${taskId} not found`)) {
-        console.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
+        severityAuditLog.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
         return;
       }
       throw error;
@@ -309,7 +312,7 @@ export class GitHubTrackingCommentService {
             "Posted GitHub tracking comment",
             `${owner}/${repo}#${number} (${event.to})`,
           );
-          console.warn(
+          severityAuditLog.warn(
             `[github-tracking-comments] Posted in-progress comment for ${event.task.id}, but failed to persist its marker: ${markerError instanceof Error ? markerError.message : String(markerError)}`,
           );
           return;

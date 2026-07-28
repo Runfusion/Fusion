@@ -2,6 +2,8 @@
  * FNXC:CodeOrganization 2026-07-15-16:00:
  * Dashboard API client core (fetch wrapper + ApiRequestError).
  */
+// FNXC:TaskDeleteAttribution 2026-07-26-17:05: import the browser-safe leaf, not the package root — the root alias resolves to `core/src/types.ts` in the client bundle and does not carry these constants.
+import { FUSION_CLIENT_HEADER, FUSION_DASHBOARD_UI_CLIENT } from "@fusion/core/task-delete-attribution";
 import { getAuthToken, withTokenHeader } from "../auth";
 import type { DedupeOptions } from "./dedupe";
 
@@ -33,6 +35,24 @@ export function buildApiUrl(path: string): string {
   return `/api${path}`;
 }
 
+/**
+ * FNXC:TaskDeleteAttribution 2026-07-26-14:30:
+ * Stamp every dashboard-originated request with `x-fusion-client: dashboard-ui` so server-side
+ * run-audit can tell an operator's click apart from an unlabeled script or agent hitting the same
+ * endpoint (the four-delete incident where `DELETE /api/tasks/:id` rows were byte-identical
+ * regardless of who called). Applied once here rather than per-call so no future mutation route
+ * has to remember it; the desktop shell mounts this same App and therefore inherits it.
+ *
+ * Self-reported and explicitly NOT a security boundary — anything can send this header. It
+ * separates "the client said it was the dashboard UI" from "nothing identified itself"; no
+ * authorization decision may depend on it. An existing explicit value is left alone.
+ */
+function applyClientIdentityHeader(headers: Headers): void {
+  if (!headers.has(FUSION_CLIENT_HEADER)) {
+    headers.set(FUSION_CLIENT_HEADER, FUSION_DASHBOARD_UI_CLIENT);
+  }
+}
+
 export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const url = buildApiUrl(path);
   const token = getAuthToken();
@@ -42,17 +62,15 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
       if (!authenticatedHeaders.has("Content-Type")) {
         authenticatedHeaders.set("Content-Type", "application/json");
       }
+      applyClientIdentityHeader(authenticatedHeaders);
       return withTokenHeader(authenticatedHeaders);
     }
 
-    if (!opts.headers) {
-      return { "Content-Type": "application/json" };
-    }
-
-    const defaultHeaders = new Headers(opts.headers);
+    const defaultHeaders = new Headers(opts.headers ?? {});
     if (!defaultHeaders.has("Content-Type")) {
       defaultHeaders.set("Content-Type", "application/json");
     }
+    applyClientIdentityHeader(defaultHeaders);
     return Object.fromEntries(defaultHeaders.entries());
   })();
 

@@ -54,7 +54,11 @@ export interface SectionKeyEntry {
  * save-split.ts for the project-models lane overrides instead of duplicating
  * them.
  */
-const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
+/*
+FNXC:UiMetadataApi 2026-07-14-00:00:
+Expose project reset-registry ids for the no-drift contract test so a reset-owning section cannot exist without discoverable Settings metadata. This is read-only inspection and does not change reset ownership or behavior.
+*/
+export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> = {
   general: [
     "allowAbsoluteFileBrowserPaths",
     "capacityRiskBannerEnabled",
@@ -66,6 +70,15 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "completionDocumentationMode",
     "reviewArtifacts",
     "enabledBuiltinWorkflowIds",
+    /*
+    FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+    Owned by "general" because that is where both pickers render. Resetting them writes
+    null, which restores the unset = "Selected workflow" behavior. `boardSelectedWorkflowId`
+    is deliberately NOT listed: it is a dashboard-written mirror of the current Board lane,
+    not an operator-editable field, so a per-menu reset has no business clearing it.
+    */
+    "taskCreateWorkflowId",
+    "refinementTaskWorkflowId",
     "ephemeralAgentTaskCreationPolicy",
     "ephemeralAgentsEnabled",
     "sessionAdvisorEnabledByDefault",

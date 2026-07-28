@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ScheduledTasksModal } from "../ScheduledTasksModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Routine } from "@fusion/core";
 
 vi.mock("lucide-react", () => ({
@@ -179,9 +180,9 @@ describe("ScheduledTasksModal", () => {
     const initialTop = Number.parseFloat(panel.style.top);
 
     act(() => {
-      fireEvent.pointerDown(header, { pointerId: 11, clientX: 120, clientY: 80 });
-      fireEvent.pointerMove(panel, { pointerId: 11, clientX: 220, clientY: 140 });
-      fireEvent.pointerUp(panel, { pointerId: 11, clientX: 220, clientY: 140 });
+      fireEvent.pointerDown(header, { pointerId: 11, pointerType: "touch", clientX: 120, clientY: 80 });
+      fireEvent.pointerMove(panel, { pointerId: 11, pointerType: "touch", clientX: 220, clientY: 140 });
+      fireEvent.pointerUp(panel, { pointerId: 11, pointerType: "touch", clientX: 220, clientY: 140 });
     });
 
     await waitFor(() => {
@@ -195,9 +196,9 @@ describe("ScheduledTasksModal", () => {
     const heightAfterDrag = Number.parseFloat(panel.style.height);
 
     act(() => {
-      fireEvent.pointerDown(resizeHandle, { pointerId: 12, clientX: 700, clientY: 600 });
-      fireEvent.pointerMove(resizeHandle, { pointerId: 12, clientX: 760, clientY: 650 });
-      fireEvent.pointerUp(resizeHandle, { pointerId: 12, clientX: 760, clientY: 650 });
+      fireEvent.pointerDown(resizeHandle, { pointerId: 12, pointerType: "touch", clientX: 700, clientY: 600 });
+      fireEvent.pointerMove(resizeHandle, { pointerId: 12, pointerType: "touch", clientX: 760, clientY: 650 });
+      fireEvent.pointerUp(resizeHandle, { pointerId: 12, pointerType: "touch", clientX: 760, clientY: 650 });
     });
 
     await waitFor(() => {
@@ -634,5 +635,13 @@ describe("ScheduledTasksModal", () => {
       fireEvent.keyDown(document, { key: "Escape" });
       expect(onClose).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("ScheduledTasksModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<ScheduledTasksModal onClose={vi.fn()} addToast={vi.fn()} />);
+    assertRenderedModalTouchGeometry("automation", screen.getByText("Automations").closest(".automation-modal__drag-handle") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("automation", () => render(<ScheduledTasksModal onClose={vi.fn()} addToast={vi.fn()} />));
   });
 });

@@ -39,6 +39,7 @@ vi.mock("../../hooks/useViewportMode", () => {
     MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
     getViewportMode: () => useViewportMode(),
     isMobileViewport: () => useViewportMode() === "mobile",
+    isTabletTouchViewport: (mode?: string) => mode === "tablet",
     useViewportMode,
   };
 });
