@@ -34,6 +34,24 @@ const RENAMED_IR = {
   edges: [],
 };
 
+/**
+ * The U11 shape: `todo` is gone, the remaining ids are the legacy ones. Rows already stored in
+ * `todo` outlive the column, so the workflow's own ordering cannot place them.
+ */
+const REMOVED_HOLD_IR = {
+  version: "v2",
+  id: "wf-no-todo",
+  name: "No Todo Flow",
+  columns: [
+    { id: "triage", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "in-review", name: "In review", traits: [{ trait: "merge-blocker" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+  nodes: [{ id: "start", kind: "start", column: "triage" }],
+  edges: [],
+};
+
 function buildStore(options: {
   taskColumn: string;
   workflowId?: string;
@@ -53,9 +71,11 @@ function buildStore(options: {
     getTask: vi.fn(async () => ({ id: "FN-001", column: options.taskColumn, dependencies: [], steps: [], currentStep: 0 })),
     getSettings: vi.fn(async () => ({})),
     getTaskWorkflowSelection: vi.fn(() => (options.workflowId ? { workflowId: options.workflowId } : undefined)),
-    getWorkflowDefinition: vi.fn(async (id: string) =>
-      id === "wf-renamed" ? { id, name: "Renamed Flow", kind: "workflow", ir: RENAMED_IR } : null,
-    ),
+    getWorkflowDefinition: vi.fn(async (id: string) => {
+      if (id === "wf-renamed") return { id, name: "Renamed Flow", kind: "workflow", ir: RENAMED_IR };
+      if (id === "wf-no-todo") return { id, name: "No Todo Flow", kind: "workflow", ir: REMOVED_HOLD_IR };
+      return null;
+    }),
     getActivePrEntityBySource: vi.fn(async () =>
       options.prState ? { id: "PR-1", state: options.prState, sourceType: "task", sourceId: "FN-001" } : null,
     ),
@@ -109,6 +129,43 @@ describe("task move route — open-PR backward guard uses the task's own column 
     });
 
     const res = await postMove(store, "building");
+
+    expect(res.status).toBe(200);
+    expect(moveTask).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-27-18:05 (U10 / R8 — greptile P1 on PR #2492):
+  The first cut of this fix used the workflow ordering UNCONDITIONALLY, which reopened the same
+  hole from the other side: a task still STORED in a column the workflow removed or renamed scores
+  -1 for its source, and a negative index means "allow". So the very rows U11 leaves behind — cards
+  sitting in `todo` after Todo is merged into Planning — could be dragged backward past an open PR.
+  The workflow is authoritative only when it can place BOTH endpoints; otherwise fall back to the
+  legacy enum, which still places every legacy id.
+  */
+  it("blocks a backward move when the task's SOURCE column is one the workflow removed", async () => {
+    const { store, moveTask } = buildStore({
+      // A row left behind in `todo` after the workflow dropped that column (the U11 shape).
+      // The workflow's own ordering cannot place it, so the legacy enum must still order it.
+      taskColumn: "todo",
+      workflowId: "wf-no-todo",
+      prState: "open",
+    });
+
+    const res = await postMove(store, "triage");
+
+    expect(res.status).toBe(409);
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("allows a forward move out of a removed source column", async () => {
+    const { store, moveTask } = buildStore({
+      taskColumn: "todo",
+      workflowId: "wf-no-todo",
+      prState: "open",
+    });
+
+    const res = await postMove(store, "in-progress");
 
     expect(res.status).toBe(200);
     expect(moveTask).toHaveBeenCalledTimes(1);

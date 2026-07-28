@@ -697,18 +697,47 @@ export function ListView({
   /**
    * FNXC:WorkflowResolvedColumns 2026-07-27-14:45 (U10 / R8):
    * Display-only landing lane for a row whose stored column the resolved workflow does not
-   * declare. Prefers the workflow's intake lane (where an operator expects unplaced work),
-   * then the first non-complete/non-archived lane, then the first lane at all. `undefined`
-   * only when the workflow declares no visible column, in which case the row is skipped
-   * rather than pushed into a group key the render loop never reads.
+   * declare. Prefers the intake lane (where an operator expects unplaced work), then the first
+   * non-complete/non-archived lane, then the first lane at all.
    */
-  const listFallbackColumnId = useMemo<ColumnId | undefined>(() => {
-    const placeable = listColumns.filter((column) => !column.flags.archived);
+  const pickFallbackColumnId = useCallback((columns: readonly BoardWorkflowColumn[]): ColumnId | undefined => {
+    const placeable = columns.filter((column) => !column.flags.archived && !column.flags.hiddenFromBoard);
     return placeable.find((column) => column.flags.intake)?.id
       ?? placeable.find((column) => !column.flags.complete)?.id
       ?? placeable[0]?.id
-      ?? listColumns[0]?.id;
-  }, [listColumns]);
+      ?? columns[0]?.id;
+  }, []);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-27-18:40 (U10 / R8 — greptile P1 on PR #2492):
+  Per-WORKFLOW landing lanes. In the All-workflows list, `listColumns` is a cross-workflow union
+  ordered default-workflow-first, so one global fallback filed every stranded row under the DEFAULT
+  workflow's intake — a card from another workflow rendered under a lifecycle it does not belong to.
+  Resolve the landing lane from the card's own workflow; the global fallback below is only the last
+  resort for a card whose workflow cannot be resolved at all.
+  */
+  const fallbackColumnIdByWorkflowId = useMemo(() => {
+    const map = new Map<string, ColumnId>();
+    for (const workflow of boardWorkflows?.workflows ?? []) {
+      const fallback = pickFallbackColumnId(workflow.columns);
+      if (fallback !== undefined) map.set(workflow.id, fallback);
+    }
+    return map;
+  }, [boardWorkflows, pickFallbackColumnId]);
+
+  const listFallbackColumnId = useMemo<ColumnId | undefined>(
+    () => pickFallbackColumnId(listColumns),
+    [listColumns, pickFallbackColumnId],
+  );
+
+  /** The workflow a rendered card belongs to, resolved the same way the lane filter resolves it. */
+  const resolveTaskWorkflowId = useCallback((taskId: string): string | undefined => {
+    if (!boardWorkflows) return undefined;
+    const raw = boardWorkflows.taskWorkflowIds[taskId];
+    return raw && boardWorkflows.workflows.some((workflow) => workflow.id === raw)
+      ? raw
+      : boardWorkflows.defaultWorkflowId;
+  }, [boardWorkflows]);
 
   const columnNameById = useMemo(() => {
     const map = new Map<ColumnId, string>();
@@ -947,8 +976,16 @@ export function ListView({
     */
     columnFiltered.forEach((task) => {
       const column = workflowMode ? task.column : (isColumn(task.column) ? task.column : DEFAULT_COLUMN);
-      const columnId = groups[column] !== undefined ? column : listFallbackColumnId;
-      if (columnId !== undefined && groups[columnId]) groups[columnId].push(task);
+      if (groups[column] !== undefined) {
+        groups[column].push(task);
+        return;
+      }
+      const ownWorkflowId = workflowMode ? resolveTaskWorkflowId(task.id) : undefined;
+      const ownFallback = ownWorkflowId ? fallbackColumnIdByWorkflowId.get(ownWorkflowId) : undefined;
+      const columnId = (ownFallback !== undefined && groups[ownFallback] !== undefined)
+        ? ownFallback
+        : listFallbackColumnId;
+      if (columnId !== undefined && groups[columnId] !== undefined) groups[columnId].push(task);
     });
 
     for (const column of listColumns) {
@@ -978,7 +1015,7 @@ export function ListView({
       });
     }
     return groups;
-  }, [tasks, searchQuery, selectedWorkflowTaskIds, listColumns, workflowMode, hideDoneTasks, selectedColumn, staleOnlyFilter, stalePausedReviewOnlyFilter, sortField, sortDirection]);
+  }, [tasks, searchQuery, selectedWorkflowTaskIds, listColumns, workflowMode, hideDoneTasks, selectedColumn, staleOnlyFilter, stalePausedReviewOnlyFilter, sortField, sortDirection, fallbackColumnIdByWorkflowId, listFallbackColumnId, resolveTaskWorkflowId]);
 
   // Calculate total filtered count from groups
   const filteredCount = useMemo(() => {

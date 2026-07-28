@@ -187,6 +187,21 @@ function renderedColumnIds(): string[] {
   );
 }
 
+/**
+ * The list groups rows under `.list-section-header` rows, so a row's section is the nearest
+ * preceding header. Asserting the header text (rather than merely "the row exists") is what
+ * catches a row landing in the WRONG lane instead of being dropped.
+ */
+function listSectionOfRow(taskId: string): string | null {
+  const rows = Array.from(document.querySelectorAll("tr, .list-row, .list-section-header"));
+  const rowIndex = rows.findIndex((node) => node.getAttribute("data-id") === taskId);
+  if (rowIndex < 0) return null;
+  for (let index = rowIndex - 1; index >= 0; index -= 1) {
+    if (rows[index]!.className.includes("list-section-header")) return rows[index]!.textContent ?? "";
+  }
+  return null;
+}
+
 function taskIdsInColumn(columnId: string): string[] {
   const node = document.querySelector(`[data-testid='column-${columnId}']`);
   if (!node) return [];
@@ -352,6 +367,39 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
       // Wait for the workflow payload to be applied before asserting.
       await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
       expect(await screen.findByText("Stranded row")).toBeTruthy();
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-27-18:35 (U10 / R8 — greptile P1 on PR #2492):
+    In the All-workflows list the column set is a cross-workflow union with the DEFAULT workflow
+    first, so a single global fallback lane sends a stranded card from workflow B into workflow A's
+    intake — visible, but filed under another workflow's lifecycle. The landing lane must come from
+    the card's OWN workflow.
+    */
+    it("re-homes a stranded card into its own workflow's intake, not the default workflow's", async () => {
+      selectAllWorkflowsView();
+      const alpha = {
+        id: "wf-alpha",
+        name: "Alpha",
+        columns: [
+          { id: "alpha-intake", name: "Alpha Intake", flags: { intake: true } },
+          { id: "alpha-done", name: "Alpha Done", flags: { complete: true } },
+        ],
+      };
+      const beta = {
+        id: "wf-beta",
+        name: "Beta",
+        columns: [
+          { id: "beta-intake", name: "Beta Intake", flags: { intake: true } },
+          { id: "beta-done", name: "Beta Done", flags: { complete: true } },
+        ],
+      };
+      fetchBoardWorkflowsMock.mockResolvedValue(payload([alpha, beta], { "FN-15": beta.id }));
+      renderList([mkTask({ id: "FN-15", title: "Beta stranded row", column: "beta-gone" as Task["column"] })]);
+
+      await screen.findByText("Beta stranded row");
+      await waitFor(() => expect(listSectionOfRow("FN-15")).toContain("Beta Intake"));
+      expect(listSectionOfRow("FN-15")).not.toContain("Alpha Intake");
     });
 
     it("does not drop a stranded card on mobile either", async () => {

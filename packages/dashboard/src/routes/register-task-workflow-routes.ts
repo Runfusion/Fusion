@@ -182,13 +182,39 @@ never fires does not fail a test.
 the workflow is the authority. The legacy enum stays as the fallback for an unresolvable or v1
 (column-less) IR, which keeps `builtin:coding` — whose column order equals the enum — unchanged.
 */
-function columnOrderIndexer(ir: WorkflowIr | undefined): (columnId: string) => number {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-18:20 (U10 / R8 — greptile P1 on PR #2492):
+The workflow is authoritative ONLY when it can place BOTH endpoints. Using its ordering
+unconditionally reopened the same hole from the other side: a row still stored in a column the
+workflow removed or renamed scores -1, and a negative index means "allow" — so exactly the rows
+U11 leaves behind in `todo` could be dragged backward past an open PR.
+
+Two orderings, never mixed. Mixing them would misjudge a workflow that REORDERS legacy ids (its
+own order says forward while the enum says backward), so the enum is a fallback for the whole
+comparison, not a per-column patch.
+
+Residual, deliberately not papered over: when the source is undeclared AND the target is a
+workflow-only id, neither ordering places both and the guard cannot fire. That is NOT a
+regression — the previous `COLUMNS.indexOf` scored the custom target -1 and was equally absent.
+Closing it needs the guard restated in terms of column TRAITS rather than position, which belongs
+with the merge lane's conversion (U9), not with a rendering unit.
+*/
+function resolveMoveOrderIndices(
+  ir: WorkflowIr | undefined,
+  fromColumn: string,
+  toColumn: string,
+): { fromIndex: number; toIndex: number } {
   const declared = (ir as { columns?: Array<{ id: string }> } | undefined)?.columns;
-  if (!Array.isArray(declared) || declared.length === 0) {
-    return (columnId: string) => COLUMNS.indexOf(columnId as Column);
+  if (Array.isArray(declared) && declared.length > 0) {
+    const order = new Map(declared.map((column, index) => [column.id, index]));
+    const fromIndex = order.get(fromColumn) ?? -1;
+    const toIndex = order.get(toColumn) ?? -1;
+    if (fromIndex >= 0 && toIndex >= 0) return { fromIndex, toIndex };
   }
-  const order = new Map(declared.map((column, index) => [column.id, index]));
-  return (columnId: string) => order.get(columnId) ?? -1;
+  return {
+    fromIndex: COLUMNS.indexOf(fromColumn as Column),
+    toIndex: COLUMNS.indexOf(toColumn as Column),
+  };
 }
 
 async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promise<string> {
@@ -1796,15 +1822,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             ? await scopedStore.getActivePrEntityBySource?.("branch-group", guardTask.branchContext.groupId)
             : null);
         // FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8): position comes from the
-        // task's own workflow column order (already resolved above as `moveTargetIr`).
-        const columnOrderIndex = columnOrderIndexer(moveTargetIr);
-        if (
-          isBackwardMoveBlockedByOpenPr({
-            fromIndex: columnOrderIndex(guardTask.column),
-            toIndex: columnOrderIndex(moveTarget),
-            activePrEntity,
-          })
-        ) {
+        // task's own workflow column order (already resolved above as `moveTargetIr`), falling
+        // back to the legacy enum when the workflow cannot place both endpoints.
+        const { fromIndex, toIndex } = resolveMoveOrderIndices(moveTargetIr, guardTask.column, moveTarget);
+        if (isBackwardMoveBlockedByOpenPr({ fromIndex, toIndex, activePrEntity })) {
           throw new ApiError(409, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE, {
             code: "pr-open-blocks-move-back",
             messageKey: "board.rejection.prOpenBlocksMoveBack",
