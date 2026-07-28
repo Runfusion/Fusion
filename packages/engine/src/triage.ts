@@ -216,7 +216,21 @@ export interface TriageProcessorOptions {
   /** Stuck task detector — monitors triage sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
   onSpecifyStart?: (task: Task) => void;
-  onSpecifyComplete?: (task: Task) => void;
+  /*
+  FNXC:PlanningHandoffOutcome 2026-07-28-10:05 (U7 / R4, R5 — workflow-owned lifecycle):
+  The reaction is told WHAT FINALIZE DID, not merely that specification stopped.
+  It fired unconditionally before, so a card parked at the manual plan-approval
+  gate — or one whose release move was refused — was announced as specified, and
+  the subscriber logged "Specified X -> todo" and armed a Plan Review run for a
+  card that had not moved.
+
+  The event still fires on every outcome. Dropping it for a non-release would also
+  drop the subscriber's activity/idle signal, and a reaction that silently does not
+  happen is harder to reason about than one that happens with an accurate payload.
+  R5's division of labour: the seam announces, the SUBSCRIBER decides what a given
+  outcome licenses.
+  */
+  onSpecifyComplete?: (task: Task, report: PlanningHandoffReport) => void;
   onSpecifyError?: (task: Task, error: Error) => void;
   onAgentText?: (taskId: string, delta: string) => void;
   /** AgentStore for resolving per-agent custom instructions. */
@@ -2482,11 +2496,12 @@ export class TriageProcessor {
 
           // FN-5220: planning agents that emit a `DUPLICATE: FN-NNNN` redirect
           // short-circuit normal spec finalization.
+          const duplicateReport: PlanningHandoffReport = { outcome: "parked" };
           if (await this.tryFinalizeExplicitDuplicateMarker(task, written, settings, {
             isReplan,
             feedback,
-          })) {
-            this.options.onSpecifyComplete?.(task);
+          }, duplicateReport)) {
+            this.options.onSpecifyComplete?.(task, duplicateReport);
             return;
           }
 
@@ -2535,11 +2550,11 @@ export class TriageProcessor {
             return;
           }
 
-          await this.finalizeApprovedTask(task, written, settings, {
+          const finalizeReport = await this.finalizeApprovedTask(task, written, settings, {
             isReplan,
             feedback,
           });
-          this.options.onSpecifyComplete?.(task);
+          this.options.onSpecifyComplete?.(task, finalizeReport);
         } finally {
           this.activeSessions.delete(task.id);
           stuckDetector?.untrackTask(task.id);
@@ -3200,6 +3215,15 @@ export class TriageProcessor {
       isReplan?: boolean;
       feedback?: string;
     } = {},
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-10:20 (U7):
+    Finalize's outcome is reported through this ref rather than by widening the
+    return type. The boolean return answers a DIFFERENT question — "was this a
+    duplicate marker at all?" — and 16 existing tests assert it directly. Folding
+    two questions into one return would have made every one of those an expectation
+    edit, which is how a behavior change gets to travel disguised as churn.
+    */
+    report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<boolean> {
     try {
       const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
@@ -3225,7 +3249,9 @@ export class TriageProcessor {
       } else {
         planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
       }
-      await this.finalizeApprovedTask(task, written, settings, options);
+      // FNXC:PlanningHandoffOutcome 2026-07-28-10:20: surface what finalize did to
+      // the caller's reaction without changing what this method's boolean means.
+      report.outcome = (await this.finalizeApprovedTask(task, written, settings, options)).outcome;
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

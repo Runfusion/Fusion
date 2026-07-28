@@ -17,6 +17,7 @@ import type {
   NotificationPayload,
   WorkflowWorkItem,
   WorkflowWorkItemState,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
@@ -29,6 +30,7 @@ import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
+import type { PlanningHandoffOutcome } from "../triage.js";
 import { buildPrNodeDeps } from "../pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
@@ -242,6 +244,62 @@ export function resolveParkedContinuationDeferral(
 /** The FIFO due-poll batch size. Named because the starvation the deferral above
  *  prevents is a property of this bound, so the two belong in one place. */
 export const DUE_PLANNING_CONTINUATION_BATCH_LIMIT = 20;
+
+/** Everything the specification-complete reaction touches, injected so the
+ *  reaction is exercisable without constructing a runtime. */
+export interface SpecificationCompleteReactionDeps {
+  taskId: string;
+  outcome: PlanningHandoffOutcome;
+  getTask: (taskId: string) => Promise<Task | undefined>;
+  resolveIr: (taskId: string) => Promise<WorkflowIr>;
+  seed: (task: Task, ir: WorkflowIr) => Promise<{ seeded: boolean; reason?: string }>;
+  kick: () => void;
+  log: (message: string) => void;
+}
+
+/**
+ * FNXC:PlanningHandoffOutcome 2026-07-28-10:05 (U7 / R4, R5 — workflow-owned lifecycle):
+ * The engine's reaction to a finished specification: arm the graph's pre-release
+ * Plan Review run for a card that was actually handed off.
+ *
+ * WHAT WAS WRONG: this fired on every finished specification, because the seam that
+ * announces it fired unconditionally. So a card parked at the manual plan-approval
+ * gate — finalize writes `status: "awaiting-approval"` and RETURNS EARLY, before the
+ * release move — was logged as "Specified X → todo" and had a Plan Review run armed
+ * for a plan the operator had not approved. PR #2491 stopped the seeder from acting
+ * on that, defensively, at the seeder. This removes the reason it was ever asked.
+ *
+ * `released` is the ONLY outcome that licenses arming a run: it is the only one that
+ * means the card crossed into the hold column (or was already resting there) and is
+ * the graph's now. `parked` belongs to a human, `withheld` belongs to the caller's
+ * retry budget — arming a run for either is doing work nobody asked for.
+ *
+ * The log line reports the real outcome rather than asserting a move that may not
+ * have happened; an operator reading "Specified → todo" for a card sitting in the
+ * planner column is being told something false about their own board.
+ *
+ * EXTRACTED from the inline `onSpecifyComplete` callback for the same reason the
+ * continuation drain was in PR #2491: the callback is constructed inside
+ * `InProcessRuntime`, whose construction attaches to the real project registry, so
+ * no test could tell "the reaction respects the outcome" from "the reaction ignores
+ * it". A guard that cannot be shown to fail is not a guard.
+ */
+export async function reactToSpecificationComplete(
+  deps: SpecificationCompleteReactionDeps,
+): Promise<void> {
+  if (deps.outcome !== "released") {
+    deps.log(
+      `Specification finished for ${deps.taskId} without a handoff (${deps.outcome}) — no plan review armed`,
+    );
+    return;
+  }
+  deps.log(`Specified ${deps.taskId} → todo`);
+  const live = await deps.getTask(deps.taskId);
+  if (!live || live.paused || live.userPaused) return;
+  const ir = await deps.resolveIr(live.id);
+  await deps.seed(live, ir);
+  deps.kick();
+}
 
 /** Everything the drain pass touches, injected so the pass is exercisable without
  *  constructing a runtime (which would attach to the real project registry). */
@@ -1306,16 +1364,19 @@ export class InProcessRuntime
             this.recordActivity();
             runtimeLog.log(`Specifying ${t.id}...`);
           },
-          onSpecifyComplete: (t) => {
+          onSpecifyComplete: (t, report) => {
+            // Activity is recorded for EVERY outcome: a planning session ran either
+            // way, and idle detection must not depend on whether it released.
             this.recordActivity();
-            runtimeLog.log(`Specified ${t.id} → todo`);
-            void (async () => {
-              const live = await this.taskStore.getTask(t.id);
-              if (!live || live.paused || live.userPaused) return;
-              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
-              await seedPreReleasePlanReviewContinuation(this.taskStore, live, ir);
-              this.kickWorkflowContinuationProcessor();
-            })().catch((error) => {
+            void reactToSpecificationComplete({
+              taskId: t.id,
+              outcome: report.outcome,
+              getTask: (id) => Promise.resolve(this.taskStore.getTask(id)),
+              resolveIr: (id) => resolveWorkflowIrForTask(this.taskStore, id),
+              seed: (task, ir) => seedPreReleasePlanReviewContinuation(this.taskStore, task, ir),
+              kick: () => this.kickWorkflowContinuationProcessor(),
+              log: (message) => runtimeLog.log(message),
+            }).catch((error) => {
               runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
             });
           },
