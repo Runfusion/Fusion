@@ -49,6 +49,7 @@ import {
   isUnplannedSeedPrompt,
   isWorkflowOptionalGroupEnabled,
   resolveEffectiveAutoMerge,
+  isTaskBlockedOnApproval,
   type TaskStore,
   type Task,
   type WorkflowIr,
@@ -683,6 +684,35 @@ async function issueRelease(
   automatic surfaces — the sweep and the webhook release — never pass it, so
   FN-7648's invariant still holds for every non-operator release.
   */
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  A card blocked on a pending human approval decision must never be released into
+  a processing column by an AUTOMATED surface. `isTaskBlockedOnApproval` is core's
+  declared "single shared predicate ... before rebounding, requeuing, resuming,
+  re-planning, or otherwise advancing a task" (task-merge.ts), and this release
+  path did not consult it.
+
+  How it was reachable: the manual plan-approval gate parks the card by writing
+  `status: "awaiting-approval"` with NO pause flag, so the pre-existing
+  `task.paused || task.userPaused` skip in `runHoldReleaseSweep` did not match,
+  and `isUnplannedForExecution` enumerates only `planning` / `needs-replan`. Once
+  the plan-review gate's evidence landed, the sweep released a card whose plan the
+  operator had never approved — the gate was skipped end to end.
+
+  Checked HERE rather than in each caller because `issueRelease` is the single
+  choke point every release surface funnels through (sweep, `promoteHeldTask`,
+  `releaseHeldTaskByEvent`, and the scheduler's `reserveSlot` guard). Gated on
+  `!options.allowUnplanned` for the same reason the unplanned check is: an
+  explicit operator force-promote IS a human decision about this card, so it
+  waives the human-decision gate, while no automatic surface can.
+  */
+  if (targetIsProcessing && !options.allowUnplanned && isTaskBlockedOnApproval(task)) {
+    schedulerLog.debug(
+      `Hold release for ${task.id} blocked — awaiting a human approval decision (status=${task.status ?? "null"}, pausedReason=${task.pausedReason ?? "null"})`,
+    );
+    return false;
+  }
+
   if (targetIsProcessing && !options.allowUnplanned && (await isUnplannedForExecution(store, task, ir))) {
     /*
     FNXC:StrandedHoldContinuation 2026-07-26-14:15:
@@ -747,11 +777,21 @@ async function issueRelease(
     /*
     FNXC:UserPausedDispatch 2026-07-21-21:45:
     Hold release must test the source column and both pause flags under the same task lock as the move. This makes an operator pause win atomically against scheduler dispatch and also replaces event-identity inference for concurrent release attempts.
+
+    FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R6):
+    The approval hold is tested here too, not only in the pre-check above. The
+    pre-check reads a task snapshot the sweep loaded earlier in the pass, so a plan
+    gate (or an operator) that parks the card between that read and this move would
+    otherwise lose the race and the card would release unapproved. Only the
+    predicate under the task lock is authoritative; the pre-check is an early exit.
+    `allowUnplanned` is carried through so an explicit operator force-promote waives
+    the gate here exactly as it does above — one waiver, not two policies.
     */
     const result = await store.moveTaskIf(
       task.id,
       target,
-      (live) => live.column === originalColumn && live.paused !== true && live.userPaused !== true,
+      (live) => live.column === originalColumn && live.paused !== true && live.userPaused !== true
+        && !(targetIsProcessing && !options.allowUnplanned && isTaskBlockedOnApproval(live)),
       {
         moveSource: "scheduler",
         allocateWorktree:

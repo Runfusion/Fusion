@@ -21,6 +21,7 @@ import {
   AsyncCentralClaimStore,
   ChatStore,
   isEphemeralAgent,
+  isTaskBlockedOnApproval,
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
@@ -125,7 +126,7 @@ export function isPlanningContinuationTaskDispatchable(
 /** Outcome of resolving one due work item for the planning-continuation drain. */
 export type PlanningContinuationResolution =
   | { kind: "actionable"; item: WorkflowWorkItem; task: Task }
-  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" }
+  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" | "awaiting-approval" }
   | {
       kind: "orphan";
       item: WorkflowWorkItem;
@@ -151,6 +152,21 @@ export function resolvePlanningContinuationCandidate(
   }
   if (item.waitReason !== "planning") {
     return { kind: "skip", item, reason: "not-planning" };
+  }
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  Dispatching a planning continuation starts a Plan Review run, so a card blocked
+  on a pending human approval decision must not be dispatched. The status-only
+  hold shape the plan-approval gate writes (`status: "awaiting-approval"`, no
+  pause flag) fell straight through the pause check below and was dispatched.
+
+  SKIP, never `orphan`: an orphan is cancelled and terminalized, so an approval
+  landing a minute later would find nothing left to resume and would need a second
+  repair (FN-8592's sweep) to come back. Skipping leaves the item due and
+  claimable, which is what "the operator has not decided yet" actually means.
+  */
+  if (isTaskBlockedOnApproval(task)) {
+    return { kind: "skip", item, reason: "awaiting-approval" };
   }
   if (task.paused === true || task.userPaused === true) {
     return { kind: "skip", item, reason: "paused" };
