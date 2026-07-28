@@ -431,9 +431,17 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
-      // U5 (R20): a flag-ON edit removing an occupied column blocks with a typed
-      // error. Surface it as a structured 409 carrying the per-column occupant
-      // counts so the client can prompt for a `rehomeTo` target and retry.
+      /*
+      U5 (R20): an edit removing an occupied column blocks with a typed error.
+      Surface it as a structured 409 carrying the per-column occupant counts so the
+      client can prompt for a `rehomeTo` target and retry.
+
+      FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+      Was "a flag-ON edit". The store-side guard is no longer gated on the retired
+      `workflowColumns` flag, so this 409 — and the editor's re-home prompt behind it
+      — are reachable for the first time. The handler itself is unchanged; it was
+      correct and simply never fired.
+      */
       if (err instanceof OccupiedColumnsError) {
         throw conflict(err.message, { workflowId: err.workflowId, occupancies: err.occupancies });
       }
@@ -639,7 +647,9 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         throw badRequest("workflowId must be a string or null");
       }
       let enabledWorkflowSteps: string[] = [];
-      // U5 (R20) switch reconciliation: when the workflowColumns flag is ON, the
+      // FNXC:WorkflowColumns 2026-07-28-00:00 (U12): the flag gate is gone — this
+      // reconciliation now runs for every project.
+      // U5 (R20) switch reconciliation: the
       // store re-homes the card to the new workflow's entry column (aborting
       // in-flight work first) unless the new workflow defines its current column.
       // The re-home outcome rides on the response so the UI can reflect the move.

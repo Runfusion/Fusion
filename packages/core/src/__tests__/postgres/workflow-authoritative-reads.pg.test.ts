@@ -31,7 +31,14 @@ pgDescribe("PostgreSQL workflow authoritative reads", () => {
 
   it("blocks removal of a PostgreSQL-occupied workflow column", async () => {
     const store = h.store();
-    await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    The `experimentalFeatures: { workflowColumns: true }` write is DELETED. It was the
+    only way this test reached the guard, and it is a configuration no production
+    project has — so this case passed while the guard was inert for every real
+    operator. The guard is no longer flag-gated, so the test now runs in the
+    production shape and means what it always claimed to mean.
+    */
     const ir = workflowWithCustomColumn();
     const workflow = await store.createWorkflowDefinition({ name: "Occupancy", ir, layout: {} });
     const task = await store.createTask({ description: "occupies custom column" });
