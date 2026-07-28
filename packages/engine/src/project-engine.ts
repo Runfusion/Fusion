@@ -3700,7 +3700,6 @@ export class ProjectEngine {
           // FNXC:MergeQueue 2026-07-15-10:05: Wait for any orphan body from a prior abort race before claiming the next generation.
           await this.awaitPriorMergeBodySettle();
 
-          const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
           const coordinatorReservedMerge = this.coordinatorAdmittedMergeTaskIds.delete(taskId);
           /*
           FNXC:ConcurrencyAdmission 2026-08-07-10:30:
@@ -3709,14 +3708,27 @@ export class ProjectEngine {
           one-shot candidate after dequeue because durable merge providers only
           see remaining queue entries; without it a sole merge endlessly defers.
           */
+          /*
+          FNXC:CapacityModel 2026-07-28-20:40 (drop the cross-project cap):
+          The `if (!semaphore) return await start()` early-return is DELETED, not
+          left to fire. It was unreachable while a global semaphore always existed;
+          with the semaphore gone it would have fired on EVERY merge and skipped
+          project admission altogether — silently stopping merges from counting
+          against the per-project agent count. That is the opposite of the intent:
+          a merge IS an agent, so it still consumes one of the project's slots; it
+          just no longer consumes a machine-wide slot too.
+
+          `admitOldest` already takes `semaphore` as optional and enforces
+          `maxConcurrent` independently of it (see its `claimed() + reservations >=
+          maxConcurrent` check), so dropping the argument keeps per-project
+          admission and oldest-first fairness exactly as they were.
+          */
           const runWithMergeAdmission = async <T>(start: () => Promise<T>): Promise<T | undefined> => {
-            if (!semaphore) return await start();
             if (coordinatorReservedMerge) {
               try {
                 return await start();
               } finally {
                 projectAdmissionCoordinator.releaseReservation(taskId);
-                semaphore.release();
               }
             }
             let selected = false;
@@ -3724,7 +3736,6 @@ export class ProjectEngine {
             await projectAdmissionCoordinator.admitOldest({
               projectId: cwd,
               maxConcurrent: (await store.getSettings()).maxConcurrent ?? 2,
-              semaphore,
               claimed: async () => computeTopLevelConcurrencyClaimedFromStore({
                 store,
                 tasks: await store.listTasks({ slim: true, includeArchived: false }),
@@ -3742,7 +3753,6 @@ export class ProjectEngine {
             });
             if (!selected) return undefined;
             projectAdmissionCoordinator.releaseReservation(taskId);
-            semaphore.release();
             return value;
           };
 
@@ -4625,8 +4635,6 @@ export class ProjectEngine {
           // Return its coordinator reservation rather than pinning a top-level slot.
           if (this.coordinatorAdmittedMergeTaskIds.delete(taskId)) {
             projectAdmissionCoordinator.releaseReservation(taskId);
-            const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
-            semaphore?.release();
           }
           this.clearActiveMergeClaim(taskId);
           this.mergeAbortController = null;

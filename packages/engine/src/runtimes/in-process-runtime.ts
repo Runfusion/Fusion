@@ -35,7 +35,7 @@ import { buildPrNodeDeps } from "../pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
 import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree-pool.js";
-import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency.js";
+
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { AutoClaimSnapshotManager } from "../auto-claim-snapshot.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
@@ -524,8 +524,14 @@ export class InProcessRuntime
   private scheduler!: Scheduler;
   private executor!: TaskExecutor;
   private worktreePool!: WorktreePool;
-  private globalSemaphore?: AgentSemaphore;
-  private projectSemaphore?: ScopedAgentSemaphore;
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The global and project-scoped semaphores are DELETED. Capacity is two numbers
+  per project; the machine-wide cap was a third limiter with a separate authority
+  (a central-DB singleton row) that the per-project gates then had to be reconciled
+  against. The scheduler/triage semaphore gate is now simply ABSENT rather than
+  holding an infinite limit — absence cannot start binding again by accident.
+  */
   private stuckTaskDetector?: StuckTaskDetector;
   /**
    * Per-project CLI Agent Executor runtime bundle (PTY manager + telemetry hub +
@@ -566,7 +572,6 @@ export class InProcessRuntime
   private unregisterTaskDeleteNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
-  private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
    * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
@@ -811,28 +816,6 @@ export class InProcessRuntime
 
       await yieldEventLoop();
 
-      // 4. Initialize global semaphore — use shared one from ProjectManager if provided,
-      // otherwise create a local one from CentralCore (single-project mode).
-      if (this.config.globalSemaphore) {
-        this.globalSemaphore = this.config.globalSemaphore;
-      } else {
-        // Dynamic getter that re-reads from CentralCore on each semaphore acquire.
-        // This ensures changes via PUT /api/global-concurrency take effect immediately.
-        let cachedLimit = await this.getGlobalConcurrencyLimit();
-        this.globalSemaphore = new AgentSemaphore(() => cachedLimit);
-
-        // Listen for concurrency changes from CentralCore (if it supports events)
-        if (typeof this.centralCore.on === "function") {
-          this.concurrencyChangedListener = (state: { globalMaxConcurrent: number }) => {
-            cachedLimit = state.globalMaxConcurrent;
-            runtimeLog.log(`Global concurrency limit updated to ${cachedLimit}`);
-          };
-          this.centralCore.on("concurrency:changed", this.concurrencyChangedListener);
-        }
-      }
-
-      this.projectSemaphore = new ScopedAgentSemaphore(this.globalSemaphore);
-
       await yieldEventLoop();
 
       // 5a. Initialize AgentStore (required for scheduler assignment, reflection service, and heartbeat monitoring)
@@ -962,7 +945,6 @@ export class InProcessRuntime
       this.scheduler = new Scheduler(this.taskStore, {
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
-        semaphore: this.projectSemaphore,
         // FNXC:GlobalConcurrencyControls 2026-07-17-00:00: Feed the triage service's
         // live pre-planning in-flight count into the scheduler's stale-semaphore
         // recovery so a triage session holding a slot before it writes
@@ -1099,7 +1081,6 @@ export class InProcessRuntime
         attribution. Reading it lazily at runner-construction time picks up the resolved id.
         */
         getLocalNodeId: () => this.localNodeId,
-        semaphore: this.projectSemaphore,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
         stuckTaskDetector: this.stuckTaskDetector,
@@ -1352,7 +1333,6 @@ export class InProcessRuntime
         this.taskStore,
         this.config.workingDirectory,
         {
-          semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
           usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
@@ -1707,12 +1687,6 @@ export class InProcessRuntime
         clearInterval(this.workflowContinuationTimer);
         this.workflowContinuationTimer = undefined;
       }
-      // 1. Remove concurrency change listener (if we registered one)
-      if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
-        this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
-        this.concurrencyChangedListener = undefined;
-      }
-
       // 2. Stop self-healing manager
       if (this.selfHealingManager) {
         this.selfHealingManager.stop();
@@ -1858,16 +1832,15 @@ export class InProcessRuntime
         );
       }
 
-      /**
-       * FNXC:Scheduler-Concurrency 2026-06-27-20:05:
-       * After stop aborts a project's agents and waits the bounded drain window, any slots still attributed to this runtime are residual leaks from sessions that did not settle their normal finally path. Return only this project's scoped slots so pauseProject/stopAll promptly free shared global capacity without clobbering other projects' active slots.
-       */
-      const returnedResidualSlots = this.projectSemaphore?.returnAllHeldSlots() ?? 0;
-      if (returnedResidualSlots > 0) {
-        runtimeLog.warn(
-          `Returned ${returnedResidualSlots} residual global concurrency slot(s) after project stop drain`,
-        );
-      }
+      /*
+      FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+      The residual-slot return on stop is GONE with the scoped semaphore it drained.
+      There is no shared cross-project pool left to leak INTO, so a session that
+      skips its finally path can no longer strand capacity belonging to another
+      project. Per-project capacity is derived from live task rows by the hold/
+      release sweep, which recomputes occupancy every pass rather than tracking a
+      counter that can drift.
+      */
 
       // 8. Shutdown plugin runner
       if (this.pluginRunner) {
@@ -2097,8 +2070,13 @@ export class InProcessRuntime
       ? (this.executor as unknown as { activeWorktrees?: Map<string, string> }).activeWorktrees?.size ?? 0
       : 0;
 
-    // Get active agent count from the semaphore
-    const activeAgents = this.globalSemaphore?.activeCount ?? 0;
+    /*
+    FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+    Active-agent load now comes from the executor's live worktree map rather than a
+    semaphore counter. The counter was a second bookkeeping of the same fact and
+    needed its own leak reaper when the two drifted.
+    */
+    const activeAgents = inFlightTasks;
 
     // Get memory usage if available
     const memoryBytes = process.memoryUsage?.().heapUsed;
