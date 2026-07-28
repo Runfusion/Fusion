@@ -18,7 +18,6 @@ import {
   GlobalSettingsStore,
   resolveGlobalDir,
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
-  isWorkflowColumnsEnabled,
   isWorkspaceTask,
   resolveColumnFlags,
   BUILTIN_CODING_WORKFLOW_IR,
@@ -1068,20 +1067,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // The CLI TUI degrades gracefully (R18): cards in workflow columns it can't
   // express must map by trait flags into its buckets or a read-only "other"
-  // bucket, never silently disappear. The TUI is flag-blind, so when
-  // `workflowColumns` is ON we enrich each slim task with its resolved column's
-  // display name + merged trait flags. Self-contained: derives everything from
-  // already-exposed store methods (workflow selection + definition) + the core
-  // `resolveColumnFlags` export — no dependency on concurrent U9 server work.
-  // Flag-OFF: returns undefineds and the TUI renders exactly as before.
+  // bucket, never silently disappear. So we enrich each slim task with its
+  // resolved column's display name + merged trait flags. Self-contained: derives
+  // everything from already-exposed store methods (workflow selection +
+  // definition) + the core `resolveColumnFlags` export. An unresolvable workflow
+  // returns undefineds and the TUI falls back to legacy column-id bucketing.
   type ResolvedColumnInfo = { columnName?: string; columnFlags?: TraitFlags };
   async function resolveTaskColumnInfo(
     projectStore: TaskStore,
-    flagOn: boolean,
     workflowIrCache: Map<string | undefined, WorkflowIrColumn[] | null>,
     task: { id: string; column: string },
   ): Promise<ResolvedColumnInfo> {
-    if (!flagOn) return {};
+    /*
+    FNXC:WorkflowColumns 2026-07-27-09:56 (U2 / R9):
+    The `flagOn` parameter and its `if (!flagOn) return {}` early exit are gone.
+    Its only caller derived it from `isWorkflowColumnsEnabled`, a literal `true`,
+    so column enrichment was already unconditional — as was the settings read that
+    fed it, now also removed.
+    */
     try {
       /*
       FNXC:WorkflowSelection 2026-07-14-17:06:
@@ -2952,17 +2955,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           listTasks: async (projectPath: string) => {
             const projectStore = await getProjectStore(projectPath);
             const tasks = await projectStore.listTasks({ slim: true, includeArchived: false });
-            // U11 (R18): when the workflow-columns flag is ON, enrich each task
-            // with its resolved column display name + trait flags so the
-            // flag-blind TUI can map non-legacy columns into its buckets (or the
-            // read-only "other" bucket) instead of silently dropping them. The
-            // IR cache keeps this O(workflows) rather than O(tasks) DB reads.
-            const settings = await projectStore.getSettings();
-            const flagOn = isWorkflowColumnsEnabled(settings);
+            // U11 (R18): enrich each task with its resolved column display name
+            // + trait flags so the column-blind TUI can map non-legacy columns
+            // into its buckets (or the read-only "other" bucket) instead of
+            // silently dropping them. The IR cache keeps this O(workflows)
+            // rather than O(tasks) DB reads.
             const workflowIrCache = new Map<string | undefined, WorkflowIrColumn[] | null>();
             return Promise.all(
               tasks.map(async (t) => {
-                const info = await resolveTaskColumnInfo(projectStore, flagOn, workflowIrCache, t);
+                const info = await resolveTaskColumnInfo(projectStore, workflowIrCache, t);
                 return {
                   id: t.id,
                   title: t.title,

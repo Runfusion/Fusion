@@ -21,7 +21,6 @@ import {getWorkflowExtensionRegistry} from "../workflow-extension-registry.js";
 import type {WorkflowMovePolicyInput} from "../workflow-extension-types.js";
 import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput} from "../workflow-definition-types.js";
-import {WORKFLOW_PARITY_OBSERVED_MUTATION, WORKFLOW_PARITY_DRIFT_MUTATION, type WorkflowParityDiff, type WorkflowParitySummary} from "../workflow-parity.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import type {AsyncDataLayer, DbTransaction} from "../postgres/data-layer.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
@@ -501,50 +500,6 @@ export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFi
     `).all(...sqlParams) as unknown as RunAuditEventRow[];
 
     return rows.map((row) => store.rowToRunAuditEvent(row));
-  }
-
-export async function getWorkflowParitySummaryImpl(store: TaskStore, options: { since?: string; limit?: number } = {}): Promise<WorkflowParitySummary> {
-    const limit = options.limit ?? 1000;
-    const observed = await store.getRunAuditEventsAsync({
-      domain: "database",
-      mutationType: WORKFLOW_PARITY_OBSERVED_MUTATION as unknown as RunAuditEvent["mutationType"],
-      startTime: options.since,
-      limit,
-    });
-    const driftEvents = await store.getRunAuditEventsAsync({
-      domain: "database",
-      mutationType: WORKFLOW_PARITY_DRIFT_MUTATION as unknown as RunAuditEvent["mutationType"],
-      startTime: options.since,
-      limit,
-    });
-
-    let agreed = 0;
-    for (const event of observed) {
-      if (event.metadata?.agree === true) agreed += 1;
-    }
-
-    const driftFieldCounts: Record<string, number> = {};
-    const recentDrift: WorkflowParitySummary["recentDrift"] = [];
-    for (const event of driftEvents) {
-      const diffs = Array.isArray(event.metadata?.diffs)
-        ? (event.metadata.diffs as WorkflowParityDiff[])
-        : [];
-      for (const diff of diffs) {
-        driftFieldCounts[diff.field] = (driftFieldCounts[diff.field] ?? 0) + 1;
-      }
-      if (recentDrift.length < 20) {
-        recentDrift.push({ taskId: event.taskId ?? event.target, timestamp: event.timestamp, diffs });
-      }
-    }
-
-    return {
-      observed: observed.length,
-      agreed,
-      drift: driftEvents.length,
-      agreeRate: observed.length > 0 ? agreed / observed.length : 0,
-      driftFieldCounts,
-      recentDrift,
-    };
   }
 
 export function dequeueMergeQueueOnColumnExitImpl(store: TaskStore, taskId: string, previousColumn: ColumnId, nextColumn: ColumnId, now: string): void {

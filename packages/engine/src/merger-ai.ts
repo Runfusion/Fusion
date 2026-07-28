@@ -52,6 +52,9 @@ import {
   resolveTaskMergeTarget,
   resolveValidatorSettingsModel,
   resolveMergerFallbackModel,
+  resolveReboundTarget,
+  resolveLifecycleColumns,
+  resolveWorkflowIrForTask,
   type MergeDetails,
   type MergeResult,
   type MergeTargetResolution,
@@ -984,6 +987,81 @@ export async function landOneRepo(
 // Orchestrator
 // ---------------------------------------------------------------------------
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-23:50 (Phase B / U5):
+Legacy ids for the roles this module decides by: the builtin coding workflow's
+`complete`/`archived` terminal pair and its `hold` rebound column. Used only
+when the task's workflow resolves to no column vocabulary, where preserving
+today's behavior exactly beats guessing.
+*/
+const LEGACY_COMPLETE_COLUMN = "done";
+const LEGACY_ARCHIVED_COLUMN = "archived";
+/* The pair, for the no-vocabulary-at-all case. Derived from the per-role ids so
+   the set and the individual fallbacks cannot drift apart. */
+const LEGACY_TERMINAL_COLUMNS: readonly string[] = [LEGACY_COMPLETE_COLUMN, LEGACY_ARCHIVED_COLUMN];
+const LEGACY_REBOUND_COLUMN = "todo";
+
+/**
+ * Where a finalize-blocked card is returned to for operator review.
+ *
+ * KTD-10 ordering via `resolveReboundTarget` (hold → intake → first column) —
+ * the same helper self-healing.ts:714 and mesh-lease-manager use for "requeue a
+ * recovered card", so the recovery paths cannot drift apart.
+ *
+ * Fail-soft to the legacy literal: these rebounds PARK WORK for a human after a
+ * no-commits / no-landed-proof / vetoed-no-op guard fires. Abandoning the
+ * rebound because a workflow lookup failed would strand the card in the merge
+ * lane with no owner, which is strictly worse than rebounding to a stale id.
+ *
+ * Exported for direct testing: the four call sites sit deep inside `runAiMerge`
+ * and `landWorkspaceTask`, behind a real git repo and a full merge run.
+ */
+export async function resolveFinalizeReboundColumn(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return resolveReboundTarget(ir) ?? LEGACY_REBOUND_COLUMN;
+  } catch {
+    return LEGACY_REBOUND_COLUMN;
+  }
+}
+
+/**
+ * True when the card already rests in a terminal column (`complete` or
+ * `archived`) of its OWN workflow — the already-finalized short circuit.
+ *
+ * Fail-soft to the legacy pair: losing this guard means an already-finalized
+ * card proceeds into the merge path, so an unresolvable workflow must keep the
+ * legacy ids rather than answer "not terminal".
+ */
+async function isAlreadyFinalizedColumn(store: TaskStore, task: Task): Promise<boolean> {
+  let terminal: readonly string[] = LEGACY_TERMINAL_COLUMNS;
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, task.id));
+    if (lifecycle) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-02:10 (PR #2471 review, P1):
+      The fallback is PER-ROLE, not per-set. The first cut replaced the whole
+      legacy pair whenever ANY terminal role resolved, so a workflow declaring
+      `complete` but no `archived` collapsed to a one-element set and silently
+      lost the archived short-circuit — an archived card then fell through to
+      `getTaskMergeBlocker` and threw "must be in 'in-review'".
+
+      Resolving each role against its OWN legacy id keeps both halves of the
+      guard for a partially-declared workflow. The two roles are independent:
+      a per-set rule passes for whichever role happens to be declared and fails
+      for the other, which is why both directions are tested.
+      */
+      terminal = [
+        lifecycle.complete ?? LEGACY_COMPLETE_COLUMN,
+        lifecycle.archived ?? LEGACY_ARCHIVED_COLUMN,
+      ];
+    }
+  } catch {
+    terminal = LEGACY_TERMINAL_COLUMNS;
+  }
+  return terminal.includes(task.column);
+}
+
 function noOpResult(task: Task, branch: string, reason: string): MergeResult {
   return {
     task,
@@ -1092,7 +1170,15 @@ export async function runAiMerge(
   assertNotWorkspaceTaskMerge(task);
   const branch = resolveTaskWorkingBranch(task);
 
-  if (task.column === "done" || task.column === "archived") {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-23:50 (Phase B / U5):
+  Resolve the terminal roles from the task's own workflow. Under a renamed
+  workflow the literal `done`/`archived` pair stopped matching, and the
+  already-finalized card fell through to `getTaskMergeBlocker` — which threw
+  "task is in 'shipped', must be in 'in-review'" for a task whose real state was
+  "already done, nothing to do". The correct outcome is this clean no-op.
+  */
+  if (await isAlreadyFinalizedColumn(store, task)) {
     return noOpResult(task, branch, "already-finalized");
   }
   const blocker = getTaskMergeBlocker(task, { manual: options.manual === true });
@@ -1218,9 +1304,10 @@ export async function runAiMerge(
        * FN-6461/FN-6455 requires the AI empty-merge lane to demote no-commits tasks whose skipped/incomplete steps outweigh done steps instead of finalizing the operational work as done.
        */
       await store.updateTask(taskId, { error: reason });
+      const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
       await store.logEntry(
         taskId,
-        `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+        `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to ${reboundColumn} with progress preserved`,
         JSON.stringify({
           doneCount: noCommitsFinalize.doneCount,
           incompleteCount: noCommitsFinalize.incompleteCount,
@@ -1241,7 +1328,7 @@ export async function runAiMerge(
           lane: "ai-empty-merge",
         },
       });
-      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      await store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
       return {
         task,
         branch,
@@ -1277,9 +1364,10 @@ export async function runAiMerge(
         const reason =
           "branch had no net changes vs main — work may have been reverted or lost; operator review required";
         await store.updateTask(taskId, { error: reason });
+        const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
         await store.logEntry(
           taskId,
-          `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — moving back to todo with progress preserved`,
+          `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — moving back to ${reboundColumn} with progress preserved`,
           JSON.stringify({ branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha }, null, 2),
         );
         await audit.database({
@@ -1294,7 +1382,7 @@ export async function runAiMerge(
             hadPriorNoOpProof: false,
           },
         });
-        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        await store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         return {
           task,
           branch,
@@ -1342,9 +1430,10 @@ export async function runAiMerge(
     if (executorVeto.veto) {
       const vetoReason = executorVeto.reason ?? "overseer failed-executor no-op-finalize veto";
       await store.updateTask(taskId, { error: vetoReason });
+      const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
       await store.logEntry(
         taskId,
-        `Finalize blocked (overseer failed-executor veto): ${vetoReason} — moving back to todo with progress preserved`,
+        `Finalize blocked (overseer failed-executor veto): ${vetoReason} — moving back to ${reboundColumn} with progress preserved`,
         JSON.stringify({
           executorSignal: executorMemory?.signal,
           executorSignalObservedAt: executorMemory?.observedAt,
@@ -1365,7 +1454,7 @@ export async function runAiMerge(
           lane: "ai-empty-merge",
         },
       });
-      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      await store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
       return {
         task,
         branch,
@@ -1904,9 +1993,10 @@ export async function landWorkspaceTask(
       const reason =
         "branch had no net changes vs main — work may have been reverted or lost; operator review required";
       await store.updateTask(taskId, { error: reason });
+      const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
       await store.logEntry(
         taskId,
-        `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — moving back to todo with progress preserved`,
+        `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — moving back to ${reboundColumn} with progress preserved`,
         JSON.stringify({ lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, repos: repos.map((r) => r.repo) }, null, 2),
       ).catch(() => undefined);
       await audit.database({
@@ -1914,7 +2004,7 @@ export async function landWorkspaceTask(
         target: taskId,
         metadata: { reason, lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, hadPriorNoOpProof: false },
       }).catch(() => undefined);
-      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      await store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
       return { taskId, repos, allLanded, finalized: false };
     }
     const finalized = await finalizeWorkspaceTask(store, taskId, task, repos);

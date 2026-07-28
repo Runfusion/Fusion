@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, resolveReboundTarget, resolveLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -96,7 +96,6 @@ import {
   type NtfyNotifier,
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
-import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
 import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
@@ -895,7 +894,6 @@ export class SelfHealingManager {
   private preservedQueuedOverlapLogged = new Map<string, string>();
   private maintenanceTickCounter = 0;
   private readonly processBootStartedAt = Date.now();
-  private dependencyBlockedTodoReporter: DependencyBlockedTodoReporter | null = null;
   private lastDbCorruptionNotifiedAt: number | null = null;
 
   private boardStallWindow: {
@@ -1983,58 +1981,6 @@ export class SelfHealingManager {
       log.error(`checkStuckBudget failed for ${taskId}: ${errorMessage}`);
       // On error, allow re-queue — safer than permanently failing
       return true;
-    }
-  }
-
-  // ── Lost work detection ────────────────────────────────────────────
-
-  /**
-   * Check whether a task's branch has any unique commits compared to main.
-   * If the branch has no unique commits and the task has steps marked done,
-   * those steps represent lost uncommitted work — reset them to "pending"
-   * so the next execution doesn't skip them.
-   */
-  private async resetStepsIfWorkLost(task: Task): Promise<void> {
-    const completedSteps = task.steps.filter(
-      (s) => s.status === "done" || s.status === "in-progress",
-    );
-    if (completedSteps.length === 0) return;
-
-    const branchName = resolveTaskWorkingBranch(task);
-
-    try {
-      const { stdout: mergeBaseOut } = await execAsync(
-        `git merge-base "${branchName}" HEAD`,
-        { cwd: this.options.rootDir, encoding: "utf-8", timeout: 30_000 },
-      );
-      const mergeBase = mergeBaseOut.trim();
-      const { stdout: branchHeadOut } = await execAsync(
-        `git rev-parse "${branchName}"`,
-        { cwd: this.options.rootDir, encoding: "utf-8", timeout: 30_000 },
-      );
-      const branchHead = branchHeadOut.trim();
-
-      if (mergeBase === branchHead) {
-        log.warn(
-          `${task.id} branch has no unique commits — resetting ${completedSteps.length} step(s) to pending`,
-        );
-
-        for (let i = 0; i < task.steps.length; i++) {
-          if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
-            await this.store.updateStep(task.id, i, "pending");
-          }
-        }
-
-        await this.store.logEntry(
-          task.id,
-          `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost with worktree)`,
-        );
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.warn(
-        `Failed to reset steps for ${task.id} after branch/worktree loss (${branchName}): ${errorMessage} — non-fatal`,
-      );
     }
   }
 
@@ -3209,11 +3155,27 @@ export class SelfHealingManager {
     if (!recoverFn) return 0;
 
     try {
-      const tasks = await this.store.listTasks({ column: "todo", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:25 (Phase B / slice B3.1 — U4):
+      This sweep decided "is this card in the hold column?" TWICE — the QUERY
+      (`{ column: "todo" }`) and the per-task GUARD (`task.column !== "todo"`) —
+      and both were literal. They convert TOGETHER or not at all: a correct guard
+      behind a literal query never runs, and a converted query behind a literal
+      guard rejects every row it just fetched. Either half alone is a green diff
+      with no behavior change.
+
+      Cost discipline: the column filter is gone, so the CHEAP non-column
+      rejections (paused / executing / incomplete steps / errored / taint) run
+      FIRST and synchronously, and only the handful of survivors pay an IR
+      resolution — shared through `irCache`, so a board spanning three workflows
+      resolves three times regardless of card count. `includeArchived: false`
+      keeps archived rows out, which the old column filter did implicitly.
+      */
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
-      const stranded = tasks.filter((task) => {
-        if (task.column !== "todo" || task.paused) return false;
+      const completedNonColumnCandidates = tasks.filter((task) => {
+        if (task.paused) return false;
         if (executingIds.has(task.id)) return false;
         if (task.steps.length === 0 || !task.steps.every((s) => s.status === "done" || s.status === "skipped")) return false;
         /*
@@ -3235,9 +3197,32 @@ export class SelfHealingManager {
         return true;
       });
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:25 (Phase B / slice B3.1 — U4):
+      The column half of the old predicate, now resolved per task against the
+      card's OWN workflow. A board can span workflows with different hold
+      columns, so this cannot be hoisted to one board-wide value. A workflow that
+      declares no hold column keeps the legacy `todo`, matching the pre-conversion
+      behavior rather than matching nothing.
+      */
+      const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const stranded: Task[] = [];
+      for (const task of completedNonColumnCandidates) {
+        let holdColumn = "todo";
+        try {
+          const lifecycle = resolveLifecycleColumns(
+            await resolveWorkflowIrForTask(this.store, task.id, irCache),
+          );
+          if (lifecycle?.hold) holdColumn = lifecycle.hold;
+        } catch {
+          holdColumn = "todo";
+        }
+        if (task.column === holdColumn) stranded.push(task);
+      }
+
       if (stranded.length === 0) return 0;
 
-      log.warn(`Found ${stranded.length} completed task(s) stranded in todo`);
+      log.warn(`Found ${stranded.length} completed task(s) stranded in the hold column`);
 
       let recovered = 0;
       for (const task of stranded) {
@@ -5423,15 +5408,18 @@ export class SelfHealingManager {
   }
 
   /**
-   * #1401: periodic transitionPending recovery sweep. Flag-ON only — when
-   * `workflowColumns` is OFF the legacy path never writes markers, so there is
-   * nothing to recover. Delegates to the store's idempotent recovery method
-   * (a no-op when no stale markers exist), keeping capacity counts honest after
-   * a crash between the in-txn marker write and the post-commit clear.
+   * #1401: periodic transitionPending recovery sweep. Delegates to the store's
+   * idempotent recovery method (a no-op when no stale markers exist), keeping
+   * capacity counts honest after a crash between the in-txn marker write and the
+   * post-commit clear.
+   *
+   * FNXC:WorkflowColumns 2026-07-27-09:40 (U2 / R9):
+   * The `isWorkflowColumnsEnabled` gate is GONE, not disabled. That helper
+   * returned a literal `true`, so the early return was unreachable and the
+   * settings read that fed it was pure cost. The sweep is unconditional now,
+   * which is what it already was at runtime.
    */
   async runStaleTransitionPendingSweep(): Promise<void> {
-    const settings = await this.store.getSettings();
-    if (!isWorkflowColumnsEnabled(settings)) return;
     await this.store.recoverStaleTransitionPending();
   }
 
@@ -8039,39 +8027,6 @@ export class SelfHealingManager {
     }
   }
 
-  private getDependencyBlockedTodoReporter(): DependencyBlockedTodoReporter | null {
-    if (this.dependencyBlockedTodoReporter) {
-      return this.dependencyBlockedTodoReporter;
-    }
-    const projectId = this.options.getProjectId?.();
-    if (!projectId) {
-      return null;
-    }
-    this.dependencyBlockedTodoReporter = new DependencyBlockedTodoReporter({
-      store: this.store,
-      projectId,
-      now: () => Date.now(),
-    });
-    return this.dependencyBlockedTodoReporter;
-  }
-
-  async surfaceDependencyBlockedTodos(): Promise<number> {
-    try {
-      const settings = await this.store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return 0;
-      if (settings.dependencyBlockedTodoReportEnabled === false) return 0;
-
-      const reporter = this.getDependencyBlockedTodoReporter();
-      if (!reporter) return 0;
-      const result = await reporter.report();
-      return result.groupCount ?? 0;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`Dependency-blocked todo surfacing failed: ${errorMessage}`);
-      return 0;
-    }
-  }
-
   /**
    * Surface quiet-window backlog-health diagnostics for unpaused in-review tasks.
    *
@@ -8207,14 +8162,43 @@ export class SelfHealingManager {
       const thresholdMs = settings.stalePausedTodoThresholdMs;
       if (!thresholdMs || thresholdMs <= 0) return 0;
 
-      const tasks = await this.store.listTasks({ column: "todo", slim: false });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-03:45 (PR #2470 review, P1):
+      This sweep needed TWO fixes, not one. `getStalePausedTodoSignal` gained a
+      `holdColumn` parameter in B1 but every caller omitted it, so the guard still
+      compared against the literal "todo" — and the QUERY was `{ column: "todo" }`,
+      so the sweep never even saw a card resting in a renamed hold column.
+      Threading only the signal would have left a correct guard that never runs.
+
+      The column filter is therefore dropped and the hold column resolved PER TASK
+      (a board can span workflows, each with its own hold column). Cost is
+      contained by ordering: `paused !== true` rejects almost every card before any
+      IR resolution, and the survivors share an `irCache`, so a board of 400 cards
+      with three paused ones resolves at most three times.
+      */
+      const tasks = await this.store.listTasks({ slim: false });
+      const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       let surfaced = 0;
 
       for (const task of tasks) {
         if (task.paused !== true) continue;
+
+        let holdColumn = "todo";
+        try {
+          const lifecycle = resolveLifecycleColumns(
+            await resolveWorkflowIrForTask(this.store, task.id, irCache),
+          );
+          // A workflow declaring no hold column keeps the legacy id rather than
+          // matching nothing (conservative: preserves today's behavior).
+          if (lifecycle?.hold) holdColumn = lifecycle.hold;
+        } catch {
+          holdColumn = "todo";
+        }
+
         const signal = getStalePausedTodoSignal(task, {
           now: cycleStartMs,
           thresholdMs,
+          holdColumn,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
