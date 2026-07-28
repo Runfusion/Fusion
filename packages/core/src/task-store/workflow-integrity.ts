@@ -246,67 +246,6 @@ export async function cleanupNoOpTaskMovedActivityRowsOnceImpl(store: TaskStore)
     });
   }
 
-export async function runWorkflowColumnsIntegrityPassImpl(store: TaskStore): Promise<{ scanned: number; rehomed: number; skippedTerminal: number }> {
-    let scanned = 0;
-    let rehomed = 0;
-    let skippedTerminal = 0;
-
-    const rows = store.db
-      .prepare(`SELECT id FROM tasks WHERE "deletedAt" IS NULL`)
-      .all() as Array<{ id: string }>;
-
-    const registry = getTraitRegistry();
-
-    for (const { id } of rows) {
-      scanned += 1;
-      const task = store.readTaskFromDb(id, { includeDeleted: false });
-      if (!task) continue;
-      const ir = store.resolveTaskWorkflowIrSync(id);
-      const currentColumn = task.column;
-
-      // Already valid in its resolved workflow — nothing to do (the common case;
-      // this is why the pass is idempotent and a no-op for healthy DBs).
-      if (workflowHasColumn(ir, currentColumn)) continue;
-
-      // The stored column is not in the resolved workflow. Before re-homing,
-      // never disturb a terminal card: if the column the card sits in carries a
-      // complete/archived flag in its workflow it is terminal — but since the
-      // column is NOT in the IR we cannot read its flags there. Fall back to the
-      // legacy terminal semantics (done/archived) so terminal cards are never
-      // re-homed, matching the plan's "done/archived untouched" rule.
-      const column = findWorkflowColumn(ir, currentColumn);
-      const flags = column ? registry.resolveColumnFlags(column) : undefined;
-      const isTerminal =
-        flags?.complete === true ||
-        flags?.archived === true ||
-        currentColumn === "done" ||
-        currentColumn === "archived";
-      if (isTerminal) {
-        skippedTerminal += 1;
-        continue;
-      }
-
-      const targetColumn = resolveEntryColumnId(ir);
-      if (!targetColumn) continue; // non-reconcilable IR — leave the card put.
-
-      await store.rehomeOccupant(id, targetColumn, "workflow-edit-rehome", {
-        integrityPass: true,
-        invalidColumn: currentColumn,
-      });
-      rehomed += 1;
-    }
-
-    if (rehomed > 0 || skippedTerminal > 0) {
-      storeLog.log("workflowColumns integrity pass completed", {
-        phase: "init:workflow-columns-integrity",
-        scanned,
-        rehomed,
-        skippedTerminal,
-      });
-    }
-    return { scanned, rehomed, skippedTerminal };
-  }
-
 export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, options: { dryRun?: boolean } = {},): Promise<CommitAssociationDiffBackfillReport> {
     const dryRun = options.dryRun === true;
 

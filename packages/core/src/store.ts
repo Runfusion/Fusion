@@ -104,9 +104,9 @@ import { getTaskCommitAssociationsByLineageIdImpl, replaceLegacyTaskCommitAssoci
 import { findRecentTasksBySourceParentTaskIdImpl } from "./task-store/branch-and-pr-entities.js";
 import { addTaskCommentImpl, applyBuiltInPromptOverridesAsyncImpl, applyBuiltInPromptOverridesSyncImpl, areAllDependenciesDoneImpl, artifactStoredNameImpl, assertWorkflowIrTraitsValidImpl, clearActivityLogImpl, clearTaskWorkflowSelectionImpl, deleteTaskByIdImpl, getDefaultWorkflowIdImpl, resolveOriginWorkflowOverrideIdImpl, type TaskOriginWorkflowKind, getInsightStoreImpl, getMergeQueuedTaskIdsImpl, getMergeRequestRecordImpl, getMergeRequestRecordAsyncImpl, getResearchStoreImpl, getTaskIdFromDirImpl, getTodoStoreImpl, getWorkflowWorkItemByIdentityImpl, hasActiveTaskImpl, invalidateConfigCacheAfterMigrationImpl, isTaskIdConflictErrorImpl, listLegacyAutoMergeStampCandidatesImpl, readTaskRowFromDbImpl, recordBranchGroupMemberLandedImpl, refreshDatabaseHealthAsyncImpl, refreshDatabaseHealthImpl, resolveEffectiveWorkflowIdSyncImpl, resolveTaskCustomFieldDefsSyncImpl, resolveWorkflowBypassGuardsImpl, serializeConfigForDiskImpl, setPluginWorkflowStepTemplatesImpl, shouldSkipWorkflowMovePoliciesImpl, suppressWatcherImpl, upsertTaskWithFtsRecoveryImpl } from "./task-store/task-store-helpers.js";
 import { getTaskSelectClauseImpl2, createTaskPersistSerializationContextImpl, getTaskPersistValuesImpl, getTaskPatchDescriptorsImpl, normalizeTaskFromDiskImpl, writeTaskJsonFileImpl, rowToPrEntityImpl, generatePrEntityIdImpl, readTaskForMoveImpl, rowToMergeQueueEntryImpl, rowToMergeRequestRecordImpl, rowToCompletionHandoffMarkerImpl, rowToWorkflowWorkItemImpl, rowToRunAuditEventImpl } from "./task-store/task-row-mappers.js";
-import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, evacuateCustomColumnsToLegacyImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
+import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
 import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWithAuditImpl, duplicateTaskImpl, listStrandedRefinementsImpl, tryClaimCheckoutImpl, evaluateWorkflowMovePoliciesImpl, recordRunAuditEventImpl, getRunAuditEventsImpl, dequeueMergeQueueOnColumnExitImpl, updateIssueInfoImpl, listWorkflowStepsImpl, getWorkflowStepImpl, createWorkflowDefinitionImpl, countActiveInCapacitySlotSyncImpl, countActiveInCapacitySlotAsyncImpl, generateSpecifiedPromptImpl, recordActivityImpl, getEvalStoreImpl } from "./task-store/project-store-ops.js";
-import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
+import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, deleteTaskIfBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
 import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
@@ -2413,16 +2413,16 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return rehomeOccupantImpl(this, taskId, targetColumn, reason, metadata);
   }
 
-  // ── U12: workflow-columns integrity pass ──────────────────────────────────
-  // FNXC:WorkflowColumns 2026-06-20-00:00:
-  // Migration rewrites ZERO task rows (KTD-1): null selection resolves to built-in
-  // default workflow at read time with byte-identical column IDs. The integrity
-  // pass audits tasks whose stored column is not valid in their RESOLVED workflow
-  // and re-homes via recoveryRehome (guard-bypassing, capacity-honoring). Terminal
-  // cards (done/archived) are never disturbed. Idempotent. Flag-ON only.
-  async runWorkflowColumnsIntegrityPass(): Promise<{ scanned: number; rehomed: number; skippedTerminal: number }> {
-    return runWorkflowColumnsIntegrityPassImpl(this);
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R7, R9):
+  `runWorkflowColumnsIntegrityPass` is DELETED. It was the SUPERSEDED predecessor of
+  the shipped R7 sweep: `SelfHealingManager.reconcileUndeclaredTaskColumns`, which is
+  registered in startup recovery (`self-healing.ts`) and re-homes a card whose stored
+  column its workflow no longer declares. The old pass had NO caller anywhere — not
+  production, not tests — and read tasks through the synchronous SQLite handle, which
+  no longer resolves under the PostgreSQL runtime, so invoking it would have thrown
+  rather than reconciled. Deleted rather than wired up: its successor already runs.
+  */
 
   // ── #1401: transitionPending recovery sweep ───────────────────────────────
   // FNXC:WorkflowColumns 2026-06-20-00:00:
@@ -2435,16 +2435,17 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return recoverStaleTransitionPendingImpl(this);
   }
 
-  // ── #1409: flag ON→OFF evacuation ─────────────────────────────────────────
-  // FNXC:WorkflowColumns 2026-06-20-00:00:
-  // When `workflowColumns` is disabled, the board reverts to the legacy enum path
-  // where only COLUMNS are valid. Cards in CUSTOM (non-legacy) columns would be
-  // stuck. This pass re-homes each to the nearest legacy column (default workflow
-  // entry column `todo`) via recoveryRehome. Terminal cards (done/archived) left
-  // put. Idempotent.
-  async evacuateCustomColumnsToLegacy( trigger: "flag-off-init" | "flag-toggled-off", ): Promise<{ scanned: number; evacuated: number }> {
-    return evacuateCustomColumnsToLegacyImpl(this, trigger);
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  `evacuateCustomColumnsToLegacy` (#1409) is DELETED with the ON→OFF flag transition
+  it existed to service. It re-homed cards out of custom columns when `workflowColumns`
+  flipped OFF, so the legacy enum board would not strand them. Both of its triggers
+  (`settings-ops.ts`) required the PREVIOUS settings to have the flag ON, and nothing
+  in production ever writes that key, so the transition — and therefore the evacuation
+  — was unreachable. Custom columns are no longer an opt-in that can be revoked; they
+  are the runtime, and a card in a column its workflow does not declare is now the
+  self-healing sweep `reconcileUndeclaredTaskColumns`'s job (R7).
+  */
 
   // ── Workflow selection (resolves a workflow to enabledWorkflowSteps) ────
   // Selection compiles a workflow into WorkflowStep rows and writes their ids into

@@ -6,7 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, storeLog, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
+import {TaskStore, storeLog} from "../store.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../moved-settings.js";
@@ -23,10 +23,6 @@ import {appendConfigurationRevision, createConfigurationRevision} from "../async
 export async function publishSettingsUpdated(store: TaskStore, previous: Settings, settings: Settings): Promise<void> {
   /* FNXC:ConfigVersioning 2026-07-18-14:20: rollback is an observable settings replacement, so it must use the same post-commit notification/effects seam as a forward mutation. */
   store.emit("settings:updated", { settings, previous });
-  if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(settings)) {
-    try { await store.evacuateCustomColumnsToLegacy("flag-toggled-off"); }
-    catch (err) { storeLog.warn("workflowColumns ON→OFF evacuation failed", { phase: "evacuate-custom-columns", error: err instanceof Error ? err.message : String(err) }); }
-  }
   if (settings.memoryEnabled !== false && previous.memoryEnabled === false) {
     try { await ensureMemoryFileWithBackend(store.rootDir, settings); }
     catch (err) { storeLog.warn("Project-memory bootstrap failed after memory toggle-on", { phase: "updateSettings:memory-toggle-on", rootDir: store.rootDir, error: err instanceof Error ? err.message : String(err) }); }
@@ -259,20 +255,12 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
     // Emit settings:updated so SSE listeners pick up the change
     store.emit("settings:updated", { settings: merged, previous });
 
-    // #1409: workflowColumns lives in experimentalFeatures (a global key), so the
-    // ON→OFF toggle flows through here. Evacuate any card stranded in a custom
-    // column when the flag flips off.
-    if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(merged)) {
-      try {
-        await store.evacuateCustomColumnsToLegacy("flag-toggled-off");
-      } catch (err) {
-        storeLog.warn("workflowColumns ON→OFF evacuation failed", {
-          phase: "evacuate-custom-columns",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    The #1409 `workflowColumns` ON→OFF evacuation hook is DELETED from both settings
+    write paths. It fired only when the PREVIOUS settings had the raw flag ON, and no
+    production writer ever sets that key, so neither call site was reachable.
+    */
     return merged;
   }
 

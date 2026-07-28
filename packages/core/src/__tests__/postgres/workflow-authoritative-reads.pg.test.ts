@@ -51,22 +51,14 @@ pgDescribe("PostgreSQL workflow authoritative reads", () => {
     });
   });
 
-  it("evacuates PostgreSQL custom-column cards to the legacy entry column", async () => {
-    const store = h.store();
-    await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
-    const ir = workflowWithCustomColumn();
-    const workflow = await store.createWorkflowDefinition({ name: "Evacuation", ir, layout: {} });
-    const task = await store.createTask({ description: "must evacuate" });
-    await store.selectTaskWorkflow(task.id, workflow.id);
-    await store.moveTask(task.id, "custom-hold", { moveSource: "engine", bypassGuards: true, recoveryRehome: true });
-
-    expect(await store.evacuateCustomColumnsToLegacy("flag-toggled-off")).toEqual({
-      scanned: 1,
-      evacuated: 1,
-    });
-    expect((await store.getTask(task.id)).column).toBe("triage");
-  });
-
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  "evacuates PostgreSQL custom-column cards to the legacy entry column" is DELETED
+  with `evacuateCustomColumnsToLegacy`. It was the only caller of that method left
+  anywhere, and it reached it by writing `experimentalFeatures.workflowColumns: true`
+  itself — the flag no production writer sets. It proved a rollback path out of a
+  runtime that is no longer opt-in.
+  */
   it("lists and exports project-scoped PostgreSQL workflow setting values", async () => {
     const store = h.store();
     const projectId = store.getWorkflowSettingsProjectId();

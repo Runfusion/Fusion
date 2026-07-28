@@ -1114,52 +1114,6 @@ export async function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflow
     return ids;
 }
 
-export async function evacuateCustomColumnsToLegacyImpl(store: TaskStore, trigger: "flag-off-init" | "flag-toggled-off",): Promise<{ scanned: number; evacuated: number }> {
-    let scanned = 0;
-    let evacuated = 0;
-
-    const legacyColumns = new Set<string>(COLUMNS);
-    // Nearest legacy landing column: the default workflow's entry column
-    // (triage). Falls back to "triage" defensively if the IR can't be resolved.
-    const targetColumn = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR) ?? "triage";
-
-    /*
-    FNXC:SqliteDualPathCleanup 2026-07-26-14:32:
-    Custom-column evacuation scans live tasks via PostgreSQL only.
-    */
-    const rows: Array<{ id: string; col: string }> = await store.asyncLayer!.db
-      .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
-      .from(schema.project.tasks)
-      .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!)));
-
-    for (const { id, col } of rows) {
-      scanned += 1;
-      // Already in a legacy column (the common case) — nothing to evacuate.
-      if (legacyColumns.has(col)) continue;
-      // Never disturb terminal cards (legacy terminal semantics — these column
-      // ids are never legacy here, but guard defensively for parity with the
-      // integrity pass).
-      if (col === "done" || col === "archived") continue;
-
-      await store.rehomeOccupant(id, targetColumn, "workflow-edit-rehome", {
-        evacuation: true,
-        trigger,
-        invalidColumn: col,
-      });
-      evacuated += 1;
-    }
-
-    if (evacuated > 0) {
-      storeLog.log("workflowColumns ON→OFF evacuation completed", {
-        phase: "evacuate-custom-columns",
-        trigger,
-        scanned,
-        evacuated,
-      });
-    }
-    return { scanned, evacuated };
-  }
-
 export async function listApprovedCliAutonomyAdaptersImpl(store: TaskStore): Promise<string[]> {
     const settings = await store.getSettings();
     const approved = (settings as { approvedCliAutonomyAdapters?: string[] }).approvedCliAutonomyAdapters;
