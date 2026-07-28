@@ -7760,6 +7760,26 @@ export class TaskExecutor {
           this.graphSeamGoverningNodeId.delete(seamTask.id);
           this.graphSeamThinkingLevel.delete(seamTask.id);
         }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-27-16:25 (U8 / R4):
+        THIS BOOLEAN IS THE OWNERSHIP BOUNDARY, and it is too narrow. `runImplementation` has
+        28 measured ways of disposing of a task (16 column moves, 3 review handoffs, 9 terminal
+        parks — counted by `executor-lifecycle-ownership-ledger.test.ts`) and exactly 3 ways of
+        telling the graph anything, all of which collapse to `taskDone: true` here.
+
+        The consequence is not a missing feature, it is a second lifecycle owner. Because the
+        seam has no value for "the agent stopped because a step is blocked on a pending review"
+        or "the session was paused after the work was already complete", the implementation
+        phase performs those transitions ITSELF (`executor-exit-while-review-pending`,
+        `paused-after-completion`) and the graph learns about them afterwards — which is why
+        `handleGraphFailure` carries `alreadyFinalizedToReview` / `completionFinalized`
+        classifiers whose whole job is to recognise a move the graph did not make.
+
+        U8's direction: widen this vocabulary so a disposition is REPORTED here and the graph
+        routes it, rather than performed upstream and compensated for downstream. The
+        compensating classifiers are the acceptance test — they become unreachable, and then
+        deletable, exactly when the last out-of-band transition is gone.
+        */
         if (result.taskDone) {
           return { outcome: "success", value: "implemented" };
         }
