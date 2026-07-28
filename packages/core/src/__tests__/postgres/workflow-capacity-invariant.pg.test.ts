@@ -217,4 +217,88 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       expect(secondColumn).toBe("todo");
     },
   );
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-16:10 (PR #2499 review — greptile: split capacity state):
+  THE SPLIT-SNAPSHOT RATCHET.
+
+  The capacity gate derives TWO things from the task's workflow selection: the
+  LIMIT (from the resolved IR) and the POOL KEY the occupancy count buckets on.
+  Before this fix they came from two INDEPENDENT reads — the pool id from a
+  pre-transaction `getTaskWorkflowSelectionAsync`, the IR from a second one inside
+  `resolveTaskWorkflowIrForMove`. Neither was serialized with the count, which runs
+  on the move's transaction handle. A selection change landing between them made
+  the gate measure workflow A's (empty) pool against workflow B's finite limit and
+  admit into a full column.
+
+  That is the R1 sentinel defect in a new costume: gate and counter describing
+  different pools, so a finite limit cannot bind. It matters precisely BECAUSE this
+  PR is where capacity starts binding — a gate that leaks under concurrent
+  selection change is a defect introduced exactly where operators begin relying on
+  it.
+
+  HOW THIS DISCRIMINATES, deterministically rather than by racing threads: the
+  pre-transaction reader is stubbed to report a workflow that DIFFERS from the one
+  actually persisted — which is what a concurrent selection change looks like from
+  inside the move. The stubbed workflow's pool is empty; the persisted one's is
+  full. Old code trusts the stub for both the pool key and the IR, so it measures
+  an empty pool against a finite limit and admits. The fix reads the selection once
+  through the transaction handle, so the PERSISTED value decides and the move is
+  refused.
+
+  FIRST ATTEMPT AT THIS TEST WAS WORTHLESS, and the revert-proof is the only reason
+  that is known: it stubbed a per-CALL sequence to hand the two old reads different
+  values, but the pre-transaction telemetry read silently consumed the first entry,
+  so both capacity reads landed on the same value and the reverted code passed. The
+  order-independent form below does not depend on how many times the reader is
+  called — which is the property a ratchet needs, since call counts are exactly the
+  kind of thing a later refactor changes without noticing.
+  */
+  it("RATCHET: a workflow-selection change mid-move cannot split the limit from the counting pool", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await setPath("inline");
+
+    // Fill builtin:coding's wip pool to its limit of 1.
+    const holder = await store.createTask({ description: "split-snapshot holder" });
+    await store.selectTaskWorkflow(holder.id, "builtin:coding");
+    await store.moveTask(holder.id, "todo");
+    await store.moveTask(holder.id, "in-progress");
+
+    const contender = await store.createTask({ description: "split-snapshot contender" });
+    await store.selectTaskWorkflow(contender.id, "builtin:coding");
+    await store.moveTask(contender.id, "todo");
+
+    /*
+    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas (whose
+    wip pool holds zero occupants and whose in-progress column still carries a
+    finite maxConcurrent-backed limit), while the row says builtin:coding (pool
+    full). Restored in `finally` so a failure cannot leak a patched store into the
+    next test.
+    */
+    const realReader = store.getTaskWorkflowSelectionAsync.bind(store);
+    let stubCalls = 0;
+    (store as unknown as { getTaskWorkflowSelectionAsync: (taskId: string) => Promise<unknown> })
+      .getTaskWorkflowSelectionAsync = async (taskId: string) => {
+        if (taskId !== contender.id) return realReader(taskId);
+        stubCalls++;
+        return { workflowId: "builtin:coding-ideas", stepIds: [] };
+      };
+
+    let error: Error | null;
+    try {
+      error = await store
+        .moveTask(contender.id, "in-progress")
+        .then(() => null, (e: unknown) => e as Error);
+    } finally {
+      (store as unknown as { getTaskWorkflowSelectionAsync: unknown }).getTaskWorkflowSelectionAsync = realReader;
+    }
+
+    // The stub was actually exercised — otherwise this would pass for the wrong reason.
+    expect(stubCalls, "the pre-transaction selection reader was never called").toBeGreaterThan(0);
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect((await store.getTask(contender.id))?.column).toBe("todo");
+  });
 });

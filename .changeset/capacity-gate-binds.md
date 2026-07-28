@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": minor
+"@runfusion/fusion": patch
 ---
 
 summary: Column WIP limits are now actually enforced — a move into a full column is refused instead of silently allowed.
