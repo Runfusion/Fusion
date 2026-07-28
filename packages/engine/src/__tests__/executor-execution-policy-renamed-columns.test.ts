@@ -329,7 +329,8 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
     marker is a genuine execute failure and belongs to the terminal sink — widening the gate to
     "any column" would swallow real failures as benign recoveries.
 
-    FNXC PR #2497 review (coderabbit): asserting only the ABSENCE of the recovery log cannot
+    FNXC:WorkflowExecutionOwnership 2026-07-28-19:00 (U8, PR #2497 review — coderabbit):
+    Asserting only the ABSENCE of the recovery log cannot
     distinguish "took the terminal path" from "did nothing and returned", which is precisely the
     silent-swallow failure mode this whole file exists to catch. Assert the terminal outcome.
     */
@@ -416,6 +417,27 @@ describe("a resolved workflow is never given a column it does not declare", () =
       undefined,
       undefined,
     );
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-28-19:05 (U8, PR #2497 review — coderabbit):
+    Assert the DISPOSITION so this cannot pass on a silent return — but the disposition here is
+    NOT a terminal park. An earlier classifier, the execution-resume router, owns this shape: a
+    recoverable execute failure with incomplete steps is routed for resume, and the card is left
+    in place because the router's own already-there check sees it. Asserting a failed park would
+    encode the wrong contract; what this case pins is that the DISPATCH-LOOP gate did not claim
+    it, and that the run reached a real classifier rather than falling off the end.
+
+    Noted while writing this: the resume router's log says "moved back to todo" and its
+    already-there check is another `"todo"` literal — one of the 20 sites in this method left to
+    U5's executor slice. It is why the card stays put here rather than being rehomed to `inbox`.
+    */
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("execution resume"),
+      undefined,
+      undefined,
+    );
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(task.status).not.toBe("failed");
   });
 
   it("a workflow with no wip column terminalizes visibly instead of claiming the card advanced", async () => {
