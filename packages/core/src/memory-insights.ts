@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-memory-insights");
 /**
  * Two-Stage Memory System with Automated Insight Extraction
  *
@@ -1726,7 +1729,7 @@ export async function processAndAuditInsightExtraction(
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
-    console.error(
+    severityAuditLog.error(
       `[memory-audit] Failed to persist audit state: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -1740,7 +1743,7 @@ export async function processAndAuditInsightExtraction(
     await writeMemoryAudit(rootDir, auditMarkdown);
   } catch (err) {
     // Best-effort: log but don't throw
-    console.error(
+    severityAuditLog.error(
       `[memory-audit] Failed to write audit report: ${err instanceof Error ? err.message : String(err)}`,
     );
   }

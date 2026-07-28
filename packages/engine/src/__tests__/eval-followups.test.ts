@@ -157,11 +157,10 @@ describe("normalizeEvalFollowUps", () => {
     });
 
     expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-existing",
-      expect.stringContaining("[verification recurrence] signature=none"),
-      expect.stringContaining("kind=eval; parentTaskId=FN-parent"),
-    );
+    // FNXC:Evals 2026-07-26-00:00: the "[verification recurrence]" logEntry assertion here
+    // belonged to the deleted shared follow-up dedup engine (which rate-limited a recurrence
+    // note on the reused card). The inlined dedup only has to prove no duplicate card is
+    // filed and that the existing one is reported back, which is what remains asserted.
     expect(created?.createdTaskId).toBe("FN-existing");
     expect(created?.recommendation.reason).toContain("Reused existing follow-up FN-existing");
   });

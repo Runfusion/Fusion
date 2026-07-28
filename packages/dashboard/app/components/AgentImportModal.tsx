@@ -5,6 +5,8 @@ import { Upload, FileText, CheckCircle, AlertTriangle, X, Loader2, FolderOpen, G
 import { fetchCompanies, type CompanyEntry } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 
+import { FloatingWindow } from "./FloatingWindow";
+
 export interface AgentImportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -469,8 +471,9 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId, initi
   if (!isOpen) return null;
 
   return (
-    <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
-      <div className="agent-dialog agent-import-dialog" role="dialog" aria-modal="true" aria-label={t("agents.importAgents", "Import agents")}>
+        <FloatingWindow windowKey="agent-import" modal title={t("agents.importAgents", "Import Agents")} ariaLabel={t("agents.importAgents", "Import agents")} onClose={handleClose} hideHeader dragHandleSelector=".agent-import-dialog .agent-dialog-header" className="floating-window--agent-import" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:agent-import" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Import mapping is reflowable, so FloatingWindow owns tablet touch geometry and retains prior outside dismissal. */}
+      <div className="agent-dialog agent-import-dialog">
         {/* Header */}
         <div className="agent-dialog-header">
           <span className="agent-dialog-header-title">{t("agents.importAgents", "Import Agents")}</span>
@@ -981,6 +984,6 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId, initi
           )}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

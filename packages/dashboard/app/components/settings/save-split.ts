@@ -149,6 +149,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "dismissModalsOnOutsideClick",
     "skipConfirmationDialogs",
     "persistAgentToolOutput",
+    "agentToolOutputMaxChars",
     "proactiveTaskChatEnabled",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",
@@ -156,6 +157,8 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "updateCheckEnabled",
     "updateCheckFrequency",
     "updateChannel",
+    // FNXC:AutoUpdate 2026-07-25-10:05: global-general owns save/reset for the unattended-update opt-in.
+    "autoUpdateAndRestart",
     "autoReloadOnVersionChange",
   ]),
   /*

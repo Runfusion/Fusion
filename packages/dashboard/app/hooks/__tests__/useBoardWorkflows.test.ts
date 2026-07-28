@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useBoardWorkflows } from "../useBoardWorkflows";
 import type { BoardWorkflowsPayload } from "../../api";
-import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../../utils/boardWorkflowSelection";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID, readBoardWorkflowViewSelection } from "../../utils/boardWorkflowSelection";
 import {
   __test_clearWorkflowSettingValuesRevisions,
   getWorkflowSettingValuesRevision,
@@ -42,6 +42,12 @@ describe("useBoardWorkflows", () => {
       }),
       readBoardWorkflowsCache: vi.fn(() => null),
       writeBoardWorkflowsCache: vi.fn(),
+      /*
+      FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+      Injected in the SHARED harness, not only in the mirror tests below: without it every
+      lane change in this file would issue a real network call through the api module.
+      */
+      persistBoardWorkflowSelection: vi.fn(() => Promise.resolve({ workflowId: null })),
     };
   }
 
@@ -314,5 +320,93 @@ describe("useBoardWorkflows", () => {
     addSpy.mockRestore();
     removeSpy.mockRestore();
     winRemoveSpy.mockRestore();
+  });
+});
+
+/*
+FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+The Board lane lives in browser-local storage, which `fn task create`, the `fn_task_create`
+agent tool, and refinement-from-CLI cannot read. These pin the server-side mirror that makes
+the "Selected workflow" option of `taskCreateWorkflowId` / `refinementTaskWorkflowId` resolvable
+off-browser, and pin that a failing mirror never disturbs the operator's lane.
+*/
+describe("useBoardWorkflows — board lane server mirror", () => {
+  let subscribeHandlers: Record<string, (payload?: unknown) => void>;
+
+  beforeEach(() => {
+    subscribeHandlers = {};
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  function makeMirrorDeps(persist: ReturnType<typeof vi.fn>) {
+    return {
+      fetchBoardWorkflows: vi.fn(() => Promise.resolve(makePayload())),
+      subscribeSse: vi.fn((_url: string, sub: { events?: Record<string, (p?: unknown) => void> }) => {
+        subscribeHandlers = { ...(sub.events ?? {}) };
+        return vi.fn();
+      }),
+      readBoardWorkflowsCache: vi.fn(() => null),
+      writeBoardWorkflowsCache: vi.fn(),
+      persistBoardWorkflowSelection: persist,
+    };
+  }
+
+  it("mirrors a user lane change to the server alongside the local write", async () => {
+    const persist = vi.fn(() => Promise.resolve({ workflowId: "wf-b" }));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...makeMirrorDeps(persist) }));
+    await waitFor(() => expect(result.current.workflowOptions.length).toBe(2));
+
+    act(() => result.current.setSelectedWorkflowId("wf-b"));
+
+    await waitFor(() => expect(persist).toHaveBeenCalledWith("wf-b", "p1"));
+    expect(result.current.selectedWorkflowId).toBe("wf-b");
+  });
+
+  // The aggregate view is a Board-only sentinel, never a real workflow id. Mirroring it
+  // would hand task creation "__all_workflows__" as a workflow to resolve.
+  it("clears the mirror instead of persisting the all-workflows sentinel", async () => {
+    const persist = vi.fn(() => Promise.resolve({ workflowId: null }));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...makeMirrorDeps(persist) }));
+    await waitFor(() => expect(result.current.workflowOptions.length).toBe(2));
+
+    act(() => result.current.setSelectedWorkflowId(ALL_WORKFLOWS_BOARD_VIEW_ID));
+
+    await waitFor(() => expect(persist).toHaveBeenCalledWith(null, "p1"));
+    expect(persist).not.toHaveBeenCalledWith(ALL_WORKFLOWS_BOARD_VIEW_ID, "p1");
+    expect(result.current.selectedWorkflowId).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
+  });
+
+  it("clears the mirror when the selection is cleared", async () => {
+    const persist = vi.fn(() => Promise.resolve({ workflowId: null }));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...makeMirrorDeps(persist) }));
+    await waitFor(() => expect(result.current.workflowOptions.length).toBe(2));
+
+    act(() => result.current.setSelectedWorkflowId(null));
+
+    await waitFor(() => expect(persist).toHaveBeenCalledWith(null, "p1"));
+  });
+
+  // localStorage already holds the authoritative selection; a mirror failure is a
+  // best-effort miss, not a reason to revert or surface an error to the operator.
+  it("keeps the lane switch when the mirror request rejects", async () => {
+    const persist = vi.fn(() => Promise.reject(new Error("offline")));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...makeMirrorDeps(persist) }));
+    await waitFor(() => expect(result.current.workflowOptions.length).toBe(2));
+
+    act(() => result.current.setSelectedWorkflowId("wf-b"));
+
+    await waitFor(() => expect(persist).toHaveBeenCalled());
+    expect(result.current.selectedWorkflowId).toBe("wf-b");
+    expect(readBoardWorkflowViewSelection("p1")).toBe("wf-b");
+  });
+
+  it("does not mirror on mount, before the operator has chosen a lane", async () => {
+    const persist = vi.fn(() => Promise.resolve({ workflowId: null }));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...makeMirrorDeps(persist) }));
+    await waitFor(() => expect(result.current.workflowOptions.length).toBe(2));
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(subscribeHandlers).toBeDefined();
   });
 });

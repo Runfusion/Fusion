@@ -140,7 +140,7 @@ it("keeps modal mode as dialog with close button", async () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  expect(document.querySelector(".agent-detail-overlay")).toBeInTheDocument();
+  expect(document.querySelector("[data-testid='floating-window-overlay-agent-detail']")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 });
 

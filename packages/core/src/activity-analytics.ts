@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-activity-analytics");
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -925,7 +928,7 @@ export async function aggregateMonitorMetrics(
       // (it previously sat outside any try/catch), but log: a real failure here
       // (permissions, schema drift, bad bind) must not masquerade as "0 deploys".
       deployments = 0;
-      console.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
+      severityAuditLog.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
     }
     try {
       const openedFrom = query.from ? sql`AND opened_at >= ${query.from}` : sql``;

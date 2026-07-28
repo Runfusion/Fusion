@@ -1449,6 +1449,7 @@ function validateColumns(ir: WorkflowIrV2): void {
     }
     validateExtensionMetadata(`Workflow IR column '${column.id}'`, column.extensions);
     validateColumnAgent(column);
+    validateColumnRecovery(column);
   }
 }
 
@@ -1555,6 +1556,67 @@ function validateColumnAgent(column: WorkflowIrColumn): void {
   if (agent.mode !== "defer" && agent.mode !== "override") {
     throw new WorkflowIrError(
       `Workflow IR column '${column.id}' agent mode must be 'defer' or 'override' (got '${String(agent.mode)}')`,
+    );
+  }
+}
+
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-28-15:20 (PR #2478 review, P1):
+Validate the optional recovery policy at PARSE, like every other IR field.
+
+Without this, `parseWorkflowIr` happily persisted a negative or non-finite
+`stalenessMs`, an `onStale` missing its `code`, or an unsupported action — and
+the reconciler consumed them directly. A negative threshold makes every card
+instantly stale; a non-finite one makes no card ever stale. Both are silent, and
+both surface as a recovery sweep behaving inexplicably at 3am rather than as a
+save that was refused.
+
+Mirrors `validateColumnAgent`: absent → no-op; present → fully checked. The
+action list is closed on purpose, so adding an action to the type without
+teaching the reconciler about it fails at authoring time.
+*/
+function validateColumnRecovery(column: WorkflowIrColumn): void {
+  const recovery = column.recovery;
+  if (recovery === undefined) return;
+  if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) {
+    throw new WorkflowIrError(`Workflow IR column '${column.id}' recovery must be an object`);
+  }
+
+  const { stalenessMs, onStale } = recovery;
+
+  if (stalenessMs !== undefined) {
+    if (typeof stalenessMs !== "number" || !Number.isFinite(stalenessMs) || stalenessMs <= 0) {
+      throw new WorkflowIrError(
+        `Workflow IR column '${column.id}' recovery.stalenessMs must be a finite number greater than 0 (got '${String(stalenessMs)}')`,
+      );
+    }
+  }
+
+  if (onStale !== undefined) {
+    if (!onStale || typeof onStale !== "object" || Array.isArray(onStale)) {
+      throw new WorkflowIrError(`Workflow IR column '${column.id}' recovery.onStale must be an object`);
+    }
+    if (onStale.action !== "surface") {
+      throw new WorkflowIrError(
+        `Workflow IR column '${column.id}' recovery.onStale.action must be 'surface' (got '${String(onStale.action)}')`,
+      );
+    }
+    if (typeof onStale.code !== "string" || onStale.code.trim() === "") {
+      throw new WorkflowIrError(
+        `Workflow IR column '${column.id}' recovery.onStale must have a non-empty code`,
+      );
+    }
+  }
+
+  /*
+  A policy is only actionable with BOTH halves: a threshold with no action never
+  fires, and an action with no threshold has nothing to fire on. Either alone is
+  almost certainly an authoring mistake, and accepting it would persist a policy
+  that silently does nothing — the exact failure this program keeps finding.
+  */
+  if ((stalenessMs === undefined) !== (onStale === undefined)) {
+    throw new WorkflowIrError(
+      `Workflow IR column '${column.id}' recovery requires both stalenessMs and onStale, or neither`,
     );
   }
 }
@@ -1796,6 +1858,19 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
     // A permanent-agent binding is a v2-only feature (column-agent plan, R9): a
     // graph that staffs a column can never round-trip through a pre-v2 binary.
     if (col.agent !== undefined) return ir;
+    /*
+    FNXC:WorkflowRecoveryPolicy 2026-07-28-15:10 (PR #2478 review, P1):
+    A recovery policy is v2-only for the same reason as `agent`. The v1 shape has
+    no `columns` at all, so downgrading a workflow that declares one does not
+    degrade it — it PERMANENTLY DISCARDS the authored policy on the next save,
+    silently. The card would then simply stop being reconciled, with no error and
+    nothing in the diff to explain why.
+
+    The mere PRESENCE of the key is the v2 signal, matching the `optionalSteps`
+    rule above: an author who wrote `recovery: {}` intended v2, and downgrading
+    would still mutate the persisted shape.
+    */
+    if (col.recovery !== undefined) return ir;
     if (col.extensions !== undefined && Object.keys(col.extensions).length > 0) return ir;
   }
 

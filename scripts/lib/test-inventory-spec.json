@@ -29,7 +29,8 @@
         "dashboard-app-quality-settings",
         "dashboard-app-quality-backfill",
         "dashboard-api-quality",
-        "dashboard-api-quality-backfill"
+        "dashboard-api-quality-backfill",
+        "dashboard-browser-touch"
       ]
     }
   ]

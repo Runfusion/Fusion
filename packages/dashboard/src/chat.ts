@@ -36,6 +36,7 @@ import {
   resolveEffectiveAgentPermissionPolicy,
   summarizeTitle,
   FUSION_RUNTIME_SELF_AWARENESS,
+  createLogger,
 } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -106,15 +107,16 @@ interface DiagnosticsLogger {
   error(message: string, ...args: unknown[]): void;
 }
 
+const chatLog = createLogger("dashboard-chat");
 const defaultDiagnostics: DiagnosticsLogger = {
   log(message: string, ...args: unknown[]) {
-    console.log(`[chat] ${message}`, ...args);
+    chatLog.log(message, ...args);
   },
   warn(message: string, ...args: unknown[]) {
-    console.warn(`[chat] ${message}`, ...args);
+    chatLog.warn(message, ...args);
   },
   error(message: string, ...args: unknown[]) {
-    console.error(`[chat] ${message}`, ...args);
+    chatLog.error(message, ...args);
   },
 };
 

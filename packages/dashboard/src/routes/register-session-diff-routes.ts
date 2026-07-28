@@ -1,9 +1,14 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-session-diff-routes");
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Request, Router } from "express";
 import type { RunAuditEvent, RunAuditEventFilter } from "@fusion/core";
 import { isWorkspaceTask } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
+// FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
+import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
 import { resolveDiffBase, runGitCommand } from "./resolve-diff-base.js";
 import { countPatchLines } from "./diff-counts.js";
 import { filterFilesToOwnTaskCommits } from "./attribute-done-range-files.js";
@@ -829,7 +834,7 @@ async function restrictRebaseRangeFiles(
     const ownSet = new Set(attribution.files);
     return rebaseRangeFiles.filter((file) => ownSet.has(file.path));
   } catch (err) {
-    console.warn(
+    severityAuditLog.warn(
       `[diff] FN-5154 attribution failed for ${task.id}: ${(err as Error).message}; falling back to unrestricted range`,
     );
     return rebaseRangeFiles;
@@ -945,7 +950,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       if (err instanceof ApiError) {
         throw err;
       }
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (isTaskLookupMiss(err)) {
         throw notFound(`Task ${req.params.id} not found`);
       }
       rethrowAsApiError(err, "Internal server error");
@@ -1088,7 +1093,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
           if (rebaseDiffSpec) {
             diffSpec = rebaseDiffSpec;
           } else {
-            console.warn(`[diff] done task ${task.id}: mergeDetails.rebaseBaseSha ${rebaseBaseSha} is not ancestor of ${sha}; falling back to single-commit diff`);
+            severityAuditLog.warn(`[diff] done task ${task.id}: mergeDetails.rebaseBaseSha ${rebaseBaseSha} is not ancestor of ${sha}; falling back to single-commit diff`);
             try {
               diffSpec = await resolveCommitDiffSpec(sha, rootDir);
             } catch {
@@ -1186,7 +1191,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       if (err instanceof ApiError) {
         throw err;
       }
-      rethrowAsApiError(err);
+      rethrowTaskApiError(err, req.params.id);
     }
   });
 
@@ -1283,7 +1288,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
           if (rebaseDiffSpec) {
             diffSpec = rebaseDiffSpec;
           } else {
-            console.warn(`[file-diffs] done task ${task.id}: mergeDetails.rebaseBaseSha ${rebaseBaseSha} is not ancestor of ${sha}; falling back to single-commit diff`);
+            severityAuditLog.warn(`[file-diffs] done task ${task.id}: mergeDetails.rebaseBaseSha ${rebaseBaseSha} is not ancestor of ${sha}; falling back to single-commit diff`);
             try {
               diffSpec = await resolveCommitDiffSpec(sha, rootDir);
             } catch {
@@ -1378,7 +1383,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       if (err instanceof ApiError) {
         throw err;
       }
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (isTaskLookupMiss(err)) {
         throw notFound(`Task ${req.params.id} not found`);
       }
       rethrowAsApiError(err, "Internal server error");
@@ -1421,7 +1426,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       if (err instanceof ApiError) {
         throw err;
       }
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (isTaskLookupMiss(err)) {
         throw notFound(`Task ${req.params.id} not found`);
       }
       rethrowAsApiError(err, "Internal server error");

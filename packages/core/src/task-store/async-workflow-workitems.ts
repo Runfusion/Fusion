@@ -27,7 +27,8 @@ import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
-import { recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
+import { projectScopeFor, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
+import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "../types.js";
 import type {
   WorkflowWorkItem,
   WorkflowWorkItemDueFilter,
@@ -50,12 +51,27 @@ const TERMINAL_WORKFLOW_WORK_ITEM_STATES: ReadonlySet<string> = new Set([
   "cancelled",
 ]);
 
-const ACTIVE_TASK_CONTINUATION_STATES: WorkflowWorkItemState[] = [
-  "runnable",
-  "running",
-  "held",
-  "retrying",
-];
+const ACTIVE_TASK_CONTINUATION_STATES: WorkflowWorkItemState[] = [...ACTIVE_WORKFLOW_WORK_ITEM_STATES];
+
+/**
+ * FNXC:WorkflowSerialization 2026-07-26-12:00:
+ * FN-8592 serializes a task's workflow continuation decisions on the logical
+ * `(project_id, task_id)` key. This MUST be the first lock in a transaction;
+ * callers never hold two task locks. A repair-only lock was rejected because it
+ * cannot serialize competing writers, while a partial unique index, in-process
+ * mutex, and SERIALIZABLE isolation respectively change valid multi-item
+ * behavior, fail across processes, or require retries. PostgreSQL releases the
+ * advisory transaction lock on commit/rollback; no migration is required.
+ */
+export async function withTaskWorkflowSerialization<T>(
+  tx: DbTransaction,
+  projectId: string | undefined,
+  taskId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${projectId ?? ""}), hashtext(${taskId}))`);
+  return fn();
+}
 
 /**
  * Normalize a workflow-work-item state string. Unknown values default to
@@ -244,7 +260,18 @@ export async function upsertWorkflowWorkItem(
 
     return row;
   };
-  return existingTx ? doWork(existingTx) : layer.transactionImmediate(doWork);
+  // FNXC:WorkflowSerialization 2026-07-26-14:15:
+  // FN-8592 requires every possible ACTIVE continuation writer to take the
+  // shared task lock, including generic upserts that default to `runnable`.
+  // The lock wraps the read and write in this transaction so a conditional
+  // stranded-card seed cannot observe an idle graph while this upsert lands.
+  const serialized = (tx: DbTransaction) => withTaskWorkflowSerialization(
+    tx,
+    layer.projectId,
+    input.taskId,
+    () => doWork(tx),
+  );
+  return existingTx ? serialized(existingTx) : layer.transactionImmediate(serialized);
 }
 
 /** Atomically retire the current task continuation and persist its successor. */
@@ -252,33 +279,51 @@ export async function replaceActiveTaskWorkflowContinuation(
   layer: AsyncDataLayer,
   input: WorkflowWorkItemUpsertInput & { kind: "task" },
 ): Promise<WorkflowWorkItem> {
-  return layer.transactionImmediate(async (tx) => {
-    const activeRows = await tx
-      .select()
-      .from(schema.project.workflowWorkItems)
-      .where(
-        and(
-          eq(schema.project.workflowWorkItems.taskId, input.taskId),
-          eq(schema.project.workflowWorkItems.kind, "task"),
-          inArray(schema.project.workflowWorkItems.state, ACTIVE_TASK_CONTINUATION_STATES),
-        ),
-      );
-
+  return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
+    const activeRows = await tx.select().from(schema.project.workflowWorkItems).where(and(
+      eq(schema.project.workflowWorkItems.taskId, input.taskId),
+      eq(schema.project.workflowWorkItems.kind, "task"),
+      inArray(schema.project.workflowWorkItems.state, ACTIVE_TASK_CONTINUATION_STATES),
+    ));
     for (const row of activeRows as WorkflowWorkItemRow[]) {
-      const isSameIdentity =
-        row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind;
-      if (isSameIdentity) continue;
-      await transitionWorkflowWorkItem(
-        layer,
-        row.id,
-        "succeeded",
-        { leaseOwner: null, leaseExpiresAt: null, lastError: null },
-        tx,
-      );
+      if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
+      await transitionWorkflowWorkItem(layer, row.id, "succeeded", { leaseOwner: null, leaseExpiresAt: null, lastError: null }, tx);
     }
-
     return upsertWorkflowWorkItem(layer, input, tx);
-  });
+  }));
+}
+
+/**
+ * FNXC:StrandedHoldContinuation 2026-07-26-12:00:
+ * FN-8592 repairs only an idle graph: this insert-only operation checks every
+ * active work-item kind and passed plan-review result after taking the shared
+ * advisory lock. A false result is a race loss for an already-qualified caller;
+ * it never retires a continuation or edits step results.
+ */
+export async function seedStrandedPlanReviewContinuation(
+  layer: AsyncDataLayer,
+  input: WorkflowWorkItemUpsertInput & { kind: "task" },
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
+  return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
+    // FNXC:StrandedHoldContinuation 2026-07-27-01:15:
+    // FN-8592's all-kinds idle check is project-partitioned as well as task
+    // partitioned. Task ids can collide across embedded-PG projects, so a
+    // different project's continuation or review result must not block repair.
+    const active = await tx.select({ id: schema.project.workflowWorkItems.id }).from(schema.project.workflowWorkItems).where(and(
+      projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      eq(schema.project.workflowWorkItems.taskId, input.taskId),
+      inArray(schema.project.workflowWorkItems.state, [...ACTIVE_WORKFLOW_WORK_ITEM_STATES]),
+    ));
+    if (active.length > 0) return { seeded: false, reason: "active-continuation" as const };
+    const taskRows = await tx.select({ workflowStepResults: schema.project.tasks.workflowStepResults }).from(schema.project.tasks).where(and(
+      projectScopeFor(schema.project.tasks.projectId, layer.projectId),
+      eq(schema.project.tasks.id, input.taskId),
+    )).limit(1);
+    const results = taskRows[0]?.workflowStepResults as Array<{ workflowStepId?: string; status?: string }> | null | undefined;
+    if (results?.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) return { seeded: false, reason: "plan-review-passed" as const };
+    const item = await upsertWorkflowWorkItem(layer, input, tx);
+    return { seeded: true, workItemId: item.id };
+  }));
 }
 
 /**
@@ -363,7 +408,19 @@ export async function transitionWorkflowWorkItem(
 
     return rowToWorkflowWorkItem(updated);
   };
-  return existingTx ? doWork(existingTx) : layer.transactionImmediate(doWork);
+  // A transition can move an item from a non-active state to an ACTIVE state;
+  // resolve its owner before taking the shared lock so it participates in the
+  // same FN-8592 serialization protocol as inserts.
+  const serialized = async (tx: DbTransaction): Promise<WorkflowWorkItem> => {
+    const owner = await tx.select({ taskId: schema.project.workflowWorkItems.taskId })
+      .from(schema.project.workflowWorkItems)
+      .where(eq(schema.project.workflowWorkItems.id, id))
+      .limit(1);
+    const taskId = owner[0]?.taskId;
+    if (!taskId) return doWork(tx);
+    return withTaskWorkflowSerialization(tx, layer.projectId, taskId, () => doWork(tx));
+  };
+  return existingTx ? serialized(existingTx) : layer.transactionImmediate(serialized);
 }
 
 /**

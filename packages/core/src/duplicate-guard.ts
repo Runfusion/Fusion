@@ -2,8 +2,33 @@ import type { Task } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
 
-const DEFAULT_WINDOW_MS = 60_000;
-const MAX_WINDOW_MS = 300_000;
+/*
+FNXC:TaskCreationDeduplication 2026-07-26-06:45:
+The window must outlive one agent timeout-and-retry cycle, not one request.
+
+Incident: an agent fired five parallel fn_task_create calls, reported them as timed out, and
+retried them sequentially about two minutes later. The originals had committed, but the retries
+landed outside the old 60s window, so the exact-content guard saw nothing and the board took ten
+tasks instead of five. 60s only covered concurrent in-flight creates; a model that pauses to
+explain itself and then retries always beat it.
+
+Ten minutes is chosen to span a stalled tool call plus the model's retry turn. False positives stay
+cheap and rare: this is an EXACT normalized title+description hash, and a legitimate repeat of
+byte-identical content inside ten minutes is a double-submit, not distinct work. Near-duplicate
+(paraphrase) matching is unaffected and keeps its own thresholds/windows. The clamp ceiling rises
+with it so an explicit caller-supplied window is not silently cut back to five minutes.
+
+FNXC:TaskCreationDeduplication 2026-07-26-07:40:
+Exported because the STORE query clamps the window independently. Code review caught that
+findRecentTasksByContentFingerprintImpl carried its own `?? 60_000` / `Math.min(300_000, …)`
+pair, so widening only this module capped the effective window at five minutes and made the
+new ceiling unreachable. Two clamps for one policy is how a window silently under-delivers;
+both sites now read these constants.
+*/
+export const FINGERPRINT_WINDOW_DEFAULT_MS = 600_000;
+export const FINGERPRINT_WINDOW_MAX_MS = 3_600_000;
+const DEFAULT_WINDOW_MS = FINGERPRINT_WINDOW_DEFAULT_MS;
+const MAX_WINDOW_MS = FINGERPRINT_WINDOW_MAX_MS;
 export const deterministicGuardLocks = new Map<string, Promise<void>>();
 
 // Test-only compatibility hook used by dashboard deterministic-dedup route tests.

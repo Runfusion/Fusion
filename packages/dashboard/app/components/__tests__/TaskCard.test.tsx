@@ -47,6 +47,8 @@ vi.mock("lucide-react", () => ({
   ArrowUp: ({ style, ...props }: React.SVGProps<SVGSVGElement>) => <svg data-testid="priority-icon-high" className="lucide-arrow-up" style={style} {...props} />,
   TriangleAlert: ({ style, ...props }: React.SVGProps<SVGSVGElement>) => <svg data-testid="priority-icon-urgent" className="lucide-triangle-alert" style={style} {...props} />,
   ArrowUpRight: () => null,
+  // FNXC:RefinementTitle 2026-07-26-20:10: icon on the "Refines <id>" provenance chip.
+  Sparkles: () => null,
   // FN-7592: the overseer badge now renders an icon child instead of a text label,
   // so tests must see a real SVG (like Zap) rather than a no-op render.
   Eye: () => <svg data-testid="icon-eye" />,
@@ -2335,7 +2337,7 @@ describe("TaskCard", () => {
       />,
     );
 
-    const badge = screen.getByText("planning");
+    const badge = screen.getByText("Planning");
     expect(badge).toHaveClass("card-status-badge");
     expect(container.querySelector(".card-header-badges")).toContainElement(badge);
   });
@@ -2348,7 +2350,7 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(screen.getByText("planning")).toBeDefined();
+    expect(screen.getByText("Planning")).toBeDefined();
 
     rerender(
       <TaskCard
@@ -2423,11 +2425,15 @@ describe("TaskCard", () => {
     const badge = container.querySelector('[data-testid="card-reviewing-FN-7831"]');
     expect(Boolean(badge)).toBe(shouldRender);
     if (shouldRender) {
-      expect(badge).toHaveTextContent("Reviewing");
-      // FNXC:StatusBadge 2026-07-19-04:30: U12 — the status badge prefers the running
-      // workflow step's IR-declared name ("Plan Review") over the raw engine token
-      // ("planning"); this expectation tracks that intentional cutover behavior.
-      expect(screen.getByText("Plan Review")).toBeDefined();
+      expect(badge).toHaveTextContent("Plan Review");
+      /*
+      FNXC:StatusBadge 2026-07-26-14:05:
+      Exactly ONE badge names the gate. U12 let the status badge borrow the running step's IR name,
+      which now collides with the gate badge's own "Plan Review" copy, so the override yields and the
+      status badge states the card's status instead — as "Planning", not the raw engine token.
+      */
+      expect(screen.getAllByText("Plan Review")).toHaveLength(1);
+      expect(screen.getByText("Planning")).toBeDefined();
     }
   });
 
@@ -2599,7 +2605,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector('[data-testid="card-ready-FN-READY-REVIEW"]')).toBeNull();
-    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Reviewing");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Plan Review");
   });
 
   it("does not render Ready while Plan Review is running even when the queue gate hides Reviewing", () => {
@@ -2717,6 +2723,73 @@ describe("TaskCard", () => {
         expect(badge(container), column).toBeNull();
         unmount();
       }
+    });
+
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+    Original symptom: this badge claimed a card was waiting for a PLANNING slot when the engine was
+    never going to plan it. The step count is TaskCard's own proxy for "unplanned", while every engine
+    lane decides from PROMPT.md seed-ness, so the two disagreed in both directions. The server now
+    ships that answer as `awaitingPlanning` (same `isTaskAwaitingPlanning` predicate as triage's
+    todo-discovery) and it OUTRANKS the step count.
+
+    Surface enumeration — every combination of (flag present/absent) x (steps present/absent):
+     - flag false + no steps -> Ready (the reported repro: real spec that parsed to zero steps).
+     - flag true + steps -> Queued to plan (the reverse mislabel: re-seeded card with stale steps).
+     - flag absent -> step-count fallback preserved in both directions (SSE payloads, older server).
+     - exactly one of the two badges renders in every case, since both derive from one value.
+    */
+    describe("server awaitingPlanning outranks the step count", () => {
+      const readyBadge = (container: HTMLElement) =>
+        container.querySelector('[data-testid="card-ready-FN-QUEUED-PLAN"]');
+
+      it("renders Ready for a stepless card the server says is already planned", () => {
+        const { container } = render(
+          <TaskCard
+            task={queuedToPlanTask({ steps: [] as Task["steps"], awaitingPlanning: false })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+
+        expect(badge(container)).toBeNull();
+        expect(readyBadge(container)).toHaveTextContent("Ready");
+      });
+
+      it("renders Queued to plan for a card with stale steps the server says is unplanned", () => {
+        const { container } = render(
+          <TaskCard
+            task={queuedToPlanTask({
+              steps: [{ name: "stale step", status: "pending" }] as Task["steps"],
+              awaitingPlanning: true,
+            })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+
+        expect(badge(container)).toHaveTextContent("Queued to plan");
+        expect(readyBadge(container)).toBeNull();
+      });
+
+      it("falls back to the step count in both directions when the field is absent", () => {
+        const stepless = render(
+          <TaskCard task={queuedToPlanTask({ steps: [] as Task["steps"] })} onOpenDetail={noop} addToast={noop} />,
+        );
+        expect(badge(stepless.container)).toHaveTextContent("Queued to plan");
+        expect(readyBadge(stepless.container)).toBeNull();
+        stepless.unmount();
+
+        const withSteps = render(
+          <TaskCard
+            task={queuedToPlanTask({ steps: [{ name: "Step 1", status: "pending" }] as Task["steps"] })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+        expect(badge(withSteps.container)).toBeNull();
+        expect(readyBadge(withSteps.container)).toHaveTextContent("Ready");
+      });
     });
   });
 
@@ -2913,7 +2986,15 @@ describe("TaskCard", () => {
     expect(badge.getAttribute("title")).toContain("Auto-merge retries exhausted");
   });
 
-  it("renders merge-blocker in-review stall badge without retry counter", () => {
+  /*
+  FNXC:InReviewStallBadge 2026-07-26-18:12:
+  Inverted from "renders merge-blocker badge": the merge-blocker code is now badge-suppressed
+  (operator request — a pre-merge blocker is the ordinary in-review resting state, so badging it
+  marked routine cards abnormal). The card must show NO stall badge for this code, in any merge
+  status — the previous carve-out only suppressed it while isActiveMergeStatus(status) held, so
+  "failed" here is the case that used to badge and must now stay silent.
+  */
+  it("suppresses the in-review stall badge for the merge-blocker code", () => {
     render(
       <TaskCard
         task={makeTask({
@@ -2931,7 +3012,10 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("Merge blocked")).toBeDefined();
+    expect(screen.queryByText("Merge blocked")).toBeNull();
+    expect(document.querySelector('[data-stall-code="merge-blocker"]')).toBeNull();
+    // The suppression must not leave an empty badge shell behind.
+    expect(document.querySelector(".card-status-badge.in-review-stall")).toBeNull();
     expect(screen.queryByText(/\/3/)).toBeNull();
   });
 
@@ -6891,6 +6975,67 @@ describe("TaskCard near-duplicate chip", () => {
     await waitFor(() => {
       expect(onUpdateTask).toHaveBeenCalledWith("FN-001", { dismissNearDuplicate: true });
     });
+  });
+});
+
+/*
+FNXC:RefinementTitle 2026-07-26-20:10:
+A refinement card is titled by the operator's feedback now, so the title no longer says the card
+is a refinement. The "Refines <id>" chip is what carries that, and this covers the affordance's
+surfaces: present for a `task_refine` task with a parent, absent for an ordinary task (with no
+empty chip shell left behind), and absent when the parent is unresolvable — a chip whose only
+content is the parent id must not render without one.
+*/
+describe("TaskCard refines chip", () => {
+  it("renders the refines chip for a refinement task", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_refine", sourceParentTaskId: "FN-1234" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Refines FN-1234")).toBeInTheDocument();
+  });
+
+  it("renders no refines chip and no empty shell for an ordinary task", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "cli", sourceParentTaskId: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText(/Refines /)).toBeNull();
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
+  });
+
+  it("renders no refines chip when the refinement has no resolvable parent", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_refine", sourceParentTaskId: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
+  });
+
+  // A non-refinement that merely carries a parent id (duplicates, agent-created follow-ups)
+  // must not be mislabeled as a refinement.
+  it("does not render the refines chip for a non-refinement task that has a parent", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_duplicate", sourceParentTaskId: "FN-1234" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
   });
 });
 

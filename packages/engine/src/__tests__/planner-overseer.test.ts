@@ -534,3 +534,99 @@ describe("PlannerOverseerMonitor.observeTask — FN-7965 executor failure detect
     expect(a?.reason).not.toMatch(/failed:|error/i);
   });
 });
+
+/*
+FNXC:WorkflowReviewGates 2026-07-26-16:45:
+Before the pre-merge review gates moved into `in-review`, a hung Code Review sat in `in-progress`
+and the FN-7743 executor stall check caught it. After the move it maps to the `reviewer` stage,
+which returned `progressing` unconditionally with no time-based check — so a gate that never posted
+a verdict produced no stall signal at all, however long it hung.
+
+These cases pin the replacement, and specifically pin the thing that makes it safe: the anchor is
+the GATE's own `startedAt` lease, not `columnMovedAt`. Anchoring on the column would fire during a
+legitimate human merge-wait, which is exactly the false positive that would make operators distrust
+the signal — so "settled gates + old card = progressing" is asserted alongside the positive case.
+*/
+describe("PlannerOverseerMonitor.observeTask — review-gate stall detection (in-review gates)", () => {
+  const THRESHOLD_MS = 2 * 60 * 60 * 1000;
+  const NOW = Date.UTC(2026, 6, 26, 12, 0, 0);
+  const isoMsAgo = (ms: number) => new Date(NOW - ms).toISOString();
+
+  const gate = (overrides: Record<string, unknown>) => ({
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    phase: "pre-merge",
+    ...overrides,
+  });
+
+  it("reports stuck when a pre-merge gate has been pending past the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      columnMovedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    // A plain in-review card with no reviewState resolves to the `merger` stage,
+    // not `reviewer` — which is exactly why the check lives on both in-review stages.
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.stage).toBe("merger");
+    expect(observation?.reason).toMatch(/Review gate running for over \d+h/);
+  });
+
+  it("also reports stuck on the reviewer stage when reviewState is present", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      reviewState: { items: [], summary: {} },
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.stage).toBe("reviewer");
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.reason).toMatch(/Review gate running for over \d+h/);
+  });
+
+  it("stays progressing while the gate is pending but still within the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("stays progressing for a long human merge-wait once the gates have settled", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      // The card has sat in review for days, but no gate is running — a human owes a merge.
+      columnMovedAt: isoMsAgo(72 * 60 * 60 * 1000),
+      updatedAt: isoMsAgo(72 * 60 * 60 * 1000),
+      workflowStepResults: [gate({ status: "passed", completedAt: isoMsAgo(71 * 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("degrades to progressing when the pending gate has no usable startedAt", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      workflowStepResults: [gate({ status: "pending", startedAt: "not-a-date" })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+});

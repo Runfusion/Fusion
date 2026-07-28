@@ -39,6 +39,8 @@ import {
   findWorkflowColumn,
   isHoldToWipBoundary,
   resolveColumnFlags,
+  TransitionRejectionError,
+  emitWorkflowLifecycleEvent,
 } from "@fusion/core";
 
 /** Run-audit event emitted by the boundary controller (KTD-12, ids/counts only). */
@@ -275,6 +277,29 @@ export function createWorkflowColumnBoundary(
 
     async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
+
+      /*
+      FNXC:WorkflowEvents 2026-07-27-15:20 (U3 / R5, PR #2467 review):
+      Announce the NODE ENTRY, not the column crossing — so this fires BEFORE the
+      columnless short-circuit and before the same-column no-op below. Traversal
+      genuinely entered the node in all three cases, and a subscriber tracking
+      graph progress must see rework loops and terminal `end` arrivals, which a
+      crossing-only signal hides. `column` is omitted for a columnless node,
+      which is exactly why `NodeEnteredEvent.column` is optional.
+
+      The paired `TaskTransitioned` comes from the store's own post-commit point,
+      so a real crossing produces both and every other entry produces only this
+      one. Neither is authoritative for any lifecycle decision.
+      */
+      emitWorkflowLifecycleEvent({
+        type: "NodeEntered",
+        taskId: deps.taskId,
+        at: new Date().toISOString(),
+        workflowId: deps.workflowId,
+        nodeId: node.id,
+        ...(toColumn ? { column: toColumn } : {}),
+      });
+
       // KTD-1: a columnless node (e.g. `end`) never moves the card.
       if (!toColumn) return { kind: "entered" };
 
@@ -309,6 +334,23 @@ export function createWorkflowColumnBoundary(
           irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
         } as const;
         await deps.onSuspend?.(suspension);
+        /*
+        FNXC:WorkflowEvents 2026-07-27-12:05 (U3 / R5):
+        Emitted AFTER `onSuspend` has persisted the durable continuation, so an
+        observed `RunSuspended` implies the continuation exists. The continuation
+        — not this event — is what the scheduler resumes from; dropping the event
+        costs a notification, never a stranded run.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "RunSuspended",
+          taskId: deps.taskId,
+          at: new Date().toISOString(),
+          workflowId: deps.workflowId,
+          nodeId: node.id,
+          reason: "capacity",
+          fromColumn,
+          toColumn,
+        });
         return suspension;
       }
 
@@ -317,9 +359,52 @@ export function createWorkflowColumnBoundary(
         try {
           await deps.moveTask(toColumn, { fromColumn, nodeId: node.id });
         } catch (err) {
-          // A rejected move (capacity, invariant) leaves the card in its current
-          // column; routing/parking is U4/U5. Do not advance `column` and do not
-          // emit a transition audit for a move that did not happen.
+          /*
+          FNXC:WorkflowReviewGates 2026-07-26-13:40:
+          A CAPACITY rejection on a real (non-hold→wip) boundary is transient, not a graph failure.
+          This became reachable once the pre-merge review gates moved into `in-review`: the paired
+          remediation node crosses in-review → in-progress, and that crossing re-enters a
+          capacity-bearing column. Capacity is enforced in-transaction and is never bypassable, so
+          if the pool filled while the gate ran, the move is rejected — and rethrowing here killed
+          the run at the remediation node, stranding the card in `in-review` behind a failed
+          pre-merge step with nothing scheduled to fix it.
+          Park it the same way the hold→wip seam parks instead: a `suspended` result unwinds to a
+          clean `outcome: "success"` with a suspension marker (no failure recorded, worktree/branch
+          and the durable failed gate result preserved), so the next graph re-run retries the
+          remediation move once a slot frees. Non-capacity rejections (invariant violations) are
+          real errors and still propagate.
+          */
+          if (err instanceof TransitionRejectionError && err.rejection.code === "capacity-exhausted") {
+            warn("graph column move parked — column at capacity (will retry on next run)", {
+              fromColumn,
+              toColumn,
+              nodeId: node.id,
+            });
+            const suspension = {
+              kind: "suspended",
+              reason: "capacity",
+              nodeId: node.id,
+              fromColumn,
+              toColumn,
+              irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+            } as const;
+            await deps.onSuspend?.(suspension);
+            // FNXC:WorkflowEvents 2026-07-27-12:06 (U3): see the hold→wip seam above.
+            emitWorkflowLifecycleEvent({
+              type: "RunSuspended",
+              taskId: deps.taskId,
+              at: new Date().toISOString(),
+              workflowId: deps.workflowId,
+              nodeId: node.id,
+              reason: "capacity",
+              fromColumn,
+              toColumn,
+            });
+            return suspension;
+          }
+          // A rejected move (invariant) leaves the card in its current column;
+          // routing/parking is U4/U5. Do not advance `column` and do not emit a
+          // transition audit for a move that did not happen.
           warn("graph column move rejected", {
             fromColumn,
             toColumn,

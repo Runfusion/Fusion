@@ -10,6 +10,11 @@ interface PersistedSize {
 const RESIZE_GRIP_CLASS = "modal-resize-grip";
 const RESIZE_GRIP_LABEL = "Resize modal from bottom-right corner";
 
+interface ModalResizePersistOptions {
+  /** Enable the explicit 44px hit target on the tablet-touch task-detail surface. */
+  touchTargets?: boolean;
+}
+
 /*
 FNXC:TaskModalResize 2026-07-24-19:20:
 The shared Task Detail grip must offer the same keyboard discovery as floating task windows.
@@ -51,11 +56,18 @@ function readPersistableSize(node: HTMLElement): PersistedSize {
  * @param ref     ref to the resizable modal element
  * @param isOpen  the modal's open flag — observation only runs while true
  * @param storageKey  localStorage key, must be stable + unique per modal
+ * @param options tablet-only touch-target opt-in; other shared modal consumers retain desktop geometry
  */
+/*
+FNXC:ModalTouchGeometry 2026-07-26-19:30:
+FN-8619 migrated every product modal consumer to FloatingWindow. Keep this hook, its grip CSS,
+and tests because the Chromium touch-geometry e2e fixture still exercises the legacy resize seam.
+*/
 export function useModalResizePersist(
   ref: RefObject<HTMLElement | null>,
   isOpen: boolean,
   storageKey: string,
+  options: ModalResizePersistOptions = {},
 ): void {
   useEffect(() => {
     if (!isOpen) return;
@@ -104,7 +116,16 @@ export function useModalResizePersist(
     };
 
     const grip = document.createElement("div");
-    grip.className = RESIZE_GRIP_CLASS;
+    grip.className = `${RESIZE_GRIP_CLASS}${options.touchTargets ? " modal-resize-grip--touch-target" : ""}`;
+    if (options.touchTargets) {
+      /*
+      FNXC:TaskModalResize 2026-07-26-10:40:
+      Keep the painted corner grip mouse-sized while exposing a separately queryable
+      touch hit target. This lets tablet touch input land outside the legacy visual
+      corner without enlarging borders, footer chrome, or content hit areas.
+      */
+      grip.dataset.resizeHitTarget = "true";
+    }
     grip.setAttribute("role", "separator");
     grip.setAttribute("aria-label", RESIZE_GRIP_LABEL);
     grip.setAttribute("aria-orientation", "vertical");
@@ -165,9 +186,10 @@ export function useModalResizePersist(
       document.body.style.userSelect = "none";
 
       const onPointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== event.pointerId) return;
         moveEvent.preventDefault();
-        const nextWidth = startWidth + moveEvent.clientX - startX;
-        const nextHeight = startHeight + moveEvent.clientY - startY;
+        const nextWidth = Math.min(window.innerWidth, startWidth + moveEvent.clientX - startX);
+        const nextHeight = Math.min(window.innerHeight, startHeight + moveEvent.clientY - startY);
         if (nextWidth > 0) node.style.width = `${nextWidth}px`;
         if (nextHeight > 0) node.style.height = `${nextHeight}px`;
         syncGripAria();
@@ -175,6 +197,7 @@ export function useModalResizePersist(
       };
 
       const endDrag = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== event.pointerId) return;
         if (typeof grip.releasePointerCapture === "function") {
           grip.releasePointerCapture(upEvent.pointerId);
         }
@@ -227,5 +250,5 @@ export function useModalResizePersist(
       observer?.disconnect();
       if (saveTimer) clearTimeout(saveTimer);
     };
-  }, [ref, isOpen, storageKey]);
+  }, [ref, isOpen, storageKey, options.touchTargets]);
 }

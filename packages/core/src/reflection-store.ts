@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-reflection-store");
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
@@ -253,7 +256,7 @@ export class ReflectionStore extends EventEmitter {
         try {
           reflections.push(JSON.parse(line) as AgentReflection);
         } catch (error) {
-          console.warn(
+          severityAuditLog.warn(
             `[ReflectionStore] Skipping malformed reflection line ${index + 1} for ${agentId}`,
             error,
           );

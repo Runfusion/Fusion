@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-async-maintenance");
 import { sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries } from "../agent-log-file-store.js";
@@ -31,7 +34,7 @@ export async function pruneAgentLogFilesAsync(
   }
   const boundProjectId = layer.projectId?.trim();
   if (!boundProjectId) {
-    console.warn("[fusion] PostgreSQL agent-log-file pruning is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+    severityAuditLog.warn("[fusion] PostgreSQL agent-log-file pruning is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
   }
   const projectId = boundProjectId || "__legacy_unscoped__";
   const rows = (await layer.db.execute(
@@ -64,7 +67,7 @@ export async function pruneOperationalLogsAsync(
   Operational retention should normally be project-bound. Preserve the legacy sentinel fallback for compatibility, but make every unbound maintenance pass visible before it can target legacy-unscoped rows.
   */
   if (!boundProjectId) {
-    console.warn("[fusion] PostgreSQL operational maintenance is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+    severityAuditLog.warn("[fusion] PostgreSQL operational maintenance is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
   }
   const projectId = boundProjectId || "__legacy_unscoped__";
   const cutoff = new Date(Date.now() - retentionMs).toISOString();

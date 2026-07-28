@@ -6,12 +6,30 @@ import { appendTokenQuery } from "../auth";
 
 export type StreamConnectionState = "connected" | "reconnecting";
 
-// Track every live createResilientEventSource instance so we can close their
-// underlying EventSource sockets on page unload. Without this, Chrome holds
-// the HTTP/1.1 sockets open in its keep-alive pool across refreshes, exhausts
-// its 6-per-origin limit after ~3 refreshes, and every new fetch stalls —
-// leaving the dashboard frozen on "Initializing...". sse-bus.ts has its own
-// handler; this one covers the parallel EventSource path in api.ts.
+/*
+ * Track every live createResilientEventSource instance so we can close their
+ * underlying EventSource sockets on page unload. Without this, Chrome holds
+ * the HTTP/1.1 sockets open in its keep-alive pool across refreshes, exhausts
+ * its 6-per-origin limit after ~3 refreshes, and every new fetch stalls —
+ * leaving the dashboard frozen on "Initializing...". sse-bus.ts has its own
+ * handler; this one covers the parallel EventSource path in api.ts.
+ *
+ * FNXC:DashboardSSE 2026-07-26-10:44:
+ * `beforeunload` was REMOVED here for the same reason as in sse-bus.ts and must not be re-added:
+ * a registered beforeunload handler makes the page ineligible for Safari's page cache / bfcache,
+ * which is exactly the cheap restore path the mobile dashboard needs after the OS backgrounds it.
+ * `pagehide` fires in every case beforeunload does, plus on bfcache freeze, so nothing is lost.
+ *
+ * FNXC:DashboardSSE 2026-07-26-10:47:
+ * These streams are DELIBERATELY NOT hidden-suspended, unlike the sse-bus channels. They carry
+ * in-flight AI generation (chat, planning, ai-text) and long-running scheduling runs; closing the
+ * EventSource mid-generation drops the server's only consumer and the user loses the response they
+ * are waiting on. Resumption is best-effort (`lastEventId` replay depends on the route keeping a
+ * ring buffer), so suspending here would trade a possible tab discard for a certain data loss.
+ * They are also short-lived and idle-free between messages, so they are a far weaker discard signal
+ * than the always-on board channels. If suspend is ever wanted here, gate it on a stream that has
+ * signalled completion.
+ */
 const activeResilientEventSources = new Set<{ close: () => void }>();
 if (typeof window !== "undefined") {
   const closeAll = () => {
@@ -20,7 +38,6 @@ if (typeof window !== "undefined") {
     }
   };
   window.addEventListener("pagehide", closeAll);
-  window.addEventListener("beforeunload", closeAll);
 }
 
 export interface ResilientEventSourceOptions {

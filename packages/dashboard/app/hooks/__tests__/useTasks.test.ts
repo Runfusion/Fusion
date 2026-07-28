@@ -699,18 +699,34 @@ describe("useTasks", () => {
       expect(mockFetchTasks).not.toHaveBeenCalled();
       expect(MockEventSource.instances).toHaveLength(1);
 
-      act(() => {
-        MockEventSource.instances[0]._emit("open");
-        MockEventSource.instances[0]._emit("error");
-      });
+      // The resync fires when the REBUILT stream opens, not on the error (see the FNXC note above).
+      // RECONNECT_DELAY_MS is 3s, so drive it with fake timers rather than waiting in real time; the
+      // fake clock must be installed BEFORE the error schedules the reconnect timer.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        act(() => {
+          MockEventSource.instances[0]._emit("open");
+          MockEventSource.instances[0]._emit("error");
+        });
 
-      await waitFor(() => {
+        await act(async () => {
+          vi.advanceTimersByTime(3_000);
+          await flushPromises();
+        });
+        expect(MockEventSource.instances).toHaveLength(2);
+        await act(async () => {
+          MockEventSource.instances[1]._emit("open");
+          await flushPromises();
+        });
+
         expect(mockFetchTasks).toHaveBeenCalledTimes(1);
-      });
-      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, false);
-      await waitFor(() => {
-        expect(result.current.tasks[0]?.id).toBe("FN-RECONNECTED");
-      });
+        expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, false);
+        await waitFor(() => {
+          expect(result.current.tasks[0]?.id).toBe("FN-RECONNECTED");
+        });
+      } finally {
+        vi.useRealTimers();
+      }
 
       unmount();
     });
@@ -905,6 +921,7 @@ describe("useTasks", () => {
     const first = MockEventSource.instances[0];
 
     act(() => {
+      first._emit("open");
       first._emit("error");
     });
 
@@ -916,6 +933,17 @@ describe("useTasks", () => {
     });
 
     expect(MockEventSource.instances).toHaveLength(2);
+    /*
+    FNXC:DashboardSSE 2026-07-26-11:25:
+    The resync signal is now emitted by the REBUILT stream's `open`, not by the error that tore the old
+    one down (a failed reconnect must not claim to have resynced). vitest.setup's MockEventSource marks
+    itself OPEN in its constructor but never dispatches `open` like a real EventSource, so the test has
+    to emit it on the replacement instance.
+    */
+    await act(async () => {
+      MockEventSource.instances[1]._emit("open");
+      await flushPromises();
+    });
     expect(mockFetchTasks).toHaveBeenCalledTimes(2);
 
     unmount();
@@ -948,6 +976,7 @@ describe("useTasks", () => {
     const first = MockEventSource.instances[0];
 
     act(() => {
+      first._emit("open");
       first._emit("error");
     });
 
@@ -957,6 +986,11 @@ describe("useTasks", () => {
     });
 
     expect(MockEventSource.instances).toHaveLength(2);
+    // See the FNXC note above: the rebuilt stream's `open` is the resync authority.
+    await act(async () => {
+      MockEventSource.instances[1]._emit("open");
+      await flushPromises();
+    });
     expect(mockFetchTasks).toHaveBeenCalledTimes(2);
     expect(result.current.tasks[0]?.title).toBe("Fresh title");
   });
@@ -1231,6 +1265,88 @@ describe("useTasks", () => {
       // Status should be updated because updatedAt is newer
       expect(result.current.tasks[0].column).toBe("in-progress");
       expect(result.current.tasks[0].status).toBe("executing");
+    });
+
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+    `awaitingPlanning` is attached by GET /api/tasks only, so an SSE update would wipe it and flip
+    TaskCard's badge back to its step-count fallback mid-stall. It is carried across same-column
+    updates, but must be DROPPED when the step count changes — planning finishing is exactly that,
+    and a stale `true` surviving it would keep claiming "Queued to plan" for a now-Ready card.
+    */
+    describe("awaitingPlanning enrichment across SSE updates", () => {
+      const todoTask = (overrides: Record<string, unknown>) => createMockTask({
+        id: "FN-001",
+        column: "todo" as Column,
+        steps: [],
+        updatedAt: "2026-01-01T00:00:00Z",
+        ...overrides,
+      });
+
+      async function mountWith(initial: Record<string, unknown>) {
+        mockFetchTasks.mockResolvedValueOnce([todoTask(initial)]);
+        const { result } = renderHook(() => useTasks());
+        await waitFor(() => {
+          expect(result.current.tasks).toHaveLength(1);
+        });
+        return result;
+      }
+
+      it("survives a status-only update that omits the field", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            status: "planning",
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBe(true);
+      });
+
+      it("is dropped when planning lands steps, so the fallback answers Ready", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            steps: [{ name: "Step 1", status: "pending" }],
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBeUndefined();
+        expect(result.current.tasks[0].steps).toHaveLength(1);
+      });
+
+      it("is dropped when steps are cleared, so the fallback answers queued", async () => {
+        const result = await mountWith({
+          awaitingPlanning: false,
+          steps: [{ name: "Step 1", status: "pending" }],
+        });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            steps: [],
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBeUndefined();
+      });
+
+      it("prefers a server value on the incoming payload over the carried one", async () => {
+        const result = await mountWith({ awaitingPlanning: true });
+
+        act(() => {
+          MockEventSource.instances[0]._emit("task:updated", todoTask({
+            awaitingPlanning: false,
+            updatedAt: "2026-01-02T00:00:00Z",
+          }));
+        });
+
+        expect(result.current.tasks[0].awaitingPlanning).toBe(false);
+      });
     });
 
     it("rapid status updates after column move are not rejected", async () => {
@@ -3767,7 +3883,10 @@ describe("useTasks", () => {
       act(() => {
         es._emit("error");
       });
-      expect(mockFetchTasks).toHaveBeenCalledTimes(1); // onReconnect fires once during error
+      // The error alone no longer resyncs — only the rebuilt stream's `open` does (see the FNXC note
+      // on the reconnect tests above). This test's real guarantee is the one below: after sseEnabled
+      // flips off, the pending reconnect can never produce a refetch.
+      expect(mockFetchTasks).toHaveBeenCalledTimes(0);
 
       // Before the reconnect timer fires, flip sseEnabled to false
       await act(async () => {
@@ -3777,8 +3896,8 @@ describe("useTasks", () => {
       // Advance timers past RECONNECT_DELAY_MS (3 seconds)
       vi.advanceTimersByTime(4_000);
 
-      // No additional fetchTasks should have been called — active flag blocked it
-      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      // No fetchTasks should have been called — active flag blocked it
+      expect(mockFetchTasks).toHaveBeenCalledTimes(0);
       vi.useRealTimers();
     });
   });

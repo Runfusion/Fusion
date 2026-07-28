@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { classifyDashboardFatalExit, resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
+import { classifyDashboardFatalExit, hasLiveSupervisingParent, resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
 import { FUSION_NON_RETRYABLE_EXIT_CODE } from "@fusion/core";
 
 /*
@@ -25,6 +25,48 @@ describe("shouldSuperviseDashboard", () => {
 
   it("never nests: disabled when a supervising parent already exists", () => {
     expect(shouldSuperviseDashboard(["dashboard"], { FUSION_RESTART_SUPERVISED: "1" }, [])).toBe(false);
+  });
+
+  /*
+  FNXC:SystemPanel 2026-07-25-10:05:
+  FUSION_RESTART_SUPERVISED is inherited by every process the dashboard spawns
+  (agent terminals, dev servers). Running `fn dashboard` from one of those must
+  still start a real supervisor — otherwise the new dashboard advertises restart
+  support it does not have and a restart request kills it for good. The pid stamp
+  distinguishes a real parent from an inherited copy.
+  */
+  it("never nests under the real supervising parent (pid matches)", () => {
+    expect(
+      shouldSuperviseDashboard(["dashboard"], { FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: "4242" }, [], 4242),
+    ).toBe(false);
+  });
+
+  it("supervises itself when the supervised flag was merely inherited from a non-parent", () => {
+    expect(
+      shouldSuperviseDashboard(["dashboard"], { FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: "4242" }, [], 99),
+    ).toBe(true);
+  });
+});
+
+describe("hasLiveSupervisingParent", () => {
+  it("requires the supervised flag", () => {
+    expect(hasLiveSupervisingParent({}, 1)).toBe(false);
+  });
+
+  it("accepts a parent that predates the pid stamp (legacy dev wrapper)", () => {
+    expect(hasLiveSupervisingParent({ FUSION_RESTART_SUPERVISED: "1" }, 1)).toBe(true);
+  });
+
+  it("accepts the stamped supervisor when it is our actual parent", () => {
+    expect(hasLiveSupervisingParent({ FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: "77" }, 77)).toBe(true);
+  });
+
+  it("rejects a stamped pid that is not our parent (leaked env / dead supervisor)", () => {
+    expect(hasLiveSupervisingParent({ FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: "77" }, 1)).toBe(false);
+  });
+
+  it("rejects an unparseable pid stamp", () => {
+    expect(hasLiveSupervisingParent({ FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: "nope" }, 1)).toBe(false);
   });
 
   it("is disabled when an inspector is attached (child would fight over the port)", () => {

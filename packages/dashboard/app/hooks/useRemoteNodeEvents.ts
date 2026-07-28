@@ -56,6 +56,15 @@ export function useRemoteNodeEvents(nodeId: string | null): UseRemoteNodeEventsR
       },
       onOpen: () => setIsConnected(true),
       onError: () => setIsConnected(false),
+      /*
+      FNXC:RemoteNodeEvents 2026-07-26-15:10:
+      Explicit opt-out of the sse-bus resync contract. This hook is a pure relay: it holds no
+      accumulated state a missed event could corrupt — only `isConnected` (re-derived by onOpen/
+      onError) and `lastEvent`, which is a transient "something changed on the remote node" nudge
+      with no proxy endpoint to refetch. Consumers that need authoritative remote state must fetch it
+      themselves; if this hook ever accumulates a list or count, it needs a real onReconnect instead.
+      */
+      replaySafe: { reason: "relay-only: no accumulated state, isConnected re-derived on open" },
     });
   }, [nodeId]);
 

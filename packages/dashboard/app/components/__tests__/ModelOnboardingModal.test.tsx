@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { ModelOnboardingModal } from "../ModelOnboardingModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { AuthProvider } from "../../api";
 import { clearAuthToken } from "../../auth";
 import type { Task } from "@fusion/core";
@@ -225,8 +226,8 @@ async function navigateToFirstTaskStep() {
   });
 }
 
-function getProviderOrderInSection(container: HTMLElement): string[] {
-  return Array.from(container.querySelectorAll<HTMLElement>("[data-testid^='onboarding-provider-card-']"))
+function getProviderOrderInSection(baseElement: HTMLElement): string[] {
+  return Array.from(baseElement.querySelectorAll<HTMLElement>("[data-testid^='onboarding-provider-card-']"))
     .map((card) => card.dataset.testid?.replace("onboarding-provider-card-", "") ?? "")
     .filter(Boolean);
 }
@@ -1425,14 +1426,14 @@ describe("ModelOnboardingModal", () => {
         ],
       });
 
-      const { container } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+      const { baseElement } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
         expect(screen.getByText("Anthropic")).toBeTruthy();
       });
 
       // Verify the authenticated provider has the connected modifier class
-      const connectedCards = container.querySelectorAll(".onboarding-provider-card--connected");
+      const connectedCards = baseElement.querySelectorAll(".onboarding-provider-card--connected");
       expect(connectedCards.length).toBe(1);
 
       // Verify the connected card contains Anthropic
@@ -1440,7 +1441,7 @@ describe("ModelOnboardingModal", () => {
       expect(anthropicCard?.textContent?.includes("Anthropic")).toBe(true);
 
       // Verify non-authenticated provider does not have the modifier
-      const allCards = container.querySelectorAll(".onboarding-provider-card");
+      const allCards = baseElement.querySelectorAll(".onboarding-provider-card");
       const connectedCardIds = Array.from(connectedCards).map((card) =>
         card.querySelector(".onboarding-provider-card__name")?.textContent
       );
@@ -5142,5 +5143,12 @@ describe("Custom providers disclosure", () => {
       expect(mockFetchCustomProviders).toHaveBeenCalled();
       expect(mockFetchModels.mock.calls.length).toBeGreaterThan(modelCallsBefore);
     });
+  });
+
+  it("uses its production header for touch drag and resize", async () => {
+    render(<ModelOnboardingModal isOpen onClose={vi.fn()} onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+    await screen.findByTestId("floating-window-model-onboarding");
+    assertRenderedModalTouchGeometry("model-onboarding", screen.getByTestId("floating-window-model-onboarding").querySelector(".model-onboarding-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("model-onboarding", () => render(<ModelOnboardingModal isOpen onClose={vi.fn()} onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />));
   });
 });

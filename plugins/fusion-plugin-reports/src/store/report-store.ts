@@ -449,14 +449,13 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
   }
 
   // ── Async siblings (PostgreSQL / backend mode) ────────────────────
-  // Each method delegates to the sync path when not in backend mode (SQLite
-  // fallback). In backend mode, queries go through asyncLayer.db (Drizzle)
-  // against project.reports. PG column names are snake_case; the Drizzle
-  // shape in postgres/schema/plugin.ts maps them to the camelCase JS keys.
+  /*
+  FNXC:SqliteDualPathCleanup 2026-07-26-13:40:
+  ReportStore async methods are PostgreSQL-only after dual-path collapse. Sync SQLite methods remain as type-compat stubs for tests that still construct without asyncLayer; production always injects AsyncDataLayer.
+  */
 
-  /** Async create. Delegates to sync createReport in SQLite mode. */
+  /** Async create against project.reports. */
   async createReportAsync(input: ReportCreateInput): Promise<Report> {
-    if (!this.backendMode) return this.createReport(input);
     const layer = this.asyncLayer!;
     const now = new Date().toISOString();
     const report: Report = {
@@ -493,7 +492,6 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   /** Async get by id. Returns null when not found. */
   async getReportAsync(id: string): Promise<Report | null> {
-    if (!this.backendMode) return this.getReport(id);
     const rows = await this.asyncLayer!.db
       .select()
       .from(schema.plugin.reports)
@@ -503,7 +501,6 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   /** Async list with filters, ordering, and pagination. */
   async listReportsAsync(filter: ReportListFilter = {}): Promise<Report[]> {
-    if (!this.backendMode) return this.listReports(filter);
     const table = schema.plugin.reports;
     const conditions: SQL[] = [eq(table.projectId, this.projectId())];
     if (filter.cadence) conditions.push(eq(table.cadence, filter.cadence));
@@ -530,7 +527,6 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   /** Async update by id with a partial patch. Throws if not found. */
   async updateReportAsync(id: string, patch: ReportUpdateInput): Promise<Report> {
-    if (!this.backendMode) return this.updateReport(id, patch);
     const current = await this.requireReportAsync(id);
     const next: Report = {
       ...current,
@@ -561,7 +557,6 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     next: ReportStatus,
     opts: { failureReason?: string; approvedBy?: string } = {},
   ): Promise<Report> {
-    if (!this.backendMode) return this.setStatus(id, next, opts);
     const current = await this.requireReportAsync(id);
     if (current.status === next) return current;
     if (!isValidReportStatusTransition(current.status, next)) {
@@ -590,7 +585,6 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   /** Async attach review. Requires review_in_progress status. */
   async attachReviewAsync(id: string, combined: CombinedReview): Promise<Report> {
-    if (!this.backendMode) return this.attachReview(id, combined);
     const current = await this.requireReportAsync(id);
     if (current.status !== "review_in_progress") {
       throw new ReportStoreError(`attachReview requires review_in_progress status; got ${current.status}`);
@@ -624,10 +618,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   /** Async delete by id. Throws if not found. */
   async deleteReportAsync(id: string): Promise<void> {
-    if (!this.backendMode) {
-      this.deleteReport(id);
-      return;
-    }
+    
     await this.requireReportAsync(id);
     await this.asyncLayer!.db
       .delete(schema.plugin.reports)

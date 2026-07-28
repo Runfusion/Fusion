@@ -12,9 +12,7 @@ import {runReconciliationAbort} from "../workflow-reconciliation.js";
 import "../builtin-traits.js";
 import {evaluateImplementationTaskBind} from "../agent-role-policy.js";
 import {isNearDuplicateCanonicalInactive} from "../near-duplicate-canonical.js";
-import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import type {ArtifactRow} from "../task-store/row-types.js";
 import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
@@ -27,128 +25,59 @@ export async function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskI
     by constraint name because project-schema PKs lead with project_id (which
     itself comes from the column's current_setting default under RLS).
     */
-    if (store.backendMode) {
-      await store.asyncLayer!.db.execute(sql`
-        INSERT INTO project.workflow_run_branches
-          (task_id, run_id, branch_id, current_node_id, status, updated_at)
-        VALUES (${state.taskId}, ${state.runId}, ${state.branchId}, ${state.currentNodeId}, ${state.status}, ${new Date().toISOString()})
-        ON CONFLICT ON CONSTRAINT workflow_run_branches_pkey DO UPDATE SET
-          current_node_id = EXCLUDED.current_node_id,
-          status = EXCLUDED.status,
-          updated_at = EXCLUDED.updated_at
-      `);
-      return;
-    }
-    try {
-      store.db
-        .prepare(
-          `INSERT INTO workflow_run_branches
-             (taskId, runId, branchId, currentNodeId, status, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(taskId, runId, branchId) DO UPDATE SET
-             currentNodeId = excluded.currentNodeId,
-             status = excluded.status,
-             updatedAt = excluded.updatedAt`,
-        )
-        .run(
-          state.taskId,
-          state.runId,
-          state.branchId,
-          state.currentNodeId,
-          state.status,
-          new Date().toISOString(),
-        );
-    } catch {
-      // Legacy/missing table — persistence is additive, so degrade silently.
-    }
-  }
+        await store.asyncLayer!.db.execute(sql`
+      INSERT INTO project.workflow_run_branches
+        (task_id, run_id, branch_id, current_node_id, status, updated_at)
+      VALUES (${state.taskId}, ${state.runId}, ${state.branchId}, ${state.currentNodeId}, ${state.status}, ${new Date().toISOString()})
+      ON CONFLICT ON CONSTRAINT workflow_run_branches_pkey DO UPDATE SET
+        current_node_id = EXCLUDED.current_node_id,
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at
+    `);
+    return;
+}
 
 export async function clearNearDuplicateReferencesToImpl(store: TaskStore, canonicalId: string, inactiveState: { column?: ColumnId | null; deletedAt?: string | null; reason: string },): Promise<Task[]> {
     if (!isNearDuplicateCanonicalInactive(inactiveState)) {
       return [];
     }
 
-    if (store.backendMode) {
-      /*
-       * FNXC:PostgresNearDuplicateCleanup 2026-07-14-18:30:
-       * Archiving, deleting, or completing a canonical task must clear every
-       * live duplicate marker in the same project. Stale JSONB markers alter
-       * operator decisions, so PostgreSQL applies the same cleanup and audit
-       * behavior as the legacy store instead of treating it as optional.
-       */
-      const layer = store.asyncLayer!;
-      const table = schema.project.tasks;
-      const conditions = [
-        isNull(table.deletedAt),
-        ne(table.column, "archived"),
-        ne(table.column, "done"),
-        sql`${table.sourceMetadata}->>'nearDuplicateOf' = ${canonicalId}`,
-      ];
-      if (layer.projectId) conditions.push(eq(table.projectId, layer.projectId));
-      const rows = await layer.db
-        .update(table)
-        .set({
-          sourceMetadata: sql`COALESCE(${table.sourceMetadata}, '{}'::jsonb) - 'nearDuplicateOf' - 'nearDuplicateScore' - 'nearDuplicateSharedTokens' - 'nearDuplicateDismissed'`,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(and(...conditions))
-        .returning({ id: table.id });
-
-      const updatedTasks: Task[] = [];
-      for (const row of rows) {
-        await store.logEntry(
-          row.id,
-          `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
-        );
-        const task = await store.getTask(row.id);
-        if (task) updatedTasks.push(task);
-      }
-      return updatedTasks;
-    }
-
-    const selectClause = store.getTaskSelectClause(false, "t");
-    const rows = store.db.prepare(`
-      SELECT ${selectClause}
-      FROM tasks t
-      WHERE t."deletedAt" IS NULL
-        AND t."column" != 'archived'
-        AND t."column" != 'done'
-        AND json_extract(t.sourceMetadata, '$.nearDuplicateOf') = ?
-      ORDER BY t.createdAt ASC
-    `).all(canonicalId) as TaskRow[];
+        /*
+     * FNXC:PostgresNearDuplicateCleanup 2026-07-14-18:30:
+     * Archiving, deleting, or completing a canonical task must clear every
+     * live duplicate marker in the same project. Stale JSONB markers alter
+     * operator decisions, so PostgreSQL applies the same cleanup and audit
+     * behavior as the legacy store instead of treating it as optional.
+     */
+    const layer = store.asyncLayer!;
+    const table = schema.project.tasks;
+    const conditions = [
+      isNull(table.deletedAt),
+      ne(table.column, "archived"),
+      ne(table.column, "done"),
+      sql`${table.sourceMetadata}->>'nearDuplicateOf' = ${canonicalId}`,
+    ];
+    if (layer.projectId) conditions.push(eq(table.projectId, layer.projectId));
+    const rows = await layer.db
+      .update(table)
+      .set({
+        sourceMetadata: sql`COALESCE(${table.sourceMetadata}, '{}'::jsonb) - 'nearDuplicateOf' - 'nearDuplicateScore' - 'nearDuplicateSharedTokens' - 'nearDuplicateDismissed'`,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(and(...conditions))
+      .returning({ id: table.id });
 
     const updatedTasks: Task[] = [];
     for (const row of rows) {
-      const task = store.rowToTask(row);
-      const nextSourceMetadata = { ...(task.sourceMetadata ?? {}) };
-      delete nextSourceMetadata.nearDuplicateOf;
-      delete nextSourceMetadata.nearDuplicateScore;
-      delete nextSourceMetadata.nearDuplicateSharedTokens;
-      delete nextSourceMetadata.nearDuplicateDismissed;
-
-      task.sourceMetadata = Object.keys(nextSourceMetadata).length > 0 ? nextSourceMetadata : undefined;
-      const updatedAt = new Date().toISOString();
-      task.updatedAt = updatedAt;
-      task.log = [
-        ...(task.log ?? []),
-        {
-          timestamp: updatedAt,
-          action: `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
-        },
-      ];
-
-      store.db.transactionImmediate(() => {
-        store.upsertTaskWithFtsRecovery(task);
-        store.db.bumpLastModified();
-      });
-      await store.writeTaskJsonFile(store.taskDir(task.id), task);
-      if (store.isWatching) store.taskCache.set(task.id, { ...task });
-      store.emit("task:updated", task);
-      updatedTasks.push(task);
+      await store.logEntry(
+        row.id,
+        `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
+      );
+      const task = await store.getTask(row.id);
+      if (task) updatedTasks.push(task);
     }
-
     return updatedTasks;
-  }
+}
 
 export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: string, agent?: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>,): Promise<InboxTask | null> {
     const hasExecutorRoleOverride = (task: Task): boolean => task.sourceMetadata?.executorRoleOverride === true;
@@ -347,70 +276,8 @@ export async function listArtifactsImpl(store: TaskStore, options?: { type?: Art
     // PG backend mode: delegate to the AsyncDataLayer helper. The sync path
     // below dereferences store.db (no SQLite handle in backend mode) and 500'd
     // the dashboard /api/artifacts list.
-    if (store.backendMode) {
-      return listArtifactsAsync(store.asyncLayer!.db, options);
-    }
-    const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
-    const offset = Math.max(0, options?.offset ?? 0);
-
-    let sql = `
-      SELECT
-        a.id,
-        a.type,
-        a.title,
-        a.description,
-        a.mimeType,
-        a.sizeBytes,
-        a.uri,
-        NULL as content,
-        a.authorId,
-        a.authorType,
-        a.taskId,
-        a.metadata,
-        a.createdAt,
-        a.updatedAt,
-        t.title as taskTitle,
-        t.description as taskDescription,
-        t.column as taskColumn
-      FROM artifacts a
-      LEFT JOIN tasks t ON a.taskId = t.id
-      WHERE (a.taskId IS NULL OR t.${TaskStore.ACTIVE_TASKS_WHERE})
-    `;
-    const params: (string | number)[] = [];
-
-    if (options?.type) {
-      sql += " AND a.type = ?";
-      params.push(options.type);
-    }
-    if (options?.authorId) {
-      sql += " AND a.authorId = ?";
-      params.push(options.authorId);
-    }
-    if (options?.taskId) {
-      sql += " AND a.taskId = ?";
-      params.push(options.taskId);
-    }
-    if (options?.search && options.search.trim() !== "") {
-      const query = `%${options.search.trim()}%`;
-      sql += " AND (a.title LIKE ? OR a.description LIKE ?)";
-      params.push(query, query);
-    }
-
-    sql += " ORDER BY a.createdAt DESC LIMIT ? OFFSET ?";
-    params.push(limit, offset);
-
-    const rows = store.db.prepare(sql).all(...params) as unknown as Array<ArtifactRow & {
-      taskTitle: string | null;
-      taskDescription: string | null;
-      taskColumn: string | null;
-    }>;
-    return rows.map((row) => ({
-      ...store.rowToArtifact(row),
-      ...(row.taskTitle !== null ? { taskTitle: row.taskTitle } : {}),
-      ...(row.taskDescription !== null ? { taskDescription: row.taskDescription } : {}),
-      ...(row.taskColumn !== null ? { taskColumn: row.taskColumn } : {}),
-    }));
-  }
+        return listArtifactsAsync(store.asyncLayer!.db, options);
+}
 
 export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>,): Promise<void> {
     /*

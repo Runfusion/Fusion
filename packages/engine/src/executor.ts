@@ -14,14 +14,14 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
-import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflow-column-boundary.js";
+import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./code-node-runner.js";
 import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./review-checkout.js";
@@ -98,7 +98,7 @@ import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./session-token-usage.js";
-import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
+import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
 import { enforceTaskTokenBudgetForPersist } from "./token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
@@ -256,6 +256,8 @@ import {
   createArtifactRegisterTool as sharedCreateArtifactRegisterTool,
   createArtifactViewTool as sharedCreateArtifactViewTool,
   createTaskCreateTool as sharedCreateTaskCreateTool,
+  isAgentTaskCreateToolAvailable,
+  isAgentDelegateTaskToolAvailable,
   createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool,
   createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool,
   createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool,
@@ -286,6 +288,26 @@ import { createRunVerificationTool, runVerificationCommand as runTaskVerificatio
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { recordRetry } from "./retry-burned-logger.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
+
+/*
+FNXC:WorkflowLifecycle 2026-07-26-11:20:
+KB-PROV: Provenance of a pause/abort marker, in one named union so the ~10 signatures that pass it around cannot drift apart.
+
+- `hard-cancel` — OPERATOR withdrawal only. AGENTS.md "Move-Task contract": user `moveTask(in-progress -> todo)`, task soft-delete, and a user-sourced move out of a planning lane. These carry `userCanceled: true` into `awaitAbortInFlightTaskWork`.
+- `engine-abort` — ENGINE/lifecycle teardown with no operator intent: workflow rerun bounces, archive disposal, approval-gate suspension, engine-sourced moves, `abortAllInFlight` (shutdown/global stop), stuck-kill force-requeue. Before KB-PROV these were mislabeled `hard-cancel`.
+- `global-pause` / `merge-seam` / `completion-finalize` — unchanged FN-6568/FN-6625 seams.
+
+`hard-cancel` and `engine-abort` are the two "generic" aborts; test them together with `isGenericAbortProvenance()`.
+*/
+export type PausedAbortProvenance = "global-pause" | "merge-seam" | "hard-cancel" | "engine-abort" | "completion-finalize";
+
+/*
+FNXC:WorkflowLifecycle 2026-07-26-11:20:
+KB-PROV: The benign-abort classifiers in handleGraphFailure were written against the pre-split `hard-cancel` catch-all and exist PRECISELY to recover engine-initiated aborts (FN-6796, FN-6735, FN-7143, FN-7214, FN-7749). Splitting the label must not narrow them, so every former `=== "hard-cancel"` test routes through this predicate. Operator intent is still discriminated where it matters by `userCanceledTaskIds` / `live.userPaused`, never by the label alone.
+*/
+function isGenericAbortProvenance(provenance: PausedAbortProvenance | undefined): boolean {
+  return provenance === "hard-cancel" || provenance === "engine-abort";
+}
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agent-logger.js";
@@ -1576,19 +1598,63 @@ The tool prevents your session from being killed by the inactivity watchdog duri
 - Introducing new patterns when existing local patterns should be reused
 - Marking a step done before required review/tooling gates are satisfied`;
 
+/*
+FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
+The base prompt teaches fn_task_create/fn_delegate_task in several places ("Out-of-scope work
+found during execution", the Guardrails follow-up rule, the completion checklist). When the
+project policy withholds those tools, an unmodified prompt instructs the agent to call a tool
+that is not in its tool list — the same instruction/capability mismatch that produced the
+original retry storm, just from the other direction.
+
+This override states the absence and names what to do instead, so a withheld tool reads as
+policy rather than malfunction. It is appended last so it wins over the base text, and it
+applies to a custom operator prompt too (an operator who overrode the prompt still gets a
+truthful statement of what this session may do).
+*/
+function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean): string {
+  if (!taskCreateWithheld && !delegateWithheld) return "";
+  const withheld = [
+    ...(taskCreateWithheld ? ["`fn_task_create`"] : []),
+    ...(delegateWithheld ? ["`fn_delegate_task`"] : []),
+  ].join(" and ");
+  return `## Follow-up task creation is disabled for this session
+
+This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. ${
+    taskCreateWithheld && delegateWithheld ? "Those tools are" : "That tool is"
+  } deliberately absent from your tool list — this is an operator setting, not a malfunction or a transient error. Do not attempt to call ${
+    taskCreateWithheld && delegateWithheld ? "them" : "it"
+  }, and do not retry.
+
+Ignore any instruction above that tells you to file follow-up work with ${withheld}. When you find out-of-scope work, record it instead with \`fn_task_log(message="follow-up: ...")\` and include it in your \`fn_task_done\` summary so the operator sees it. If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
+}
+
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
-export function getExecutorSystemPrompt(settings: Settings): string {
+export function getExecutorSystemPrompt(
+  settings: Settings,
+  toolAvailability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
+): string {
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   const sections = [
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
+    getWithheldTaskCreationGuidance(
+      toolAvailability?.taskCreateWithheld === true,
+      toolAvailability?.delegateWithheld === true,
+    ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");
 }
 
-
 export interface TaskExecutorOptions {
+  /*
+   * FNXC:PlanReviewLease 2026-07-26-21:07:
+   * Resolves this engine's cluster node id for review-gate lease attribution. A GETTER, not a
+   * value: the runtime resolves the id asynchronously during start(), which can complete after
+   * the executor is constructed, so a snapshot taken at construction would be permanently
+   * undefined. Read at runner-construction time instead.
+   */
+  getLocalNodeId?: () => string | undefined;
   semaphore?: AgentSemaphore;
   /** Worktree pool for recycling idle worktrees across tasks. */
   pool?: WorktreePool;
@@ -1839,8 +1905,13 @@ export class TaskExecutor {
    *
    * FNXC:WorkflowLifecycle 2026-06-17-23:31:
    * FN-6625 adds completion-finalize provenance for the FN-6614 symptom where a completed/no-commit execution already handed off to in-review, then a trailing graph abort looked like a pause/resume engine abort and re-parked the task failed. Completion-finalize is sibling provenance to FN-6568 merge-seam, not operator pause intent.
+   *
+   * FNXC:WorkflowLifecycle 2026-07-26-11:20:
+   * KB-PROV: `hard-cancel` had become a catch-all bucket: `awaitAbortInFlightTaskWork` stamped it unconditionally, so an ENGINE-initiated teardown was labeled with the provenance AGENTS.md reserves for the operator Move-Task hard cancel ("User moveTask(in-progress -> todo) is a hard cancel ... Engine rebounds must not set userPaused"). Observed on FN-8596: the graph's own `performWorkflowRerunBounce` (in-progress -> todo -> in-progress re-dispatch, moveSource "engine") logged `provenance=hard-cancel source=abort-in-flight:parent moved from in-progress to todo` even though `userCanceled` was correctly false and `userPaused` was never set. Behaviour was right, the LABEL lied.
+   *
+   * `engine-abort` splits that bucket: `hard-cancel` now means ONLY an operator withdrawal (`options.userCanceled === true`), `engine-abort` means an engine/lifecycle teardown. Both are "generic" (non-global-pause, non-merge-seam, non-completion-finalize) aborts, so every downstream classifier that used to accept `hard-cancel` must accept BOTH via `isGenericAbortProvenance()` — those classifiers exist FOR the engine case (see FN-6796's note that "an engine restart/pause-resume abort reaches graph-failure handling as `hard-cancel` provenance even when no user canceled the task") and discriminate real user intent through `userCanceledTaskIds`, not through the provenance label. Narrowing them to `hard-cancel` alone would strand benign engine aborts as operator-action failures.
    */
-  private pausedAbortProvenance = new Map<string, "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize">();
+  private pausedAbortProvenance = new Map<string, PausedAbortProvenance>();
   /**
    * FNXC:WorkflowLifecycle 2026-06-18-10:56:
    * FN-6644 makes completed/no-commit finalize-to-review state durable beyond volatile pause provenance. FN-6641 showed FN-6625 was incomplete because teardown can re-mark `completion-finalize` as `hard-cancel`; this marker keeps the already-finalized handoff from being re-parked as an operator-action pause abort while preserving genuine live pauses and active hard-cancels.
@@ -1892,7 +1963,7 @@ export class TaskExecutor {
 
   private markPausedAborted(
     taskId: string,
-    provenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" = "hard-cancel",
+    provenance: PausedAbortProvenance = "hard-cancel",
     source = "unspecified",
   ): void {
     const previousProvenance = this.pausedAbortProvenance.get(taskId);
@@ -2676,7 +2747,7 @@ export class TaskExecutor {
     const msg = err instanceof Error ? err.message : String(err);
     const lower = msg.toLowerCase();
     if (lower.includes("not found") || lower.includes("already deleted") || lower.includes("does not exist")) {
-      executorLog.log(`Skip spawned-agent cleanup for ${agentId}: already deleted by another pathway`);
+      executorLog.debug(`Skip spawned-agent cleanup for ${agentId}: already deleted by another pathway`);
       return true;
     }
     return false;
@@ -2771,7 +2842,11 @@ export class TaskExecutor {
     if (options.userCanceled) {
       this.userCanceledTaskIds.add(taskId);
     }
-    this.markPausedAborted(taskId, "hard-cancel", `abort-in-flight:${reason}`);
+    /*
+    FNXC:WorkflowLifecycle 2026-07-26-11:20:
+    KB-PROV: Stamp the provenance the caller actually reported instead of a blanket `hard-cancel`. `options.userCanceled` is already the truthful operator-intent signal every caller computes (`source === "user"`, soft-delete, the registered move disposer), so derive the label from it: operator withdrawal keeps `hard-cancel`, everything else is an `engine-abort`. Without this, the FN-8596 engine rerun bounce told the operator `provenance=hard-cancel` for work the engine itself re-dispatched, and any future consumer branching on `hard-cancel` would read an engine bounce as an operator withdrawal. Behaviour is unchanged: `userPaused` is still never set by engine rebounds, and the downstream classifiers accept both labels via `isGenericAbortProvenance()`.
+    */
+    this.markPausedAborted(taskId, options.userCanceled ? "hard-cancel" : "engine-abort", `abort-in-flight:${reason}`);
     this.options.stuckTaskDetector?.untrackTask(taskId);
     this.clearWorkflowRerunWatchdog(taskId);
     this.clearCompletedTaskWatchdog(taskId);
@@ -3020,7 +3095,7 @@ export class TaskExecutor {
     try {
       const pauseLabel = await this.getExecutionPauseLabel();
       if (pauseLabel) {
-        executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
+        executorLog.debug(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
         return false;
       }
 
@@ -3167,7 +3242,11 @@ export class TaskExecutor {
     private rootDir: string,
     private options: TaskExecutorOptions = {},
   ) {
-    executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
+    /*
+    FNXC:EngineDiagnostics 2026-07-26-09:39:
+    Executor bookkeeping that fires on every dispatch/session (construct, execute() entry, worktree ready, session create/register, prompt start, graph event stream, column-boundary warns-as-info, model/plugin setup, skip/duplicate/no-op guards) is debug-only (FUSION_DEBUG=executor). Keep log/warn/error for lifecycle outcomes operators act on: Starting task, ✓/✗ completion, failures, requeues, handoffs, stuck kills, verification failures, real moves.
+    */
+    executorLog.debug(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
     this.unregisterTaskMoveDisposer = registerTaskMoveDisposer(store, async (task) => {
       // Start both paths without awaiting between them. Each synchronously
       // detaches its current targets before its first await, fencing late
@@ -3209,7 +3288,7 @@ export class TaskExecutor {
       if (to === "in-progress") {
         this.userCanceledTaskIds.delete(task.id);
         if (this.recoveringCompleted.has(task.id)) {
-          executorLog.log(`[event:task:moved] Skipping execute() for ${task.id} — completed-task recovery in progress`);
+          executorLog.debug(`[event:task:moved] Skipping execute() for ${task.id} — completed-task recovery in progress`);
           return;
         }
         this.clearWorkflowRerunWatchdog(task.id);
@@ -4646,7 +4725,7 @@ export class TaskExecutor {
         || this.resumingUnpaused.has(task.id)
         || TaskExecutor.processWideGraphRouting.has(task.id)
       ) {
-        executorLog.log(`${task.id}: skipping recoverCompletedTask — task has active execution in flight`);
+        executorLog.debug(`${task.id}: skipping recoverCompletedTask — task has active execution in flight`);
         return false;
       }
 
@@ -4666,7 +4745,7 @@ export class TaskExecutor {
       recovery re-launch execution instead.
       */
       if (this.workflowRerunWatchdogs.has(task.id) || this.workflowRerunPending.has(task.id)) {
-        executorLog.log(`${task.id}: skipping recoverCompletedTask — workflow remediation bounce already scheduled`);
+        executorLog.debug(`${task.id}: skipping recoverCompletedTask — workflow remediation bounce already scheduled`);
         return false;
       }
       const liveForCompletenessCheck = await this.store.getTask(task.id).catch(() => task);
@@ -4675,7 +4754,7 @@ export class TaskExecutor {
         && (liveForCompletenessCheck.steps?.length ?? 0) > 0
         && !this.isTaskWorkComplete(liveForCompletenessCheck)
       ) {
-        executorLog.log(`${task.id}: skipping recoverCompletedTask — task has incomplete steps awaiting executor remediation`);
+        executorLog.debug(`${task.id}: skipping recoverCompletedTask — task has incomplete steps awaiting executor remediation`);
         return false;
       }
       /*
@@ -4712,7 +4791,7 @@ export class TaskExecutor {
       */
       const failureProvenance = evaluateCompletedPromotionFailureProvenance(liveForCompletenessCheck ?? task);
       if (failureProvenance.blocked) {
-        executorLog.log(`${task.id}: skipping recoverCompletedTask — most recent execution ended in a failure/refusal park (operator-decides)`);
+        executorLog.debug(`${task.id}: skipping recoverCompletedTask — most recent execution ended in a failure/refusal park (operator-decides)`);
         return false;
       }
 
@@ -4798,7 +4877,7 @@ export class TaskExecutor {
           FNXC:FastOptionalSteps 2026-06-30-12:00:
           Fast recovery can hand off completed implementation directly only when the operator did not explicitly enable optional workflow steps, or when those enabled steps already have passed pre-merge results. Explicit optional selections are stronger than the fast default, so completed-task recovery must re-enter the workflow graph before review when any selected optional group is still unsatisfied.
           */
-          executorLog.log(`${task.id}: fast mode — no unsatisfied explicit workflow steps on auto-recovery`);
+          executorLog.debug(`${task.id}: fast mode — no unsatisfied explicit workflow steps on auto-recovery`);
         }
       }
 
@@ -4966,10 +5045,18 @@ export class TaskExecutor {
         optionalGroupId: info.nodeId ?? "plan-review",
         workflowSettings: settings as Record<string, unknown>,
         nodeMaxRevisions: info.maxRevisions,
-        fallbackMaxRevisions: settings.maxPostReviewFixes ?? 3,
+        fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
       });
-      const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? 3);
-      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+      const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
+      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+        // FNXC:RemediationVisibility 2026-07-26-19:20 (FN-8596 follow-up): returning false here
+        // makes the graph's plan-replan node fail with `remediation-not-scheduled` and leaves the
+        // card parked in place with nothing scheduled to fix it. Never let that be silent.
+        executorLog.warn(
+          `${taskId}: plan-review remediation NOT scheduled — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
+        );
+        return false;
+      }
       const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
       const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
       if (!budget.unbounded && currentCount >= budget.max) {
@@ -5037,20 +5124,39 @@ export class TaskExecutor {
       return true;
     }
 
-    if (info.verdict !== "REVISE") return false;
+    if (info.verdict !== "REVISE") {
+      // FNXC:RemediationVisibility 2026-07-26-19:20: a hard-failed gate with no parsed REVISE
+      // verdict schedules nothing, so the remediation node fails and the card parks. Say so.
+      executorLog.warn(
+        `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — status=${info.status}, verdict=${info.verdict ?? "none"}. Card left parked.`,
+      );
+      return false;
+    }
     const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
     const maxRevisions = resolveOptionalReviewRevisionBudget({
       optionalGroupId: info.nodeId ?? "",
       workflowSettings: settings as Record<string, unknown>,
       nodeMaxRevisions: info.maxRevisions,
-      fallbackMaxRevisions: settings.maxPostReviewFixes ?? 3,
+      fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
     });
-    const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? 3);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+    const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
+    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+      executorLog.warn(
+        `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
+      );
+      return false;
+    }
 
     const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
     const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
-    if (!budget.unbounded && currentCount >= budget.max) return false;
+    if (!budget.unbounded && currentCount >= budget.max) {
+      // Budget exhaustion is a legitimate terminal outcome, but it must be visible: the card stays
+      // in place with a failed pre-merge step and only an operator bypass clears it.
+      executorLog.warn(
+        `${taskId}: pre-merge remediation budget EXHAUSTED for step "${info.stepName}" (${currentCount}/${String(budget.max)}). Card left parked for operator action.`,
+      );
+      return false;
+    }
 
     const nextCount = currentCount + 1;
     const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
@@ -5455,11 +5561,11 @@ export class TaskExecutor {
       // move it directly to in-review instead of re-executing from scratch.
       if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
         if (this.recoveringCompleted.has(task.id)) {
-          executorLog.log(`${task.id} completed-task recovery already running - skipping duplicate startup recovery`);
+          executorLog.debug(`${task.id} completed-task recovery already running - skipping duplicate startup recovery`);
           continue;
         }
         if (TaskExecutor.processWideGraphRouting.has(task.id)) {
-          executorLog.log(`${task.id} owned by the workflow graph interpreter — skipping completed-task fast-path`);
+          executorLog.debug(`${task.id} owned by the workflow graph interpreter — skipping completed-task fast-path`);
           continue;
         }
         executorLog.log(`${task.id} is already complete — fast-pathing to in-review`);
@@ -5865,6 +5971,7 @@ export class TaskExecutor {
         resolveColumnBinding: resolveBindingForNode,
       });
       const runner = new WorkflowGraphTaskRunner({
+        localNodeId: this.options.getLocalNodeId?.(),
         store: {
           ...this.store,
           /*
@@ -5898,7 +6005,7 @@ export class TaskExecutor {
             return update;
           });
         },
-        onEvent: (event) => executorLog.log(`[workflow-graph] ${event.type} ${event.taskId}: ${event.detail}`),
+        onEvent: (event) => executorLog.debug(`[workflow-graph] ${event.type} ${event.taskId}: ${event.detail}`),
         signal: graphAbortController.signal,
         // Wire SQLite-backed per-branch persistence in production (#1407): the
         // executor writes each branch's currentNodeId/status to
@@ -6271,70 +6378,23 @@ export class TaskExecutor {
     });
   }
 
+  /*
+  FNXC:WorkflowColumnBoundary 2026-07-27-16:40 (PR #2475 review, P2):
+  The wiring itself now lives in `createExecutorColumnBoundaryHooks` so the E2E suite can drive the
+  REAL hooks instead of rebuilding them (a hand copy had already diverged in three places). What
+  stays here is only genuine Executor state: the in-flight graph-move marker and the logger.
+  */
   private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): WorkflowColumnBoundaryHooks {
-    // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
-    // buildBranchPersistence — structural probe of the row surface so a store
-    // lacking the pin fields degrades to the inert no-pin seam.
-    const pinPersistence = createStoreIrPinPersistence(
-      this.store as unknown as WorkflowIrPinStoreSurface,
-      task.id,
-    );
-    return {
-      pinNodeEntry: pinPersistence.pinNodeEntry,
-      loadPriorPin: pinPersistence.loadPriorPin,
-      // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
-      // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
-      clearPin: pinPersistence.clearPin,
-      onSuspend: async (suspension) => {
-        const items = await this.store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
-        const live = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
-        if (live.some((item) => item.nodeId === suspension.nodeId)) return;
-        await this.store.replaceActiveTaskWorkflowContinuation({
-          runId: `${workflowRunId ?? `${task.id}:workflow`}:continuation:${suspension.nodeId}:${items.length}`,
-          taskId: task.id,
-          nodeId: suspension.nodeId,
-          kind: "task",
-          state: "held",
-          stableWorkflowRunId: workflowRunId ?? `${task.id}:workflow`,
-          continuationSequence: items.length,
-          waitReason: "capacity",
-          sourceColumn: suspension.fromColumn,
-          targetColumn: suspension.toColumn,
-          irHash: suspension.irHash,
-        });
-      },
-      moveTask: async (toColumn, ctx) => {
-        this.workflowLifecycleMovesInFlight.add(task.id);
-        try {
-          await this.store.moveTask(task.id, toColumn, {
-            moveSource: "engine",
-            workflowMoveSource: "workflow-graph",
-            bypassGuards: true,
-            preserveProgress: true,
-            workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
-          });
-        } finally {
-          this.workflowLifecycleMovesInFlight.delete(task.id);
-        }
-      },
-      emitAudit: async (event) => {
-        await this.store.recordRunAuditEvent?.({
-          taskId: event.taskId,
-          agentId: "executor",
-          runId: generateSyntheticRunId("workflow-column-boundary", event.taskId),
-          domain: "database",
-          mutationType: event.type,
-          target: event.taskId,
-          metadata:
-            event.type === "task:column-transition"
-              ? { taskId: event.taskId, workflowId: event.workflowId, fromColumn: event.fromColumn, toColumn: event.toColumn, nodeId: event.nodeId, irHash: event.irHash }
-              : { taskId: event.taskId, workflowId: event.workflowId, pinnedNodeId: event.pinnedNodeId, reason: event.reason },
-        });
-      },
+    return createExecutorColumnBoundaryHooks({
+      store: this.store,
+      task,
+      workflowRunId,
+      markMoveInFlight: (taskId) => this.workflowLifecycleMovesInFlight.add(taskId),
+      clearMoveInFlight: (taskId) => this.workflowLifecycleMovesInFlight.delete(taskId),
       onWarn: (message, detail) => {
-        executorLog.log(`[workflow-column-boundary] ${task.id}: ${message} ${JSON.stringify(detail)}`);
+        executorLog.debug(`[workflow-column-boundary] ${task.id}: ${message} ${JSON.stringify(detail)}`);
       },
-    };
+    });
   }
 
   /**
@@ -7515,10 +7575,12 @@ export class TaskExecutor {
     */
     const targetColumn = await this.resolveMergeBoundaryColumn(task.id, metadata.nodeId);
 
-    // Already at the merge column, or in the terminal (done/complete) column:
-    // nothing to do. builtin:coding's targetColumn is `in-review`, so this stays
-    // byte-identical to the pre-cutover `in-review || done` guard.
-    if (live.column === targetColumn || live.column === "done") return live;
+    /*
+    FNXC:WorkflowMerge 2026-07-26-22:59:
+    A prior review handoff can move a graph-native workflow into its merge column before this boundary projects successful node results onto the legacy checklist. Preserve the no-move behavior, but do not return until the projection has run.
+    */
+    const alreadyAtMergeColumn = live.column === targetColumn;
+    if (live.column === "done") return live;
     if (live.paused || live.userPaused) return live;
 
     /*
@@ -7528,7 +7590,18 @@ export class TaskExecutor {
     FNXC:WorkflowMerge 2026-06-29-15:28:
     Compound Engineering and similar graph-native workflows execute skill nodes instead of legacy parsed task steps. The graph records those nodes as `workflowStepResults.source = "node"`; at the merge boundary, project a successful graph-native run onto the legacy checklist so `task has incomplete steps` cannot block a workflow that already completed its authoritative nodes.
     */
-    if (this.shouldCompleteChecklistAtWorkflowMerge(live)) {
+    const mergeProof = await this.evaluateWorkflowMergeBoundary(live, metadata.runId);
+    if (mergeProof.hasForeachStepExecute && !mergeProof.complete) {
+      const reason = !mergeProof.hasRelevantNodeResult
+        ? "no pre-merge node result recorded"
+        : !mergeProof.allResultsTerminal
+          ? `non-terminal pre-merge node result ${mergeProof.nonTerminalResult?.workflowStepId ?? "unknown"} (${mergeProof.nonTerminalResult?.status ?? "unknown"})`
+          : `foreach step instances incomplete at merge boundary: missing ${mergeProof.missingInstanceIds.join(", ")}`;
+      await this.store.logEntry(live.id, `Workflow merge boundary blocked: ${reason}`, undefined, this.getRunContextFor(live.id));
+      return live;
+    }
+
+    if (this.shouldCompleteChecklistAtWorkflowMerge(live, mergeProof)) {
       const completedSteps = live.steps.map((step) =>
         step.status === "done" || step.status === "skipped"
           ? step
@@ -7550,6 +7623,7 @@ export class TaskExecutor {
         this.getRunContextFor(live.id),
       );
     }
+    if (alreadyAtMergeColumn) return live;
     const moveOptions = {
       preserveProgress: true,
       moveSource: "engine" as const,
@@ -7569,6 +7643,49 @@ export class TaskExecutor {
     return { ...live, column: targetColumn };
   }
 
+  private async evaluateWorkflowMergeBoundary(task: TaskDetail, runId?: string): Promise<{
+    resolved: boolean;
+    hasRelevantNodeResult: boolean;
+    allResultsTerminal: boolean;
+    coverageComplete: boolean;
+    hasForeachStepExecute: boolean;
+    missingInstanceIds: string[];
+    nonTerminalResult?: CoreWorkflowStepResult;
+    complete: boolean;
+  }> {
+    const relevant = (task.workflowStepResults ?? []).filter((result) =>
+      result.source === "node" && (result.phase ?? "pre-merge") === "pre-merge",
+    );
+    // FNXC:WorkflowMerge 2026-07-27-12:30: FN-8601 keeps required presence
+    // independent from terminality: a failed node result proves execution occurred,
+    // while allResultsTerminal separately rejects it at the merge boundary.
+    const hasRelevantNodeResult = relevant.length > 0;
+    const nonTerminalResult = relevant.find((result) => result.status !== "passed" && result.status !== "skipped");
+    const allResultsTerminal = nonTerminalResult === undefined;
+    let ir: WorkflowIr | undefined;
+    try { ir = await resolveWorkflowIrForTask(this.store, task.id); } catch { /* preserve legacy behavior for unresolved IRs */ }
+    if (!ir) return { resolved: false, hasRelevantNodeResult, allResultsTerminal, coverageComplete: true, hasForeachStepExecute: false, missingInstanceIds: [], nonTerminalResult, complete: false };
+
+    let persistedInstances: Awaited<ReturnType<typeof this.loadMergeBoundaryInstances>> = [];
+    try { persistedInstances = await this.loadMergeBoundaryInstances(task.id, runId); } catch { /* persistence is additive */ }
+    const coverage = evaluateForeachMergeProof({ ir, steps: task.steps, workflowStepResults: task.workflowStepResults, persistedInstances });
+    const complete = hasRelevantNodeResult && allResultsTerminal && coverage.missingInstanceIds.length === 0;
+    return { resolved: true, hasRelevantNodeResult, allResultsTerminal, coverageComplete: coverage.missingInstanceIds.length === 0, hasForeachStepExecute: coverage.hasForeachStepExecute, missingInstanceIds: coverage.missingInstanceIds, nonTerminalResult, complete };
+  }
+
+  private async loadMergeBoundaryInstances(taskId: string, runId?: string): Promise<Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>> {
+    if (!runId) return [];
+    const store = this.store as typeof this.store & {
+      loadWorkflowRunStepInstancesAsync?: (id: string, idRun: string) => Promise<Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>>;
+      loadWorkflowRunStepInstances?: (id: string, idRun: string) => Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>;
+    };
+    try {
+      return await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId)
+        ?? store.loadWorkflowRunStepInstances?.(taskId, runId)
+        ?? [];
+    } catch { return []; }
+  }
+
   private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
     /*
     FNXC:Lifecycle 2026-07-16-21:40:
@@ -7579,62 +7696,41 @@ export class TaskExecutor {
     Runs before the noCommitsExpected exemption so a tainted task cannot slip past it.
     */
     const taint = evaluateSkipBypassTaint(task);
-    if (taint.blocked) {
-      return "implementation did not run: steps were skipped after a bulk-step-completion refusal without an accepted fn_task_done";
-    }
+    if (taint.blocked) return "implementation did not run: steps were skipped after a bulk-step-completion refusal without an accepted fn_task_done";
     if (task.noCommitsExpected === true) return undefined;
-
     let ir: WorkflowIr | undefined;
-    try {
-      ir = await resolveWorkflowIrForTask(this.store, task.id);
-    } catch {
-      ir = undefined;
-    }
+    try { ir = await resolveWorkflowIrForTask(this.store, task.id); } catch { ir = undefined; }
     if (!ir) return undefined;
-
     const usesParsedSteps = ir.nodes.some((node) => node.kind === "parse-steps");
     const usesExecuteSeam = ir.nodes.some((node) => node.kind === "prompt" && node.config?.seam === "execute");
     if (!usesParsedSteps && !usesExecuteSeam) return undefined;
-
     const steps = Array.isArray(task.steps) ? task.steps : [];
-    const hasTerminalParsedSteps =
-      steps.length > 0 && steps.every((step) => step.status === "done" || step.status === "skipped");
+    const hasTerminalParsedSteps = steps.length > 0 && steps.every((step) => step.status === "done" || step.status === "skipped");
     const hasModifiedFiles = (task.modifiedFiles?.length ?? 0) > 0;
-    const hasGraphNativeImplementationProof = (task.workflowStepResults ?? []).some((result) =>
-      result.source === "node"
-      && (result.phase ?? "pre-merge") === "pre-merge"
-      && (result.status === "passed" || result.status === "skipped")
-    );
-
-    /*
-    FNXC:WorkflowMerge 2026-06-30-00:38:
-    Stepwise Coding proves implementation through parsed task steps/foreach projection. Legacy monolithic Coding may prove through modified files or explicit no-op completion. Do not accept an empty step list as success for parse-step workflows; a valid PROMPT.md with unparsed steps must resume execution, not no-op merge.
-    */
+    const proof = await this.evaluateWorkflowMergeBoundary(task);
+    const hasGraphNativeImplementationProof = proof.hasRelevantNodeResult && proof.allResultsTerminal && proof.coverageComplete;
     if (usesParsedSteps) {
-      return hasTerminalParsedSteps || hasGraphNativeImplementationProof
-        ? undefined
+      if (hasTerminalParsedSteps || hasGraphNativeImplementationProof) return undefined;
+      return proof.hasForeachStepExecute && !proof.coverageComplete
+        ? `implementation did not run: foreach step instances are incomplete (missing ${proof.missingInstanceIds.join(", ")})`
         : "implementation did not run: parsed coding steps are missing or incomplete";
     }
-
-    if (usesExecuteSeam) {
-      return hasTerminalParsedSteps || hasModifiedFiles || hasGraphNativeImplementationProof
-        ? undefined
-        : "implementation did not run: execute seam has no completion proof";
-    }
-
+    if (usesExecuteSeam) return hasTerminalParsedSteps || hasModifiedFiles || hasGraphNativeImplementationProof ? undefined : "implementation did not run: execute seam has no completion proof";
     return undefined;
   }
 
-  private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail): boolean {
+  /*
+  FNXC:WorkflowMerge 2026-07-27-12:00:
+  FN-8601 gates checklist projection and foreach merge admission on required node-result
+  presence, terminal status for every present result, and expanded-instance coverage.
+  Non-foreach/no-seam coverage is vacuous and does not change legacy move behavior.
+  */
+  private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): boolean {
     if (!Array.isArray(task.steps) || task.steps.length === 0) return false;
     if (task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
-
-    const graphNodeResults = (task.workflowStepResults ?? []).filter((result) =>
-      result.source === "node" && (result.phase ?? "pre-merge") === "pre-merge"
-    );
-    if (graphNodeResults.length === 0) return false;
-
-    return graphNodeResults.every((result) => result.status === "passed" || result.status === "skipped");
+    if (proof) return proof.complete;
+    const graphNodeResults = (task.workflowStepResults ?? []).filter((result) => result.source === "node" && (result.phase ?? "pre-merge") === "pre-merge");
+    return graphNodeResults.length > 0 && graphNodeResults.every((result) => result.status === "passed" || result.status === "skipped");
   }
 
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams {
@@ -8729,7 +8825,7 @@ export class TaskExecutor {
     Fast mode skips review/validation work, not the agent-authored completion summary. FN-7335 reached review with "Fast mode — custom graph node 'completion-summary' skipped"; keep summary nodes executable so fast tasks still produce the same review/done card summary as standard tasks.
     */
     if (live.executionMode === "fast" && !isCompletionSummaryNode && !optionalGroupId && !cfg.seam && (node.kind === "prompt" || node.kind === "script" || node.kind === "gate")) {
-      executorLog.log(`${live.id}: fast mode — skipping custom graph node '${node.id}'`);
+      executorLog.debug(`${live.id}: fast mode — skipping custom graph node '${node.id}'`);
       await this.store.logEntry(
         live.id,
         `Fast mode — custom graph node '${node.id}' skipped`,
@@ -9562,7 +9658,7 @@ export class TaskExecutor {
     target: CoreWorkflowStepResult,
   ): Promise<{ unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }> {
     const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
-    const fallback = settings.maxPostReviewFixes ?? 3;
+    const fallback = settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES;
     let rawMaxRevisions: unknown;
     try {
       const ir = await resolveWorkflowIrForTask(this.store, task.id);
@@ -9646,7 +9742,7 @@ export class TaskExecutor {
   private async isRetryableBenignMergePauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
   ): Promise<boolean> {
     /*
@@ -9680,16 +9776,19 @@ export class TaskExecutor {
   private isBenignInReviewPauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
   ): boolean {
     /*
     FNXC:WorkflowLifecycle 2026-06-20-00:00:
-    FN-6796: an engine restart/pause-resume abort reaches graph-failure handling as `hard-cancel` provenance even when no user canceled the task. A clean completed `in-review` row in that shape is already handed off for review and must not be stranded with the operator-action pause-abort marker; the discriminator is the in-memory `userCanceledTaskIds` set plus the resting column and clean row state, while global/user pause, merge-seam, terminal merge values, merge-confirmed partial landings, and pre-existing status/error still park exactly as before.
+    FNXC:WorkflowLifecycle 2026-07-26-11:20:
+    KB-PROV: post-split the engine case arrives as `engine-abort` and an operator withdrawal as `hard-cancel`; this classifier still accepts BOTH (`isGenericAbortProvenance`) because the `userCanceled` guard below — not the label — is the load-bearing operator-intent discriminator FN-6796 designed. Narrowing to `engine-abort` would change behaviour for the operator path.
+
+    FN-6796: an engine restart/pause-resume abort reaches graph-failure handling as `hard-cancel`/`engine-abort` provenance even when no user canceled the task. A clean completed `in-review` row in that shape is already handed off for review and must not be stranded with the operator-action pause-abort marker; the discriminator is the in-memory `userCanceledTaskIds` set plus the resting column and clean row state, while global/user pause, merge-seam, terminal merge values, merge-confirmed partial landings, and pre-existing status/error still park exactly as before.
     */
     if (!pausedAborted) return false;
-    if (abortProvenance !== "hard-cancel") return false;
+    if (!isGenericAbortProvenance(abortProvenance)) return false;
     if (userCanceled) return false;
     if (live.column !== "in-review") return false;
     if (live.userPaused === true) return false;
@@ -9714,15 +9813,15 @@ export class TaskExecutor {
   private async isBenignManualMergeHoldPauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-07-09-14:54:
-    FN-7749 / Runfusion#1979: with auto-merge off, a manual merge hold is the healthy `in-review` resting state for Merge & Close. A benign hard-cancel pause/resume abort at any merge-region node must not park the task failed; FN-5147 forbids moving, failing, or re-enqueueing the row, so this classifier only permits preserving `in-review` and clearing a stale pause-abort status/error.
+    FN-7749 / Runfusion#1979: with auto-merge off, a manual merge hold is the healthy `in-review` resting state for Merge & Close. A benign generic (`hard-cancel`/`engine-abort`, KB-PROV 2026-07-26) pause/resume abort at any merge-region node must not park the task failed; FN-5147 forbids moving, failing, or re-enqueueing the row, so this classifier only permits preserving `in-review` and clearing a stale pause-abort status/error.
     */
     if (!pausedAborted) return false;
-    if (abortProvenance !== "hard-cancel") return false;
+    if (!isGenericAbortProvenance(abortProvenance)) return false;
     if (live.paused || live.userPaused === true) return false;
     if (live.column !== "in-review") return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
@@ -9746,7 +9845,7 @@ export class TaskExecutor {
   private async handleStaleInReviewPlanPauseAbortReplay(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
   ): Promise<boolean> {
@@ -9755,7 +9854,7 @@ export class TaskExecutor {
     FN-7143 showed that a stale graph lifecycle replay can surface at `plan` after an in-review pause/resume even though planning is not actually running anymore. Plan is not a safe re-entry point for review rows, typed or generic, so this classifier is clear/log-only: preserve in-review, never route to triage/todo, and keep genuine user/global pauses plus real plan failures on the operator-action path.
     */
     if (!pausedAborted) return false;
-    if (abortProvenance !== "hard-cancel" && abortProvenance !== "global-pause") return false;
+    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
     if (userCanceled) return false;
     if (live.column !== "in-review") return false;
     if (live.paused || live.userPaused === true) return false;
@@ -9818,7 +9917,7 @@ export class TaskExecutor {
   private async handleStaleInReviewParsePauseAbortReplay(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
   ): Promise<boolean> {
@@ -9827,7 +9926,7 @@ export class TaskExecutor {
     A stale in-review pause/resume replay at `parse` is not an operator action. Unlike `plan`, parse is a safe workflow re-entry point for review rows, so auto-retry the graph with the shared transient resume budget and suppress the parked failure notification.
     */
     if (!pausedAborted) return false;
-    if (abortProvenance !== "hard-cancel" && abortProvenance !== "global-pause") return false;
+    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
     if (userCanceled) return false;
     if (live.column !== "in-review") return false;
     if (live.paused || live.userPaused === true) return false;
@@ -9903,7 +10002,7 @@ export class TaskExecutor {
             || this.activeWorkflowGraphAbortControllers.has(live.id)
             || TaskExecutor.processWideGraphRouting.has(live.id)
           ) {
-            executorLog.log(`${live.id}: skipping stale parse graph retry — task is no longer in a safe in-review resume state`);
+            executorLog.debug(`${live.id}: skipping stale parse graph retry — task is no longer in a safe in-review resume state`);
             return;
           }
           await this.executeWorkflowGraph(resumeTask);
@@ -9924,7 +10023,7 @@ export class TaskExecutor {
   private async isReentrantPausedAbortedInFlightNode(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
   ): Promise<boolean> {
@@ -9936,7 +10035,7 @@ export class TaskExecutor {
     A global engine pause aborts active workflow graph controllers with `global-pause` provenance; after the global pause is lifted, the typed interrupted-node marker is sufficient to re-enter that node. Only active global-pause settings and explicit task/user pauses remain terminal so resume never runs behind an operator-controlled pause.
     */
     if (!pausedAborted) return false;
-    if (abortProvenance !== "hard-cancel" && abortProvenance !== "global-pause") return false;
+    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
     if (userCanceled) return false;
     if (live.paused || live.userPaused === true) return false;
     if (live.status != null || live.error != null) return false;
@@ -9969,7 +10068,7 @@ export class TaskExecutor {
   private async reenterPausedAbortedWorkflowNode(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
   ): Promise<boolean> {
     const nodeId = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const priorRetries = live.graphResumeRetryCount ?? 0;
@@ -10023,7 +10122,7 @@ export class TaskExecutor {
             || this.activeWorkflowGraphAbortControllers.has(live.id)
             || TaskExecutor.processWideGraphRouting.has(live.id)
           ) {
-            executorLog.log(`${live.id}: skipping paused-node graph re-entry — task is no longer in a safe resume state`);
+            executorLog.debug(`${live.id}: skipping paused-node graph re-entry — task is no longer in a safe resume state`);
             return;
           }
           if (preservedInReview) {
@@ -10050,13 +10149,13 @@ export class TaskExecutor {
   private async routeGraphMergeFailureToRetry(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    abortProvenance: PausedAbortProvenance | undefined,
   ): Promise<boolean> {
     if (!this.mergeRequester) return false;
     /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 defense in depth — implementation-incomplete merge graph failures must never reach the merge requester, because a no-branch task can otherwise be finalized as an intentional no-op. */
     if (this.graphFailureValue(result) === "implementation-incomplete") return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
-    const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : abortProvenance === "hard-cancel" || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
+    const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
     await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
     try {
@@ -10458,7 +10557,8 @@ export class TaskExecutor {
                 : "task pause";
         // Typed discriminant for the engine-internal abort case (mirrors the
         // `pauseProvenance === "engine abort during pause/resume"` arm above):
-        // a hard-cancel teardown that is NOT a user pause or global pause. Used
+        // a generic (`hard-cancel`/`engine-abort`, KB-PROV 2026-07-26) teardown that is
+        // NOT a user pause or global pause. Used
         // to gate the auto-continue branch so the gate cannot silently drift if
         // the human-readable provenance label is ever revised.
         const isEngineInternalAbort =
@@ -10615,7 +10715,7 @@ export class TaskExecutor {
           benign teardown, not an operator problem. The live-acceptance repro:
           the workflow merge boundary hard-cancels the in-flight executor
           session when it moves the task in-progress → in-review
-          (abort-in-flight provenance=hard-cancel), the AI merge then lands and
+          (abort-in-flight provenance=engine-abort, formerly hard-cancel — KB-PROV 2026-07-26), the AI merge then lands and
           the task advances to done — and only afterwards does the aborted
           graph run reach this sink, where it logged "Workflow graph failure
           surfaced ... operator action required; retry or explicitly
@@ -11339,7 +11439,7 @@ export class TaskExecutor {
     if (this.graphRouting.has(task.id)) {
       // Duplicate dispatch while the graph runner owns this task — drop it,
       // mirroring the executingTaskLock duplicate-invocation behavior.
-      executorLog.log(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
+      executorLog.debug(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
       return;
     }
     this.graphRouting.add(task.id);
@@ -11422,7 +11522,7 @@ export class TaskExecutor {
     // multi-project hybrid runtime, etc.). This is `executingTaskLock` in
     // active-session-registry.ts, a module-level Set.
     const claimed = executingTaskLock.tryClaim(task.id);
-    executorLog.log(`execute() called for ${task.id} (claimed=${claimed}, perInstanceExecuting=${this.executing.has(task.id)})`);
+    executorLog.debug(`execute() called for ${task.id} (claimed=${claimed}, perInstanceExecuting=${this.executing.has(task.id)})`);
     if (!claimed) {
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: graph fallback may have re-registered a pre-held slot; drop it when this process cannot claim the executor lock.
       dropPreHeldExecutorSlot(task.id, this.options.semaphore);
@@ -11462,7 +11562,7 @@ export class TaskExecutor {
     // byte-identical to before.
     const deferralPrincipalId = this.resolveEffectivePrincipalId(task, task);
     if (deferralPrincipalId && await this.shouldDeferForHeartbeat(deferralPrincipalId)) {
-      executorLog.log(`${task.id}: skipping execute — agent ${deferralPrincipalId} has active heartbeat run (allowParallelExecution=false)`);
+      executorLog.debug(`${task.id}: skipping execute — agent ${deferralPrincipalId} has active heartbeat run (allowParallelExecution=false)`);
       // Release the slot we just claimed — we never actually ran.
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
@@ -11911,7 +12011,7 @@ export class TaskExecutor {
 
       // FNXC:Workspace 2026-06-21-12:00: KTD2 — register the worktree path under the task's Set. In workspace mode `worktreePath` is the browse-only root; per-repo sub-repo worktree paths ARE now added to the same Set as the agent acquires them (F2: fn_acquire_repo_worktree's onAcquired callback → addActiveWorktree), so the Set holds root + N sub-repo paths, not just the root. Non-workspace tasks add exactly one path → a one-element set (unchanged liveness/owner semantics).
       this.addActiveWorktree(task.id, worktreePath);
-      executorLog.log(`${task.id}: worktree ready at ${worktreePath}`);
+      executorLog.debug(`${task.id}: worktree ready at ${worktreePath}`);
 
       const injected = await this.buildInjectedRuntimeEnv(task.id, worktreePath, acquisition.branch ?? undefined);
       taskEnv = injected.env;
@@ -11922,7 +12022,7 @@ export class TaskExecutor {
       this.options.onStart?.(task, worktreePath);
 
       const detail = await this.store.getTask(task.id);
-      executorLog.log(`${task.id}: fetched task detail (${detail.steps.length} steps, prompt length=${detail.prompt?.length ?? 0})`);
+      executorLog.debug(`${task.id}: fetched task detail (${detail.steps.length} steps, prompt length=${detail.prompt?.length ?? 0})`);
 
       // Initialize steps from PROMPT.md if empty
       if (detail.steps.length === 0) {
@@ -11992,7 +12092,7 @@ export class TaskExecutor {
       const forceStepSession = this.graphStepSessionPinned.has(task.id);
       if (settings.runStepsInNewSessions || forceStepSession) {
         // ── Step-Session Path ──────────────────────────────────────────
-        executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2}${forceStepSession ? ", graph-pinned" : ""})`);
+        executorLog.debug(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2}${forceStepSession ? ", graph-pinned" : ""})`);
 
         const stepSessionAgent = await this.getAuthoritativeAssignedAgent(detail.assignedAgentId);
 
@@ -12074,7 +12174,12 @@ export class TaskExecutor {
             }
           },
           onStepComplete: (stepIndex, result) => {
-            executorLog.log(`${task.id}: step ${stepIndex} ${result.success ? "succeeded" : "failed"} (${result.retries} retries)`);
+            // FNXC:EngineDiagnostics 2026-07-26-10:05: per-step success is expected bookkeeping (incl. foreach instances); failures stay at log.
+            if (result.success) {
+              executorLog.debug(`${task.id}: step ${stepIndex} succeeded (${result.retries} retries)`);
+            } else {
+              executorLog.log(`${task.id}: step ${stepIndex} failed (${result.retries} retries)`);
+            }
             try {
               this.store.updateStep(task.id, stepIndex, result.success ? "done" : "skipped", stepProjectionOptions).catch((err) => {
                 executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
@@ -12602,7 +12707,7 @@ export class TaskExecutor {
 
       // Log fast mode status
       if (executionMode === "fast") {
-        executorLog.log(`${task.id}: fast mode`);
+        executorLog.debug(`${task.id}: fast mode`);
       }
 
       /*
@@ -12642,11 +12747,44 @@ export class TaskExecutor {
       };
       await runPendingTaskVerification();
 
+      /*
+      FNXC:EphemeralAgentTaskCreation 2026-07-26-06:20:
+      A `deny` project policy removes fn_task_create from the session's tool list instead of
+      registering a tool that only refuses at execute time; see isAgentTaskCreateToolAvailable.
+
+      FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
+      fn_delegate_task is withheld by the same policy (it creates a task through the same
+      primitive), and the suppression emits a run-audit event. Without the event an operator
+      cannot distinguish "the policy suppressed the tool" from "the agent had nothing to file" —
+      every other policy decision in this engine leaves that trail.
+      */
+      const executionCallerIsEphemeral = !identityAgent || isEphemeralAgent(identityAgent);
+      const taskCreateWithheld = !isAgentTaskCreateToolAvailable(settings, executionCallerIsEphemeral);
+      const delegateWithheld = !isAgentDelegateTaskToolAvailable(settings, executionCallerIsEphemeral);
+      if (taskCreateWithheld || delegateWithheld) {
+        await this.store.recordRunAuditEvent?.({
+          taskId: task.id,
+          agentId: identityAgent?.id ?? "executor",
+          runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("task-create-withheld", task.id),
+          domain: "database",
+          mutationType: "agent:task-create-withheld",
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            policy: resolveEphemeralTaskCreationPolicy(settings),
+            withheldTaskCreate: taskCreateWithheld,
+            withheldDelegateTask: delegateWithheld,
+            lane: "execution-session",
+          },
+        }).catch(() => undefined);
+      }
       const customTools = [
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stuckDetector),
         this.createTaskLogTool(task.id),
         this.createTaskLogsReadTool(task.id),
-        this.createTaskCreateTool(!identityAgent || isEphemeralAgent(identityAgent), task.id, identityAgent?.id),
+        ...(taskCreateWithheld
+          ? []
+          : [this.createTaskCreateTool(executionCallerIsEphemeral, task.id, identityAgent?.id)]),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
         createRunVerificationTool({
@@ -12659,6 +12797,7 @@ export class TaskExecutor {
           onVerificationEnd: () => stuckDetector?.endVerification(task.id),
           log: {
             info: (s) => executorLog.log(s),
+            debug: (s) => executorLog.debug(s),
             warn: (s) => executorLog.warn(s),
             error: (s) => executorLog.warn(s),
           },
@@ -12727,7 +12866,9 @@ export class TaskExecutor {
         // Agent delegation tools — discover and delegate work to other agents.
         ...(this.options.agentStore ? [
           createListAgentsTool(this.options.agentStore),
-          createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgentId }),
+          ...(delegateWithheld
+            ? []
+            : [createDelegateTaskTool(this.options.agentStore, this.store, { rootDir: this.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgentId, callerIsEphemeral: executionCallerIsEphemeral })]),
           createTaskAssignTool(this.options.agentStore, this.store),
           ...(assignedAgentId ? [
             createGetAgentConfigTool(this.options.agentStore, assignedAgentId),
@@ -12868,7 +13009,7 @@ export class TaskExecutor {
           ? SessionManager.open(task.sessionFile!)
           : SessionManager.create(worktreePath);
 
-        executorLog.log(`${task.id}: creating agent session (provider=${executorProvider ?? "default"}, model=${executorModelId ?? "default"}, resuming=${isResuming})`);
+        executorLog.debug(`${task.id}: creating agent session (provider=${executorProvider ?? "default"}, model=${executorModelId ?? "default"}, resuming=${isResuming})`);
 
         // Resolve per-agent custom instructions for the executor role.
         // Column-agent session identity (U4, R3/KTD-6): when a column agent governs,
@@ -12886,7 +13027,7 @@ export class TaskExecutor {
           this.options.pluginRunner,
         );
         if (executorPluginContributions) {
-          executorLog.log(`${task.id}: applied plugin prompt contributions for executor-system surface`);
+          executorLog.debug(`${task.id}: applied plugin prompt contributions for executor-system surface`);
         }
 
         const executorGoalResolution = await resolveAndEmitGoalContext({
@@ -12899,7 +13040,7 @@ export class TaskExecutor {
         const executorGoalContext = executorGoalResolution.goalContext;
 
         const executorLayers = buildPromptLayers({
-          basePrompt: getExecutorSystemPrompt(settings),
+          basePrompt: getExecutorSystemPrompt(settings, { taskCreateWithheld, delegateWithheld }),
           goalContext: executorGoalContext,
           agentInstructions: executorInstructions,
           pluginContributions: executorPluginContributions,
@@ -12969,10 +13110,10 @@ export class TaskExecutor {
         const executorModelDetails = formatModelMarkerDetails(executorModelDesc, executorThinkingLevel);
         const executorModelMarker = `Executor using model: ${executorModelDetails}`;
         if (isResuming) {
-          executorLog.log(`${task.id}: resumed session from ${task.sessionFile}`);
+          executorLog.debug(`${task.id}: resumed session from ${task.sessionFile}`);
           await this.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, this.getRunContextFor(task.id));
         } else {
-          executorLog.log(`${task.id}: using model ${executorModelDesc}`);
+          executorLog.debug(`${task.id}: using model ${executorModelDesc}`);
           await this.store.logEntry(task.id, executorModelMarker, undefined, this.getRunContextFor(task.id));
           // Persist session file path so pause/resume can reopen it
           if (sessionFile) {
@@ -13030,7 +13171,7 @@ export class TaskExecutor {
 
         // Register with stuck task detector for heartbeat monitoring
         stuckDetector?.trackTask(task.id, session);
-        executorLog.log(`${task.id}: session registered (model=${describeModel(session)}, stuckDetector=${!!stuckDetector})`);
+        executorLog.debug(`${task.id}: session registered (model=${describeModel(session)}, stuckDetector=${!!stuckDetector})`);
 
         // Invoke plugin onAgentRunStart hook (fire-and-forget)
         void this.options.pluginRunner?.invokeHookSafe("onAgentRunStart", task.id);
@@ -13039,7 +13180,7 @@ export class TaskExecutor {
           // Record activity on prompt start (heartbeat for stuck detection)
           stuckDetector?.recordActivity(task.id);
 
-          executorLog.log(`${task.id}: calling promptWithFallback()...`);
+          executorLog.debug(`${task.id}: calling promptWithFallback()...`);
           if (isResuming) {
             // Session already has full conversation history — just tell the
             // agent it was paused and should pick up where it left off.
@@ -13093,10 +13234,10 @@ export class TaskExecutor {
               },
             );
             if (capResult.triggered) {
-              executorLog.log(`${task.id} token cap check: ${capResult.message}`);
+              executorLog.debug(`${task.id} token cap check: ${capResult.message}`);
             }
           } catch (err) {
-            executorLog.log(`${task.id} token cap check failed (non-fatal): ${err}`);
+            executorLog.debug(`${task.id} token cap check failed (non-fatal): ${err}`);
           }
 
           // If loop recovery is pending (compact-and-resume was triggered by
@@ -13703,7 +13844,7 @@ export class TaskExecutor {
         if (fromColumn === "in-review" && toColumn === "in-review") {
           try {
             const finalizeResult = await this.finalizeAlreadyReviewedTask(task.id);
-            executorLog.log(`${task.id} duplicate in-review finalization result: ${finalizeResult}`);
+            executorLog.debug(`${task.id} duplicate in-review finalization result: ${finalizeResult}`);
           } catch (finalizeErr: unknown) {
             const finalizeErrMessage = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
             executorLog.warn(`${task.id} failed to finalize duplicate in-review transition: ${finalizeErrMessage}`);
@@ -13728,7 +13869,7 @@ export class TaskExecutor {
           latestTask.paused === true &&
           ((latestTask.currentStep ?? 0) > 0 || latestTask.steps?.some((step) => step.status === "done" || step.status === "in-progress"))
         ) {
-          executorLog.log(`${task.id} paused-abort cleanup skipped — incomplete task is already parked with progress preserved`);
+          executorLog.debug(`${task.id} paused-abort cleanup skipped — incomplete task is already parked with progress preserved`);
           await this.store.logEntry(
             task.id,
             "Execution abort cleanup skipped — incomplete stuck-loop task is already parked with progress preserved",
@@ -14405,7 +14546,7 @@ export class TaskExecutor {
         */
         const cleanupClaimed = executingTaskLock.tryClaim(task.id);
         if (!cleanupClaimed) {
-          executorLog.log(`${task.id} stale assistant-continuation requeue skipped — a fresh executor already claimed the task`);
+          executorLog.debug(`${task.id} stale assistant-continuation requeue skipped — a fresh executor already claimed the task`);
         } else {
           let cleanupLockHeld = true;
           try {
@@ -14427,7 +14568,7 @@ export class TaskExecutor {
               }
               executorLog.log(`${task.id} stale assistant-continuation session cleared — requeued to todo with progress preserved`);
             } else {
-              executorLog.log(`${task.id} stale assistant-continuation requeue skipped — task is now in '${latestTask.column}'`);
+              executorLog.debug(`${task.id} stale assistant-continuation requeue skipped — task is now in '${latestTask.column}'`);
             }
           } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -14511,7 +14652,7 @@ export class TaskExecutor {
               await audit.database({ type: "task:move", target: task.id, metadata: { to: "todo" } });
               executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
             } else {
-              executorLog.log(`${task.id} already in todo — skipping redundant move`);
+              executorLog.debug(`${task.id} already in todo — skipping redundant move`);
             }
           }
           } catch (err: unknown) {
@@ -15054,7 +15195,7 @@ export class TaskExecutor {
           ? workspacePromptEligibility.reason ?? "prompt-derived no-commit eligibility"
           : null);
       if (workspaceNoCommitEligibilityReason) {
-        executorLog.log(`${task.id}: workspace fn_task_done no_commits guard skipped (${workspaceNoCommitEligibilityReason})`);
+        executorLog.debug(`${task.id}: workspace fn_task_done no_commits guard skipped (${workspaceNoCommitEligibilityReason})`);
       }
       // FNXC:Workspace 2026-06-21-15:00: F6 — iterate sorted repo keys so the FIRST failing repo
       // returned here is deterministic across runs/rehydrate (the value is surfaced to the operator).
@@ -15324,7 +15465,7 @@ export class TaskExecutor {
         ? promptDerivedEligibility.reason ?? "prompt-derived no-commit eligibility"
         : null);
     if (noCommitEligibilityReason) {
-      executorLog.log(`${task.id}: fn_task_done no_commits guard skipped (${noCommitEligibilityReason})`);
+      executorLog.debug(`${task.id}: fn_task_done no_commits guard skipped (${noCommitEligibilityReason})`);
       try {
         await this.store.logEntry(
           task.id,
@@ -15386,7 +15527,7 @@ export class TaskExecutor {
     audit?: RunAuditor,
   ): Promise<{ blocked: false } | { blocked: true; message: string }> {
     if (task.scopeOverride === true) {
-      executorLog.log(`${task.id}: scope-leak guard bypassed (scopeOverride=true)`);
+      executorLog.debug(`${task.id}: scope-leak guard bypassed (scopeOverride=true)`);
       await this.store.logEntry(task.id, "[scope-leak] scope guard bypassed via task.scopeOverride", undefined, this.getRunContextFor(task.id));
       return { blocked: false };
     }
@@ -16131,14 +16272,15 @@ export class TaskExecutor {
     const buildCommand = settings.buildCommand?.trim();
 
     if (!testCommand && !buildCommand) {
-      executorLog.log(`${task.id}: no test/build commands configured — skipping verification`);
+      executorLog.debug(`${task.id}: no test/build commands configured — skipping verification`);
       return { allPassed: true };
     }
 
     const parts: string[] = [];
     if (testCommand) parts.push(`test: ${testCommand}`);
     if (buildCommand) parts.push(`build: ${buildCommand}`);
-    executorLog.log(`${task.id}: [verification] running deterministic verification (${parts.join(", ")})`);
+    // FNXC:EngineDiagnostics 2026-07-26-09:33: green path verification start/pass is expected work — debug so failures stay prominent.
+    executorLog.debug(`${task.id}: [verification] running deterministic verification (${parts.join(", ")})`);
     await this.store.logEntry(
       task.id,
       `[verification] Running deterministic verification (${parts.join(", ")})`,
@@ -16178,7 +16320,7 @@ export class TaskExecutor {
       }
     }
 
-    executorLog.log(`${task.id}: [verification] passed`);
+    executorLog.debug(`${task.id}: [verification] passed`);
     await this.store.logEntry(
       task.id,
       `[verification] Deterministic verification passed`,
@@ -16610,7 +16752,7 @@ ${scopeGuard}
       await audit.git({ type: "commit:create", target: baseCommitSha, metadata: { purpose: "base", preserved: false } });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.log(`Failed to capture baseCommitSha for ${task.id}: ${errorMessage}`);
+      executorLog.debug(`Failed to capture baseCommitSha for ${task.id}: ${errorMessage}`);
       // Non-fatal: task can continue without baseCommitSha
     }
   }
@@ -16677,7 +16819,7 @@ ${scopeGuard}
       });
       return stdout.trim() || undefined;
     } catch {
-      executorLog.log(`Could not determine base commit for diff in ${worktreePath}`);
+      executorLog.debug(`Could not determine base commit for diff in ${worktreePath}`);
       return undefined;
     }
   }
@@ -16733,7 +16875,7 @@ ${scopeGuard}
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.log(`Failed to capture modified files: ${errorMessage}`);
+      executorLog.debug(`Failed to capture modified files: ${errorMessage}`);
       return [];
     }
   }
@@ -17466,7 +17608,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           attemptLabel === "fallback" ? "fallback after timeout" : "",
         ],
       );
-      executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${workflowModelDetails}`);
+      executorLog.debug(`${task.id}: workflow step '${workflowStep.name}' using model ${workflowModelDetails}`);
       await this.store.logEntry(
         task.id,
         `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
@@ -18452,6 +18594,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       failure: error,
       source: "executor-session-start",
       auditor: audit,
+      rootDir: this.rootDir,
     });
     if (recovery.outcome !== "escalate-exhausted") {
       this.markGraphExecuteSelfRequeued(task.id);
@@ -18678,7 +18821,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           throw new Error(`Failed to remove existing directory ${path}: ${eMessage}`);
         }
       } else {
-        executorLog.log(`Worktree already exists: ${path}`);
+        executorLog.debug(`Worktree already exists: ${path}`);
         await installGuardOrCleanup();
         return { path, branch };
       }
@@ -20041,8 +20184,10 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             executorLog.warn(`${taskId}: spawned child cleanup failed during force-requeue: ${err instanceof Error ? err.message : String(err)}`);
           });
           await this.awaitAbortInFlightTaskWork(taskId, "force-requeue after stuck-kill unwind timeout");
-          // awaitAbortInFlightTaskWork marks pausedAborted as a generic hard-cancel
-          // signal. The force-requeue path has already handled the task move, so
+          // awaitAbortInFlightTaskWork marks pausedAborted as a generic abort
+          // signal (KB-PROV 2026-07-26: `engine-abort`, since the force-requeue is
+          // engine-initiated and passes no `userCanceled`).
+          // The force-requeue path has already handled the task move, so
           // clear it to prevent a later subprocess unwind from logging/moving as a pause.
           this.clearPausedAborted(taskId);
 
@@ -20718,7 +20863,7 @@ git log --oneline
 
   const pluginTaskContributions = options?.pluginTaskContributions ?? "";
   if (pluginTaskContributions) {
-    executorLog.log(`${task.id}: applied plugin prompt contributions for executor-task surface`);
+    executorLog.debug(`${task.id}: applied plugin prompt contributions for executor-task surface`);
   }
 
   const executionPrompt = `Execute this task.

@@ -18,12 +18,12 @@ describe("createLogger debug gating", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("emits debug output for a subsystem named in the FUSION_DEBUG list", () => {
+  it("emits an info-marked debug line for a subsystem named in the FUSION_DEBUG list", () => {
     process.env.FUSION_DEBUG = "scheduler,merger";
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     createLogger("scheduler").debug("steady-state chatter");
     expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0]?.[0]).toContain("[scheduler] steady-state chatter");
+    expect(spy.mock.calls[0]?.[0]).toContain("\0fnlvl=info\0[scheduler] steady-state chatter");
   });
 
   it("suppresses debug output for a subsystem absent from the FUSION_DEBUG list", () => {
@@ -33,11 +33,12 @@ describe("createLogger debug gating", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it.each(["1", "true", "all", "*"])("emits debug output for every subsystem when FUSION_DEBUG=%s", (value) => {
+  it.each(["1", "true", "all", "*"])("emits an info-marked debug line for every subsystem when FUSION_DEBUG=%s", (value) => {
     process.env.FUSION_DEBUG = value;
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     createLogger("scheduler").debug("steady-state chatter");
     expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0]?.[0]).toContain("\0fnlvl=info\0[scheduler] steady-state chatter");
   });
 
   it("re-reads FUSION_DEBUG per call so toggling does not require a new logger", () => {

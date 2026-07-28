@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { MAX_LOG_ENTRIES, useMultiAgentLogs } from "../useMultiAgentLogs";
+import { isLogGapMarker } from "../logStreamReconcile";
 import { fetchAgentLogsWithMeta } from "../../api";
 import { MockEventSource } from "../../../vitest.setup";
 
@@ -621,6 +622,274 @@ describe("useMultiAgentLogs", () => {
       expect(mockFetchAgentLogsWithMeta.mock.calls.length).toBeGreaterThan(initialCallCount);
       const lastCall = mockFetchAgentLogsWithMeta.mock.calls.at(-1);
       expect(lastCall?.[1]).toBe("proj-B");
+    });
+  });
+
+  /*
+  FNXC:AgentLogResync 2026-07-26-17:45:
+  Regression cover for the silent log gap on the MULTI-agent surface. `/api/tasks/:id/logs/stream`
+  replays nothing on open, so every line emitted while the channel is down (SSE error, heartbeat
+  timeout, or the hidden-tab suspend added for mobile tab retention) used to vanish from a list that
+  still rendered as contiguous. useAgentLogs was fixed first; this hook subscribes to the SAME
+  live-only channel and must hold the SAME invariant: after any reconnect the rendered list either
+  contains the missed lines, in order and without duplicates, or shows an explicit gap marker.
+  */
+  describe("reconnect resync", () => {
+    const logEntry = (minute: number, text: string) => ({
+      timestamp: `2026-01-01T00:${String(minute).padStart(2, "0")}:00Z`,
+      taskId: "FN-001",
+      text,
+      type: "text" as const,
+    });
+
+    /** Payload-less transport event; the sse-bus turns a channel's SECOND `open` into onReconnect. */
+    function fireOpen(es: MockEventSource) {
+      es._emit("open");
+    }
+
+    it("recovers lines emitted while the stream was suspended, in order and without duplicates", async () => {
+      const history = [logEntry(0, "hist-1"), logEntry(1, "hist-2")];
+      mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: history, total: 2, hasMore: false });
+
+      const { result } = renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(2);
+      });
+
+      const es = getConnection("FN-001")!;
+      act(() => {
+        fireOpen(es);
+      });
+      act(() => {
+        es._emit("agent:log", logEntry(2, "live-3"));
+      });
+      expect(result.current["FN-001"].entries.map((entry) => entry.text)).toEqual([
+        "hist-1",
+        "hist-2",
+        "live-3",
+      ]);
+
+      // Suspended: the server kept writing and the stream delivered none of it.
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: [...history, logEntry(2, "live-3"), logEntry(3, "missed-4"), logEntry(4, "missed-5")],
+        total: 5,
+        hasMore: false,
+      });
+
+      await act(async () => {
+        fireOpen(es);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries.map((entry) => entry.text)).toEqual([
+          "hist-1",
+          "hist-2",
+          "live-3",
+          "missed-4",
+          "missed-5",
+        ]);
+      });
+      expect(new Set(result.current["FN-001"].entries.map((entry) => entry.text)).size).toBe(5);
+      expect(result.current["FN-001"].entries.some(isLogGapMarker)).toBe(false);
+    });
+
+    it("splices the reconnect page onto paged-back history instead of replacing the buffer", async () => {
+      // 150 entries held (100 initial + one "load older" page). The reconnect page is the newest 100
+      // plus 2 lines emitted while suspended; the 50 oldest must survive the merge.
+      const all = Array.from({ length: 152 }, (_, index) => logEntry(index, `entry-${index}`));
+      const held = all.slice(0, 150);
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: held.slice(50),
+        total: 150,
+        hasMore: true,
+      });
+
+      const { result } = renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(100);
+      });
+
+      mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: held.slice(0, 50), total: 150, hasMore: false });
+      await act(async () => {
+        await result.current["FN-001"].loadMore();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(150);
+      });
+
+      const es = getConnection("FN-001")!;
+      act(() => {
+        fireOpen(es);
+      });
+
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: all.slice(52),
+        total: 152,
+        hasMore: true,
+      });
+
+      await act(async () => {
+        fireOpen(es);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(152);
+      });
+      const texts = result.current["FN-001"].entries.map((entry) => entry.text);
+      expect(texts).toEqual(all.map((entry) => entry.text));
+      expect(new Set(texts).size).toBe(152);
+      expect(result.current["FN-001"].entries.some(isLogGapMarker)).toBe(false);
+    });
+
+    it("renders an explicit gap marker when the missed window exceeds one authoritative page", async () => {
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: [logEntry(0, "before-suspend")],
+        total: 1,
+        hasMore: false,
+      });
+
+      const { result } = renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(1);
+      });
+
+      const es = getConnection("FN-001")!;
+      act(() => {
+        fireOpen(es);
+      });
+
+      // The newest page shares nothing with the buffer: more than one page was missed.
+      const authoritativePage = Array.from({ length: INITIAL_LOAD_LIMIT }, (_, index) =>
+        logEntry(index + 5, `missed-${index}`),
+      );
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: authoritativePage,
+        total: 401,
+        hasMore: true,
+      });
+
+      await act(async () => {
+        fireOpen(es);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(INITIAL_LOAD_LIMIT + 1);
+      });
+
+      const entries = result.current["FN-001"].entries;
+      expect(isLogGapMarker(entries[0])).toBe(true);
+      expect(entries[0].text.length).toBeGreaterThan(0);
+      expect(entries.slice(1).map((entry) => entry.text)).toEqual(
+        authoritativePage.map((entry) => entry.text),
+      );
+      // The unreconcilable prefix is not silently glued onto a page it does not touch.
+      expect(entries.some((entry) => entry.text === "before-suspend")).toBe(false);
+      expect(result.current["FN-001"].hasMore).toBe(true);
+    });
+
+    it("does not duplicate a live entry that races the reconnect refetch", async () => {
+      mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: [], total: 0, hasMore: false });
+
+      const { result } = renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].loading).toBe(false);
+      });
+
+      const es = getConnection("FN-001")!;
+      act(() => {
+        fireOpen(es);
+      });
+
+      const raced = logEntry(1, "raced");
+      let resolveResync: ((value: { entries: typeof raced[]; total: number; hasMore: boolean }) => void) | undefined;
+      mockFetchAgentLogsWithMeta.mockImplementation(
+        () => new Promise((resolve) => {
+          resolveResync = resolve as typeof resolveResync;
+        }),
+      );
+
+      act(() => {
+        fireOpen(es);
+      });
+      // Arrives while the authoritative refetch is still in flight, and is also in that page.
+      act(() => {
+        es._emit("agent:log", raced);
+      });
+
+      await act(async () => {
+        resolveResync?.({ entries: [logEntry(0, "hist-1"), raced], total: 2, hasMore: false });
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries.map((entry) => entry.text)).toEqual(["hist-1", "raced"]);
+      });
+    });
+
+    it("pages older entries in below the gap marker and retires it", async () => {
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: [logEntry(0, "before-suspend")],
+        total: 1,
+        hasMore: false,
+      });
+
+      const { result } = renderHook(() => useMultiAgentLogs(["FN-001"]));
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries).toHaveLength(1);
+      });
+
+      const es = getConnection("FN-001")!;
+      act(() => {
+        fireOpen(es);
+      });
+
+      const authoritativePage = [logEntry(9, "newest-1"), logEntry(10, "newest-2")];
+      mockFetchAgentLogsWithMeta.mockResolvedValue({
+        entries: authoritativePage,
+        total: 12,
+        hasMore: true,
+      });
+
+      await act(async () => {
+        fireOpen(es);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(isLogGapMarker(result.current["FN-001"].entries[0])).toBe(true);
+      });
+
+      const older = [logEntry(7, "older-1"), logEntry(8, "older-2")];
+      mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: older, total: 12, hasMore: false });
+
+      await act(async () => {
+        await result.current["FN-001"].loadMore();
+      });
+
+      await waitFor(() => {
+        expect(result.current["FN-001"].entries.map((entry) => entry.text)).toEqual([
+          "older-1",
+          "older-2",
+          "newest-1",
+          "newest-2",
+        ]);
+      });
+      // Offset must count REAL entries only; the client-only marker would shift the page by one.
+      expect(mockFetchAgentLogsWithMeta).toHaveBeenLastCalledWith("FN-001", undefined, {
+        limit: INITIAL_LOAD_LIMIT,
+        offset: 2,
+      });
+      expect(result.current["FN-001"].entries.some(isLogGapMarker)).toBe(false);
+      expect(result.current["FN-001"].hasMore).toBe(false);
     });
   });
 });

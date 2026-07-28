@@ -155,6 +155,13 @@ describe("FN-4946 implicit refusal budget handling", () => {
     The in-review handoff is now the graph's merge boundary, so the move carries the
     workflow-graph provenance of the node that made it instead of being a bare 2-arg
     completion-path move.
+
+    FNXC:WorkflowReviewGates 2026-07-26-12:20:
+    The pre-merge review gates (browser-verification, code-review) now live in `in-review` too, so
+    the FIRST crossing into that column is whichever gate the graph reaches first rather than
+    `completion-summary`. This assertion is about the handoff carrying graph provenance and
+    `preserveProgress`, not about which node owns the boundary, so it pins the invariant (one
+    provenance-carrying move into in-review) and leaves the node id to the graph's shape.
     */
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-4946-B3",
@@ -162,7 +169,7 @@ describe("FN-4946 implicit refusal budget handling", () => {
       expect.objectContaining({
         preserveProgress: true,
         workflowMoveSource: "workflow-graph",
-        workflowMoveMetadata: expect.objectContaining({ nodeId: "completion-summary" }),
+        workflowMoveMetadata: expect.objectContaining({ fromColumn: "in-progress" }),
       }),
     );
     const retryBumpCalls = store.updateTask.mock.calls.filter(([, patch]: [string, Record<string, unknown>]) => typeof patch.taskDoneRetryCount === "number" && patch.taskDoneRetryCount > 1);

@@ -185,3 +185,75 @@ describe("FN-8492: reconcile orphaned pending step results", () => {
     expect(recordRunAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({ target: "FN-OK" }));
   });
 });
+
+/*
+FNXC:WorkflowReviewGates 2026-07-26-16:05:
+The pre-merge review gates now run with the card in `in-review`, so this sweep judges them where it
+previously skipped them (it skips `in-progress` rows outright). Because it also runs from PERIODIC
+maintenance — in the same live process as an active graph run — a tick landing between the gate's
+`pending` lease write and its session-registry registration could stamp a genuinely running gate as
+`failed`, closing the merge gate on a healthy task. A within-floor lease (`leaseOwner` + recent
+`startedAt`) therefore counts as live, matching the semantics Plan Review already had via
+`classifyReviewLease`.
+
+The second case is the one that keeps FN-8492 intact: this must DELAY cleanup by the staleness
+floor, not defeat it. A lease past the floor is still rewritten to `failed`.
+*/
+describe("review-gate lease liveness (in-review gates)", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => executingTaskLock._clearForTest());
+
+  const leaseResult = (startedAt: string) => stepResult({
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    status: "pending",
+    leaseOwner: "run-abc",
+    startedAt,
+  });
+
+  it("leaves a code-review gate alone while its lease is still within the staleness floor", async () => {
+    const live = task("FN-LEASE-LIVE", {
+      workflowStepResults: [leaseResult(new Date(Date.now() - 60_000).toISOString())],
+    });
+    const store = storeFor([live]);
+    const manager = new SelfHealingManager(store, "/repo", {} as never);
+
+    const recovered = await manager.reconcileOrphanedPendingStepResults();
+
+    expect(recovered).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    const after = await store.getTask("FN-LEASE-LIVE");
+    expect(after?.workflowStepResults?.[0]?.status).toBe("pending");
+  });
+
+  it("still fails a code-review gate whose lease has aged past the floor (FN-8492 preserved)", async () => {
+    const stale = task("FN-LEASE-STALE", {
+      workflowStepResults: [leaseResult(new Date(Date.now() - 60 * 60_000).toISOString())],
+    });
+    const store = storeFor([stale]);
+    const manager = new SelfHealingManager(store, "/repo", {} as never);
+
+    const recovered = await manager.reconcileOrphanedPendingStepResults();
+
+    expect(recovered).toBe(1);
+    const after = await store.getTask("FN-LEASE-STALE");
+    expect(after?.workflowStepResults?.[0]?.status).toBe("failed");
+  });
+
+  it("still fails an ownerless pending result — no leaseOwner means no lease to honor", async () => {
+    const ownerless = task("FN-NO-OWNER", {
+      workflowStepResults: [stepResult({
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        status: "pending",
+        startedAt: new Date().toISOString(),
+      })],
+    });
+    const store = storeFor([ownerless]);
+    const manager = new SelfHealingManager(store, "/repo", {} as never);
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(1);
+    const after = await store.getTask("FN-NO-OWNER");
+    expect(after?.workflowStepResults?.[0]?.status).toBe("failed");
+  });
+});

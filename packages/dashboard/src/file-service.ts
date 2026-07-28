@@ -1,3 +1,6 @@
+import { createLogger, isTaskNotFoundError } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-file-service");
 import { join, resolve, relative, dirname, basename } from "node:path";
 import { readdir, readFile as fsReadFile, writeFile as fsWriteFile, stat, copyFile as fsCopyFile, rename as fsRename, rm as fsRm, mkdir, access } from "node:fs/promises";
 import type { Dirent } from "node:fs";
@@ -89,7 +92,15 @@ async function getTaskBasePath(store: TaskStore, taskId: string): Promise<string
     return resolve(join(rootDir, ".fusion", "tasks", taskId));
   } catch (err: unknown) {
     const error = err as Error & { code?: string };
-    if (error.code === "ENOENT" || (error.message && error.message.includes("not found"))) {
+    /*
+    FNXC:TaskLookup404 2026-07-26-11:58:
+    A missing task must become the ENOTASK FileServiceError so the workspace-file
+    routes answer 404 instead of 500. Prefer the typed TaskNotFoundError from
+    `@fusion/core`; the ENOENT / "not found" substring tests remain as legacy
+    fallbacks (ENOENT for file-backed reads, the substring for any store that
+    still throws a bare Error).
+    */
+    if (isTaskNotFoundError(err) || error.code === "ENOENT" || (error.message && error.message.includes("not found"))) {
       throw new FileServiceError(`Task ${taskId} not found`, "ENOTASK");
     }
     throw err;
@@ -1154,7 +1165,7 @@ export async function scanMarkdownFiles(
     } catch (err: unknown) {
       const error = err as NodeJS.ErrnoException;
       if (error.code !== "ENOENT") {
-        console.warn(
+        severityAuditLog.warn(
           `[scanMarkdownFiles] failed to read directory ${directoryPath}: ${error.message ?? String(err)}`,
         );
       }

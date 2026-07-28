@@ -2047,7 +2047,8 @@ export class HeartbeatMonitor {
         try {
           const budgetStatus = await this.store.getBudgetStatus(agentId);
           if (budgetStatus.isOverBudget) {
-            heartbeatLog.log(`Agent ${agentId} budget exhausted — heartbeat skipped`);
+            // FNXC:EngineDiagnostics 2026-07-26-08:17: timer-path skips complete a run record every interval; debug keeps TUI free of repeated budget/pause no-ops.
+            heartbeatLog.debug(`Agent ${agentId} budget exhausted — heartbeat skipped`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "budget_exhausted", budgetStatus },
@@ -2057,7 +2058,7 @@ export class HeartbeatMonitor {
           }
           // Above threshold: only allow critical triggers (assignment, on_demand)
           if (budgetStatus.isOverThreshold && source === "timer") {
-            heartbeatLog.log(`Agent ${agentId} over budget threshold (${budgetStatus.usagePercent}%) — timer heartbeat skipped`);
+            heartbeatLog.debug(`Agent ${agentId} over budget threshold (${budgetStatus.usagePercent}%) — timer heartbeat skipped`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "budget_threshold_exceeded", budgetStatus },
@@ -2076,7 +2077,7 @@ export class HeartbeatMonitor {
           heartbeatModelSettings = await taskStore.getSettings();
           const settings = heartbeatModelSettings;
           if (settings.globalPause) {
-            heartbeatLog.log(`Agent ${agentId} heartbeat skipped — global pause active (source=${source})`);
+            heartbeatLog.debug(`Agent ${agentId} heartbeat skipped — global pause active (source=${source})`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "global_pause", source },
@@ -2085,7 +2086,7 @@ export class HeartbeatMonitor {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
           if (settings.enginePaused && source === "timer") {
-            heartbeatLog.log(`Agent ${agentId} timer heartbeat skipped — engine paused (soft pause)`);
+            heartbeatLog.debug(`Agent ${agentId} timer heartbeat skipped — engine paused (soft pause)`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "engine_paused", source },
@@ -4710,7 +4711,7 @@ export class HeartbeatTriggerScheduler {
           runtimeConfig.allowParallelExecution === false
           && (this.isTaskExecuting?.(taskId) || this.isAgentEffectivelyExecuting?.(agent.id))
         ) {
-          heartbeatLog.log(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} or column-bound session executing)`);
+          heartbeatLog.debug(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} or column-bound session executing)`);
           return;
         }
 
@@ -5228,7 +5229,7 @@ export class HeartbeatTriggerScheduler {
         if (activeRun) {
           if (settings?.globalPause || settings?.enginePaused) {
             this.nonAdvancingRearmState.delete(agent.id);
-            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            heartbeatLog.debug(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
           const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "audit", staleMultiplier);
@@ -5237,7 +5238,7 @@ export class HeartbeatTriggerScheduler {
           activeRunThresholdMs = reapResult.thresholdMs;
           if (!reapedActiveRun) {
             this.nonAdvancingRearmState.delete(agent.id);
-            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            heartbeatLog.debug(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
         }
@@ -5356,13 +5357,17 @@ export class HeartbeatTriggerScheduler {
 
     try {
       const agent = await this.store.getAgent(agentId);
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-08:17:
+      Timer skip reasons (pause, idle, active run, ineligible state) fire on every interval for every registered agent. That is steady-state gating, not a lifecycle event — demote to debug (FUSION_DEBUG=heartbeat). Keep reap/re-arm and actual executeHeartbeat start/complete on log/warn.
+      */
       if (!agent) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (agent missing)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (agent missing)`);
         this.unregisterAgent(agentId);
         return;
       }
       if (!isHeartbeatManaged(agent) || (agent.state !== "error" && !isTickableState(agent.state))) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (state=${agent.state})`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (state=${agent.state})`);
         this.unregisterAgent(agentId);
         return;
       }
@@ -5370,7 +5375,7 @@ export class HeartbeatTriggerScheduler {
       const settings = this.taskStore ? await this.taskStore.getSettings() : null;
       const errorRecoveryLimit = this.updateErrorRecoveryLimit(settings);
       if (agent.state === "error" && !isErrorRecoveryEligible(agent, errorRecoveryLimit)) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (state=${agent.state}, error recovery ineligible)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (state=${agent.state}, error recovery ineligible)`);
         this.unregisterAgent(agentId);
         return;
       }
@@ -5381,7 +5386,7 @@ export class HeartbeatTriggerScheduler {
         skipHeartbeatWhenIdle?: boolean;
       };
       if (timerRc.skipHeartbeatWhenIdle === true && (!agent.taskId || agent.taskId.length === 0)) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (skipHeartbeatWhenIdle, no task assigned)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (skipHeartbeatWhenIdle, no task assigned)`);
         return;
       }
 
@@ -5397,18 +5402,18 @@ export class HeartbeatTriggerScheduler {
           || this.isAgentEffectivelyExecuting?.(agentId)
         )
       ) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (parallel execution disabled, bound task ${agent.taskId ?? "—"} or column-bound session executing)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (parallel execution disabled, bound task ${agent.taskId ?? "—"} or column-bound session executing)`);
         return;
       }
 
       // Global/engine pause guard: scheduler should not dispatch timer callbacks
       // while globally paused (hard stop) or engine paused (soft stop for timers).
       if (settings?.globalPause) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (global pause active)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (global pause active)`);
         return;
       }
       if (settings?.enginePaused) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (engine paused)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (engine paused)`);
         return;
       }
 
@@ -5418,7 +5423,7 @@ export class HeartbeatTriggerScheduler {
         const staleMultiplier = this.resolveRepairStaleMultiplier(settings);
         const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "timer", staleMultiplier);
         if (!reapResult.reaped) {
-          heartbeatLog.log(`Timer tick skipped for ${agentId} (active run)`);
+          heartbeatLog.debug(`Timer tick skipped for ${agentId} (active run)`);
           return;
         }
         heartbeatLog.log(

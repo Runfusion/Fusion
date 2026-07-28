@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-mission-store");
 /**
  * MissionStore - Data layer for the Missions hierarchy system.
  *
@@ -2086,7 +2089,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         await this.triageSlice(id);
       } catch (err) {
         // Log but don't fail — triage failures shouldn't block slice activation
-        console.error(`[MissionStore] Auto-triage failed for slice ${id}:`, err);
+        severityAuditLog.error(`[MissionStore] Auto-triage failed for slice ${id}:`, err);
       }
     }
 

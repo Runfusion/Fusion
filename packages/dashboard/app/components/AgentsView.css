@@ -1235,13 +1235,6 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
   font-size: var(--space-md);
 }
 
-/* FNXC:AgentHeartbeatControls 2026-07-23-13:15: Keep the org action outside the card's button-like detail target so keyboard users never encounter nested interactive controls. */
-.org-chart-node__actions {
-  display: flex;
-  justify-content: center;
-  margin-top: var(--space-xs);
-}
-
 .agent-heartbeat-toggle {
   min-height: var(--touch-target-min-size);
 }

@@ -146,6 +146,7 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [SQLite → PostgreSQL Migration Review (2026-06-26, historical)](./postgres-migration-review-2026-06-26.md) | Historical multi-agent review of the incomplete migration branch and its original findings |
 | [Dashboard Theme & UI Plugin System Proposal (2026-07-01)](./proposals/2026-07-01-dashboard-theme-plugin-system.md) | Feasibility-spike proposal for a controlled dashboard theme/UI shell extension point sharing one backend source of truth |
 | [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
+| [Dashboard Modal Inventory](./dashboard-modal-inventory.md) | Canonical classification of all 45 dashboard modal surfaces (classes A–D) with file:line evidence, FloatingWindow migration targets, and the shared migration contract (FN-8605 → FN-8617) |
 
 ## External Resources
 

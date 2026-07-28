@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { NodeDetailModal } from "../NodeDetailModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
+import { expectStableTyping } from "./typingStability.test-helpers";
 import type { DockerNodeConfig, ManagedDockerNodeInfo, NodeInfo, ProjectInfo } from "../../api";
 
 vi.mock("lucide-react", () => ({
@@ -74,6 +76,20 @@ const dockerConfig: DockerNodeConfig = {
 };
 
 describe("NodeDetailModal docker section", () => {
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard. The FN-8606 floating-window migration made Planning Mode and Settings
+  untypable and no test noticed, because field coverage here uses fireEvent.change, which never needs
+  the input to stay mounted. This asserts the field keeps its DOM node, value, and focus while typed.
+  */
+  it("keeps the API key field mounted and focused while typing", async () => {
+    render(<NodeDetailModal {...baseProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    const field = screen.getByPlaceholderText("Leave blank to keep unchanged") as HTMLInputElement;
+    await expectStableTyping(field, "tok-123", () => screen.getByPlaceholderText("Leave blank to keep unchanged"));
+  });
+
   it("does not render docker section without managedDockerNode", () => {
     render(<NodeDetailModal {...baseProps} />);
     expect(screen.queryByText("Docker Management")).not.toBeInTheDocument();
@@ -204,5 +220,13 @@ describe("NodeDetailModal docker section", () => {
     fireEvent.click(screen.getByText("Volume Mounts"));
     expect(screen.getByText("/host → /data")).toBeInTheDocument();
     expect(screen.getByText("Read-only")).toBeInTheDocument();
+  });
+});
+
+describe("NodeDetailModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<NodeDetailModal {...baseProps} />);
+    assertRenderedModalTouchGeometry("node-detail", screen.getByText("Node Details").closest(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("node-detail", () => render(<NodeDetailModal {...baseProps} />));
   });
 });

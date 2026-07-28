@@ -59,10 +59,14 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   /*
   FNXC:UpdateBanner 2026-07-16-00:00:
   Issue #1799 requires a successful in-app update to offer the supervised restart hook in-place.
-  Hosts without restart support keep the control visible but disabled with manual-restart guidance.
+
+  FNXC:UpdateBanner 2026-07-25-10:05:
+  Capability is advisory, never a hard block — same contract as the Settings footer.
+  A failed or stale /system/info probe must not turn this into a button that silently
+  does nothing; let the request reach the server and show its refusal reason instead.
   */
   const handleRestart = async () => {
-    if (restartLoading || restartSupported !== true) return;
+    if (restartLoading) return;
 
     setRestartLoading(true);
     setRestartError(null);
@@ -82,7 +86,8 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
 
   const installSucceeded = installResult?.updated === true;
   const installError = installResult?.error;
-  const restartUnavailable = restartSupported !== true;
+  // Advisory guidance only — shown when the host explicitly reported no supervising parent.
+  const restartUnavailable = restartSupported === false;
 
   return (
     <div className="update-available-banner" role="status" aria-live="polite">
@@ -126,7 +131,7 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
                   onClick={() => {
                     void handleRestart();
                   }}
-                  disabled={restartUnavailable || restartLoading}
+                  disabled={restartLoading}
                 >
                   {restartLoading ? (
                     <>

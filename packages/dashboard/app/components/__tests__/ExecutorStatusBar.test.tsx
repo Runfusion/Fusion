@@ -11,6 +11,7 @@ const mockFetchScripts = vi.hoisted(() => vi.fn());
 vi.mock("../../hooks/useViewportMode", () => ({
     isFullScreenSheetViewport: () => false,
   isShortViewport: () => false,
+isTabletTouchViewport: (mode?: string) => mode === "tablet",
 useViewportMode: () => viewportModeMock.value,
 }));
 

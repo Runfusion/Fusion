@@ -184,7 +184,11 @@ function expectSizeBadgeAfterTaskId(container: HTMLElement, expected: boolean) {
   const sizeStyles = getComputedStyle(sizeBadge!);
   expect(sizeStyles.display).toBe("inline-flex");
   expect(sizeStyles.alignItems).toBe("center");
+  expect(sizeStyles.alignSelf).toBe("flex-start");
   expect(sizeStyles.lineHeight).toBe("1");
+  expect(sizeStyles.height).toMatch(resolvedChipHeightPattern);
+  expect(sizeStyles.minHeight).toMatch(resolvedChipHeightPattern);
+  expect(sizeStyles.maxHeight).toMatch(resolvedChipHeightPattern);
   expect(sizeBadge!.parentElement).toBe(header);
   expect(cardId.nextElementSibling).toBe(sizeBadge);
   expect(actions?.contains(sizeBadge)).toBe(false);
@@ -519,11 +523,63 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(loadedCss).toContain("min-height: var(--card-chip-height-mobile);");
   });
 
-  it("derives the size badge height from shared header-badge geometry", () => {
+  it("anchors the size badge to the first header chip row across desktop and mobile", () => {
     const sizeBadgeRule = loadedCss.match(/\.card-size-badge\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    const mobileSection = getCssBlocks(loadedCss, "max-width: 768px").join("\n");
+    const shortLandscapeSection = getCssBlocks(loadedCss, "max-height: 480px").join("\n");
 
-    expect(sizeBadgeRule).toContain("align-self: center;");
-    expect(sizeBadgeRule).not.toContain("min-height:");
+    expect(sizeBadgeRule).toContain("align-self: flex-start;");
+    expect(sizeBadgeRule).toContain("box-sizing: border-box;");
+    expect(sizeBadgeRule).toContain("height: var(--card-chip-height);");
+    expect(sizeBadgeRule).toContain("min-height: var(--card-chip-height);");
+    expect(sizeBadgeRule).toContain("max-height: var(--card-chip-height);");
+    expect(sizeBadgeRule).not.toContain("align-self: center;");
+    for (const section of [mobileSection, shortLandscapeSection]) {
+      expectCssRuleToContain(section, ".card-size-badge", "align-self: flex-start;");
+      expectCssRuleToContain(section, ".card-size-badge", "height: var(--card-chip-height-mobile);");
+      expectCssRuleToContain(section, ".card-size-badge", "min-height: var(--card-chip-height-mobile);");
+      expectCssRuleToContain(section, ".card-size-badge", "max-height: var(--card-chip-height-mobile);");
+    }
+  });
+
+  it("keeps the size chip beside the id when paused and reviewing badges fill the wrapping group", () => {
+    const { container: pausedContainer } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8599-PAUSED",
+          status: "planning" as Task["status"],
+          size: "M",
+          paused: true,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    const { container: reviewingContainer } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8599-REVIEWING",
+          column: "triage",
+          status: "planning" as Task["status"],
+          size: "M",
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-26T08:29:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(pausedContainer.querySelectorAll(".card-status-badge")).toHaveLength(1);
+    expect(reviewingContainer.querySelectorAll(".card-status-badge")).toHaveLength(2);
+    expect(reviewingContainer.querySelector('[data-testid="card-reviewing-FN-8599-REVIEWING"]')).toHaveTextContent("Plan Review");
+    expectSizeBadgeAfterTaskId(pausedContainer, true);
+    expectSizeBadgeAfterTaskId(reviewingContainer, true);
   });
 
   it("locks the mobile three-dot menu, size, and Promote controls to the card rhythm", () => {

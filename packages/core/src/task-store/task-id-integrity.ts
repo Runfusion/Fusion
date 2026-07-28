@@ -11,9 +11,8 @@
 
 import { TaskStore } from "../store.js";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ArchiveDatabase } from "../archive-db.js";
-import { validateBranchGroupBranchName } from "../branch-assignment.js";
 import { CentralCore } from "../central-core.js";
 import { Database, fromJson, toJsonNullable } from "../db.js";
 import { reconcileTaskIdState, resolveLocalNodeId } from "../distributed-task-id.js";
@@ -23,14 +22,15 @@ import * as schema from "../postgres/schema/index.js";
 import { getTaskCreatedHook } from "../task-creation-hooks.js";
 import { type TaskIdIntegrityReport, detectTaskIdIntegrityAnomalies } from "../task-id-integrity.js";
 import { createBranchGroup as createBranchGroupAsync } from "./async-branch-groups.js";
-import { findLiveLineageChildren as findLiveLineageChildrenAsync } from "./async-lifecycle.js";
+import { findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition } from "./async-lifecycle.js";
 import { recordRunAuditEvent as recordRunAuditEventAsync } from "./async-audit.js";
+import { getLiveTaskColumn } from "./async-comments-attachments.js";
 import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async-persistence.js";
 import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } from "./persistence.js";
 import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.js";
 import { ConfigRow } from "./row-types.js";
 import { ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT } from "./serialization.js";
-import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, Column, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
+import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
 import { resolveAllOptionalGroupIds } from "../workflow-optional-steps.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -55,44 +55,16 @@ Backend mode intentionally has no synchronous SQLite escape hatch. Name the
 AsyncDataLayer route and authoring guide in this failure so plugin authors fix
 the durable-data boundary rather than adding a backend-specific fallback.
 */
-export function dbImpl(store: TaskStore): Database {
-    if (store.backendMode) {
-      throw new Error(
-        "TaskStore.db: SQLite Database is not available in backend mode (PostgreSQL/AsyncDataLayer injected). Use ctx.taskStore.getAsyncLayer() / an async store — see docs/PLUGIN_AUTHORING.md",
-      );
-    }
-    if (!store._db) {
-      const db = new Database(store.fusionDir, { inMemory: false });
-      try {
-        db.init();
-      } catch (error) {
-        db.close();
-        throw error;
-      }
-      store._db = db;
-      store.reconcileDistributedTaskIdStateOnOpen();
-    }
-    return store._db;
+export function dbImpl(_store: TaskStore): Database {
+        throw new Error(
+      "TaskStore.db: SQLite Database is not available in backend mode (PostgreSQL/AsyncDataLayer injected). Use ctx.taskStore.getAsyncLayer() / an async store — see docs/PLUGIN_AUTHORING.md",
+    );
 }
 
-export function archiveDbImpl(store: TaskStore): ArchiveDatabase {
-    if (store.backendMode) {
-      throw new Error(
-        "TaskStore.archiveDb: SQLite ArchiveDatabase is not available in backend mode (AsyncDataLayer injected)",
-      );
-    }
-    if (!store._archiveDb) {
-      const db = new ArchiveDatabase(store.fusionDir, { inMemory: false });
-      try {
-        db.init();
-      } catch (error) {
-        db.close();
-        throw error;
-      }
-      store._archiveDb = db;
-      store.migrateLegacyArchiveEntriesToArchiveDb();
-    }
-    return store._archiveDb;
+export function archiveDbImpl(_store: TaskStore): ArchiveDatabase {
+        throw new Error(
+      "TaskStore.archiveDb: SQLite ArchiveDatabase is not available in backend mode (AsyncDataLayer injected)",
+    );
 }
 
 export function buildTaskIdIntegrityFallbackReportImpl(_store: TaskStore): TaskIdIntegrityReport {
@@ -322,9 +294,7 @@ export function readTaskFromDbImpl(store: TaskStore, id: string, options?: { act
 }
 
 export async function getMergeQueuedTaskIdsAsyncImpl(store: TaskStore): Promise<Set<string>> {
-    if (!store.backendMode) {
-      return store.getMergeQueuedTaskIds();
-    }
+    
     const layer = store.asyncLayer!;
     const rows = await layer.db
       .select({ taskId: schema.project.mergeQueue.taskId })
@@ -332,43 +302,56 @@ export async function getMergeQueuedTaskIdsAsyncImpl(store: TaskStore): Promise<
     return new Set(rows.map((row) => row.taskId));
 }
 
-export function isTaskIdPresentInArchivedTasksTableImpl(store: TaskStore, id: string): boolean {
+export function isTaskIdPresentInArchivedTasksTableImpl(_store: TaskStore, _id: string): boolean {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
-     * Backend-mode: archived tasks are not yet wired to async. Return false
-     * as a safety guard (the archive check is secondary to the live-tasks
-     * check in taskIdExistsAnywhere).
-     */
-    if (store.backendMode) {
-      return false;
-    }
-    try {
-      const row = store.db.prepare("SELECT 1 as found FROM archivedTasks WHERE id = ? LIMIT 1").get(id) as { found?: number } | undefined;
-      return row?.found === 1;
-    } catch {
-      return false;
-    }
+    FNXC:IncompletePgPorts 2026-07-26-20:30:
+    Sync archive-table probe remains SQLite-only. PostgreSQL callers must use
+    isTaskIdPresentInArchivedTasksTableAsyncImpl / taskIdExistsAnywhere (async).
+    Returning false here avoids opening the removed SQLite Database stub.
+    */
+        return false;
+}
+
+/*
+FNXC:IncompletePgPorts 2026-07-26-20:30:
+PostgreSQL archive authority is project.archived_tasks (warm) and
+archive.archived_tasks (cold). Both must reserve task IDs the same way the
+legacy SQLite archivedTasks / archive.db tables did.
+*/
+export async function isTaskIdPresentInArchivedTasksTableAsyncImpl(store: TaskStore, id: string): Promise<boolean> {
+    
+    const layer = store.asyncLayer!;
+    const partition = projectPartition(layer.projectId);
+    const [projectArchive, coldArchive] = await Promise.all([
+      layer.db
+        .select({ id: schema.project.archivedTasks.id })
+        .from(schema.project.archivedTasks)
+        .where(and(
+          eq(schema.project.archivedTasks.projectId, partition),
+          eq(schema.project.archivedTasks.id, id),
+        ))
+        .limit(1),
+      layer.db
+        .select({ id: schema.archive.archivedTasks.id })
+        .from(schema.archive.archivedTasks)
+        .where(and(
+          eq(schema.archive.archivedTasks.projectId, partition),
+          eq(schema.archive.archivedTasks.id, id),
+        ))
+        .limit(1),
+    ]);
+    return projectArchive.length > 0 || coldArchive.length > 0;
 }
 
 export async function taskIdExistsAnywhereImpl(store: TaskStore, id: string): Promise<boolean> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
-     * Backend-mode: use async readTaskRow (includeDeleted) for the live-tasks
-     * check. Archive checks are deferred (safety guard returns false above).
-     */
-    if (store.backendMode) {
-      const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
-      if (row) return true;
-      return false;
-    }
-    // FN-5105: include soft-deleted rows so IDs remain permanently reserved.
-    if (store.readTaskFromDb(id, { includeDeleted: true })) {
-      return true;
-    }
-    if (store.isTaskIdPresentInArchivedTasksTable(id)) {
-      return true;
-    }
-    return store.archiveDb.get(id) !== undefined;
+    FNXC:IncompletePgPorts 2026-07-26-20:30:
+    Backend-mode: live/soft-deleted rows via readTaskRow, then warm+cold archive
+    tables so IDs stay permanently reserved (FN-5105 parity with SQLite).
+    */
+        const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
+    if (row) return true;
+    return isTaskIdPresentInArchivedTasksTableAsyncImpl(store, id);
 }
 
 export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
@@ -382,18 +365,14 @@ export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
      * sync readTaskFromDb, and hard-delete via the layer. This unblocks
      * createTaskWithReservedId in backend mode (VAL-DATA-005/006).
      */
-    let existing: { deletedAt?: string | null; allowResurrection?: boolean | number | null } | undefined;
-    if (store.backendMode) {
-      const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
-      existing = row
-        ? {
-            deletedAt: row.deletedAt as string | null | undefined,
-            allowResurrection: row.allowResurrection as boolean | number | null | undefined,
-          }
-        : undefined;
-    } else {
-      existing = store.readTaskFromDb(id, { includeDeleted: true });
-    }
+    const row = await readTaskRow(store.asyncLayer!, id, { includeDeleted: true });
+    const existing: { deletedAt?: string | null; allowResurrection?: boolean | number | null } | undefined = row
+      ? {
+          deletedAt: row.deletedAt as string | null | undefined,
+          allowResurrection: row.allowResurrection as boolean | number | null | undefined,
+        }
+      : undefined;
+
     if (!existing?.deletedAt) return;
 
     const allowResurrection = existing.allowResurrection === true || existing.allowResurrection === 1;
@@ -401,14 +380,16 @@ export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
       // FNXC:FixPgTestsAndCi 2026-06-26-09:35:
       // Use the async purge variant in backend mode so workflow_steps children
       // are deleted before the parent task row is hard-deleted.
-      if (store.backendMode) {
-        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, id);
-        await store.asyncLayer!.db.delete(schema.project.tasks).where(eq(schema.project.tasks.id, id));
-      } else {
-        store.purgeTaskWorkflowSelectionRows(id);
-        store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
-        store.db.bumpLastModified();
-      }
+            await purgeTaskWorkflowSelectionRowsAsyncImpl(store, id);
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Project-scope hard-delete after tombstone resurrection so another project's matching id is untouched.
+      */
+      const layer = store.asyncLayer!;
+      const delConds = [eq(schema.project.tasks.id, id)];
+      if (layer.projectId) delConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+      await layer.db.delete(schema.project.tasks).where(and(...delConds));
+
       return;
     }
 
@@ -417,55 +398,48 @@ export async function maybeResolveTombstonedTaskIdImpl(store: TaskStore,
     // insertRunAuditEventRow is sync and uses store.db (unavailable in backend
     // mode). Use the async recordRunAuditEvent helper so the resurrection-blocked
     // audit row is persisted against PostgreSQL (VAL-DATA-006 forensic surface).
-    if (store.backendMode) {
-      await recordRunAuditEventAsync(store.asyncLayer!, {
-        taskId: id,
-        agentId: "system",
-        runId: "unknown",
-        domain: "database",
-        mutationType: "task:resurrection-blocked",
-        target: id,
-        metadata: {
-          id,
-          deletedAt: existing.deletedAt,
-          allowResurrection,
-          operation,
-        },
-      });
-    } else {
-      store.insertRunAuditEventRow({
-        taskId: id,
-        domain: "database",
-        mutationType: "task:resurrection-blocked",
-        target: id,
-        metadata: {
-          id,
-          deletedAt: existing.deletedAt,
-          allowResurrection,
-          operation,
-        },
-      });
-    }
+        await recordRunAuditEventAsync(store.asyncLayer!, {
+      taskId: id,
+      agentId: "system",
+      runId: "unknown",
+      domain: "database",
+      mutationType: "task:resurrection-blocked",
+      target: id,
+      metadata: {
+        id,
+        deletedAt: existing.deletedAt,
+        allowResurrection,
+        operation,
+      },
+    });
 
     throw new TombstonedTaskResurrectionError(id, existing.deletedAt, allowResurrection);
 }
 
 export function isTaskArchivedImpl(store: TaskStore, id: string): boolean {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * In backend mode, store.db is unavailable. Return false — the archive
-     * check in logEntry is a safety guard, and the task is loaded below
-     * anyway. For full correctness this should use the async layer.
-     */
-    if (store.backendMode) {
-      return false;
-    }
-    const row = store.db.prepare(`SELECT "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(id) as { column: Column } | undefined;
-    if (row) {
-      return row.column === "archived";
-    }
+    FNXC:IncompletePgPorts 2026-07-26-20:30:
+    Sync isTaskArchived cannot query PostgreSQL. Prefer isTaskArchivedAsyncImpl
+    from async callers. In backend mode use the in-memory task cache when the
+    row is already hydrated; otherwise false (caller should have used async).
+    */
+        const cached = store.taskCache.get(id);
+    return cached?.column === "archived";
+}
 
-    return store.archiveDb.get(id) !== undefined;
+/*
+FNXC:IncompletePgPorts 2026-07-26-20:30:
+Authoritative archived check for PostgreSQL: live column gate via
+getLiveTaskColumn, plus cold archive.archived_tasks presence.
+*/
+export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Promise<boolean> {
+    
+    const layer = store.asyncLayer!;
+    const live = await getLiveTaskColumn(layer.db, id, layer.projectId);
+    // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
+    if (live === "archived") return true;
+    if (live !== null) return false;
+    return isTaskIdPresentInArchivedTasksTableAsyncImpl(store, id);
 }
 
 export function findLiveDependentsImpl(store: TaskStore, id: string): string[] {
@@ -489,17 +463,8 @@ export function findLiveDependentsImpl(store: TaskStore, id: string): string[] {
 }
 
 export async function findLiveLineageChildrenImpl(store: TaskStore, id: string): Promise<string[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT id FROM tasks WHERE sourceParentTaskId = ? AND id != ? AND "column" != 'archived' AND ${TaskStore.ACTIVE_TASKS_WHERE}`,
-      )
-      .all(id, id) as Array<{ id: string }>;
-
-    return rows.map((row) => row.id);
+        const layer = store.asyncLayer!;
+    return findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
 }
 
 export function recordActivityFromListenerImpl(store: TaskStore,
@@ -673,42 +638,30 @@ export async function atomicCreateTaskJsonImpl(store: TaskStore, dir: string, ta
     insert in one async transaction (parity with the sync transactionImmediate
     block below), with unique_violation normalized to "Task ID already exists".
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const context = store.createTaskPersistSerializationContext(task);
-      let backendDeletedAt: string | undefined;
-      try {
-        await layer.transactionImmediate(async (tx) => {
-          const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
-          if (pgRow) {
-            backendDeletedAt = store.getSoftDeletedWriteConflict(id, task, store.pgRowToTaskRow(pgRow));
-            if (backendDeletedAt) return;
-          }
-          await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
-        });
-      } catch (error) {
-        if (isTaskIdConflictError(error)) {
-          store.logTaskCreateConflict(task, operation, error);
-          throw new Error(`Task ID already exists: ${task.id}`);
+        const layer = store.asyncLayer!;
+    const context = store.createTaskPersistSerializationContext(task);
+    let backendDeletedAt: string | undefined;
+    try {
+      await layer.transactionImmediate(async (tx) => {
+        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        if (pgRow) {
+          backendDeletedAt = store.getSoftDeletedWriteConflict(id, task, store.pgRowToTaskRow(pgRow));
+          if (backendDeletedAt) return;
         }
-        throw error;
+        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+      });
+    } catch (error) {
+      if (isTaskIdConflictError(error)) {
+        store.logTaskCreateConflict(task, operation, error);
+        throw new Error(`Task ID already exists: ${task.id}`);
       }
-      if (backendDeletedAt) {
-        store.throwSoftDeletedWriteBlocked(id, backendDeletedAt, operation);
-      }
-      await store.writeTaskJsonFile(dir, task);
-      return;
+      throw error;
     }
-    let deletedAt: string | undefined;
-    store.db.transactionImmediate(() => {
-      deletedAt = store.getSoftDeletedWriteConflict(id, task);
-      if (deletedAt) return;
-      store.insertTaskWithFtsRecovery(task, operation);
-    });
-    if (deletedAt) {
-      store.throwSoftDeletedWriteBlocked(id, deletedAt, operation);
+    if (backendDeletedAt) {
+      store.throwSoftDeletedWriteBlocked(id, backendDeletedAt, operation);
     }
     await store.writeTaskJsonFile(dir, task);
+    return;
 }
 
 export async function readConfigImpl(store: TaskStore): Promise<BoardConfig> {
@@ -785,26 +738,11 @@ export function toBuiltInWorkflowStepImpl(store: TaskStore, template: import("..
     };
 }
 
-export function getLegacyWorkflowStepSnapshotImpl(store: TaskStore, id: string, templateId?: string): Record<string, unknown> | undefined {
+export function getLegacyWorkflowStepSnapshotImpl(_store: TaskStore, _id: string, _templateId?: string): Record<string, unknown> | undefined {
     // FNXC:PostgresOnlyDataAccess 2026-07-16-12:55: the legacy snapshot lives
     // only in the pre-migration SQLite config.workflowSteps JSON blob; a
     // PostgreSQL deployment has no legacy snapshot, so overrides never apply.
-    if (store.backendMode) {
-      return undefined;
-    }
-    const row = store.db
-      .prepare("SELECT workflowSteps FROM config WHERE id = 1")
-      .get() as { workflowSteps?: string | null } | undefined;
-    const legacySteps = fromJson<Array<Record<string, unknown>>>(row?.workflowSteps);
-    if (!Array.isArray(legacySteps)) {
-      return undefined;
-    }
-
-    return legacySteps.find((legacy) => {
-      if (!legacy || typeof legacy !== "object") return false;
-      if (legacy.id === id) return true;
-      return Boolean(templateId && legacy.templateId === templateId);
-    });
+        return undefined;
 }
 
 export function applyLegacyWorkflowStepOverridesImpl(store: TaskStore, step: import("../types.js").WorkflowStep): import("../types.js").WorkflowStep {
@@ -913,34 +851,6 @@ export async function invokeTaskCreatedHookImpl(store: TaskStore, task: Task): P
 }
 
 export async function createBranchGroupImpl(store: TaskStore, input: BranchGroupCreateInput): Promise<BranchGroup> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return createBranchGroupAsync(layer.db, input);
-    }
-    // Fix #11: reject injection-shaped branch names at the persistence boundary
-    // so they can never reach a downstream git/shell sink (coordinator, merger).
-    validateBranchGroupBranchName(input.branchName);
-    const now = Date.now();
-    const id = store.generateBranchGroupId();
-    store.db.prepare(`
-      INSERT INTO branch_groups (id, sourceType, sourceId, branchName, worktreePath, autoMerge, prState, prUrl, prNumber, status, createdAt, updatedAt, closedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      input.sourceType,
-      input.sourceId,
-      input.branchName,
-      input.worktreePath ?? null,
-      input.autoMerge ? 1 : 0,
-      input.prState ?? "none",
-      input.prUrl ?? null,
-      input.prNumber ?? null,
-      input.status ?? "open",
-      now,
-      now,
-      input.closedAt ?? null,
-    );
-    store.db.bumpLastModified();
-    const created = await store.getBranchGroup(id);
-    return created!;
+        const layer = store.asyncLayer!;
+    return createBranchGroupAsync(layer.db, input);
 }

@@ -67,14 +67,21 @@ export function useWorktrunkInstallStatus(projectId?: string, options?: { enable
   }, [enabled, refresh]);
 
   useEffect(() => {
+    /*
+    FNXC:WorktrunkInstall 2026-07-26-15:06:
+    Missed-event recovery. Install status advanced only on live approval events, so a decision made
+    during an SSE gap (error reconnect, or the mobile hidden-tab suspend) left the UI stuck on
+    "installing"/pending forever. Re-read the authoritative status on reopen while an approval is
+    outstanding — the same guard and refetch the event handlers use.
+    */
+    const resyncInstallStatus = () => {
+      if (status.pendingApprovalId) void refresh();
+    };
     const unsubscribe = subscribeSse(withProjectId("/api/events", projectId), {
+      onReconnect: resyncInstallStatus,
       events: {
-        "approval:updated": () => {
-          if (status.pendingApprovalId) void refresh();
-        },
-        "approval:decided": () => {
-          if (status.pendingApprovalId) void refresh();
-        },
+        "approval:updated": resyncInstallStatus,
+        "approval:decided": resyncInstallStatus,
       },
     });
     return unsubscribe;

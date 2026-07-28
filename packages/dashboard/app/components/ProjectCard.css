@@ -285,3 +285,61 @@
     display: none;
   }
 }
+
+/*
+FNXC:DashboardResponsive 2026-07-25-22:57:
+Project cards must not retain their desktop minimum at 320px. Literal pixel media conditions are the permitted dashboard breakpoint convention; declarations remain token-based.
+*/
+@media (max-width: 480px) {
+  .project-card,
+  .project-card-header,
+  .project-card-title-section,
+  .project-card-availability__row,
+  .project-card-skeleton__header,
+  .project-skeleton__text-group {
+    min-width: 0;
+  }
+
+  .project-card-name,
+  .project-card-path,
+  .project-card-availability__path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-card-health,
+  .project-card-skeleton__health {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+  }
+
+  .project-card-metric,
+  .project-card-metric-empty {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+/*
+FNXC:DashboardResponsive 2026-07-25-22:57:
+At the 320px floor, card actions and skeleton footer content stack instead of creating a horizontal overflow. Literal pixel media conditions are intentional; declarations use tokens.
+*/
+@media (max-width: 380px) {
+  .project-card-header,
+  .project-card-footer,
+  .project-card-skeleton__footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-card-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-card-action {
+    width: 100%;
+  }
+}

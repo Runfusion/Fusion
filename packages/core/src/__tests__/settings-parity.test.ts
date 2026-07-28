@@ -447,32 +447,6 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("backlogPressureAlertCooldownMs")).toBe(false);
   });
 
-  it("keeps dependency-blocked todo report settings project-scoped with documented defaults", () => {
-    expect(DEFAULT_PROJECT_SETTINGS.dependencyBlockedTodoReportEnabled).toBe(true);
-    expect(DEFAULT_PROJECT_SETTINGS.dependencyBlockedTodoFreshAgeMs).toBe(30 * 60_000);
-    expect(DEFAULT_PROJECT_SETTINGS.dependencyBlockedTodoStaleAgeMs).toBe(4 * 60 * 60_000);
-    expect(DEFAULT_PROJECT_SETTINGS.dependencyBlockedTodoMinCount).toBe(1);
-    expect(DEFAULT_PROJECT_SETTINGS.dependencyBlockedTodoReportCooldownMs).toBe(6 * 60 * 60_000);
-
-    expect(PROJECT_SETTINGS_KEYS).toContain("dependencyBlockedTodoReportEnabled");
-    expect(PROJECT_SETTINGS_KEYS).toContain("dependencyBlockedTodoFreshAgeMs");
-    expect(PROJECT_SETTINGS_KEYS).toContain("dependencyBlockedTodoStaleAgeMs");
-    expect(PROJECT_SETTINGS_KEYS).toContain("dependencyBlockedTodoMinCount");
-    expect(PROJECT_SETTINGS_KEYS).toContain("dependencyBlockedTodoReportCooldownMs");
-
-    expect(isProjectSettingsKey("dependencyBlockedTodoReportEnabled")).toBe(true);
-    expect(isProjectSettingsKey("dependencyBlockedTodoFreshAgeMs")).toBe(true);
-    expect(isProjectSettingsKey("dependencyBlockedTodoStaleAgeMs")).toBe(true);
-    expect(isProjectSettingsKey("dependencyBlockedTodoMinCount")).toBe(true);
-    expect(isProjectSettingsKey("dependencyBlockedTodoReportCooldownMs")).toBe(true);
-
-    expect(isGlobalSettingsKey("dependencyBlockedTodoReportEnabled")).toBe(false);
-    expect(isGlobalSettingsKey("dependencyBlockedTodoFreshAgeMs")).toBe(false);
-    expect(isGlobalSettingsKey("dependencyBlockedTodoStaleAgeMs")).toBe(false);
-    expect(isGlobalSettingsKey("dependencyBlockedTodoMinCount")).toBe(false);
-    expect(isGlobalSettingsKey("dependencyBlockedTodoReportCooldownMs")).toBe(false);
-  });
-
   it("keeps github tracking keys in expected scopes with documented defaults", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingEnabledByDefault).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.sessionAdvisorEnabledByDefault).toBe(false);

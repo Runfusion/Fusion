@@ -1,7 +1,12 @@
 import type { TaskStore } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "./logger.js";
-import { createAutomatedFollowup } from "./verification-followup-dedup.js";
+
+/*
+FNXC:PullRequestReview 2026-07-26-00:00:
+The PR-feedback follow-up card is a real product feature, but it used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature needs is inlined below: never file a second card for the same PR number under the same parent while one is still open. Closed columns (done/archived) are excluded so a later close/reopen of the same PR can legitimately file a fresh card.
+*/
+const CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"]);
 
 interface PrComment {
   id: number;
@@ -229,28 +234,32 @@ ${summary}
 Please review the PR comments and address any remaining issues.`;
 
     try {
-      const result = await createAutomatedFollowup(this.store, {
-        kind: "pr-comment",
-        parentTaskId: originalTaskId,
-        extraMatchKeys: { prNumber: prInfo.number },
-        createInput: {
-          title: `Follow-up: Address PR #${prInfo.number} feedback`,
-          description,
-          column: "triage",
-          dependencies: [originalTaskId],
-          source: {
-            sourceType: "api",
-            sourceParentTaskId: originalTaskId,
-            sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
-          },
+      const openTasks = await this.store.listTasks({ slim: true }).catch(() => []);
+      const existing = openTasks.find(
+        (task) =>
+          task.id !== originalTaskId &&
+          !CLOSED_FOLLOWUP_COLUMNS.has(task.column) &&
+          task.sourceParentTaskId === originalTaskId &&
+          task.sourceMetadata?.prNumber === prInfo.number,
+      );
+
+      if (existing) {
+        prMonitorLog.log(`Reused follow-up task ${existing.id} for PR #${prInfo.number}`);
+        return;
+      }
+
+      const task = await this.store.createTask({
+        title: `Follow-up: Address PR #${prInfo.number} feedback`,
+        description,
+        column: "triage",
+        dependencies: [originalTaskId],
+        source: {
+          sourceType: "api",
+          sourceParentTaskId: originalTaskId,
+          sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
         },
       });
-
-      if (result.outcome === "created") {
-        prMonitorLog.log(`Created follow-up task ${result.task.id} for PR #${prInfo.number}`);
-      } else {
-        prMonitorLog.log(`Reused follow-up task ${result.existingTaskId} for PR #${prInfo.number}`);
-      }
+      prMonitorLog.log(`Created follow-up task ${task.id} for PR #${prInfo.number}`);
     } catch (err) {
       prMonitorLog.error(`Failed to create follow-up task:`, err);
     }

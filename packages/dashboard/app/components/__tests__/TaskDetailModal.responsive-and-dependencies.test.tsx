@@ -3,6 +3,8 @@ FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 */
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -22,6 +24,10 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
+import {
+  assertModalGeometryRecoveryAndSheetContracts,
+  assertRenderedModalTouchGeometry,
+} from "./floatingWindowMigration.test-helpers";
 
 setupTaskDetailModalHooks();
 
@@ -586,18 +592,14 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/task-detail-workflow-badge-mobile/);
       expect(css).not.toMatch(/\.detail-title-row\s+\.detail-workflow-badge\s*\{/);
     });
-    it("keeps desktop and mobile modal sizing guards unchanged", () => {
-      const css = readDashboardStylesSource();
-      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".modal-overlay:has(.task-detail-modal)");
-      const mobileOverlayBlock = getCssRuleBlock(mobileBlock, ".modal-overlay:has(.task-detail-modal)");
-      const mobileModalBlock = getCssRuleBlock(mobileBlock, ".modal.task-detail-modal");
+    it("uses FloatingWindow's full-screen sheet guards on phone and short viewports", () => {
+      const css = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
+      const sheetBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 767.98px), (max-height: 480px)", ".floating-window--task-detail");
+      const sheetRule = getCssRuleBlock(sheetBlock, ".floating-window--task-detail");
 
-      expectBaseRule(css, ".modal.task-detail-modal", "width: min(95vw, 800px);");
-      expectBaseRule(css, ".modal.task-detail-modal", "height: 85vh;");
-      expect(mobileOverlayBlock).toContain("padding-top: 0;");
-      expect(mobileOverlayBlock).toContain("align-items: stretch;");
-      expect(mobileModalBlock).toContain("width: 100vw;");
-      expect(mobileModalBlock).toContain("height: 100dvh;");
+      expect(sheetRule).toContain("inset: 0 !important;");
+      expect(sheetRule).toContain("width: 100vw !important;");
+      expect(sheetRule).toContain("height: 100dvh !important;");
     });
 
     it("reconciles tablet overlay offset with task-detail max-height and widens the modal", () => {
@@ -729,23 +731,24 @@ describe("TaskDetailModal", () => {
 
       expect(css).not.toContain(".activity-toolbar");
       expect(css).not.toContain("activity-toolbar--expand-only");
-      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: 0;\n}");
+      expect(css).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
+      expect(css).toContain("padding-inline-end: calc(var(--space-2xl) + var(--space-md));");
       expect(overlayBlock).toContain("position: absolute;");
       expect(overlayBlock).toContain("top: var(--space-md);");
       expect(overlayBlock).toContain("right: var(--space-md);");
-      expect(mobileBlock).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
+      expect(mobileBlock).not.toContain("  .detail-activity {\n    padding-inline-end:");
       expect(mobileOverlayBlock).toContain("top: var(--space-sm);");
       expect(mobileOverlayBlock).toContain("right: var(--space-sm);");
 
       /*
-      FNXC:TaskDetailActivity 2026-07-16-00:00:
-      FN-8166 requires Feed to inherit the symmetric mobile `.detail-body` inset,
-      while only its first visible row reserves space for the opaque overlay toggle.
-      This contract also prevents non-Feed task-detail surfaces from adding a
-      container-level right-only inset or mobile horizontal overflow.
+      FNXC:TaskDetailActivity 2026-07-27-02:15:
+      FN-8624 requires Feed to inherit the symmetric `.detail-body` inset at every
+      breakpoint, while only its first visible row reserves space for the opaque overlay.
+      This contract covers modal, pop-out, embedded, and mobile task-detail surfaces.
       */
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
-      const mobileInterventionsBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity--interventions");
+      const baseInterventionsBlock = getExactCssRuleBlock(css, ".detail-activity--interventions");
       const mobilePrBlock = getExactCssRuleBlock(
         getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-pr-tab"),
         ".detail-pr-tab",
@@ -758,7 +761,7 @@ describe("TaskDetailModal", () => {
 
       expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
-      expect(mobileInterventionsBlock).toContain("padding-inline-end: 0;");
+      expect(baseInterventionsBlock).toContain("padding-inline-end: 0;");
       expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
       expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > .detail-log-loading,");
       expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > .detail-log-empty,");
@@ -797,6 +800,7 @@ describe("TaskDetailModal", () => {
       const mobileScrollbarBlock = getExactCssRuleBlock(mobileBlock, ".detail-body::-webkit-scrollbar");
       const mobileActivityBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity");
       const mobileInterventionsBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity--interventions");
+      const baseInterventionsBlock = getExactCssRuleBlock(css, ".detail-activity--interventions");
       const mobilePrBlock = getExactCssRuleBlock(
         getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-pr-tab"),
         ".detail-pr-tab",
@@ -815,9 +819,10 @@ describe("TaskDetailModal", () => {
       expect(mobileDetailBodyBlock).toContain("scrollbar-width: none;");
       expect(mobileScrollbarBlock).toContain("display: none;");
 
-      expect(mobileActivityBlock).toContain("padding-inline-end: 0;");
+      expect(mobileActivityBlock).toBe("");
       expect(mobileBlock).toContain("padding-inline-end: calc(var(--space-2xl) + var(--space-sm));");
-      expect(mobileInterventionsBlock).toContain("padding-inline-end: 0;");
+      expect(mobileInterventionsBlock).toBe("");
+      expect(baseInterventionsBlock).toContain("padding-inline-end: 0;");
       expect(mobilePrBlock.trim()).toBe("gap: var(--space-md);");
       expect(allMobileCss).not.toMatch(/\.task-changes-tab\s*\{[^}]*\bpadding(?:-[\w-]+)?\s*:/);
       expect(embeddedBodyBlock).toContain("width: 100%;");
@@ -843,6 +848,26 @@ describe("TaskDetailModal", () => {
       }
     });
 
+    it("uses production FloatingWindow geometry for touch drag, eight-direction resize, recovery, and sheets", () => {
+      const mount = () => render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-progress" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      const rendered = mount();
+      const header = rendered.baseElement.querySelector("[data-testid='floating-window-task-detail'] .modal-header");
+      expect(header).not.toBeNull();
+      assertRenderedModalTouchGeometry("task-detail", header!);
+      rendered.unmount();
+      assertModalGeometryRecoveryAndSheetContracts("task-detail", mount);
+    });
+
     it("keeps Task Detail resizable for a known touch tablet at 768px", () => {
       const originalScreen = Object.getOwnPropertyDescriptor(window, "screen");
       const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
@@ -858,7 +883,7 @@ describe("TaskDetailModal", () => {
       })));
 
       try {
-        const { container } = render(
+        const { baseElement: container } = render(
           <TaskDetailModal
             task={makeTask({ column: "in-progress" as Column })}
             onClose={noop}
@@ -869,24 +894,12 @@ describe("TaskDetailModal", () => {
             addToast={noop}
           />,
         );
-        const modal = container.querySelector(".task-detail-modal");
-        expect(modal).toHaveClass("task-modal--tablet");
-        const grip = modal?.querySelector(".modal-resize-grip") as HTMLElement;
-        expect(grip).toHaveAttribute("aria-label", "Resize modal from bottom-right corner");
-        expect(grip).toHaveAttribute("tabindex", "0");
-
-        // FNXC:TaskModalResize 2026-07-24-19:20: The 768px tablet recovery must
-        // remain keyboard discoverable, not merely restore a touch-only grip.
-        modal!.style.width = "500px";
-        modal!.style.height = "400px";
-        grip.focus();
-        fireEvent.keyDown(grip, { key: "ArrowRight" });
-        fireEvent.keyDown(grip, { key: "ArrowDown" });
-
-        expect(modal!.style.width).toBe("516px");
-        expect(modal!.style.height).toBe("416px");
-        expect(grip).toHaveAttribute("aria-valuenow", "516");
-        expect(grip).toHaveAttribute("aria-valuetext", "Width 516 pixels, height 416 pixels");
+        const window = container.querySelector("[data-testid='floating-window-task-detail']");
+        expect(window).toBeTruthy();
+        const handles = window!.querySelectorAll(".floating-window__resize-handle");
+        expect(handles).toHaveLength(8);
+        handles.forEach((handle) => expect(handle).toHaveAttribute("data-resize-hit-target", "true"));
+        expect(container.querySelector(".modal-resize-grip")).toBeNull();
       } finally {
         if (originalScreen) Object.defineProperty(window, "screen", originalScreen);
         if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
@@ -895,7 +908,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("renders responsive structural classes (modal-lg, overlay, spacer, tabs, detail-body)", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ column: "in-progress" as Column })}
           onClose={noop}
@@ -907,7 +920,7 @@ describe("TaskDetailModal", () => {
         />,
       );
       expect(container.querySelector(".modal.modal-lg")).toBeTruthy();
-      expect(container.querySelector(".modal-overlay.open")).toBeTruthy();
+      expect(container.querySelector("[data-testid='floating-window-overlay-task-detail']")).toBeTruthy();
       expect(container.querySelector(".modal-actions .modal-actions-spacer")).toBeTruthy();
       expect(container.querySelector(".detail-body")).toBeTruthy();
       expect(container.querySelector(".detail-timestamps")).toBeTruthy();
@@ -995,7 +1008,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("keeps dense in-review and standard task controls in their shared footer", () => {
-      const { container, unmount } = render(
+      const { baseElement: container, unmount } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ column: "in-review" as Column })}
@@ -1028,7 +1041,7 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
-      const standardFooter = standard.container.querySelector(".modal-actions");
+      const standardFooter = standard.baseElement.querySelector(".modal-actions");
 
       expect(standardFooter).toBeTruthy();
       expect(standardFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
@@ -1047,7 +1060,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("keeps the triage footer usable when Actions is absent", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ column: "triage" as Column })}
@@ -1818,7 +1831,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(summary.container.querySelector(".merge-details-card a")).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
+      expect(summary.baseElement.querySelector(".merge-details-card a")).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
       summary.unmount();
 
       render(
@@ -1988,7 +2001,7 @@ describe("TaskDetailModal", () => {
         { id: "FN-002", title: "Add tests", description: "Test coverage", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
       ];
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
@@ -2023,7 +2036,7 @@ describe("TaskDetailModal", () => {
         { id: "FN-001", description: "Login is broken", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
       ];
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2043,7 +2056,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("renders dependency ID as label when no title or description available", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2070,7 +2083,7 @@ describe("TaskDetailModal", () => {
         { id: "FN-001", title: longTitle, description: "Short desc", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
       ];
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2097,7 +2110,7 @@ describe("TaskDetailModal", () => {
         { id: "FN-001", title: "Very long title that gets truncated in the UI but should show full text on hover", description: "Desc", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
       ];
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2127,7 +2140,7 @@ describe("TaskDetailModal", () => {
       mockFetch.mockResolvedValueOnce(mockDetail);
       const onOpenDetail = vi.fn();
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2156,7 +2169,7 @@ describe("TaskDetailModal", () => {
       const onOpenDetail = vi.fn();
       const addToast = vi.fn();
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ dependencies: ["FN-001"] })}
@@ -2218,7 +2231,7 @@ describe("TaskDetailModal", () => {
         makeTask({ id: "FN-101", title: "Stale blockedBy dependent", column: "todo" as Column, blockedBy: "FN-099" }),
       ];
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={tasks[0]}

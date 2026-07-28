@@ -99,10 +99,18 @@ export interface TranslateFields {
   body?: string;
 }
 
+export interface ImportTranslationIdentity {
+  provider: "github" | "gitlab";
+  repoKey: string;
+  issueNumber: number;
+}
+
 export interface TranslateTextRequest {
   fields: TranslateFields;
   targetLocale: Locale;
   sourceLocale?: string;
+  /** Present only when every cache identity field is valid. */
+  importIdentity?: ImportTranslationIdentity;
 }
 
 export interface TranslateTextResponse {
@@ -138,6 +146,7 @@ export function validateTranslateRequest(
   fields: unknown,
   targetLocale: unknown,
   sourceLocale?: unknown,
+  identity?: unknown,
 ): TranslateTextRequest {
   if (fields === undefined || fields === null || typeof fields !== "object" || Array.isArray(fields)) {
     throw new ValidationError("fields is required and must be an object");
@@ -182,6 +191,19 @@ export function validateTranslateRequest(
     normalizedSource = sourceLocale.trim() || undefined;
   }
 
+  const rawIdentity = identity && typeof identity === "object" && !Array.isArray(identity)
+    ? identity as Record<string, unknown>
+    : null;
+  const provider = rawIdentity?.provider;
+  const repoKey = rawIdentity?.repoKey;
+  const issueNumber = rawIdentity?.issueNumber;
+  const importIdentity =
+    (provider === "github" || provider === "gitlab") &&
+    typeof repoKey === "string" && repoKey.trim().length > 0 &&
+    typeof issueNumber === "number" && Number.isInteger(issueNumber) && issueNumber > 0
+      ? { provider: provider as ImportTranslationIdentity["provider"], repoKey: repoKey.trim(), issueNumber }
+      : undefined;
+
   return {
     fields: {
       ...(title !== undefined ? { title } : {}),
@@ -189,6 +211,7 @@ export function validateTranslateRequest(
     },
     targetLocale,
     sourceLocale: normalizedSource,
+    importIdentity,
   };
 }
 

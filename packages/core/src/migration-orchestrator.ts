@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-migration-orchestrator");
 /**
  * Migration Orchestrator — Coordinates auto-migration from single-project to multi-project mode.
  *
@@ -16,7 +19,7 @@
  * if (await orchestrator.needsMigration()) {
  *   // Run migration with auto-registration
  *   const result = await orchestrator.runMigration({ autoRegister: true });
- *   console.log(`Registered ${result.projectsRegistered.length} projects`);
+ *   severityAuditLog.debug(`Registered ${result.projectsRegistered.length} projects`);
  * }
  * ```
  */
@@ -281,7 +284,7 @@ export class MigrationOrchestrator {
         registered.push(activeProject);
       } catch (err) {
         // Log but continue with other projects
-        console.warn(`[migration] Failed to register ${project.path}:`, (err as Error).message);
+        severityAuditLog.warn(`[migration] Failed to register ${project.path}:`, (err as Error).message);
       }
     }
 

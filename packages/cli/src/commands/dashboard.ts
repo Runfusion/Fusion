@@ -18,7 +18,6 @@ import {
   GlobalSettingsStore,
   resolveGlobalDir,
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
-  isWorkflowColumnsEnabled,
   isWorkspaceTask,
   resolveColumnFlags,
   BUILTIN_CODING_WORKFLOW_IR,
@@ -1068,20 +1067,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // The CLI TUI degrades gracefully (R18): cards in workflow columns it can't
   // express must map by trait flags into its buckets or a read-only "other"
-  // bucket, never silently disappear. The TUI is flag-blind, so when
-  // `workflowColumns` is ON we enrich each slim task with its resolved column's
-  // display name + merged trait flags. Self-contained: derives everything from
-  // already-exposed store methods (workflow selection + definition) + the core
-  // `resolveColumnFlags` export — no dependency on concurrent U9 server work.
-  // Flag-OFF: returns undefineds and the TUI renders exactly as before.
+  // bucket, never silently disappear. So we enrich each slim task with its
+  // resolved column's display name + merged trait flags. Self-contained: derives
+  // everything from already-exposed store methods (workflow selection +
+  // definition) + the core `resolveColumnFlags` export. An unresolvable workflow
+  // returns undefineds and the TUI falls back to legacy column-id bucketing.
   type ResolvedColumnInfo = { columnName?: string; columnFlags?: TraitFlags };
   async function resolveTaskColumnInfo(
     projectStore: TaskStore,
-    flagOn: boolean,
     workflowIrCache: Map<string | undefined, WorkflowIrColumn[] | null>,
     task: { id: string; column: string },
   ): Promise<ResolvedColumnInfo> {
-    if (!flagOn) return {};
+    /*
+    FNXC:WorkflowColumns 2026-07-27-09:56 (U2 / R9):
+    The `flagOn` parameter and its `if (!flagOn) return {}` early exit are gone.
+    Its only caller derived it from `isWorkflowColumnsEnabled`, a literal `true`,
+    so column enrichment was already unconditional — as was the settings read that
+    fed it, now also removed.
+    */
     try {
       /*
       FNXC:WorkflowSelection 2026-07-14-17:06:
@@ -1228,7 +1231,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let restartScheduled = false;
   let requestSelfRestart: ((reason: string) => boolean) | null = null;
   const systemControlForServer = {
-    supervised: process.env.FUSION_RESTART_SUPERVISED === "1",
+    // FNXC:SystemPanel 2026-07-25-10:05: proof of a LIVE supervising parent, not
+    // just an inherited env flag — see hasLiveSupervisingParent.
+    supervised: hasLiveSupervisingParent(),
     requestRestart: (reason: string) => (requestSelfRestart ? requestSelfRestart(reason) : false),
     sourceWorkspaceRoot: resolveFusionSourceWorkspaceRoot(),
   };
@@ -2950,17 +2955,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           listTasks: async (projectPath: string) => {
             const projectStore = await getProjectStore(projectPath);
             const tasks = await projectStore.listTasks({ slim: true, includeArchived: false });
-            // U11 (R18): when the workflow-columns flag is ON, enrich each task
-            // with its resolved column display name + trait flags so the
-            // flag-blind TUI can map non-legacy columns into its buckets (or the
-            // read-only "other" bucket) instead of silently dropping them. The
-            // IR cache keeps this O(workflows) rather than O(tasks) DB reads.
-            const settings = await projectStore.getSettings();
-            const flagOn = isWorkflowColumnsEnabled(settings);
+            // U11 (R18): enrich each task with its resolved column display name
+            // + trait flags so the column-blind TUI can map non-legacy columns
+            // into its buckets (or the read-only "other" bucket) instead of
+            // silently dropping them. The IR cache keeps this O(workflows)
+            // rather than O(tasks) DB reads.
             const workflowIrCache = new Map<string | undefined, WorkflowIrColumn[] | null>();
             return Promise.all(
               tasks.map(async (t) => {
-                const info = await resolveTaskColumnInfo(projectStore, flagOn, workflowIrCache, t);
+                const info = await resolveTaskColumnInfo(projectStore, workflowIrCache, t);
                 return {
                   id: t.id,
                   title: t.title,
@@ -3509,6 +3512,37 @@ export function resolveSupervisorRespawnCommand(): { command: string; args: stri
 }
 
 /*
+FNXC:SystemPanel 2026-07-25-10:05:
+Is a supervising parent ACTUALLY there, right now?
+
+FUSION_RESTART_SUPERVISED=1 alone is not proof. It is a plain environment
+variable, so it is inherited by every process the dashboard spawns — agent
+terminals, dev servers, shells. Running `fn dashboard` from inside one of those
+made the new dashboard believe it was supervised: it advertised
+restartSupported=true, and a restart request then exited the process with
+FUSION_RESTART_EXIT_CODE with nobody listening for it. The dashboard just
+disappeared — which is what "the restart button does nothing" looks like from a
+browser tab that never comes back.
+
+The supervisor now also stamps its own pid (FUSION_SUPERVISOR_PID). Supervision
+counts only when that pid is our real parent: a leaked copy of the variable
+names a process that is not our parent (or a dead one — we get reparented, so
+ppid stops matching), and we correctly report unsupervised. A parent that
+predates the stamp (older scripts/dev-with-memory.mjs) sets no pid, so the flag
+alone still counts — no behavior change for it.
+*/
+export function hasLiveSupervisingParent(
+  env: NodeJS.ProcessEnv = process.env,
+  ppid: number = process.ppid,
+): boolean {
+  if (env.FUSION_RESTART_SUPERVISED !== "1") return false;
+  const declaredPid = env.FUSION_SUPERVISOR_PID;
+  if (!declaredPid) return true;
+  const parsed = Number.parseInt(declaredPid, 10);
+  return Number.isFinite(parsed) && parsed === ppid;
+}
+
+/*
 FNXC:SystemPanel 2026-07-12-14:05:
 Supervision decision for `fn dashboard` (and bare `fn`, which defaults to the
 dashboard). Supervision is now the DEFAULT so every install shape — bare `fn`,
@@ -3516,9 +3550,12 @@ dashboard). Supervision is now the DEFAULT so every install shape — bare `fn`,
 and gets crash recovery. Skipped when:
   - --no-supervise is passed (explicit opt-out; also the escape hatch for
     debugging the child directly),
-  - FUSION_RESTART_SUPERVISED=1 (a supervising parent already exists — the
-    supervisor's own child, or scripts/dev-with-memory.mjs under `pnpm dev` —
-    so never nest supervisors),
+  - a supervising parent is genuinely present (the supervisor's own child, or
+    scripts/dev-with-memory.mjs under `pnpm dev` — never nest supervisors). A
+    merely INHERITED FUSION_RESTART_SUPERVISED no longer counts; see
+    hasLiveSupervisingParent above. This is what makes `fn dashboard` launched
+    from a Fusion-spawned terminal supervise itself instead of silently losing
+    restart support.
   - an inspector flag is active (the debugger must attach to the real app
     process, and a respawned child would fight over the inspector port),
   - no respawn command can be resolved.
@@ -3527,9 +3564,10 @@ export function shouldSuperviseDashboard(
   args: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   execArgv: readonly string[] = process.execArgv,
+  ppid: number = process.ppid,
 ): boolean {
   if (args.includes("--no-supervise")) return false;
-  if (env.FUSION_RESTART_SUPERVISED === "1") return false;
+  if (hasLiveSupervisingParent(env, ppid)) return false;
   if (execArgv.some((arg) => arg.startsWith("--inspect"))) return false;
   return resolveSupervisorRespawnCommand() !== null;
 }
@@ -3721,7 +3759,13 @@ supervisor's own exit/SIGTERM handlers.
 function spawnAttached(command: string, args: string[]): { child: ChildProcess; waitExit: Promise<AttachedChildExit> } {
   const child = spawn(command, args, {
     stdio: "inherit",
-    env: { ...process.env, FUSION_RESTART_SUPERVISED: "1" },
+    /*
+    FNXC:SystemPanel 2026-07-25-10:05:
+    FUSION_SUPERVISOR_PID lets the child verify this supervisor is its actual
+    parent. Without it, any grandchild that inherits FUSION_RESTART_SUPERVISED
+    (agent terminals, dev servers) would claim restart support it does not have.
+    */
+    env: { ...process.env, FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: String(process.pid) },
   });
   const waitExit = new Promise<AttachedChildExit>((resolve) => {
     child.on("close", (code, signal) => resolve({ code, signal }));

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GitManagerModal } from "../GitManagerModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Task } from "@fusion/core";
 import { loadAllAppCss } from "../../test/cssFixture";
 
@@ -20,8 +21,9 @@ const mockUseMobileKeyboard = vi.fn(() => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  isFullScreenSheetViewport: () => false,
-  isShortViewport: () => false,
+  isFullScreenSheetViewport: () => window.matchMedia("(max-width: 767.98px)").matches,
+  isShortViewport: () => window.matchMedia("(max-height: 480px)").matches,
+  isTabletTouchViewport: () => false,
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   useViewportMode: () => mockUseViewportMode(),
@@ -381,14 +383,14 @@ describe("GitManagerModal", () => {
   });
 
   it("renders git-manager overlay class hook for mobile fullscreen CSS", async () => {
-    const { container } = render(
+    const { baseElement } = render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
     );
     await waitFor(() => {
       expect(screen.getByText("Git Manager")).toBeInTheDocument();
     });
 
-    expect(container.querySelector(".modal-overlay.git-manager-modal-overlay")).toBeTruthy();
+    expect(baseElement.querySelector(".floating-window--git-manager")).toBeTruthy();
   });
 
   it("keeps the sidebar-launched Git Manager overlay transparent and click-through like Files", () => {
@@ -412,14 +414,14 @@ describe("GitManagerModal", () => {
       keyboardOpen: true,
     });
 
-    const { container } = render(
+    const { baseElement } = render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
     );
     await waitFor(() => {
       expect(screen.getByText("Git Manager")).toBeInTheDocument();
     });
 
-    const modal = container.querySelector(".modal.gm-modal") as HTMLElement;
+    const modal = baseElement.querySelector(".modal.gm-modal") as HTMLElement;
     expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("240px");
     expect(modal.style.getPropertyValue("--vv-height")).toBe("620px");
     expect(modal.style.getPropertyValue("--vv-offset-top")).toBe("18px");
@@ -698,7 +700,7 @@ describe("GitManagerModal", () => {
     });
   });
 
-  it("keeps separate scroll containers for unstaged and staged file lists", async () => {
+  it("keeps separate scroll baseElements for unstaged and staged file lists", async () => {
     (fetchFileChanges as any).mockResolvedValue([
       ...Array.from({ length: 30 }, (_, index) => ({
         file: `src/unstaged-${index}.ts`,
@@ -2189,7 +2191,7 @@ describe("GitManagerModal", () => {
     ]);
 
     const user = userEvent.setup();
-    const { container } = render(
+    const { baseElement } = render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
     );
     fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
@@ -2200,7 +2202,7 @@ describe("GitManagerModal", () => {
     });
 
     await waitFor(() => {
-      const selectedOrigin = container.querySelector(".gm-remote-selector-item.selected");
+      const selectedOrigin = baseElement.querySelector(".gm-remote-selector-item.selected");
       expect(selectedOrigin).toBeTruthy();
       expect(selectedOrigin?.textContent ?? "").toContain("origin");
     });
@@ -2211,7 +2213,7 @@ describe("GitManagerModal", () => {
     await user.click(upstreamButton as HTMLElement);
 
     await waitFor(() => {
-      const selectedUpstream = container.querySelector(".gm-remote-selector-item.selected");
+      const selectedUpstream = baseElement.querySelector(".gm-remote-selector-item.selected");
       expect(selectedUpstream).toBeTruthy();
       expect(selectedUpstream?.textContent ?? "").toContain("upstream");
     });
@@ -3786,5 +3788,13 @@ describe("GitManagerModal", () => {
       expect(mobile720).not.toContain(".gm-sidebar");
       expect(mobile720).not.toContain(".gm-nav-item");
     });
+  });
+});
+
+describe("GitManagerModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<GitManagerModal isOpen onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />);
+    assertRenderedModalTouchGeometry("git-manager", screen.getByTestId("floating-window-git-manager").querySelector(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("git-manager", () => render(<GitManagerModal isOpen onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />));
   });
 });

@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-setup-activity-routes");
 import type { ActivityEventType } from "@fusion/core";
 import { ApiError, badRequest, rethrowAsApiError } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -194,7 +197,7 @@ router.get("/first-run-status", async (_req, res) => {
       const hasProjects = detectedProjects.length > 0;
       const singleProjectPath = detectedProjects.length === 1 ? detectedProjects[0].path : null;
 
-      console.warn(
+      severityAuditLog.warn(
         `[routes:first-run-status] Falling back to detected projects after central DB error: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -241,7 +244,7 @@ router.get("/setup-state", async (_req, res) => {
       state = await detector.detectFirstRunState(central);
       projects = await central.listProjects();
     } catch (error) {
-      console.warn(
+      severityAuditLog.warn(
         `[routes:setup-state] Unable to read central DB state: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {

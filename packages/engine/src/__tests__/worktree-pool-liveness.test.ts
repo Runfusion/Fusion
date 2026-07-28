@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { classifyTaskWorktree, hasRequiredWorktreeFiles, isUsableTaskWorktree } from "../worktree-pool.js";
+import { classifyTaskWorktree, hasRequiredWorktreeFiles, hasUsableWorktreeShape, isUsableTaskWorktree } from "../worktree-pool.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -228,5 +228,57 @@ describeIfGit("worktree liveness gating (FN-4682)", () => {
   it("FN-4682: hasRequiredWorktreeFiles rejects missing .git", () => {
     const path = track(mkdtempSync(join(tmpdir(), "fn-4682-no-git-")));
     expect(hasRequiredWorktreeFiles(path)).toBe(false);
+  });
+
+  /*
+  FNXC:WorktreeLiveness 2026-07-26-08:20:
+  `hasUsableWorktreeShape` is the sync, non-spawning probe recovery paths use instead of the
+  canonical async `classifyTaskWorktree`. These cases pin BOTH halves of its contract: what it
+  rejects, and — just as important — the narrower guarantee it makes, so a future caller does not
+  mistake it for the full classifier. Every "reads as usable" case below is a shape the caller must
+  still be able to survive.
+  */
+  describe("hasUsableWorktreeShape (sync recovery-path probe)", () => {
+    it("rejects empty, missing, and .git-less paths", () => {
+      const missing = join(track(mkdtempSync(join(tmpdir(), "fn-8594-missing-"))), "gone");
+      const noGit = track(mkdtempSync(join(tmpdir(), "fn-8594-no-git-")));
+      expect(hasUsableWorktreeShape(undefined)).toBe(false);
+      expect(hasUsableWorktreeShape(null)).toBe(false);
+      expect(hasUsableWorktreeShape("")).toBe(false);
+      expect(hasUsableWorktreeShape(missing)).toBe(false);
+      expect(hasUsableWorktreeShape(noGit)).toBe(false);
+    });
+
+    it("accepts a real registered task worktree", () => {
+      const rootDir = track(makeRepo((dir) => {
+        git(dir, 'git commit --allow-empty -m "init"');
+      }));
+      const worktreePath = track(makeWorktree(rootDir, "shape-ok"));
+      expect(hasUsableWorktreeShape(worktreePath, rootDir)).toBe(true);
+    });
+
+    it("rejects the repo root when rootDir is supplied, and cannot detect it without one", () => {
+      const rootDir = track(makeRepo((dir) => {
+        git(dir, 'git commit --allow-empty -m "init"');
+      }));
+      // FN-6861: the main checkout is a registered worktree carrying `.git`, so the repo-root gate
+      // is the ONLY thing that keeps it from reading as a usable task worktree.
+      expect(hasUsableWorktreeShape(rootDir, rootDir)).toBe(false);
+      expect(hasUsableWorktreeShape(rootDir)).toBe(true);
+    });
+
+    it("still reads a de-registered worktree with a dangling gitdir as usable (documented limit)", () => {
+      const rootDir = track(makeRepo((dir) => {
+        git(dir, 'git commit --allow-empty -m "init"');
+      }));
+      const worktreePath = track(makeWorktree(rootDir, "shape-deregistered"));
+      // Break the link the way `git worktree prune` / a manual admin-dir delete would.
+      writeFileSync(join(worktreePath, ".git"), "gitdir: /nonexistent/.git/worktrees/gone\n", "utf-8");
+      // The probe cannot see this without spawning git — callers must tolerate it, and the
+      // executor's own session-start assertion is the backstop that rejects the checkout.
+      expect(hasUsableWorktreeShape(worktreePath, rootDir)).toBe(true);
+      // The canonical classifier DOES catch it, which is why it stays the default.
+      return expect(isUsableTaskWorktree(rootDir, worktreePath)).resolves.toBe(false);
+    });
   });
 });

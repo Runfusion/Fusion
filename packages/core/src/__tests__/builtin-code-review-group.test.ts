@@ -75,16 +75,26 @@ describe("codeReviewOptionalGroupNode", () => {
 });
 
 describe("built-in coding + stepwise workflows wire code-review as a default-ON optional group", () => {
+  /*
+  FNXC:WorkflowReviewGates 2026-07-26-11:40:
+  The column is parametrized because the two built-ins deliberately disagree: the stepwise graph
+  (and everything cloned from it, incl. the default `builtin:coding`) runs Code Review in
+  "in-review" so the card shows the running gate as a badge, while the frozen legacy coding IR
+  keeps its historical "in-progress" placement. The paired remediation node stays "in-progress"
+  in BOTH — a gate that requests changes must send the card back to implementation.
+  */
   it.each([
-    ["builtin coding", BUILTIN_CODING_WORKFLOW_IR],
-    ["builtin stepwise", BUILTIN_STEPWISE_CODING_WORKFLOW_IR],
-  ])("%s includes the default-ON code-review optional-group and still parses/round-trips", (_name, ir) => {
+    ["builtin coding", BUILTIN_CODING_WORKFLOW_IR, "in-progress"],
+    ["builtin stepwise", BUILTIN_STEPWISE_CODING_WORKFLOW_IR, "in-review"],
+  ] as const)("%s includes the default-ON code-review optional-group and still parses/round-trips", (_name, ir, expectedColumn) => {
     const byId = new Map(ir.nodes.map((n) => [n.id, n]));
     const group = byId.get("code-review");
     expect(group?.kind).toBe("optional-group");
     expect(group?.config?.name).toBe("Code Review");
     expect(group?.config?.defaultOn).toBe(true);
-    expect(group?.column).toBe("in-progress");
+    expect(group?.column).toBe(expectedColumn);
+    // Changes-requested always routes back to implementation.
+    expect(byId.get("code-review-remediation")?.column).toBe("in-progress");
 
     // Pre-merge wiring: ... → browser-verification → code-review → completion-summary; failure → remediation node.
     expect(ir.edges).toEqual(

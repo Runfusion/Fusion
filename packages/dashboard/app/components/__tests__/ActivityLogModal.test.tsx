@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ActivityLogModal } from "../ActivityLogModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import * as apiModule from "../../api";
 import type { ActivityLogEntry, Task } from "@fusion/core";
 
@@ -130,7 +131,7 @@ describe("ActivityLogModal", () => {
       { id: "older", timestamp: "2026-06-10T20:00:00.000Z", type: "task:created", details: "older" },
     ] as ActivityLogEntry[]);
 
-    const { container } = render(
+    const { baseElement } = render(
       <ActivityLogModal
         isOpen={true}
         onClose={mockOnClose}
@@ -140,7 +141,7 @@ describe("ActivityLogModal", () => {
     );
 
     await waitFor(() => {
-      const times = Array.from(container.querySelectorAll(".activity-log-entry-time")).map((node) => node.textContent);
+      const times = Array.from(baseElement.querySelectorAll(".activity-log-entry-time")).map((node) => node.textContent);
       expect(times).toEqual(expect.arrayContaining([
         "Just now",
         "5m ago",
@@ -168,7 +169,7 @@ describe("ActivityLogModal", () => {
       },
     ]);
 
-    const { container } = render(
+    const { baseElement } = render(
       <ActivityLogModal
         isOpen={true}
         onClose={mockOnClose}
@@ -178,12 +179,12 @@ describe("ActivityLogModal", () => {
     );
 
     await waitFor(() => {
-      const labels = Array.from(container.querySelectorAll(".activity-log-entry-type")).map((node) => node.textContent);
+      const labels = Array.from(baseElement.querySelectorAll(".activity-log-entry-type")).map((node) => node.textContent);
       expect(labels).toContain("Task Auto-Archived (Ghost Bug)");
       expect(labels).toContain("Task Auto-Archived (Duplicate)");
     });
 
-    const icons = container.querySelectorAll(".activity-log-entry-icon .activity-icon");
+    const icons = baseElement.querySelectorAll(".activity-log-entry-icon .activity-icon");
     expect(icons).toHaveLength(2);
   });
 
@@ -550,7 +551,7 @@ describe("ActivityLogModal", () => {
   // ── Responsive Layout Regression Tests ───────────────────────────
 
   it("renders all mobile-responsive CSS classes on the modal structure", async () => {
-    const { container } = render(
+    const { baseElement } = render(
       <ActivityLogModal
         isOpen={true}
         onClose={mockOnClose}
@@ -565,7 +566,7 @@ describe("ActivityLogModal", () => {
     });
 
     // Verify key structural classes that the mobile CSS targets
-    const modal = container.querySelector(".activity-log-modal");
+    const modal = baseElement.querySelector(".activity-log-modal");
     expect(modal).toBeTruthy();
     // Modal uses shared modal-lg for consistent wide sizing
     expect(modal!.classList.contains("modal-lg")).toBe(true);
@@ -580,7 +581,7 @@ describe("ActivityLogModal", () => {
   });
 
   it("renders close button with shared modal-close class and accessibility attributes", async () => {
-    const { container } = render(
+    const { baseElement } = render(
       <ActivityLogModal
         isOpen={true}
         onClose={mockOnClose}
@@ -596,16 +597,16 @@ describe("ActivityLogModal", () => {
     // Has accessibility label
     expect(closeButton.getAttribute("aria-label")).toBe("Close");
     // Close button is a direct child of the header, NOT inside the actions row
-    const header = container.querySelector(".modal-header");
+    const header = baseElement.querySelector(".modal-header");
     expect(header).toBeTruthy();
     expect(header!.contains(closeButton)).toBe(true);
-    const actions = container.querySelector(".activity-log-actions");
+    const actions = baseElement.querySelector(".activity-log-actions");
     expect(actions).toBeTruthy();
     expect(actions!.contains(closeButton)).toBe(false);
   });
 
   it("renders entry header and details within each entry for mobile reflow", async () => {
-    const { container } = render(
+    const { baseElement } = render(
       <ActivityLogModal
         isOpen={true}
         onClose={mockOnClose}
@@ -619,7 +620,7 @@ describe("ActivityLogModal", () => {
     });
 
     // Each entry should have the inner structure that mobile CSS reflows
-    const entries = container.querySelectorAll(".activity-log-entry");
+    const entries = baseElement.querySelectorAll(".activity-log-entry");
     for (const entry of entries) {
       expect(entry.querySelector(".activity-log-entry-icon")).toBeTruthy();
       expect(entry.querySelector(".activity-log-entry-content")).toBeTruthy();
@@ -678,5 +679,13 @@ describe("ActivityLogModal", () => {
     expect(actions).toBeTruthy();
     expect(actions!.querySelector(".activity-log-confirm-cancel")).toBeTruthy();
     expect(actions!.querySelector(".activity-log-confirm-clear")).toBeTruthy();
+  });
+});
+
+describe("ActivityLogModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<ActivityLogModal isOpen onClose={vi.fn()} tasks={[]} onOpenTaskDetail={vi.fn()} />);
+    assertRenderedModalTouchGeometry("activity-log", screen.getByText("Activity Log").closest(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("activity-log", () => render(<ActivityLogModal isOpen onClose={vi.fn()} tasks={[]} onOpenTaskDetail={vi.fn()} />));
   });
 });

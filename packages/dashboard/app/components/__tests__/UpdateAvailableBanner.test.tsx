@@ -113,30 +113,44 @@ describe("UpdateAvailableBanner", () => {
     expect(await screen.findByText("Restarting… Your connection will close shortly.")).toBeInTheDocument();
   });
 
-  it("renders the restart button disabled with manual guidance when unsupported", async () => {
+  /*
+  FNXC:UpdateBanner 2026-07-25-10:05:
+  Restart capability is advisory, not a hard block: the button always reaches the
+  server so an operator sees the real refusal instead of a control that silently
+  does nothing (a failed or stale /system/info probe used to disable it outright).
+  */
+  it("shows manual guidance but still attempts the restart when unsupported", async () => {
     mockFetchSystemInfo.mockResolvedValueOnce({ restartSupported: false });
+    mockRequestSystemRestart.mockRejectedValueOnce(new Error("Restart is not available: no supervising parent."));
     renderBanner();
     await completeInstall();
 
-    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeDisabled();
+    const restartButton = screen.getByRole("button", { name: "Restart Fusion" });
+    expect(restartButton).toBeEnabled();
     expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+
+    fireEvent.click(restartButton);
+
+    await waitFor(() => expect(mockRequestSystemRestart).toHaveBeenCalledWith("update-banner"));
+    expect(await screen.findByText(/Restart is not available: no supervising parent\./)).toBeInTheDocument();
   });
 
-  it("keeps restart disabled while system info is loading", async () => {
+  it("allows a restart attempt while system info is still loading", async () => {
     mockFetchSystemInfo.mockReturnValueOnce(new Promise(() => {}));
     renderBanner();
     await completeInstall();
 
-    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    expect(screen.queryByText(/Needs a supervising parent/)).not.toBeInTheDocument();
   });
 
-  it("fails closed with manual guidance when system info cannot be loaded", async () => {
+  it("shows manual guidance when system info cannot be loaded", async () => {
     mockFetchSystemInfo.mockRejectedValueOnce(new Error("network unavailable"));
     renderBanner();
     await completeInstall();
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeDisabled());
-    expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
   });
 
   it("shows a disabled spinning restart action while a restart request is in flight", async () => {
@@ -206,7 +220,7 @@ describe("UpdateAvailableBanner", () => {
     expect(actions).toBeInTheDocument();
     expect(actions).toContainElement(restartButton);
     expect(restartButton).toBeInTheDocument();
-    expect(restartButton).toHaveProperty("disabled", !restartSupported);
+    expect(restartButton).toHaveProperty("disabled", false);
     if (!restartSupported) expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
 
     Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });

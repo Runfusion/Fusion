@@ -129,7 +129,16 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
         // Re-evaluate polling against the freshest snapshot after every fetch.
         // "In-flight" = any active session or run. Idle → no interval exists.
         const snap = snapshotRef.current;
-        const inFlight = !!snap && (snap.activeSessions > 0 || snap.activeRuns > 0);
+        /*
+        FNXC:MobileTabRetention 2026-07-26-11:40:
+        The live-snapshot poll is self-managed (it re-arms itself from each response), so the visibility gate
+        lives here rather than in `useVisibilityAwarePoll`: a hidden document must never re-arm the timer.
+        A backgrounded page that keeps fetching is a primary iOS/Chrome Android discard signal, and the
+        discard is the white-splash reload operators saw on return. The visibilitychange handler below calls
+        `load()` on the hidden -> visible edge, which refreshes once and re-arms polling if work is live.
+        */
+        const documentVisible = typeof document === "undefined" || document.visibilityState !== "hidden";
+        const inFlight = documentVisible && !!snap && (snap.activeSessions > 0 || snap.activeRuns > 0);
         if (inFlight) {
           // Start the poll interval iff one is not already running.
           if (pollTimerRef.current === null) {
@@ -167,7 +176,21 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
       onReconnect: () => void load(),
     });
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        stopPolling();
+        return;
+      }
+      void load();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
     return () => {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
       unsubscribe();
       stopPolling();
     };
