@@ -34,66 +34,137 @@ this ledger: once the counts reach their floor, the assertion becomes "zero, out
 allowlist" and this file is where that allowlist grows up. Seeded here because a ratchet written
 after the migration cannot prove the migration happened.
 
-SELF-CHECK DISCIPLINE. A source-scanning guard that silently matches nothing passes forever. The
-extraction is therefore range-checked (`it("extracts …")`) so a brace-matching or
-comment-stripping failure fails loudly instead of reporting a comfortable zero.
+SELF-CHECK DISCIPLINE. A source-scanning guard that silently matches nothing passes forever, so
+two things hold it honest. The extraction is AST-based (`ts.createSourceFile`), not brace
+matching over text: a `}` inside a string, a template literal, a regex, or a comment is a token
+to the parser, never structure, so ordinary edits to literal content cannot truncate a body or
+shift a count. And the extracted bodies are still range-checked below, because "the parser found
+something" is not the same as "the parser found the 3.2k-line method we meant".
+
+WHY AST AND NOT GREP (greptile P2, PR #2490). The first cut brace-matched over comment-stripped
+text. Its failure mode was demonstrable rather than theoretical — a single `const brace = "}"`
+inside `runImplementation` truncated the body to 13 lines — and while the size guard caught that
+loudly, the cost landed on whichever unrelated PR happened to add such a literal. A ratchet that
+misfires on innocent edits gets deleted, and then it protects nothing.
 */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const EXECUTOR_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "executor.ts");
 
-/** Strip block and line comments so FNXC prose is never counted as a call site. */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-}
+const SOURCE_FILE = ts.createSourceFile(
+  EXECUTOR_PATH,
+  readFileSync(EXECUTOR_PATH, "utf8"),
+  ts.ScriptTarget.ESNext,
+  /* setParentNodes */ true,
+);
 
 /**
- * Extract a class method body by brace matching from its declaration.
- * Returns the body text, or throws — a silent miss would make every count zero.
+ * Find a class method's body by NAME through the AST. Throws rather than returning empty — a
+ * silent miss would make every count zero and report "U8 complete" while nothing had changed.
  */
-function extractMethodBody(source: string, declaration: string): string {
-  const start = source.indexOf(declaration);
-  if (start === -1) throw new Error(`method declaration not found: ${declaration}`);
-  const open = source.indexOf("{", start);
-  if (open === -1) throw new Error(`no method body found for: ${declaration}`);
-  let depth = 0;
-  for (let i = open; i < source.length; i++) {
-    const ch = source[i];
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return source.slice(open, i + 1);
+function methodBody(name: string): ts.Block {
+  let found: ts.Block | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.body) {
+      if (found) throw new Error(`ambiguous method name (declared more than once): ${name}`);
+      found = node.body;
     }
-  }
-  throw new Error(`unbalanced braces while extracting: ${declaration}`);
+    ts.forEachChild(node, visit);
+  };
+  visit(SOURCE_FILE);
+  if (!found) throw new Error(`method not found: ${name}`);
+  return found;
 }
-
-function count(body: string, needle: string): number {
-  return body.split(needle).length - 1;
-}
-
-const SOURCE = stripComments(readFileSync(EXECUTOR_PATH, "utf8"));
-const RUN_IMPLEMENTATION = extractMethodBody(SOURCE, "private async runImplementation(");
-const HANDLE_GRAPH_FAILURE = extractMethodBody(SOURCE, "private async handleGraphFailure(");
 
 /**
- * The three ways the executor performs a lifecycle disposition itself. `moveTask` already
- * resolves its target through `resolveReboundColumnFor` (U5b), so this counts WHO DECIDES the
- * transition, not which column id it names.
+ * Count call expressions of `this.<property>.…(…)` shapes inside a method body.
+ * `member` is the dotted path after `this.` — e.g. `store.moveTask` or `handoffTaskToReview`.
+ * Matching on the callee EXPRESSION (not text) is what makes a call inside a string impossible
+ * to miscount, and a renamed-but-equivalent call impossible to miss.
  */
-const EXECUTOR_OWNED = [
-  { label: "column transitions (store.moveTask)", needle: "this.store.moveTask(" },
-  { label: "review transitions (handoffTaskToReview)", needle: "this.handoffTaskToReview(" },
-  { label: "terminal parks (status: \"failed\")", needle: "status: \"failed\"" },
+function countCalls(body: ts.Block, member: string): number {
+  const path = member.split(".");
+  let total = 0;
+  const matchesPath = (expr: ts.Expression): boolean => {
+    let current: ts.Expression = expr;
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (!ts.isPropertyAccessExpression(current) || current.name.text !== path[i]) return false;
+      current = current.expression;
+    }
+    return current.kind === ts.SyntaxKind.ThisKeyword;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && matchesPath(node.expression)) total++;
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return total;
+}
+
+/** Count calls to a plain identifier (a local callback such as `graphCompletion`). */
+function countIdentifierCalls(body: ts.Block, name: string): number {
+  let total = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) total++;
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return total;
+}
+
+/**
+ * Count object-literal properties that write a terminal park, i.e. `status: "failed"`.
+ * A property assignment is a node, so `status: "failed"` appearing inside a log string or an
+ * FNXC note is structurally not a write and is never counted.
+ */
+function countTerminalParks(body: ts.Block): number {
+  let total = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === "status"
+      && ts.isStringLiteral(node.initializer)
+      && node.initializer.text === "failed"
+    ) total++;
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return total;
+}
+
+const RUN_IMPLEMENTATION = methodBody("runImplementation");
+const HANDLE_GRAPH_FAILURE = methodBody("handleGraphFailure");
+
+/** The three ways the executor performs a lifecycle disposition itself. */
+const EXECUTOR_OWNED_LABELS = [
+  "column transitions (store.moveTask)",
+  "review transitions (handoffTaskToReview)",
+  "terminal parks (status: \"failed\")",
 ] as const;
 
 /** The one way the implementation phase hands the decision back to the graph. */
-const GRAPH_HANDBACK = { label: "graph handbacks (graphCompletion)", needle: "graphCompletion(" } as const;
+const GRAPH_HANDBACK_LABEL = "graph handbacks (graphCompletion)";
+
+function bodyLineCount(body: ts.Block): number {
+  const { line: start } = SOURCE_FILE.getLineAndCharacterOfPosition(body.getStart(SOURCE_FILE));
+  const { line: end } = SOURCE_FILE.getLineAndCharacterOfPosition(body.getEnd());
+  return end - start + 1;
+}
+
+function measure(body: ts.Block, includeHandbacks: boolean): Record<string, number> {
+  const measured: Record<string, number> = {
+    "column transitions (store.moveTask)": countCalls(body, "store.moveTask"),
+    "review transitions (handoffTaskToReview)": countCalls(body, "handoffTaskToReview"),
+    "terminal parks (status: \"failed\")": countTerminalParks(body),
+  };
+  if (includeHandbacks) measured[GRAPH_HANDBACK_LABEL] = countIdentifierCalls(body, "graphCompletion");
+  return measured;
+}
 
 /*
 Measured 2026-07-27 against 387e83643. Lower these as U8 moves a disposition behind a graph
@@ -121,30 +192,25 @@ const LEDGER = {
 
 describe("U8 execution-lifecycle ownership ledger", () => {
   /*
-  The extraction guard. `runImplementation` is ~3.2k lines and `handleGraphFailure` ~0.9k; a
-  comment-stripping or brace-matching regression would shrink them to a few lines and every
-  count below would fall to zero — reporting "U8 complete" while nothing had changed.
+  The extraction guard. Parsing cannot silently truncate a body the way brace matching could,
+  but it CAN silently find the wrong thing — a renamed method, a moved declaration, a parser
+  that gave up. `runImplementation` is ~3.2k lines and `handleGraphFailure` ~0.9k; anything far
+  outside that is not the method this ledger is about, and every count below would be measuring
+  something else while still reporting a comfortable pass.
   */
   it("extracts both junction-box method bodies at their real size", () => {
-    const implLines = RUN_IMPLEMENTATION.split("\n").length;
-    const failureLines = HANDLE_GRAPH_FAILURE.split("\n").length;
-    expect(implLines).toBeGreaterThan(2000);
-    expect(implLines).toBeLessThan(4500);
-    expect(failureLines).toBeGreaterThan(500);
-    expect(failureLines).toBeLessThan(1600);
+    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeGreaterThan(2000);
+    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeLessThan(4500);
+    expect(bodyLineCount(HANDLE_GRAPH_FAILURE)).toBeGreaterThan(500);
+    expect(bodyLineCount(HANDLE_GRAPH_FAILURE)).toBeLessThan(1600);
   });
 
   it("runImplementation: executor-owned dispositions match the ledger", () => {
-    const measured: Record<string, number> = {};
-    for (const { label, needle } of EXECUTOR_OWNED) measured[label] = count(RUN_IMPLEMENTATION, needle);
-    measured[GRAPH_HANDBACK.label] = count(RUN_IMPLEMENTATION, GRAPH_HANDBACK.needle);
-    expect(measured).toEqual(LEDGER.runImplementation);
+    expect(measure(RUN_IMPLEMENTATION, true)).toEqual(LEDGER.runImplementation);
   });
 
   it("handleGraphFailure: executor-owned dispositions match the ledger", () => {
-    const measured: Record<string, number> = {};
-    for (const { label, needle } of EXECUTOR_OWNED) measured[label] = count(HANDLE_GRAPH_FAILURE, needle);
-    expect(measured).toEqual(LEDGER.handleGraphFailure);
+    expect(measure(HANDLE_GRAPH_FAILURE, false)).toEqual(LEDGER.handleGraphFailure);
   });
 
   /*
@@ -152,8 +218,8 @@ describe("U8 execution-lifecycle ownership ledger", () => {
   implementation phase decides its own lifecycle 28 times and asks the graph 3 times.
   */
   it("states the U8 baseline ratio: the implementation phase decides far more than it asks", () => {
-    const owned = EXECUTOR_OWNED.reduce((sum, { label }) => sum + LEDGER.runImplementation[label], 0);
-    const handbacks = LEDGER.runImplementation[GRAPH_HANDBACK.label];
+    const owned = EXECUTOR_OWNED_LABELS.reduce<number>((sum, label) => sum + LEDGER.runImplementation[label], 0);
+    const handbacks = LEDGER.runImplementation[GRAPH_HANDBACK_LABEL];
     expect({ owned, handbacks }).toEqual({ owned: 28, handbacks: 3 });
   });
 });
