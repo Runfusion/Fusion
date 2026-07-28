@@ -19,6 +19,7 @@ import { builtinPromptConfig, BUILTIN_SEAM_PROMPTS } from "../builtin-workflow-p
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { resolveColumnFlags } from "../trait-registry.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
+import { resolveOptionalReviewRevisionBudget } from "../workflow-settings-resolver.js";
 import { pgDescribe, createSharedPgTaskStoreTestHarness } from "../__test-utils__/pg-test-harness.js";
 import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
 
@@ -133,6 +134,28 @@ describe("built-in workflows", () => {
     }
   });
 
+  it("bounds Compound Engineering Code Review remediation", () => {
+    const workflow = getBuiltinWorkflow("builtin:compound-engineering")!;
+    const codeReview = workflow.ir.nodes.find((node) => node.id === "code-review");
+
+    expect(codeReview?.config?.maxRevisions).toBe(2);
+    expect(resolveOptionalReviewRevisionBudget({
+      optionalGroupId: "code-review",
+      workflowSettings: {},
+      nodeMaxRevisions: codeReview?.config?.maxRevisions,
+    })).toBe(2);
+    expect(resolveOptionalReviewRevisionBudget({
+      optionalGroupId: "code-review",
+      workflowSettings: { codeReviewMaxRevisions: 4 },
+      nodeMaxRevisions: codeReview?.config?.maxRevisions,
+    })).toBe(4);
+    expect(resolveOptionalReviewRevisionBudget({
+      optionalGroupId: "code-review",
+      workflowSettings: { codeReviewMaxRevisions: "unbounded" },
+      nodeMaxRevisions: codeReview?.config?.maxRevisions,
+    })).toBe("unbounded");
+  });
+
   it("engineering built-in review failures loop through graph-owned remediation", () => {
     const expectedLoops = [
       { gate: "plan-review", remediation: "plan-replan" },
@@ -159,7 +182,12 @@ describe("built-in workflows", () => {
         expect(workflow.ir.nodes.find((node) => node.id === gate)?.config, `${workflow.id}:${gate}:reworkRegion`).toMatchObject({
           reworkRegion: true,
           maxReworkCycles: 3,
-          maxRevisions: gate === "browser-verification" ? 3 : "unbounded",
+          maxRevisions:
+            gate === "browser-verification"
+              ? 3
+              : workflow.id === "builtin:compound-engineering" && gate === "code-review"
+                ? 2
+                : "unbounded",
         });
       }
     }
@@ -645,7 +673,7 @@ describe("built-in workflows", () => {
     });
     expect(ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions")).toMatchObject({
       type: "number",
-      description: expect.stringMatching(/unbounded/i),
+      description: expect.stringMatching(/workflow's authored default/i),
     });
   });
 
