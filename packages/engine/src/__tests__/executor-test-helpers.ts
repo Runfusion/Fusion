@@ -124,8 +124,10 @@ function withSessionDefaults(session: any, options?: { systemPrompt?: unknown })
 }
 
 vi.mock("../agent-session-helpers.js", async () => {
+  const actual = await vi.importActual<typeof import("../agent-session-helpers.js")>("../agent-session-helpers.js");
   const { createFnAgent } = await import("../pi.js");
   return {
+    ...actual,
     createResolvedAgentSession: async (options: any) => {
       const result = await createFnAgent(options);
       return {
@@ -197,6 +199,7 @@ vi.mock("../agent-session-helpers.js", async () => {
       }
       return { provider: undefined, modelId: undefined };
     },
+
   };
 });
 vi.mock("../worktree-names.js", async () => {
