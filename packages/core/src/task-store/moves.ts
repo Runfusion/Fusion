@@ -323,9 +323,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     (`resolveCapacityPoolId`, shared); the WORKFLOW id is telemetry and must stay
     a real workflow id, never the bucketing sentinel.
     */
-    const workflowSelectionForMove = useWorkflow
-      ? await store.getTaskWorkflowSelectionAsync(id)
-      : undefined;
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 — make the gate bind for real projects):
+    The selection is now read REGARDLESS of the compatibility flag, because the
+    capacity pool id derived from it is needed on both paths. Previously this was
+    flag-gated, which is one of the two reasons the gate could not bind.
+    */
+    const workflowSelectionForMove = await store.getTaskWorkflowSelectionAsync(id);
     const effectiveWorkflowIdForMove = workflowSelectionForMove?.workflowId ?? DEFAULT_WORKFLOW_ID;
     const capacityPoolIdForMove = resolveCapacityPoolId(workflowSelectionForMove?.workflowId);
     const workflowIr: WorkflowIr | undefined = useWorkflow
@@ -928,13 +932,31 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     await layer.transactionImmediate(async (tx) => {
       // Capacity check (KTD-10). In backend mode, count active tasks in the
       // target column via async Drizzle instead of the sync helper.
-      if (useWorkflow && workflowIr && fromColumn !== toColumn) {
-        const capacity = resolveColumnCapacity(workflowIr, toColumn, mergedSettingsForMove);
+      /*
+      FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 — make the gate bind for real projects):
+      NO LONGER GATED ON `useWorkflow`. `workflow-capacity.ts` states this enforcement
+      "runs INSIDE moveTaskInternal's transaction and is NEVER bypassable"; that was
+      false twice over. Phase A3 R1 was the pool-id sentinel (fixed separately). R2 is
+      this condition: `useWorkflow` reads `experimentalFeatures.workflowColumns`, which
+      is absent from DEFAULT_GLOBAL_SETTINGS and has no production writer, so the whole
+      block was unreachable on the path every real project takes. A limit the product
+      documents and the UI exposes was silently not enforced.
+
+      SCOPE, deliberately narrow: only the CAPACITY check is un-gated. `workflowIr`
+      stays flag-gated so transition VALIDATION keeps its current behavior — the
+      inline path's bare-Error/"Valid targets:" contract is unchanged, and none of the
+      Phase A2 divergences are flipped here. `capacityIr` is resolved separately for
+      this one purpose, so a flag-off project pays one extra IR resolution per
+      cross-column move and gets its configured limit actually enforced.
+      */
+      const capacityIr = workflowIr ?? (await resolveTaskWorkflowIrForMove(store, id));
+      if (capacityIr && fromColumn !== toColumn) {
+        const capacity = resolveColumnCapacity(capacityIr, toColumn, mergedSettingsForMove);
         if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
           // Shared pooled-budget enforcement (see enforcePooledColumnCapacity);
           // this path supplies the async in-transaction counter.
           await enforcePooledColumnCapacity({
-            workflowIr,
+            workflowIr: capacityIr,
             toColumn,
             taskId: id,
             capacity,

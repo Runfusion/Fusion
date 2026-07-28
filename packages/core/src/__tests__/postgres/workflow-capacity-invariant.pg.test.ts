@@ -111,24 +111,20 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     return { error, secondColumn: (await store.getTask(contender.id))?.column };
   }
 
-  it("DEFECT (R2, STILL LIVE): on the production inline path the in-txn capacity check cannot run at all", async () => {
+  it("FIXED (R2): the capacity check now runs on the PRODUCTION inline path too", async () => {
     /*
-    FNXC:WorkflowCapacity 2026-07-28-19:05:
-    R1 IS FIXED; R2 IS NOT, and this test is the standing evidence. The whole
-    capacity block sits inside `if (useWorkflow && …)`, and `useWorkflow` reads
-    `experimentalFeatures.workflowColumns === true`, which NOTHING in production
-    sets (it is absent from DEFAULT_GLOBAL_SETTINGS and has no writer outside
-    tests). So on the path real projects take, the gate still does not run at all
-    and cards still enter wip past the cap.
+    FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 fix):
+    Was `DEFECT (R2, STILL LIVE)`, asserting that a second card entered a full wip
+    column on the path every real project takes. Both reasons the invariant failed
+    are now closed: R1 was the pool-id sentinel, R2 was this — the whole capacity
+    block sat inside `if (useWorkflow && …)`, reading a settings key with no
+    production writer.
 
-    Concretely, measured on this suite's fixture with maxConcurrent 1:
-        flag OFF, no selection  -> ADMITTED   (this test)
-        flag OFF, selection     -> ADMITTED
-        flag ON,  no selection  -> REFUSED    (was ADMITTED before the R1 fix)
-        flag ON,  selection     -> REFUSED
-    Making the gate bind for real projects means removing the `useWorkflow`
-    condition from the capacity block — a separate, larger blast radius than the
-    sentinel fix, and an operator decision rather than a drive-by.
+    THIS IS THE USER-VISIBLE HALF of the change. Before it, a project with
+    `maxConcurrent: N` could hold more than N cards in its wip column and nothing
+    said so; now the move is refused with `capacity-exhausted`, which the graph
+    column boundary parks on and the promote route surfaces. Flipping this
+    expectation is the acceptance test for that behavior change.
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
@@ -136,8 +132,10 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
-    expect(error).toBeNull();
-    expect(secondColumn).toBe("in-progress"); // limit of 1, two occupants
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect(secondColumn).toBe("todo"); // refused, stays put
   });
 
   it("FIXED (R1): flag-ON, a NO-SELECTION task is now REFUSED at the limit", async () => {

@@ -370,7 +370,7 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     expect(hooksErr!.message).toContain("Unknown column for this workflow");
   });
 
-  it("DIVERGENCE: in-transaction capacity rejects on the HOOKS path only — the inline path cannot run it", async () => {
+  it("CONVERGED: in-transaction capacity now rejects on BOTH paths", async () => {
     /*
     FNXC:WorkflowCapacity 2026-07-28-19:40 (pool-id sentinel fix):
     WAS `UNPROVEN: … did NOT reject on EITHER path`. That test recorded an honest
@@ -416,8 +416,15 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     }
 
     await setPath("inline");
-    // Unchanged: the block is unreachable on this path regardless of the pool id.
-    expect(await fillThenMoveSecond()).toBeNull();
+    /* FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 fix): was `toBeNull()` — the block used
+       to be unreachable here. Un-gating the capacity check is what converged the two
+       paths on this behavior; the OTHER divergences in this file (rejection type and
+       message) are deliberately untouched, because only the capacity check was
+       un-gated, not transition validation. */
+    const inlineErr = await fillThenMoveSecond();
+    expect((inlineErr as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
 
     await setPath("hooks");
     const hooksErr = await fillThenMoveSecond();
