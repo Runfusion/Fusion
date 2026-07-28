@@ -258,8 +258,29 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
     The #1409 `workflowColumns` ON→OFF evacuation hook is DELETED from both settings
-    write paths. It fired only when the PREVIOUS settings had the raw flag ON, and no
-    production writer ever sets that key, so neither call site was reachable.
+    write paths.
+
+    CORRECTED (PR #2500 review — greptile P1). An earlier draft of this note claimed the
+    ON→OFF transition was unreachable because no production writer sets the key. That is
+    wrong: `settings-schema.ts` explicitly TOLERATES stale persisted values, so a project
+    upgraded from a version where this was a real toggle can carry
+    `experimentalFeatures.workflowColumns: true`, and a settings import or configuration
+    rollback can then flip it to false. The transition is reachable. It is the EVACUATION
+    that is wrong, not the trigger.
+
+    Post-cutover the evacuation is a destructive reposition, not a repair. It moved cards
+    OUT of columns their own workflow legitimately declares and into the legacy `triage`
+    column. It existed to protect the legacy enum BOARD, which could only render the six
+    legacy ids — and that board is deleted in this same change, so the thing it protected
+    is gone.
+
+    The stranding it guarded against does not occur either: `moves.ts` resolves a
+    NON-LEGACY source column's targets from the task's own workflow adjacency on the
+    flag-OFF path (the FN-7591 carve-out), so a card in a custom column still moves.
+    `src/__tests__/coding-ideas-move.test.ts` proves this in the production shape — it
+    never writes the flag — covering the forward chain and the non-adjacent rejection.
+    And `reconcileUndeclaredTaskColumns` correctly leaves such a card alone: its workflow
+    DECLARES its column, so there is nothing undeclared to reconcile.
     */
     return merged;
   }

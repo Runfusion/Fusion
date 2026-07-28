@@ -2437,14 +2437,20 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
 
   /*
   FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
-  `evacuateCustomColumnsToLegacy` (#1409) is DELETED with the ON→OFF flag transition
-  it existed to service. It re-homed cards out of custom columns when `workflowColumns`
-  flipped OFF, so the legacy enum board would not strand them. Both of its triggers
-  (`settings-ops.ts`) required the PREVIOUS settings to have the flag ON, and nothing
-  in production ever writes that key, so the transition — and therefore the evacuation
-  — was unreachable. Custom columns are no longer an opt-in that can be revoked; they
-  are the runtime, and a card in a column its workflow does not declare is now the
-  self-healing sweep `reconcileUndeclaredTaskColumns`'s job (R7).
+  `evacuateCustomColumnsToLegacy` (#1409) is DELETED. It re-homed cards out of custom
+  columns when `workflowColumns` flipped OFF, so the legacy enum board would not strand
+  them.
+
+  CORRECTED (PR #2500 review — greptile P1): the ON→OFF transition IS reachable — stale
+  persisted `true` values are tolerated by design, so an import or configuration
+  rollback can flip one to false. The deletion rests on the evacuation being wrong, not
+  the trigger being dead: it moved cards out of columns their workflow legitimately
+  declares into legacy `triage`, to protect a legacy enum board that this same change
+  deletes. See `settings-ops.ts` for the full reasoning and the covering tests.
+
+  Custom columns are no longer an opt-in that can be revoked; they are the runtime, and
+  a card in a column its workflow does NOT declare is the self-healing sweep
+  `reconcileUndeclaredTaskColumns`'s job (R7).
   */
 
   // ── Workflow selection (resolves a workflow to enabledWorkflowSteps) ────
