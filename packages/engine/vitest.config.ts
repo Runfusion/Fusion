@@ -183,6 +183,11 @@ export default defineConfig({
             "src/__tests__/merger-landed-files-capture.test.ts",
             "src/__tests__/branch-attribution.test.ts",
             /*
+            FNXC:EngineTests 2026-07-28-10:20:
+            Gate admission evidence (U9): this pins which authority actually decides merge-region policy — the built-in IR declares `merge-retry.maxAttempts` / `manual-merge-hold.release` that no handler reads, while the live budgets sit in `settings.maxAutoMergeRetries` and `ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES`. Merge is where irreversible work happens, and the drift it guards is SILENT: a handler-only edit can quietly make the dead IR config live (or move the live budget) with no other test failing. Outside the gate the ratchet cannot fire on the defect it exists for. Deterministic and pure — no git subprocesses, no timers, no network, no store; 3 ms of assertions.
+            */
+            "src/__tests__/u9-merge-region-node-config-authority.test.ts",
+            /*
             FNXC:EngineTests 2026-06-23-10:48:
             Workflow columns and workflow graph execution are now the default runtime. Retire the legacy direct-dispatch executor/scheduler gate files and gate the new hold-release plus graph interpreter seams instead.
 
