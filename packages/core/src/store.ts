@@ -2397,9 +2397,18 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   // never a raw column write, so capacity (KTD-10) and single transition authority
   // (KTD-3) are honored. Only consulted when `workflowColumns` flag is ON.
 
-  public async workflowColumnsFlagOn(): Promise<boolean> {
-    return isWorkflowColumnsCompatibilityFlagEnabled(await this.getSettingsFast());
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  `workflowColumnsFlagOn()` is DELETED — it has no callers left. Its six readers were
+  the three U5 reconciliation guards (now unconditional) and the three v1-IR
+  rollback-compat persistence sites (now unconditional, same stored bytes).
+
+  The underlying `isWorkflowColumnsCompatibilityFlagEnabled` SURVIVES for now: it is
+  still read by `moves.ts` and `workflow-task-create-ops.ts`, and removing those reads
+  IS the U2b move-path convergence, which carries an equivalence-proof obligation.
+  Deleting this wrapper is what makes the remaining reads easy to enumerate: after
+  this change, every surviving read of the raw flag is on the move path.
+  */
   public async listWorkflowOccupantTaskIds(workflowId: string, includeNullSelection: boolean): Promise<string[]> {
     return listWorkflowOccupantTaskIdsImpl(this, workflowId, includeNullSelection);
   }
@@ -2474,8 +2483,8 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
 /** Synchronous workflow-definition insert used by migration (U2/KTD-3). */
-  public insertWorkflowDefinitionSync( input: WorkflowDefinitionInput, flagOn: boolean, ): WorkflowDefinition {
-    return insertWorkflowDefinitionSyncImpl(this, input, flagOn);
+  public insertWorkflowDefinitionSync( input: WorkflowDefinitionInput ): WorkflowDefinition {
+    return insertWorkflowDefinitionSyncImpl(this, input);
   }
   async migrateLegacyWorkflowSteps(): Promise<{ migrated: number; skipped: number; combinedWorkflowId?: string; }> {
     return migrateLegacyWorkflowStepsImpl(this);

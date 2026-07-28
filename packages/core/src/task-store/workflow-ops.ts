@@ -311,19 +311,13 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         description: next.description,
         icon: next.icon ?? null,
         /*
-        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — deliberately NOT flipped here):
-        This is the v1-IR rollback-compat persistence decision (#1405), not an
-        enforcement gate — it chooses the STORED SHAPE of the graph so an older binary
-        could still load the row. It shared the U5 `flagOn` variable that this change
-        deletes, which is why it is spelled out separately now rather than silently
-        inheriting the flip: one flag read was feeding two unrelated decisions, so the
-        flag has more decision sites than call sites.
-
-        Retiring the downgrade is a persistence-format change with a different blast
-        radius than a guard, and it needs its own round-trip evidence. Left reading the
-        raw flag, unchanged in behaviour, for a follow-up.
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+        v1-IR rollback-compat persistence (#1405), now unconditional — which is what it
+        already was. The flag read it used to branch on is retired and always false, so
+        every real project has always taken the downgrade arm. See the fuller note on
+        the create path in `project-store-ops.ts`; the downgrade is kept on purpose.
         */
-        ir: (await store.workflowColumnsFlagOn()) ? next.ir : downgradeIrToV1IfPure(next.ir),
+        ir: downgradeIrToV1IfPure(next.ir),
         layout: next.layout,
         updatedAt: next.updatedAt,
       }).where(eq(schema.project.workflows.id, id));

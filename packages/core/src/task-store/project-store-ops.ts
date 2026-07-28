@@ -682,9 +682,24 @@ export function __setWorkflowDefinitionBeforeInsertForTesting(
 }
 
 export async function createWorkflowDefinitionImpl(store: TaskStore, input: WorkflowDefinitionInput,): Promise<WorkflowDefinition> {
-    // Rollback compat (#1405): with the flag OFF, persist a pure-v1-equivalent
-    // graph in the v1 shape so a binary downgrade can still load the row.
-    const flagOnForCreate = await store.workflowColumnsFlagOn();
+    /*
+    Rollback compat (#1405): persist a pure-v1-equivalent graph in the v1 shape so a
+    binary downgrade can still load the row.
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+    The `flagOnForCreate` read is DELETED and the downgrade is now unconditional —
+    which is what it already was. The ternary was `flagOn ? ir : downgrade(ir)`, and
+    `flagOn` reads the retired raw `experimentalFeatures.workflowColumns` key that no
+    production writer sets, so every real project has ALWAYS taken the downgrade arm.
+    Removing the branch changes no persisted byte; it deletes a flag read.
+
+    The downgrade itself is KEPT deliberately. It is a compatibility affordance, not
+    cutover machinery: it only fires for a graph that is exactly equivalent to pure v1
+    (default columns, default placements, no v2-only features), and `upgradeV1ToV2`
+    re-reads it into an identical v2 graph. Retiring it would break a binary downgrade
+    for no benefit, and stale binaries opening these databases is an observed event in
+    this project, not a hypothetical.
+    */
     return store.withConfigLock(async () => {
       const name = input.name?.trim();
       if (!name) throw new Error("Workflow name is required");
@@ -724,7 +739,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
             name: definition.name,
             description: definition.description,
             icon: definition.icon ?? null,
-            ir: (flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)) as unknown as object,
+            ir: downgradeIrToV1IfPure(definition.ir) as unknown as object,
             layout: definition.layout as unknown as object,
             kind: definition.kind,
             createdAt: definition.createdAt,

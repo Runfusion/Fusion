@@ -356,7 +356,6 @@ export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
 
 export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
     input: WorkflowDefinitionInput,
-    flagOn: boolean,
   ): WorkflowDefinition {
     const name = input.name?.trim();
     if (!name) throw new Error("Workflow name is required");
@@ -387,7 +386,7 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
             definition.name,
             definition.description,
             definition.icon ?? null,
-            serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+            serializeWorkflowIr(downgradeIrToV1IfPure(definition.ir)),
             JSON.stringify(definition.layout),
             definition.kind,
             definition.createdAt,
