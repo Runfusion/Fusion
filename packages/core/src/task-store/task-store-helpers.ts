@@ -11,6 +11,7 @@
  */
 
 import { TaskStore } from "../store.js";
+import { resolveCapacityPoolId } from "../workflow-capacity.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
 import { InsightStore } from "../insight-store.js";
 import { ResearchStore } from "../research-store.js";
@@ -287,7 +288,7 @@ export function resolveTaskCustomFieldDefsSyncImpl(store: TaskStore, taskId: str
 
 export function resolveEffectiveWorkflowIdSyncImpl(store: TaskStore, taskId: string): string {
     const selection = store.getTaskWorkflowSelection(taskId);
-    return selection?.workflowId ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+    return resolveCapacityPoolId(selection?.workflowId);
 }
 
 export async function clearTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): Promise<void> {

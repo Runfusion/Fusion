@@ -43,7 +43,7 @@ import {
   resolveColumnAdjacency,
   PLAN_REVIEW_GROUP_ID,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
-  DEFAULT_WORKFLOW_POOL_ID,
+  resolveCapacityPoolId,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
@@ -113,9 +113,11 @@ export interface HoldReleaseResult {
 
 async function effectiveWorkflowId(store: TaskStore, taskId: string): Promise<string> {
   try {
-    return (await store.getTaskWorkflowSelectionAsync(taskId))?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+    return resolveCapacityPoolId((await store.getTaskWorkflowSelectionAsync(taskId))?.workflowId);
   } catch {
-    return DEFAULT_WORKFLOW_POOL_ID;
+    /* An unreadable selection is indistinguishable from no selection for pooling
+       purposes, so it takes the same bucket rather than a second convention. */
+    return resolveCapacityPoolId(undefined);
   }
 }
 
@@ -439,7 +441,7 @@ function countCapacitySlot(
 ): number {
   let count = 0;
   for (const t of allTasks) {
-    if ((effectiveWorkflowIdByTask.get(t.id) ?? DEFAULT_WORKFLOW_POOL_ID) !== workflowId) continue;
+    if (resolveCapacityPoolId(effectiveWorkflowIdByTask.get(t.id)) !== workflowId) continue;
     if (budgetColumns.has(t.column)) {
       count += 1;
       continue;
@@ -573,7 +575,7 @@ export async function runHoldReleaseSweep(
       }
       const capacity = resolveColumnCapacity(ir, target, settings);
       if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-        const workflowId = effectiveWorkflowIdByTask.get(task.id) ?? DEFAULT_WORKFLOW_POOL_ID;
+        const workflowId = resolveCapacityPoolId(effectiveWorkflowIdByTask.get(task.id));
         // U4/KTD-9: count occupants across every column sharing the target's
         // budget (a shared `limitSetting` pools multiple wip columns).
         const budgetColumns = new Set(resolveWipBudgetColumns(ir, target));
