@@ -9,6 +9,8 @@ import type {
   Agent,
   AgentPermissionPolicy,
   PermanentAgentGatingContext,
+  WorkflowIr,
+  LifecycleColumns,
 } from "@fusion/core";
 import {
   DUPLICATE_OF_METADATA_KEY,
@@ -33,6 +35,7 @@ import {
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
+  resolveTaskLifecycleColumns,
   getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
@@ -1083,7 +1086,24 @@ export class TriageProcessor {
     const recoverableStatus =
       task.status === "planning"
       || (task.status == null && this.hasPassedPlanReview(task));
-    if (task.column !== "triage" || !recoverableStatus) {
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-11:10 (U7 / R3):
+    Resolve the INTAKE column from the task's own workflow. Keyed on the literal
+    `"triage"`, recovery was unreachable for every renamed workflow — a stuck
+    planner on such a card was recovered by nothing.
+
+    The intake-ONLY scope is preserved deliberately, not widened. Plan-in-place
+    cards are specified while resting in the HOLD column (Coding (Ideas), and any
+    `needs-replan` revision on the default workflow), so this path still cannot
+    reach them. That is a real pre-existing gap; closing it is a behavior change and
+    does not belong in a vocabulary conversion. It is pinned by a test so the gap is
+    a recorded decision rather than an accident.
+
+    Unresolvable workflow: refuse, exactly as an unmatched literal did. Recovery
+    force-releases a card, so guessing its lifecycle is the wrong default.
+    */
+    const intakeColumn = (await resolveTaskLifecycleColumns(this.store, task.id))?.intake;
+    if (!intakeColumn || task.column !== intakeColumn || !recoverableStatus) {
       return false;
     }
 
@@ -1392,15 +1412,39 @@ export class TriageProcessor {
    * union include cards before their planner writes status:"planning".
    */
   private async discoverReadyPlanningTasks(allTasks: Task[], now: number): Promise<Task[]> {
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-11:10 (U7 / R3):
+    Discovery is keyed on the task's OWN workflow roles, not on the literal ids
+    `triage` / `todo`. Keyed on the literals, a workflow whose columns are renamed
+    matched NOTHING and its cards were never planned — silently: the filter simply
+    returned empty and the poll looked healthy. That is the failure mode the whole
+    of Phase B exists to remove, and `triage.ts` is in no Phase B unit's file list.
+
+    One IR cache for the whole pass, so a board of N cards on M workflows costs M
+    resolutions rather than N (the same shape `runHoldReleaseSweep` uses). A task
+    whose workflow cannot be resolved yields no roles and is skipped rather than
+    defaulted into a literal — guessing here would plan a card whose lifecycle we
+    could not read.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const rolesById = new Map<string, LifecycleColumns | undefined>();
+    for (const t of allTasks) {
+      rolesById.set(t.id, await resolveTaskLifecycleColumns(this.store, t.id, irCache));
+    }
+    const isAt = (t: Task, role: "intake" | "hold"): boolean => {
+      const roles = rolesById.get(t.id);
+      return roles !== undefined && roles[role] !== undefined && t.column === roles[role];
+    };
+
     const eligibleTriageTasks = allTasks.filter(
-      (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+      (t) => isAt(t, "intake") && isTaskStillInPlanningStage(t)
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
     );
     const eligibleTodoTasksRaw = allTasks.filter(
-      (t) => t.column === "todo" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+      (t) => isAt(t, "hold") && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && t.status !== "planning"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
@@ -3921,7 +3965,30 @@ export class TriageProcessor {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }
 
-    if (task.column !== "todo") {
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-11:10 (U7 / R3):
+    Release into the workflow's OWN hold column. Keyed on the literal `"todo"`, a
+    renamed workflow's specified card was moved into a column its workflow does not
+    declare — exactly the R7 violation `reconcileUndeclaredTaskColumns` exists to
+    clean up after — and, worse, the same-column skip above it never matched, so a
+    plan-in-place card resting in its own renamed hold column was moved OUT of it.
+
+    Unresolvable workflow, or a workflow declaring no hold column: withhold the
+    handoff rather than fall back to a literal. A card left in the planner column
+    with a finished spec is visible and recoverable; a card moved into a column
+    nothing declares is the failure this program is removing.
+    */
+    const lifecycleColumns = await resolveTaskLifecycleColumns(this.store, task.id);
+    const holdColumn = lifecycleColumns?.hold;
+    if (!holdColumn) {
+      planLog.warn(
+        `${task.id}: planning handoff skipped — could not resolve a hold column from the task's workflow; card left in ${task.column}`,
+      );
+      report.outcome = "withheld";
+      return;
+    }
+
+    if (task.column !== holdColumn) {
       const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
       if (typeof moveTaskIf !== "function") {
         // FNXC:TriageFinalizeVisibility 2026-07-26-19:05: the release move is the handoff. If it
@@ -3934,10 +4001,10 @@ export class TriageProcessor {
         report.outcome = "withheld";
         return;
       }
-      const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
+      const release = await moveTaskIf.call(this.store, task.id, holdColumn, isTaskStillInPlanningStage);
       if (!release.moved) {
         planLog.warn(
-          `${task.id}: planning handoff to todo REFUSED by the planning-stage guard `
+          `${task.id}: planning handoff to ${holdColumn} REFUSED by the planning-stage guard `
           + `(column=${release.task?.column ?? "unknown"}, status=${release.task?.status ?? "null"}). Card left in ${task.column}.`,
         );
         // FNXC:PlanningHandoffOutcome 2026-07-28-09:20: same class as above (FN-8361).
