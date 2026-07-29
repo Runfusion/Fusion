@@ -1,3 +1,25 @@
+/*
+FNXC:CapacityModel 2026-07-29-15:00 (capacity-simplification audit — KEEP, with evidence):
+ASKED AND ANSWERED: does gridlock detection still have a job once capacity is two
+numbers and the competing limiters are gone?
+
+YES. "Gridlock" here has nothing to do with limiters arbitrating against each other.
+`GridlockEvent.reasons` is typed `"dependency" | "overlap"` — it detects DEPENDENCY
+deadlock and FILE-SCOPE OVERLAP deadlock, using `pathsOverlap` /
+`filterPathsByIgnoreList` from the scheduler. Neither is affected by removing the
+cross-project cap, the spawn budgets, or the worktree gate: two tasks can still
+block each other on a dependency cycle or a shared file scope no matter how many
+agents the operator allows.
+
+Measured, not assumed: no CODE in this file references maxConcurrent, maxWorktrees, the shared
+semaphore, or any slot/capacity accounting — the only occurrences of those words are in this note.
+It is live and wired (project-engine.ts -> notifier.notifyGridlock).
+
+Recorded here because the natural reading of the NAME is "limiters deadlocking", and
+deleting a live detector on that reading would remove real coverage silently. If a
+future cleanup revisits this, the question to ask is whether dependency and overlap
+deadlock are still possible — not whether capacity is simpler.
+*/
 import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { createLogger } from "./logger.js";
