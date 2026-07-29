@@ -1157,7 +1157,7 @@ export async function runTaskAttach(id: string, filePath: string, projectName?: 
 export async function runTaskPause(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "pause task" }, async (context) => {
-    const task = await context.store.pauseTask(id, true);
+    const task = await context.store.pauseTask(id, true, undefined, { userPaused: true });
 
     console.log();
     console.log(`  ✓ Paused ${task.id}`);

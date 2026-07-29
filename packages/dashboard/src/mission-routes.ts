@@ -79,6 +79,35 @@ export function resolveMissionInterviewThinkingLevel(
   return resolvePlanningThinkingLevel(settings, thinkingLevel) as ThinkingLevel | undefined;
 }
 
+type MissionTaskHierarchy = {
+  milestones: Array<{
+    slices: Array<{
+      features: Array<{ taskId?: string }>;
+    }>;
+  }>;
+};
+
+export async function pauseMissionTasksForOperatorStop(
+  store: Pick<TaskStore, "pauseTask">,
+  hierarchy: MissionTaskHierarchy,
+): Promise<string[]> {
+  const pausedTaskIds: string[] = [];
+  for (const milestone of hierarchy.milestones) {
+    for (const slice of milestone.slices) {
+      for (const feature of slice.features) {
+        if (!feature.taskId) continue;
+        try {
+          await store.pauseTask(feature.taskId, true, undefined, { userPaused: true });
+          pausedTaskIds.push(feature.taskId);
+        } catch (_err) {
+          // Continue stopping the mission if a linked task is already gone.
+        }
+      }
+    }
+  }
+  return pausedTaskIds;
+}
+
 // ── Validation Utilities ────────────────────────────────────────────────────
 
 /*
@@ -3012,22 +3041,8 @@ export function createMissionRouter(
       // Set mission status to blocked
       const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
 
-      // Pause all tasks linked to features in this mission
-      const pausedTaskIds: string[] = [];
-      for (const milestone of hierarchy.milestones) {
-        for (const slice of milestone.slices) {
-          for (const feature of slice.features) {
-            if (feature.taskId) {
-              try {
-                await store.pauseTask(feature.taskId, true);
-                pausedTaskIds.push(feature.taskId);
-              } catch (_err) {
-                // Log but don't fail — task may already be paused or not found
-              }
-            }
-          }
-        }
-      }
+      // Pause all tasks linked to features in this mission.
+      const pausedTaskIds = await pauseMissionTasksForOperatorStop(store, hierarchy);
 
       res.json({ ...updated, pausedTaskIds });
     })

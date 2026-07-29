@@ -172,7 +172,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     return null;
   }
 
-export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string },): Promise<Task> {
+export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean },): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
@@ -184,6 +184,9 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
 
       const previousPausedByAgentId = task.pausedByAgentId;
       task.paused = paused || undefined;
+      if (paused && agentOptions?.userPaused) {
+        task.userPaused = true;
+      }
       if (paused && agentOptions?.pausedByAgentId) {
         task.pausedByAgentId = agentOptions.pausedByAgentId;
       }

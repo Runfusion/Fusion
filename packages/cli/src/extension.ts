@@ -1799,7 +1799,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
-      const task = await store.pauseTask(params.id, true);
+      const task = await store.pauseTask(params.id, true, undefined, { userPaused: true });
 
       return {
         content: [{ type: "text", text: `Paused ${task.id}` }],

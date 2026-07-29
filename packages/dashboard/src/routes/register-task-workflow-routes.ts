@@ -3549,7 +3549,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.getTask(req.params.id);
-      const updated = await scopedStore.pauseTask(req.params.id, true);
+      const updated = await scopedStore.pauseTask(req.params.id, true, undefined, { userPaused: true });
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
