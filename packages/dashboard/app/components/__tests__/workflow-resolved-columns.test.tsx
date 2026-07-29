@@ -471,6 +471,39 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
       expect(shipped?.label).toBe("Move to Shipped");
     });
 
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (PR #2521 review — greptile):
+    A workflow may place a `countsTowardWip` lane AFTER its `mergeBlocker` one (rework
+    or hotfix downstream of review). The traits alone would label that FORWARD move
+    "Back to"; direction has to be part of the predicate.
+
+    REVERT CHECK: drop the order comparison and this fails — `hotfix` is labelled
+    "Back to Hotfix" despite sitting after `signoff` in the declared order.
+    */
+    it("does not call a forward move backwards when a WIP lane follows review", () => {
+      // Placed immediately AFTER signoff so it is a neighbour (and therefore offered),
+      // while still sitting later in the declared order.
+      const signoffIndex = renamedMoveColumns.findIndex((column) => column.id === "signoff");
+      const downstreamWip: TaskContextMenuColumnMetadata[] = [
+        ...renamedMoveColumns.slice(0, signoffIndex + 1),
+        { id: "hotfix" as ColumnId, label: "Hotfix", flags: { countsTowardWip: true } },
+        ...renamedMoveColumns.slice(signoffIndex + 1),
+      ];
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-18", column: "signoff" as Task["column"] }),
+        t,
+        columnLabel,
+        downstreamWip,
+      );
+      const hotfix = transitions.find((transition) => transition.column === "hotfix");
+      expect(hotfix).toBeDefined();
+      expect(hotfix!.label).toBe("Move to Hotfix");
+      // The genuinely-backwards move keeps its label, so the fix narrows rather than
+      // disables the rule.
+      const building = transitions.find((transition) => transition.column === "building");
+      expect(building?.label).toBe("Back to Building");
+    });
+
     it("never offers a column the workflow does not declare", () => {
       const transitions = getTaskMoveTransitions(
         mkTask({ id: "FN-13", column: "in-review" }),

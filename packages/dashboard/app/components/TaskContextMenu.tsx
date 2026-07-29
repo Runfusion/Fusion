@@ -264,11 +264,28 @@ export function getTaskMoveTransitions(
   already kept for the targets themselves a few lines below.
   */
   const flagsById = new Map(visibleOrdered.map((column) => [column.id, column.flags]));
+  const orderById = new Map(visibleOrdered.map((column, index) => [column.id, index]));
   const currentFlags = flagsById.get(task.column);
+  const currentOrder = orderById.get(task.column);
   const isBackwardsLabel = (target: ColumnId): boolean => {
     if (visibleOrdered.length === 0) {
       return target === "in-progress" && task.column === "in-review";
     }
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (PR #2521 review — greptile):
+    DIRECTION as well as traits. The traits alone say "review lane -> work lane", but a
+    workflow may declare a `countsTowardWip` column AFTER its `mergeBlocker` one (a
+    rework or hotfix lane placed downstream of review). Labelling that "Back to" would
+    call a FORWARD move backwards — the same class of wrongness as the hardcoded ids
+    this predicate replaced, just arrived at differently.
+
+    Requiring the target to sit EARLIER in the workflow's declared order keeps the
+    builtin:coding set unchanged (in-progress precedes in-review) while making the
+    label mean what it says on any column layout.
+    */
+    if (currentOrder === undefined) return false;
+    const targetOrder = orderById.get(target);
+    if (targetOrder === undefined || targetOrder >= currentOrder) return false;
     return currentFlags?.mergeBlocker === true && flagsById.get(target)?.countsTowardWip === true;
   };
 
