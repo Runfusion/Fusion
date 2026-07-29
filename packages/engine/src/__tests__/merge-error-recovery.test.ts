@@ -975,4 +975,76 @@ describe("ProjectEngine merge error recovery", () => {
     releasePr?.();
     await engine.stop();
   });
+  /*
+  FNXC:AutostashRecovery 2026-07-29-11:20 (U9):
+  Replaces the deleted "creates one recovery follow-up for live autostash orphans"
+  test. The follow-up-CARD engine is gone (project-engine.ts:4801); a `live`
+  autostash orphan is now surfaced by a durable log entry PLUS an operator comment
+  on the parent, because the parent may already be `done` and merged — if nothing
+  is said the stash becomes invisible and real uncommitted work is silently lost.
+
+  The production comment is explicit that `record.label` "must never be dropped
+  from the message or truncated" — it is the handle `git stash` recovery needs.
+  That is the invariant under test here, and it had NO working assertion: the file
+  was red, so every claim it made was inert.
+
+  Only `live` orphans notify: a subsumed/dead stash holds no unique work, and
+  commenting on those would train operators to ignore the notice.
+  */
+  it("surfaces a live autostash orphan as a log entry and parent comment that keep the stash label", async () => {
+    const store = makeStore();
+    const engine = createEngine(store);
+    await engine.start();
+
+    const handler = store.on.mock.calls.find(
+      (call: unknown[]) => call[0] === "merger:autostashOrphans",
+    )?.[1] as ((payload: { rootDir: string; records: unknown[] }) => Promise<void>) | undefined;
+    if (!handler) throw new Error("merger:autostashOrphans handler was not registered");
+
+    try {
+    await handler({
+      rootDir: "/tmp/proj_test",
+      records: [
+        {
+          classification: "live",
+          sha: "abcdef1234567890",
+          label: "fusion-autostash/FN-2084/pre-merge",
+          sourceTaskId: "FN-2084",
+          detectedByTaskId: "FN-9001",
+          sourcePhase: "pre-merge",
+        },
+        // A non-live orphan must stay silent.
+        {
+          classification: "subsumed",
+          sha: "999999999999",
+          label: "fusion-autostash/FN-2084/subsumed",
+          sourceTaskId: "FN-2084",
+        },
+      ],
+    });
+
+    // Exactly one notification pair — the subsumed record is not surfaced.
+    expect(store.addTaskComment).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    const [commentTaskId, commentBody] = store.addTaskComment.mock.calls[0] as [string, string];
+    expect(commentTaskId).toBe("FN-2084");
+    // The stash label is the recovery handle: it must survive verbatim, untruncated.
+    expect(commentBody).toContain("fusion-autostash/FN-2084/pre-merge");
+    expect(commentBody).toContain("abcdef1");
+    expect(commentBody).toContain("FN-9001");
+    expect(commentBody).toContain("pre-merge");
+
+    const [logTaskId, logMessage, logDetail] = store.logEntry.mock.calls[0] as [string, string, string];
+    expect(logTaskId).toBe("FN-2084");
+    expect(logMessage).toContain("fusion-autostash/FN-2084/pre-merge");
+    expect(logDetail).toContain("fusion-autostash/FN-2084/pre-merge");
+    } finally {
+      // Always stop: a thrown assertion that leaves the engine running kills the
+      // vitest worker, and a crashed run reports NO failures at all — which reads
+      // as "this guard is untested" instead of "this guard just failed".
+      await engine.stop();
+    }
+  });
+
 });
