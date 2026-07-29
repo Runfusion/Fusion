@@ -164,6 +164,38 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     expect((await store.getTask(task.id)).column).not.toBe("custom-hold");
   });
 
+  it("reports the ACTUAL column when the re-home is blocked by capacity (PR #2512 review)", async () => {
+    const store = h.store();
+
+    /*
+    `rehomeOccupant` deliberately swallows a rejected move ("a full target column
+    rejects, which we audit and skip"), so the switch used to report the column it
+    ASKED for. Induce that: give the target workflow's entry column a WIP limit of 1
+    and fill it, so the re-home is rejected and the card stays put.
+    */
+    const targetIr = structuredClone(BUILTIN_CODING_WORKFLOW_IR) as WorkflowIrV2;
+    targetIr.name = "capped-target";
+    const entry = targetIr.columns.find((c) => c.id === "triage")!;
+    entry.traits = [...entry.traits, { trait: "wip", config: { limit: 1 } }];
+    const target = await store.createWorkflowDefinition({ name: "Capped target", ir: targetIr, layout: {} });
+
+    // Occupy the single slot in the target workflow's entry column.
+    const filler = await store.createTask({ description: "fills the cap" });
+    await store.selectTaskWorkflow(filler.id, target.id);
+    expect((await store.getTask(filler.id)).column).toBe("triage");
+
+    // A card parked in a column the target workflow does not declare.
+    const { task } = await seedOccupiedCustomColumn("Capacity source");
+
+    const result = await store.selectTaskWorkflowAndReconcile(task.id, target.id);
+
+    // The card could not move, so the response must say so rather than claiming the
+    // entry column. Reverting the re-read makes toColumn "triage" and preserved false.
+    expect((await store.getTask(task.id)).column).toBe("custom-hold");
+    expect(result.reconciliation!.toColumn).toBe("custom-hold");
+    expect(result.reconciliation!.preserved).toBe(true);
+  });
+
   it("preserves a task's column when the new workflow DOES declare it, with no flag set", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "stays put" });

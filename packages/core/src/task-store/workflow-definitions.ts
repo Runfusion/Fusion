@@ -742,6 +742,13 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     all in the production backend — the flag was hiding an unported read, not just a
     disabled feature. Caught by the production-shape tests in
     `__tests__/postgres/workflow-reconciliation-production-shape.pg.test.ts`.
+
+    NOT a missing SQLite fallback (PR #2513 review — CodeRabbit). `backendMode` is
+    defined as "the mandatory production AsyncDataLayer was injected", this module
+    already dereferences `store.asyncLayer!` in 15 other places, and the sibling
+    workflow-definition operations carry FNXC:SqliteDualPathCleanup notes stating they
+    require an AsyncDataLayer. Re-adding the synchronous reader as a fallback would
+    reintroduce exactly the throw this line fixes.
     */
     const currentRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
     if (!currentRow) return { enabledWorkflowSteps };
@@ -750,12 +757,32 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     if (!decision.preserved && decision.targetColumn !== fromColumn) {
       await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
     }
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    Report the column the task ACTUALLY has, not the one we asked for.
+    `rehomeOccupant` deliberately swallows a rejected move — "a full target column
+    rejects, which we audit and skip" — and returns void, so reporting
+    `decision.targetColumn` claimed a move that may never have happened. A caller
+    (dashboard switch, `fn_task_set_workflow`) would then show the card in a column it
+    is not in.
+
+    Re-reading also makes the reported result honest under the concurrency windows
+    raised in the same review: this call resolves the IR and re-homes AFTER
+    `selectTaskWorkflow` released its task lock, so a racing move can land in between.
+    Re-reading cannot close that window — it makes the response describe the outcome
+    rather than the intention, so a caller is never told a move succeeded when the
+    card sits elsewhere. Closing the window itself needs the switch to hold the task
+    lock across selection + reconciliation, which changes the locking contract and is
+    left as a separate, testable change rather than smuggled into a flag flip.
+    */
+    const afterRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    const actualColumn = afterRow ? String(afterRow.column) : fromColumn;
     return {
       enabledWorkflowSteps,
       reconciliation: {
-        preserved: decision.preserved,
+        preserved: actualColumn === fromColumn,
         fromColumn,
-        toColumn: decision.targetColumn,
+        toColumn: actualColumn,
       },
     };
 }

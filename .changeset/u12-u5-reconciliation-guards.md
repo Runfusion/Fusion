@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": minor
+"@runfusion/fusion": patch
 ---
 
 summary: Workflow edits, deletes, and switches now reconcile the cards sitting in the affected columns.
