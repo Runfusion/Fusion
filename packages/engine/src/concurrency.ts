@@ -320,9 +320,22 @@ consume a project slot (FNXC:ConcurrencyAdmission 2026-08-06-12:00).
 Sites that still hold a semaphore reference release it EXPLICITLY next to their
 drop, so behaviour is unchanged for any caller that supplies one.
 */
-export function dropPreHeldExecutorSlot(taskId: string): void {
-  if (!preHeldExecutorSlots.delete(taskId)) return;
+export function dropPreHeldExecutorSlot(taskId: string): boolean {
+  /*
+  FNXC:CapacityModel 2026-07-29-17:10 (PR #2574 review — greptile P1, double release):
+  RETURNS whether a registration was actually dropped, because callers that own a
+  semaphore reference must release it ONLY when this did something.
+
+  The original two-argument form released the semaphore INSIDE this guard, so a call
+  after a successful `takePreHeldExecutorSlot` was "intentionally a no-op" — the
+  transferred slot belongs to the lane, which releases it via `semaphore.run`.
+  Hoisting the release to the call site unconditionally broke that: it released a
+  slot this call never held, INFLATING capacity — the opposite of the leak the
+  cleanup was guarding against.
+  */
+  if (!preHeldExecutorSlots.delete(taskId)) return false;
   projectAdmissionCoordinator.releaseReservation(taskId);
+  return true;
 }
 
 /** Test/helper: whether a task currently has an unclaimed pre-held executor slot. */
