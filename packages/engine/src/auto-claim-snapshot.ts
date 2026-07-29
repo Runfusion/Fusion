@@ -37,15 +37,47 @@ Auto-claim runnability must have one source of truth so the snapshot rebuild and
 FNXC:AutoClaim 2026-06-21-16:09:
 FN-6873 pins `column === "todo"` as the candidate gate after FN-6872 appeared in a heartbeat prompt while archived from a stale cache. Archived, done, triage, in-progress, in-review, soft-deleted, paused, assigned, checked-out, and dependency-blocked rows can satisfy dependencies where allowed, but must never be surfaced or claimed as auto-claim candidates.
 */
-export function isRunnableAutoClaimCandidate(task: Task, tasksById: ReadonlyMap<string, Task>): boolean {
-  return task.column === "todo"
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-12:25 (U11):
+The two lifecycle ROLES this predicate decides by. `todo`/`done`/`archived` are
+only what the builtin coding workflow calls them, and the two failures point in
+OPPOSITE directions:
+
+  a renamed HOLD column makes every card fail the gate, so auto-claim surfaces
+  nothing and idle agents sit with an empty candidate list;
+
+  a renamed TERMINAL column makes finished dependencies read as UNMET, so a card
+  whose blockers are all done is never offered.
+
+Either way the symptom is a silent stall with no error. Both default to the legacy
+ids, so an unconverted caller is byte-identical.
+
+FN-6873's intent is UNCHANGED: the gate still admits ONLY the hold column, and
+archived/done/intake/wip/review rows remain excluded. This changes which id means
+"hold", not which roles may be claimed.
+*/
+export interface AutoClaimColumnRoles {
+  /** The capacity-wait column whose residents may be claimed. */
+  hold: string;
+  /** Columns that end a task's life, satisfying a dependency. */
+  terminal: readonly string[];
+}
+
+const LEGACY_AUTO_CLAIM_ROLES: AutoClaimColumnRoles = { hold: "todo", terminal: ["done", "archived"] };
+
+export function isRunnableAutoClaimCandidate(
+  task: Task,
+  tasksById: ReadonlyMap<string, Task>,
+  roles: AutoClaimColumnRoles = LEGACY_AUTO_CLAIM_ROLES,
+): boolean {
+  return task.column === roles.hold
     && task.paused !== true
     && !task.assignedAgentId
     && !task.checkedOutBy
     && !task.deletedAt
     && task.dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
-      return dependency?.column === "done" || dependency?.column === "archived";
+      return dependency !== undefined && roles.terminal.includes(dependency.column);
     });
 }
 
