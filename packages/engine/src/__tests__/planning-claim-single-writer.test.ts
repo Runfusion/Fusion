@@ -55,18 +55,32 @@ const REPO_ROOT = resolve(import.meta.dirname, "../../../..");
  * the day they appear, with no allowlist to forget to update.
  */
 function sourceRoots(base: string = REPO_ROOT): string[] {
-  const packagesDir = join(base, "packages");
-  return readdirSync(packagesDir)
-    .filter((name) => {
-      const src = join(packagesDir, name, "src");
+  /*
+  FNXC:PlanningClaimSingleWriter 2026-07-29-20:30 (PR #2587 review — greptile P2):
+  BOTH first-party trees. `packages/` alone left `plugins/<name>/src` unscanned, and
+  a first-party plugin can reach the task store — so a plugin writing the planning
+  claim sat outside a ratchet whose whole assertion is "production-wide". Same shape
+  as the hardcoded four-package list this function already replaced: a guard whose
+  blind spot is defined by wherever someone happened to look.
+  */
+  const roots: string[] = [];
+  for (const tree of ["packages", "plugins"]) {
+    const dir = join(base, tree);
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue; // A tree absent from this checkout is not a hole.
+    }
+    for (const name of entries) {
       try {
-        return statSync(src).isDirectory();
+        if (statSync(join(dir, name, "src")).isDirectory()) roots.push(`${tree}/${name}/src`);
       } catch {
-        return false;
+        /* not a source package */
       }
-    })
-    .map((name) => `packages/${name}/src`)
-    .sort();
+    }
+  }
+  return roots.sort();
 }
 
 /**
@@ -226,11 +240,19 @@ describe("the planning claim has a single writer (U7 / FN-8504)", () => {
     const claims = [...source.matchAll(/status:\s*"planning"/g)];
     expect(claims).toHaveLength(1);
 
-    // The single claim sits inside an `updatePlanningStateIfStillCurrent(...)` call.
-    const claimLine = source
-      .split("\n")
-      .find((line) => /status:\s*"planning"/.test(line));
-    expect(claimLine).toMatch(/updatePlanningStateIfStillCurrent/);
+    /*
+    FNXC:PlanningClaimSingleWriter 2026-07-29-20:30 (PR #2587 review — greptile P2):
+    Assert CONTAINMENT, not co-location. The original required the helper name and
+    the literal to share a physical line, so wrapping the call across lines during
+    routine formatting would fail a guard about WHO writes the claim, for reasons of
+    whitespace. A ratchet that breaks on formatting gets deleted by the first person
+    it annoys — the same end state as not having one.
+    */
+    const claimIndex = source.search(CLAIM_WRITE);
+    const helperIndex = source.lastIndexOf("updatePlanningStateIfStillCurrent(", claimIndex);
+    expect(helperIndex).toBeGreaterThan(-1);
+    // Nothing may terminate that call between the helper and the claim.
+    expect(source.slice(helperIndex, claimIndex)).not.toMatch(/;/);
   });
 
   /*
