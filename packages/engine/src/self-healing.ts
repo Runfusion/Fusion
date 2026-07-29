@@ -3009,7 +3009,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const tasks = await this.store.listTasks({ column: "triage", slim: true });
+      /*
+      FNXC:WorkflowColumns 2026-07-29-17:40 (PR #2560 review — greptile P1):
+      THE QUERY carried the literal too, and I missed it while converting this
+      sweep's predicate. `listTasks({ column: "triage" })` returns EMPTY for the
+      merged default lineage (#2515 collapsed the two pre-implementation columns
+      into one with id "todo") and for any workflow that renamed its intake column —
+      so the role-aware filter below received no candidates and this recovery was
+      dead, silently. Converting a predicate while leaving its source query on a
+      literal produces a sweep that LOOKS converted and does nothing.
+
+      Read the board and filter by role. `slim` is preserved; the extra cost is one
+      board read per sweep instead of an indexed column read, which the per-workflow
+      IR cache below bounds to one resolution per workflow rather than per task.
+      */
+      const tasks = await this.filterByPreWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        ["intake"],
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const hasForeignPathOwner = (task: Task) => {
@@ -3023,8 +3041,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       test failing — the sweep would simply never fire again.
       */
       const preWipCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-      const intakeTasks = await this.filterByPreWipRole(tasks, ["intake"], preWipCache);
-      const candidates = intakeTasks.filter((task) =>
+      const candidates = tasks.filter((task) =>
         task.status == null
         && !task.paused
         && !task.error
@@ -9262,6 +9279,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const now = Date.now();
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowColumns 2026-07-29-17:40 (PR #2560 review):
+      This trio is a UNION and is deliberately left on literals. For the merged
+      default lineage the `triage` read returns empty and `todo` supplies the cards;
+      for a legacy/custom workflow that still declares `triage` it supplies them.
+      Either way the union is complete, and the role filter below decides which rows
+      count as pre-WIP. Unlike the recoverAdvancedTriageTasks query this replaces
+      nothing and disables nothing — it is a redundant read, not a dead sweep.
+      */
       const triage = await this.store.listTasks({ column: "triage", slim: true });
       const todo = await this.store.listTasks({ column: "todo", slim: true });
       const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
