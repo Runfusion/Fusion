@@ -134,6 +134,34 @@ async function resolveHoldColumnForTask(
   }
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-15:20:
+The REVIEW half of the same threading `resolveHoldColumnForTask` does for hold.
+
+B1 gave `getStalePausedTodoSignal` a `holdColumn` parameter and PR #2470's review
+caught that both hydration sites here omitted it — a correct guard comparing against
+the literal, so the badge was silent on a renamed board. That P1 was fixed for hold and
+NOT for its sibling role: `getStalePausedReviewSignal` and `getInReviewStalledSignal`
+both take `reviewColumn`, and all six call sites in this file left it defaulted to
+"in-review". Same defect, same file, one role over.
+
+Fail-soft to "in-review" for the same reason as the hold helper: this is read-path badge
+hydration, so a workflow lookup failure must degrade to today's behavior rather than
+break a board list. Cache is caller-owned so a list pass reads one IR per workflow.
+*/
+async function resolveReviewColumnForTask(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<string> {
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
+    return lifecycle?.review ?? "in-review";
+  } catch {
+    return "in-review";
+  }
+}
+
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {
       // FNXC:RuntimePersistenceAsync 2026-06-24-10:50:
@@ -190,11 +218,13 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
+      const reviewColumnForTask = await resolveReviewColumnForTask(store, task.id);
       task.inReviewStalled = mergeQueuedTaskIds.has(task.id)
         ? undefined
         : getInReviewStalledSignal(task, {
           now,
           executingTaskIds,
+          reviewColumn: reviewColumnForTask,
           thresholdMs: settings.inReviewStalledThresholdMs,
           autoMerge: allowsAutoMergeProcessing(task, settings),
           engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -351,15 +381,18 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
+      const reviewColumnForRow = await resolveReviewColumnForTask(store, task.id, listPassIrCache);
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+        reviewColumn: reviewColumnForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: reviewColumnForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -506,10 +539,20 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     */
     const pageRows = pgRows.slice(0, resolvedLimit);
     const holdColumnByTaskId = new Map<string, string>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:20:
+    The review column is pre-resolved here for the same reason the hold column is: the
+    row mapping below is SYNCHRONOUS, so a per-row `await` is not available to it. Both
+    share one IR cache, so a page spanning three workflows reads three IRs regardless of
+    card count. Unlike hold — which only matters for a paused card — the review signals
+    apply to any row, so this resolves for every row on the page.
+    */
+    const reviewColumnByTaskId = new Map<string, string>();
     {
       const irCache = new Map<string, WorkflowIr>();
       for (const pgRow of pageRows) {
         const row = store.pgRowToTaskRow(pgRow);
+        reviewColumnByTaskId.set(row.id, await resolveReviewColumnForTask(store, row.id, irCache));
         if (store.rowToTask(row).paused !== true) continue;
         holdColumnByTaskId.set(row.id, await resolveHoldColumnForTask(store, row.id, irCache));
       }
@@ -535,15 +578,18 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
+      const reviewColumnForRow = reviewColumnByTaskId.get(task.id) ?? "in-review";
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+        reviewColumn: reviewColumnForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: reviewColumnForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -625,6 +671,8 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     const now = Date.now();
     const settings = await store.getSettingsFast();
     const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
+    // Shared across the page so one workflow is read once, not once per hit.
+    const searchPassIrCache = new Map<string, WorkflowIr>();
     const tasks = await Promise.all(pgRows.map(async (pgRow) => {
       const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
       const isMergeQueued = mergeQueuedTaskIds.has(task.id);
@@ -649,6 +697,7 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: await resolveReviewColumnForTask(store, task.id, searchPassIrCache),
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
