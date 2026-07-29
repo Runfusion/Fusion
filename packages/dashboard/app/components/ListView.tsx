@@ -855,6 +855,21 @@ export function ListView({
     return null;
   }, [boardWorkflows, workflowMode]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The card's INTAKE role, from its own column's traits. Both grouped-list render paths
+  gated the transient Planning badge on `task.column === "triage"`, which U11 deletes —
+  the badge would simply stop appearing on planning rows, with nothing failing.
+
+  ONE fallback, matching TaskCard: `columnFlagsById` has no entry for a column the
+  resolved workflow does not declare (a stranded card, or the pre-load window), and a
+  bare trait read would drop the badge there too.
+  */
+  const isIntakeColumnForTask = useCallback((task: Task): boolean => {
+    const flags = columnFlagsById.get(task.column);
+    return flags ? flags.intake === true : task.column === "triage";
+  }, [columnFlagsById]);
+
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
     return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
   }, [columnFlagsById, workflowMode]);
@@ -1903,8 +1918,19 @@ export function ListView({
     try {
       const hasStepProgress = task.steps.some((step) => step.status !== "pending");
       const targetFlags = columnFlagsById.get(column);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      Flags FIRST, ids only when the destination has no resolved metadata. The previous
+      form OR-ed the two, so a column merely NAMED `todo` or `triage` prompted regardless
+      of its traits — and post-U11 that is the merged column's id, meaning the legacy
+      disjunct would keep firing for reasons unrelated to what the column IS. Reading the
+      traits when they exist makes the rule mean "moving back into a pre-implementation
+      lane", which is the thing worth warning about.
+      */
       const shouldPrompt = hasStepProgress && (
-        column === "todo" || column === "triage" || Boolean(targetFlags?.intake || targetFlags?.hold)
+        targetFlags
+          ? Boolean(targetFlags.intake || targetFlags.hold)
+          : column === "todo" || column === "triage"
       );
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
@@ -2451,8 +2477,12 @@ export function ListView({
         const task = tasks.find((candidate) => candidate.id === taskId);
         const hasStepProgress = task?.steps.some((step) => step.status !== "pending") ?? false;
         const targetFlags = columnFlagsById.get(column);
+        // Same rule as the context-menu move above: flags first, ids only as the
+        // no-metadata fallback.
         const shouldPrompt = hasStepProgress && (
-          column === "todo" || column === "triage" || Boolean(targetFlags?.intake || targetFlags?.hold)
+          targetFlags
+            ? Boolean(targetFlags.intake || targetFlags.hold)
+            : column === "todo" || column === "triage"
         );
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
@@ -2941,9 +2971,9 @@ export function ListView({
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
-                          const isTransientPlannerActive = task.column === "triage"
+                          const isTransientPlannerActive = isIntakeColumnForTask(task)
                             && !visualStatus
                             && Boolean(task.recentAgentActivityAt)
                             && isAgentActive;
@@ -3204,9 +3234,9 @@ export function ListView({
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                            const isTransientPlannerActive = task.column === "triage"
+                            const isTransientPlannerActive = isIntakeColumnForTask(task)
                               && !visualStatus
                               && Boolean(task.recentAgentActivityAt)
                               && isAgentActive;
