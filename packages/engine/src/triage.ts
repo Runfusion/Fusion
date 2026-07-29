@@ -34,7 +34,7 @@ import {
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
-  resolveTaskLifecycleColumns,
+  resolveLifecycleColumns,
   getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
@@ -54,7 +54,6 @@ import {
   localeDisplayName,
   parsePlanningPlanMd,
   type NearDuplicateCandidate,
-  resolveLifecycleColumns,
 } from "@fusion/core";
 
 
@@ -291,6 +290,7 @@ export interface PlanningHandoffReport {
 }
 
 
+
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-29-08:40 (U11 conversion — triage planner lanes):
 The PLANNER LANES for a task: the columns where specification happens, resolved
@@ -324,6 +324,15 @@ function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; 
     return { hold: "todo", intake: "triage" };
   }
 }
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-19:10 (U11 — STALL 3):
+The pre-implementation column ids that shipped as the builtin lifecycle vocabulary,
+and therefore the only ids a lineage change can leave a card stranded on. Used to
+scope the undeclared-column rescue in `discoverReadyPlanningTasks`; deliberately not
+derived from the IR, since the point is to recognise a column the CURRENT workflow
+no longer has.
+*/
+const LEGACY_PLANNER_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
 
 export class TriageProcessor {
   private running = false;
@@ -1523,15 +1532,35 @@ export class TriageProcessor {
     };
 
     const candidates = allTasks.filter(couldBeCandidate);
-    const lifecycleByTaskId = new Map<string, { intake?: string; hold?: string }>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
+    Resolves the IR ONCE per candidate and derives both the lifecycle roles and the
+    DECLARED column ids from it. Previously this called `resolveTaskLifecycleColumns`,
+    which returns roles only; the declared set is what the undeclared-column rescue
+    below needs, and taking it from the same resolution keeps the cost identical
+    (same call, same `irCache`, same bounded window) rather than adding a read.
+    */
+    const lifecycleByTaskId = new Map<string, { intake?: string; hold?: string; declared: ReadonlySet<string> }>();
     const RESOLUTION_CONCURRENCY = 8;
     for (let offset = 0; offset < candidates.length; offset += RESOLUTION_CONCURRENCY) {
       const window = candidates.slice(offset, offset + RESOLUTION_CONCURRENCY);
       const resolved = await Promise.all(
-        window.map((t) => resolveTaskLifecycleColumns(this.store, t.id, irCache)),
+        window.map(async (t) => {
+          try {
+            const ir = await resolveWorkflowIrForTask(this.store, t.id, irCache);
+            const roles = resolveLifecycleColumns(ir);
+            const columns = (ir as { columns?: { id: string }[] }).columns ?? [];
+            return { ...roles, declared: new Set(columns.map((c) => c.id)) };
+          } catch {
+            return undefined;
+          }
+        }),
       );
       window.forEach((t, index) => {
-        lifecycleByTaskId.set(t.id, resolved[index] ?? { intake: "triage", hold: "todo" });
+        lifecycleByTaskId.set(
+          t.id,
+          resolved[index] ?? { intake: "triage", hold: "todo", declared: new Set<string>() },
+        );
       });
     }
 
@@ -1539,10 +1568,62 @@ export class TriageProcessor {
     // candidate and both predicates are correctly false for it.
     const isAtHoldColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.hold === t.column;
     const isAtIntakeColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.intake === t.column;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
+    A card in a column its OWN workflow does not declare is unowned by construction:
+    no lane's rules apply to it, so no sweep claims it.
+
+    #2515 created a population of exactly these. It removed `triage` from the default
+    lineage while leaving the id legal for stored rows, and shipped no migration — so
+    every project upgrading has cards sitting in a column their workflow no longer
+    knows about. Both role checks above miss them (a default card's `intake` and
+    `hold` are BOTH `todo`), and the rebound paths that could move them are all
+    triggered by ACTIVE work, which a parked card has none of. Discovery admitted
+    nothing and the card sat until an operator dragged it by hand.
+
+    Admitting it to PLANNING heals it without a data migration: it gets planned, and
+    finalize releases it to the workflow's hold column, re-homing the row as a side
+    effect of ordinary work.
+
+    An EMPTY declared set means the IR could not be resolved (or is column-less v1) —
+    that is ignorance, not evidence of strandedness, so it must never trigger the
+    rescue. Requiring a non-empty set keeps an unresolvable workflow behaving exactly
+    as before.
+
+    NARROWED to the LEGACY LIFECYCLE IDS, and this is the load-bearing half. "Any
+    undeclared column" is too broad: a card can also sit in a column its workflow
+    genuinely owns while the SELECTION fails to resolve, and then the resolved
+    default IR does not declare that column either. The first version of this rescue
+    re-specified a parked Coding (Ideas) `ideas` card for exactly that reason, which
+    breaks FN-7596's manual-intake rule — an ideas card is promoted by an OPERATOR,
+    never auto-planned. `triage.test.ts` caught it.
+
+    So the rescue is scoped to the population a lineage change can actually strand: a
+    card resting on a legacy PRE-IMPLEMENTATION id that its own workflow no longer
+    declares. A workflow-specific column name is never rescued, which is the
+    difference between healing #2515's orphans and second-guessing a workflow about
+    its own board.
+    */
+    const isAtUndeclaredColumn = (t: Task): boolean => {
+      const declared = lifecycleByTaskId.get(t.id)?.declared;
+      if (declared === undefined || declared.size === 0) return false;
+      return LEGACY_PLANNER_COLUMN_IDS.has(t.column) && !declared.has(t.column);
+    };
 
     const eligibleTriageTasks = candidates.filter(
       // `!isAtHoldColumn` keeps the two branches disjoint for a merged intake+hold column.
-      (t) => isAtIntakeColumn(t) && !isAtHoldColumn(t) && isTaskStillInPlanningStage(t)
+      /* `isTaskStillInPlanningStage` is what keeps the rescue narrow: a card that
+         advanced past planning in an undeclared column stays with self-healing's
+         advanced-recovery sweep instead of being re-specified here. */
+      /* `t.userPaused !== true` is explicit rather than inherited from `t.paused`.
+         The ratified safeguard is that a user-paused card's lifecycle state is never
+         MUTATED, and planning a card mutates it. `couldBeCandidate` screens only
+         `paused`, so a row carrying `userPaused` without `paused` slipped through —
+         invisible before this change (an undeclared-column card was admitted by
+         nothing at all) and reachable the moment the rescue widens admission. */
+      (t) => ((isAtIntakeColumn(t) && !isAtHoldColumn(t)) || isAtUndeclaredColumn(t))
+        && t.userPaused !== true
+        && isTaskStillInPlanningStage(t)
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
