@@ -94,6 +94,22 @@ export function hasAdvancedPastPlanning(
   because that file belongs to another worker's slice.
   */
   plannerColumn: string = "triage",
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-29-15:10 (U11 — post-#2515 P0 audit):
+  The workflow's MERGED planning column: a lane that is the planner AND the hold
+  column at once. #2515 made that the default lineage's shape (one
+  pre-implementation column, id `todo`, display "Planning"), so this defaults to
+  `todo` rather than being absent — that default is what closes the stall for
+  every caller at once, with no call-site change.
+
+  Deliberately SEPARATE from `plannerColumn`, because the two rules below are not
+  the same rule. A merged column participates in the FN-8596 arrival-order rescue
+  but NOT in the "planner column is never advanced" shortcut: on a merged lineage
+  the same id also means "released, awaiting capacity", and a released card with
+  steps must keep reading as advanced or `hasAdvancedPastPlanning(t) ||
+  releasedToTodo` stops distinguishing anything.
+  */
+  roles: { mergedPlanningColumn?: string } = { mergedPlanningColumn: "todo" },
 ): boolean {
   if (
     task.column === "in-progress"
@@ -174,7 +190,11 @@ export function hasAdvancedPastPlanning(
     AFTER landing here has a stamp NEWER than its arrival, so it still reads advanced and stays with
     the advanced-recovery sweep.
     */
-    const inPlannerLane = task.column === plannerColumn;
+    /* Merged lanes participate HERE — the rescue is already gated on the stamp
+       predating arrival, so a released card later claimed by execution (newer
+       stamp) still reads as advanced and stays with the advanced-recovery sweep. */
+    const inPlannerLane = task.column === plannerColumn
+      || (roles.mergedPlanningColumn != null && task.column === roles.mergedPlanningColumn);
     if (!(stampPredatesArrival && inPlannerLane)) {
       return true;
     }
@@ -204,8 +224,9 @@ export function isTaskStillInPlanningStage(
   task: Pick<Task, "column" | "worktree" | "steps" | "status">
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
   plannerColumn: string = "triage",
+  roles: { mergedPlanningColumn?: string } = { mergedPlanningColumn: "todo" },
 ): boolean {
-  return !hasAdvancedPastPlanning(task, plannerColumn);
+  return !hasAdvancedPastPlanning(task, plannerColumn, roles);
 }
 
 export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string> {
