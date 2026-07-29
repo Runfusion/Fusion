@@ -1792,9 +1792,6 @@ export class TriageProcessor {
       exceed its operator-facing top-level capacity in a different lane.
       */
       const maxConcurrent = settings.maxConcurrent ?? 2;
-      const semaphoreAvailable = this.options.semaphore
-        ? Math.max(0, this.options.semaphore.availableCount)
-        : Infinity;
       // processing entries that have not yet written status:"planning" still claim a future slot.
       let pendingSpecifyCount = 0;
       for (const id of this.processing) {
@@ -1806,23 +1803,33 @@ export class TriageProcessor {
         tasks: allTasks,
         pendingSpecifyCount,
       });
-      // `claimed` is project-local. The scoped/global host semaphore remains a
-      // distinct process-wide availability gate, so project A cannot spend B's cap.
+      /*
+      FNXC:CapacityModel 2026-07-29-10:20 (drop the cross-project cap — throttle payload):
+      Capacity is the PROJECT's agent count, full stop. The second term was the
+      cross-project host semaphore, which is deleted — nothing wires
+      `options.semaphore` any more, so its availability was permanently Infinity and
+      `Math.min` was a no-op keeping a dead limiter visible in the arithmetic.
+      */
       const projectRoom = Math.max(0, maxConcurrent - claimed);
-      const maxToStart = Math.min(projectRoom, semaphoreAvailable);
+      const maxToStart = projectRoom;
 
       if (maxToStart <= 0 && triageTasks.length > 0) {
-        const semaphoreSnapshot = this.options.semaphore?.snapshot();
-        const semaphoreDetail = semaphoreSnapshot
-          ? `, semaphore active=${semaphoreSnapshot.activeCount}/${semaphoreSnapshot.limit}, available=${semaphoreSnapshot.availableCount}, waiting=${semaphoreSnapshot.waitingCount}`
-          : ", semaphore unavailable";
         const processingIds = [...this.processing].slice(0, 5);
         const eligibleIds = triageTasks.slice(0, 5).map((t) => t.id);
-        const blockedBy = projectRoom <= 0 ? "running-agent cap" : "global semaphore";
+        /*
+        FNXC:CapacityModel 2026-07-29-10:20 (drop the cross-project cap — throttle payload):
+        `blockedBy` was a DISCRIMINATOR between two gates: "running-agent cap" and
+        "global semaphore". With the machine-wide cap deleted there is only one gate
+        left, so the field collapses to a constant. It is KEPT rather than dropped:
+        the event's whole purpose (FN-8600) is answering "why did this card sit
+        queued?", and a named reason answers it even when there is only one — while
+        a payload with no reason field at all would read as "unknown".
+        */
+        const blockedBy = "running-agent cap";
         planLog.log(
           `Plan throttled by ${blockedBy}: eligible=${triageTasks.length} [${eligibleIds.join(", ")}], ` +
           `maxConcurrent=${maxConcurrent}, claimed=${claimed}, processing=${this.processing.size}` +
-          `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}${semaphoreDetail}`,
+          `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}`,
         );
         /*
         FNXC:ConcurrencyAdmission 2026-07-26-09:30:
@@ -1849,14 +1856,19 @@ export class TriageProcessor {
         Live counts still jitter as unrelated lanes cycle, so this bounds write volume rather than
         guaranteeing exactly one row.
         */
+        /*
+        FNXC:CapacityModel 2026-07-29-10:20: the two semaphore terms are dropped from
+        the dedupe signature with the gate they described. `blockedBy` is now
+        constant and contributes nothing, but stays for readability of the key; the
+        eligible task IDs remain the term that keeps a NEW card's stall from being
+        swallowed by an unchanged count tuple.
+        */
         const throttleSignature = [
           blockedBy,
           maxConcurrent,
           claimed,
           triageTasks.length,
           this.processing.size,
-          semaphoreSnapshot?.activeCount ?? -1,
-          semaphoreSnapshot?.limit ?? -1,
           eligibleIds.join(","),
         ].join("|");
         if (this.lastPlanThrottleSignature !== throttleSignature) {
@@ -1884,10 +1896,6 @@ export class TriageProcessor {
               eligibleTaskIds: eligibleIds,
               processingCount: this.processing.size,
               processingTaskIds: processingIds,
-              semaphoreActiveCount: semaphoreSnapshot?.activeCount,
-              semaphoreLimit: semaphoreSnapshot?.limit,
-              semaphoreAvailableCount: semaphoreSnapshot?.availableCount,
-              semaphoreWaitingCount: semaphoreSnapshot?.waitingCount,
             },
           })
             .then(() => {
