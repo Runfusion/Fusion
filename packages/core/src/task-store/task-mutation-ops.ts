@@ -12,7 +12,7 @@ const severityAuditLog = createLogger("core-task-mutation-ops");
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {TaskDeletedError} from "./errors.js";
+import {TaskDeletedError, TaskNotFoundError} from "./errors.js";
 import type {LegacyAutoMergeStampReconcileResult} from "../store.js";
 import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
@@ -26,7 +26,7 @@ import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
-import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, resolveActiveTaskWedgeEpisodeRow} from "../task-store/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
 import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
@@ -371,6 +371,30 @@ export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater
       return store.updateTaskUnlocked(id, updates, runContext);
     });
   }
+
+export async function resolveTaskWedgeNotificationEpisodeImpl(
+  store: TaskStore,
+  id: string,
+  episodeId: string,
+): Promise<{ task: Task; resolved: boolean }> {
+  const layer = store.asyncLayer!;
+  const row = await resolveActiveTaskWedgeEpisodeRow(layer, id, episodeId, new Date().toISOString());
+  if (row) {
+    const task = store.rowToTask(store.pgRowToTaskRow(row));
+    await store.writeTaskJsonFile(store.taskDir(id), task);
+    if (store.isWatching) store.taskCache.set(id, { ...task });
+    store.emitTaskLifecycleEventSafely("task:updated", [task]);
+    return { task, resolved: true };
+  }
+
+  const currentRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+  if (!currentRow) throw new TaskNotFoundError(id);
+  if (currentRow.deletedAt) throw new TaskDeletedError(id, currentRow.deletedAt as string);
+  return {
+    task: store.rowToTask(store.pgRowToTaskRow(currentRow)),
+    resolved: false,
+  };
+}
 
 export function getWorkflowPromptOverridesImpl(_store: TaskStore, _workflowId: string, _projectId: string): Record<string, string> {
     /*

@@ -4936,21 +4936,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("episodeId must be a non-empty string");
       }
 
-      const updated = await scopedStore.updateTaskAtomic(id, (current) => {
-        const wedge = current.wedgeNotification;
-        if (!wedge || wedge.status !== "active" || wedge.episodeId !== episodeId) return null;
-        return {
-          wedgeNotification: {
-            ...wedge,
-            status: "resolved",
-            transitionedAt: new Date().toISOString(),
-          },
-        };
-      });
-      if (updated.wedgeNotification?.episodeId !== episodeId || updated.wedgeNotification.status !== "resolved") {
+      const result = await scopedStore.resolveTaskWedgeNotificationEpisode(id, episodeId);
+      if (!result.resolved) {
         throw conflict(`Wedge episode ${episodeId} is no longer active`);
       }
-      res.json(updated);
+      res.json(result.task);
     } catch (err: unknown) {
       rethrowTaskApiError(err, req.params.id);
     }

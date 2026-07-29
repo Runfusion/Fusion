@@ -2,12 +2,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
-import { TaskNotFoundError, type TaskStore } from "@fusion/core";
+import { TaskDeletedError, TaskNotFoundError, type TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../../routes.js";
 import { request as REQUEST } from "../../test-request.js";
 
 interface HarnessOptions {
   missing?: boolean;
+  deleted?: boolean;
   rejectStepTransition?: boolean;
   wedgeEpisodeId?: string;
 }
@@ -41,26 +42,30 @@ function createHarness(options: HarnessOptions = {}) {
     if (!options.rejectStepTransition) task.steps[index].status = status;
     return task;
   });
-  const updateTaskAtomic = vi.fn(async (
-    _id: string,
-    updater: (current: typeof task) => Record<string, unknown> | null | undefined,
-  ) => {
+  const resolveTaskWedgeNotificationEpisode = vi.fn(async (_id: string, episodeId: string) => {
     if (options.missing) throw new TaskNotFoundError("FN-001");
-    const updates = await updater(task);
-    if (updates) Object.assign(task, updates);
-    return task;
+    if (options.deleted) throw new TaskDeletedError("FN-001", "2026-07-29T00:00:00.000Z");
+    if (task.wedgeNotification.episodeId !== episodeId || task.wedgeNotification.status !== "active") {
+      return { task, resolved: false };
+    }
+    task.wedgeNotification = {
+      ...task.wedgeNotification,
+      status: "resolved",
+      transitionedAt: "2026-07-29T00:01:00.000Z",
+    };
+    return { task, resolved: true };
   });
   const store = {
     getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
     getTask,
     updateStep,
-    updateTaskAtomic,
+    resolveTaskWedgeNotificationEpisode,
   } as unknown as TaskStore;
   const app = express();
   app.use(express.json());
   app.use("/api", createApiRoutes(store));
-  return { app, getTask, updateStep, updateTaskAtomic, task };
+  return { app, getTask, updateStep, resolveTaskWedgeNotificationEpisode, task };
 }
 
 describe("task checklist step update route", () => {
@@ -113,7 +118,7 @@ describe("task checklist step update route", () => {
   });
 
   it("resolves only the observed stale task wedge episode", async () => {
-    const { app, updateTaskAtomic } = createHarness();
+    const { app, resolveTaskWedgeNotificationEpisode } = createHarness();
     const response = await REQUEST(
       app,
       "POST",
@@ -123,7 +128,7 @@ describe("task checklist step update route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(updateTaskAtomic).toHaveBeenCalledOnce();
+    expect(resolveTaskWedgeNotificationEpisode).toHaveBeenCalledWith("FN-001", "episode-observed");
     expect((response.body as { wedgeNotification: { status: string } }).wedgeNotification.status).toBe("resolved");
   });
 
@@ -142,7 +147,7 @@ describe("task checklist step update route", () => {
   });
 
   it("requires the observed wedge episode id", async () => {
-    const { app, updateTaskAtomic } = createHarness();
+    const { app, resolveTaskWedgeNotificationEpisode } = createHarness();
     const response = await REQUEST(
       app,
       "POST",
@@ -152,7 +157,20 @@ describe("task checklist step update route", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(updateTaskAtomic).not.toHaveBeenCalled();
+    expect(resolveTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
+  });
+
+  it("maps a soft-deleted wedge mutation to 404", async () => {
+    const { app } = createHarness({ deleted: true });
+    const response = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks/FN-001/wedge/resolve",
+      JSON.stringify({ episodeId: "episode-observed" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(404);
   });
 
   it.each([
