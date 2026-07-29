@@ -34,6 +34,13 @@ the rebound strand and the terminal fallback are all `??` defaults and were invi
 to a comparison-only regex — a census that could not see three of the five bugs it
 cites as its reason to exist.
 
+RESIDUAL IMPRECISION, stated rather than tuned away: a couple of counted lines are
+display defaults (a column rendered in CLI output). They are left in. The census claims
+each site NEEDS A HUMAN JUDGMENT, and a display default passes that judgment in seconds;
+chasing them would cost more than the precision buys and would make the pattern too
+clever to trust. Agent-id fallbacks are excluded because they are a QUARTER of the
+shape, not because false positives are intolerable in principle.
+
 `?? "builtin:coding"` — the pool-id sentinel — is deliberately still NOT counted here.
 It defaults a WORKFLOW id, not a column, and it is legitimately correct at most of its
 sites (an IR-resolution key needs a resolvable workflow id). It has its own, stronger
@@ -70,16 +77,27 @@ const LEGACY_COLUMN_COMPARISON = /\.column\s*(?:===|!==)\s*"(?:todo|triage|in-pr
 /** DEFAULTING to a legacy column name when a role does not resolve. */
 const LEGACY_COLUMN_FALLBACK = /\?\?\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-14:40:
+`"triage"` is BOTH a column id and the synthetic agent id used for triage-authored
+audit rows, so `agentId: task.assignedAgentId ?? "triage"` matches the fallback shape
+while having nothing to do with columns. Eight such lines exist, all in triage.ts —
+roughly a quarter of the fallback count, which is enough to make the number wrong
+rather than merely imprecise. A census with known false positives is one people learn
+to discount, which is the same end state as not having it.
+*/
+const AGENT_ID_FALLBACK = /(?:agentId\s*[:=]|assignedAgentId|agent\?\.id)[^"]*\?\?\s*"triage"/;
+
 const LEGACY_COLUMN_DECISION = new RegExp(
   `(?:${LEGACY_COLUMN_COMPARISON.source})|(?:${LEGACY_COLUMN_FALLBACK.source})`,
 );
 
 /*
 The pinned ceiling. Measured 2026-07-29 on main at the U12-part-9 tip:
-417 comparisons + 31 fallbacks, of which 2 lines carry both shapes -> 446 lines. LOWER THIS when a conversion slice reduces the count —
+417 comparisons + 31 column fallbacks, minus 8 agent-id false positives and 2 lines carrying both shapes -> 438 lines. LOWER THIS when a conversion slice reduces the count —
 in the same PR.
 */
-const CEILING = 446;
+const CEILING = 438;
 
 function productionSources(): string[] {
   const out = execFileSync(
@@ -107,7 +125,11 @@ function census(): { total: number; byFile: Map<string, number> } {
       continue;
     }
     let n = 0;
-    for (const line of text.split("\n")) if (LEGACY_COLUMN_DECISION.test(line)) n += 1;
+    for (const line of text.split("\n")) {
+      if (!LEGACY_COLUMN_DECISION.test(line)) continue;
+      if (AGENT_ID_FALLBACK.test(line) && !LEGACY_COLUMN_COMPARISON.test(line)) continue;
+      n += 1;
+    }
     if (n > 0) {
       byFile.set(file, n);
       total += n;
@@ -176,6 +198,24 @@ describe("legacy column-literal census — the unconverted lifecycle surface", (
     for (const line of motivating) {
       expect(LEGACY_COLUMN_DECISION.test(line), `census is blind to: ${line}`).toBe(true);
     }
+  });
+
+  it("does not count an agent-id fallback that merely spells a column name", () => {
+    /* `"triage"` is both a column id and the synthetic triage agent id. Counting these
+       inflated the number by eight, all in triage.ts. */
+    const agentLines = [
+      'agentId: task.assignedAgentId ?? "triage",',
+      'auditContext: { agentId: task.assignedAgentId ?? "triage", runId: x },',
+      'agentId: assignedAgent?.id ?? "triage",',
+    ];
+    for (const line of agentLines) {
+      expect(LEGACY_COLUMN_DECISION.test(line), "matches the raw shape").toBe(true);
+      expect(AGENT_ID_FALLBACK.test(line), `should be excluded: ${line}`).toBe(true);
+    }
+    // ...but a genuine column fallback that mentions triage is still counted.
+    const columnLine = 'const intake = first("intake") ?? "triage";';
+    expect(AGENT_ID_FALLBACK.test(columnLine)).toBe(false);
+    expect(LEGACY_COLUMN_DECISION.test(columnLine)).toBe(true);
   });
 
   it("counts a DECISION, not a mention", () => {
