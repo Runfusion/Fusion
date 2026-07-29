@@ -136,9 +136,28 @@ function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityE
   };
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+This is the SOURCE of the planner-activity signal, and it was the narrowest gate of all:
+it only stamped `recentAgentActivityAt` for cards literally in `triage`. #2515 removed
+that column from the default lineage, so after that merge the stamp never happened for a
+default-workflow card — and every consumer downstream (the pulsing Planning badge, the
+agent-active row border, the column's executing count) had NO DATA to act on, however
+correctly they resolved their own column traits.
+
+Converting the consumers without this would have been cosmetic: they would ask the right
+question of a field nothing ever set.
+
+This hook processes SSE and has no resolved column metadata, so the lane is matched by id
+against BOTH shapes — pre-merge `triage` and post-merge `todo`. Over-stamping a legacy
+hold-lane card is harmless: every consumer additionally requires the column to be an
+INTAKE lane before showing anything, so the extra timestamps are filtered downstream.
+*/
+const PLANNER_ACTIVITY_COLUMN_IDS = new Set(["triage", "todo"]);
+
 function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
   if (
-    task.column !== "triage"
+    !PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)
     || task.status === "planning"
     || entry.agent !== "triage"
     || !hasFreshAgentLog(task, entry)

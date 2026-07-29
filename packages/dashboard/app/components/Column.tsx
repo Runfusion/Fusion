@@ -434,7 +434,18 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     try {
       const sourceTask = allTasks?.find((t) => t.id === taskId) ?? task;
       const hasStepProgress = sourceTask?.steps.some((step) => step.status !== "pending") ?? false;
-      const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      This component's `column` IS the drop target, so its own `columnFlags` are the
+      target's traits — no lookup needed, unlike the same prompt in TaskCard/ListView
+      where the card and the destination differ. Ids remain the fallback for the
+      no-metadata window.
+      */
+      const shouldPrompt = hasStepProgress && (
+        columnFlags
+          ? Boolean(columnFlags.intake || columnFlags.hold)
+          : column === "todo" || column === "triage"
+      );
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
