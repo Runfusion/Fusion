@@ -390,10 +390,26 @@ export class MissionAutopilot {
       const task = await this.taskStore.getTask(taskId);
       const holdColumn = (await resolveTaskLifecycleColumns(this.taskStore, taskId))?.hold;
       if (!holdColumn) {
+        /*
+        FNXC:UnownedHoldColumnGates 2026-07-29-20:10 (PR #2561 review — greptile P1):
+        No hold column means there is NOWHERE to retry from: the hold-release sweep
+        only dispatches out of hold columns, so a card left in WIP is never picked up
+        again. Clearing its failure state here would therefore convert a visible
+        failure into a SILENT STALL — the mission would show a task that is not
+        failed, not running, and never will be.
+
+        So leave the failure state intact and say why. A card that stays visibly
+        failed is one an operator can act on; that is strictly better than a clean-
+        looking row nothing will ever touch. The feature keeps its own status, which
+        the retry-count path above already manages.
+        */
         autopilotLog.warn(
-          `Mission retry for ${taskId}: workflow declares no hold column — leaving the card in ${task?.column ?? "its current column"}`,
+          `Mission retry for ${taskId} NOT scheduled — its workflow declares no hold column to retry from, `
+          + `so nothing would dispatch it. Leaving the task visibly failed in ${task?.column ?? "its current column"} for a human.`,
         );
-      } else if (task?.column !== holdColumn) {
+        return;
+      }
+      if (task?.column !== holdColumn) {
         await this.taskStore.moveTask(taskId, holdColumn);
       }
 

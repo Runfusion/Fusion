@@ -141,6 +141,31 @@ describe("mission autopilot retries into the workflow's own hold column", () => 
     } as never;
   }
 
+  /** The store after a real retry, for asserting what it did and did not do. */
+  async function retryStoreFor(
+    names: { hold: string; wip: string },
+    opts: { declaresHold?: boolean } = { declaresHold: true },
+  ): Promise<TaskStore> {
+    const failed = task({ id: "FN-RETRY", column: names.wip, status: "failed" });
+    const workflowIr = opts.declaresHold
+      ? ir(names)
+      : ({
+        version: "v2", id: WF, name: WF, nodes: [], edges: [],
+        columns: [
+          { id: names.wip, name: "Wip", traits: [{ trait: "wip" }] },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+        ],
+      } as unknown as WorkflowIr);
+    const store = storeWith([failed], workflowIr);
+    (store as unknown as Record<string, unknown>).moveTask = vi.fn(async () => undefined);
+    (store as unknown as Record<string, unknown>).updateTask = vi.fn(async () => undefined);
+    const autopilot = new MissionAutopilot(store, missionStoreFor("FN-RETRY"));
+    (autopilot as unknown as { watchedMissions: Map<string, unknown> })
+      .watchedMissions.set("mission-1", {});
+    await autopilot.handleTaskFailure("FN-RETRY");
+    return store;
+  }
+
   /** Where did a real retry move the card, if anywhere? */
   async function retryTarget(
     names: { hold: string; wip: string },
@@ -188,10 +213,21 @@ describe("mission autopilot retries into the workflow's own hold column", () => 
     expect(target).not.toBe("todo");
   });
 
-  it("does NOT move the card at all when the workflow declares no hold column", async () => {
-    // Leaving it put is recoverable; relocating it into a column nothing renders is
-    // the failure this program removes. The error/status clear still runs, so the
-    // retry itself is not lost.
-    expect(await retryTarget({ hold: "unused", wip: "building" }, { declaresHold: false })).toBeUndefined();
+  it("does NOT move the card, and leaves it visibly FAILED, when the workflow declares no hold column", async () => {
+    /*
+    FNXC:UnownedHoldColumnGates 2026-07-29-20:10 (PR #2561 review — greptile P1):
+    My first version cleared the failure state and left the card in WIP, reasoning
+    that "the retry is not lost". It is: the hold-release sweep only dispatches out
+    of HOLD columns, so a card left in WIP is never picked up again — clearing its
+    error turned a visible failure into a SILENT STALL, a row that is not failed,
+    not running, and never will be. Strictly worse than the R7 move it replaced.
+
+    Leaving the failure intact is the correct trade: an operator can act on a failed
+    card, and nothing can act on a clean-looking abandoned one.
+    */
+    const store = await retryStoreFor({ hold: "unused", wip: "building" }, { declaresHold: false });
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
   });
 });
