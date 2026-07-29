@@ -1321,13 +1321,21 @@ export class Scheduler {
     for (const agent of linkedAgents) {
       const activeRun = await agentStore.getActiveHeartbeatRun?.(agent.id);
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-28-11:50 (U11 conversion):
+      FNXC:WorkflowLifecycleColumns 2026-07-29-17:45 (PR #2518 self-review — CORRECTED):
       The synthetic column here stands for "this task is parked in the backlog",
-      which is what `evaluateParkedAgentTaskLink` gates on. Passing the literal
-      made a renamed workflow read as UNPARKED, so a running agent's task link was
-      dropped instead of preserved — the worse direction of that safeguard.
-      `parkedColumns` is passed too, so the helper's own check resolves against the
-      same vocabulary rather than its legacy default.
+      which is what `evaluateParkedAgentTaskLink` gates on via
+      `isParkedTaskColumn(linkedTask, parkedColumns)`.
+
+      An earlier version of this note claimed the literal made a renamed workflow
+      read as UNPARKED and drop a live agent's link. THAT WAS WRONG, and the
+      mutation test proved it: the literal passed `{column:"todo"}` together with
+      the helper's LEGACY default parked list, so the pair was self-consistent and
+      read as parked either way. This conversion is behaviour-NEUTRAL here.
+
+      What is load-bearing is the pair travelling TOGETHER. The dangerous state is
+      drift — a resolved column checked against the legacy list (or the reverse),
+      which reads as unparked and clears a live agent's link. That invariant, not
+      the conversion, is what the agent-link tests pin.
       */
       const rollbackParked = resolveTaskParkedColumnsSync(this.store, taskId);
       const proof = evaluateParkedAgentTaskLink({
