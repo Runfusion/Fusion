@@ -537,13 +537,30 @@ function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "sta
   return executionMode === "fast" ? "fast" : "standard";
 }
 
-function requiresExecutionModeReplan(column: Task["column"]): boolean {
+function requiresExecutionModeReplan(column: Task["column"], flags?: TaskContextMenuColumnFlags): boolean {
   /*
    FNXC:ExecutionModeReplan 2026-06-30-00:00:
    Todo and in-progress tasks can already hold a generated plan or active execution context. Changing Standard/Fast mode invalidates that plan, so the dashboard must confirm the change and send the task back through the existing replanning path instead of silently patching executionMode in place.
+
+   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+   The rule is "this card may already hold a plan or a live execution context", which the
+   traits state directly: a HOLD lane (planned, waiting for capacity) or a WIP lane
+   (executing). Naming `todo` and `in-progress` was the Default workflow's spelling of
+   that, and it silently narrows to nothing useful on a renamed workflow. Legacy ids
+   remain the fallback for callers without resolved column metadata.
    */
+  if (flags) return flags.hold === true || flags.countsTowardWip === true;
   return column === "todo" || column === "in-progress";
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+Test seam. The rule is a pure function of (column id, column flags), and asserting it
+through the full modal means booting async detail loading to observe one boolean — an
+earlier DOM-level attempt at this class of assertion in ListView passed with the
+conversion reverted, because the text it matched also appears in a column header.
+*/
+export const requiresExecutionModeReplanForTest = requiresExecutionModeReplan;
 
 interface ProvenanceDisplay {
   label: string;
@@ -2023,7 +2040,7 @@ export function TaskDetailContent({
       }
       return false;
     }
-    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column);
+    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column, workflowMoveMetadata?.currentColumnFlags);
     if (replanAfterExecutionModeChange && !includeDescription) {
       delete updates.executionMode;
     }
@@ -2161,7 +2178,7 @@ export function TaskDetailContent({
     const currentMode = normalizeExecutionModeValue(task.executionMode);
     const nextMode = currentMode === "fast" ? "standard" : "fast";
     const previousMode = inlineExecutionMode;
-    const shouldReplan = requiresExecutionModeReplan(task.column);
+    const shouldReplan = requiresExecutionModeReplan(task.column, workflowMoveMetadata?.currentColumnFlags);
 
     if (shouldReplan) {
       const shouldChangeMode = await confirm({
@@ -2510,7 +2527,18 @@ export function TaskDetailContent({
     async (column: Column) => {
       try {
         const hasStepProgress = task.steps.some((step) => step.status !== "pending");
-        const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+        The TARGET column's role, not this card's — moving BACK into a pre-implementation
+        lane is what risks discarding step progress. (The same site in TaskCard is where I
+        first got this backwards; its regression test caught it.) Falls back to the legacy
+        ids when the destination has no resolved metadata.
+        */
+        const targetFlags = workflowMoveMetadata?.moveColumns?.find((candidate) => candidate.id === column)?.flags;
+        const targetIsPreImplementation = targetFlags
+          ? targetFlags.intake === true || targetFlags.hold === true
+          : column === "todo" || column === "triage";
+        const shouldPrompt = targetIsPreImplementation && hasStepProgress;
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
         if (shouldPrompt) {
@@ -3006,7 +3034,16 @@ export function TaskDetailContent({
   plan-review-replan-cap, explain that Plan Review exhausted automatic REVISE replans
   without converging so the operator is not guessing why the task is parked.
   */
-  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The INTAKE lane's approval hold. `task.column === "triage"` is deleted by U11, which
+  would silently drop the Approve/Reject controls from a parked planning card — the
+  operator sees a task stuck "awaiting approval" with no way to answer it.
+  */
+  const isIntakeColumn = workflowMoveMetadata?.currentColumnFlags
+    ? workflowMoveMetadata.currentColumnFlags.intake === true
+    : task.column === "triage";
+  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 
   const handleTogglePause = useCallback(async () => {
@@ -6390,10 +6427,11 @@ export function TaskDetailContent({
                 </>
               )}
 
-              {/* Standalone Delete button for triage-column tasks — triage tasks
-                  hide the Actions dropdown (see condition below) so the user has
-                  no quick way to delete a freshly-created task otherwise. */}
-              {task.column === "triage" && !isAwaitingApproval && !canRetryTask && (
+              {/* Standalone Delete button for INTAKE-lane tasks — they hide the Actions
+                  dropdown (see condition below) so the user has no quick way to delete a
+                  freshly-created task otherwise. Keyed on the intake trait rather than the
+                  `triage` id, which U11 deletes. */}
+              {isIntakeColumn && !isAwaitingApproval && !canRetryTask && (
                 <button
                   className="btn btn-sm btn-danger"
                   onClick={handleDelete}
