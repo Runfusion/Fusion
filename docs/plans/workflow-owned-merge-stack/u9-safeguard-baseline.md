@@ -20,8 +20,8 @@ this program has already shipped four guards that looked like enforcement and we
 not. The first version of this document made that same mistake in its own
 measurement; see Methodology.
 
-**Result: four of the six safeguards are covered. Safeguards 1 (user pause) and 4
-(capacity single-flight) have no test coverage at all.**
+**Result: five of the six safeguards are covered. Safeguard 1 (user pause) has no
+test coverage at all.**
 
 ## The six safeguards
 
@@ -39,27 +39,33 @@ measurement; see Methodology.
 | 1 | **user pause** | `project-engine.ts:645` merge admission filter | 11 | 11 | **0** | **NOT COVERED** |
 | 2 | **`autoMerge:false`** | `project-engine.ts:2797` `allowsAutoMergeProcessing` | 0 | 9 | **9** | covered |
 | 3 | **dependency gating** | `task-merge.ts:402` unresolved-dependency reason | 0 | 5 | **5** | covered |
-| 4 | **capacity** | `project-engine.ts:3178` single-flight `mergeRunning` | 10 | 10 | **0** | **NOT COVERED** |
+| 4 | **capacity** | `project-engine.ts:3178` single-flight `mergeRunning` | 0 | 1 | **1** | covered — `merge-single-flight-invariant.test.ts` |
 | 5a | **merge-proof** (pre-enqueue) | `project-engine.ts:2609` `getTaskMergeBlocker` consult | 0 | 1 | **1** | covered, thin |
 | 5b | **merge-proof** (file scope) | `merger-file-scope.ts:200` `FileScopeViolationError` | 0 | 6 | **6** | covered |
 | 6 | **at-most-once** | `project-engine.ts:2730` `mergeActive` dedupe | 0 | 3 | **3** | covered |
 
-**Four of six hold. Two do not.**
+**Five of six hold. One does not: safeguard 1.**
 
-### Safeguards 1 and 4 have NO test coverage
+### Safeguard 1 has NO test coverage
 
-Deleting the user-pause filter from merge admission, or the single-flight guard
-from the merge pump, produces **zero new test failures** anywhere in the merge,
-project-engine, self-healing, or concurrency suites.
+Deleting the user-pause filter from merge admission produces **zero new test
+failures** — verified against a deliberately wide selection (`project-engine`,
+`merge-single-flight-invariant`, `concurrency`, `merge-active-status`,
+`merge-reclaim-policy`, `merger-merge-lifecycle`).
 
-- **Safeguard 1** is the one re-ratified in #2486: never MUTATE lifecycle state of
-  a user-paused card. Removing `task.paused || task.userPaused` from the admission
-  provider admits a user-paused card into the merge pump — and nothing fails.
-- **Safeguard 4** is the single-flight guard that makes merge serialized. Removing
-  it permits concurrent `drainMergeQueue` entry — and nothing fails.
+Safeguard 1 is the one re-ratified in #2486: never MUTATE lifecycle state of a
+user-paused card. Removing `task.paused || task.userPaused` from the admission
+provider admits a user-paused card into the merge pump — and nothing fails. The
+guard exists and works today; what is missing is any test that would notice if it
+stopped. That is precisely the state U9 must not convert on top of.
 
-Both are guards that exist and work today; what is missing is any test that would
-notice if they stopped. That is precisely the state U9 must not convert on top of.
+> **Row 4 corrected 2026-07-28 (third pass, #2520 review — greptile P1).** Capacity
+> single-flight IS covered, by `merge-single-flight-invariant.test.ts` (landed in
+> #2502, "capacity, part 1"). My row-4 run reported it uncovered because **that file
+> was not in the selection** — methodology error #2 below, committed *after* I wrote
+> error #2 down. The lesson is not "widen once"; it is that a NOT-COVERED verdict
+> needs a deliberate search for existing coverage by name, not just a wider run of
+> whatever files came to mind.
 
 Named tests for the four that do hold are in the delta output; rows 2 and 6 are
 `project-engine.test.ts`, row 3 is core's `task-merge.test.ts`, row 5b is
@@ -68,11 +74,16 @@ case.
 
 ## Gate coverage
 
-Of the test files proving the four surviving safeguards, **only
-`merger-merge-lifecycle.test.ts` is in the `engine-core` merge-gate allow-list**,
-and it is not the file that proves any of them — rows 2/5a/6 rest on
-`project-engine.test.ts` and row 3 on core's `task-merge.test.ts`, neither of which
-is in the gate (the core gate is two PG tests via `test:pg-gate`).
+At the time of measurement, of the files proving these safeguards **only
+`merger-merge-lifecycle.test.ts` was in the `engine-core` allow-list**, and it is
+not the file that proves any of them — rows 2/5a/6 rest on `project-engine.test.ts`,
+row 3 on core's `task-merge.test.ts`, row 4 on `merge-single-flight-invariant.test.ts`.
+
+**Being fixed in #2526:** `project-engine.test.ts` and
+`merge-single-flight-invariant.test.ts` are admitted to the gate, which brings rows
+1, 2, 4, 5a and 6 into blocking CI for +~1.0s (5.19–5.51s → 6.18–6.32s against a
+~60s ceiling). Row 3 stays outside — core's gate is two PG tests via `test:pg-gate`
+and admitting a non-PG core file is a separate change.
 
 Per AGENTS.md the gate is thin and trusted; a red non-blocking run is "information,
 not a merge stopper". So **no safeguard on this table is currently defended by
@@ -87,10 +98,13 @@ same family of error this program is trying to stamp out.
    because the mutated run showed failures. The selection was already red. **A
    mutation run must diff fail-SETS against a baseline of the identical selection
    and report only NEW failures.**
-2. **Too-narrow selection.** An earlier pass measured rows 1 and 3 at zero
-   failures and I nearly filed both as gaps; widening changed row 3. Narrow runs
-   cannot prove absence — but see (1), because widening is also how the
-   pre-existing red crept in. Both directions need the baseline diff.
+2. **Too-narrow selection — twice.** An earlier pass measured rows 1 and 3 at zero
+   and I nearly filed both as gaps; widening changed row 3. Then row 4 was filed as
+   NOT COVERED because `merge-single-flight-invariant.test.ts` was not in the
+   selection — an error I made *after* writing this very item down. Widening the run
+   is not the fix. **A NOT-COVERED verdict requires a deliberate search for existing
+   coverage by name** (`ls`/grep the suite for the guard's concept) before the
+   verdict is allowed to stand.
 3. **A harness whose parser silently matched nothing.** The delta harness's regex
    required a `|project|` segment in vitest's `FAIL` line. Core's config does not
    emit one, so for `@fusion/core` it parsed **zero** failures at both baseline and
