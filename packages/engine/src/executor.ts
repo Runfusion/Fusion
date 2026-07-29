@@ -7277,12 +7277,34 @@ export class TaskExecutor {
         if (typeof governingNodeId === "string") {
           this.graphSeamGoverningNodeId.set(task.id, governingNodeId);
         }
-        let result: { taskDone: boolean; modifiedFiles: string[] };
+        let result: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit };
         try {
           result = await this.runImplementationPhase(task, prepared);
         } finally {
           this.graphSeamGoverningNodeId.delete(task.id);
         }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-16:20 (U8 / R4, R5):
+        THIS is the live implementation node, not the identically-shaped `execute` entry in
+        `createAuthoritativeWorkflowSeams`. `createDefaultNodeHandlers` prefers the PRIMITIVES
+        handler whenever `deps.primitives` is set, and `executeWorkflowGraph` always sets it — so
+        the legacy-seams prompt handler is unreachable for prompt nodes and anything wired only
+        there never runs. The exit announcement was wired only there; it is announced here now.
+
+        Measured, not assumed: instrumenting the seam and `createPromptLikeHandler` produced no
+        output for a graph run that demonstrably visited `steps#0:step-execute`, while a
+        module-load write from the same file appeared — so the negative was real and not swallowed
+        output.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "NodeCompleted",
+          taskId: task.id,
+          at: new Date().toISOString(),
+          runId: this.getRunContextFor(task.id)?.runId,
+          nodeId: typeof governingNodeId === "string" ? governingNodeId : ctx.node.node.id,
+          outcome: result.taskDone ? "success" : "failure",
+          ...(result.exit ? { exit: result.exit } : {}),
+        });
         if (result.taskDone) {
           return { outcome: "success", value: "implemented", data: result };
         }
