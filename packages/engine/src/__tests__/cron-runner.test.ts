@@ -23,6 +23,17 @@ const coreModuleMocks = vi.hoisted(() => ({
 vi.mock("../logger.js", () => ({
   createLogger: () => ({
     log: cronLoggerSpies.log,
+    /*
+    FNXC:TestInfrastructure 2026-07-29-14:20 (#2573 review — greptile P1):
+    The spy object carries `debug` but this factory did not wire it through, so
+    the logger handed to production still lacked it. cron-runner's tick() calls
+    log.debug on the dedupe / scope-mismatch / lost-atomic-claim paths, and the
+    resulting TypeError was SWALLOWED by tick()'s own error handler — the polling
+    cycle aborted early while the test carried on and still passed. A silently
+    truncated run is worse than a red one: it asserts against a cycle that never
+    happened.
+    */
+    debug: cronLoggerSpies.debug,
     warn: cronLoggerSpies.warn,
     error: cronLoggerSpies.error,
   }),
@@ -2358,3 +2369,4 @@ describe("CronRunner", () => {
     });
   });
 });
+
