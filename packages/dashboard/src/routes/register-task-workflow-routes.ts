@@ -536,8 +536,18 @@ const RESET_TASK_FIELDS = {
   sessionFile: null,
 } as const;
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2582 review, greptile):
+COLUMN REMOVED from the shared constant. It hardcoded `todo`, so drift correction forced
+the card there regardless of the workflow's actual rebound column — and then the final
+verification (which now compares against `resetColumn`) saw the mismatch and raised the
+very 409 "limbo" conflict this change exists to remove. Fixing the check without fixing
+the writer just moved the bug.
+
+The column is supplied per call from the resolved rebound column; everything else here is
+genuinely column-independent cleanup.
+*/
 const RESET_DRIFT_CORRECTION_FIELDS = {
-  column: "todo" as const,
   worktree: null,
   branch: null,
   status: null,
@@ -2925,10 +2935,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           worktreeSessionRetryCount: updated.worktreeSessionRetryCount ?? null,
           sessionFile: updated.sessionFile ?? null,
         };
-        await scopedStore.updateTask(req.params.id, RESET_DRIFT_CORRECTION_FIELDS);
+        /*
+        Built as a named const, not an inline literal: `updateTask`'s patch type does not
+        declare `column`, and the original code only compiled because a variable reference
+        skips excess-property checking. Keeping that shape preserves the existing runtime
+        behaviour exactly while making the column follow the resolved rebound target.
+        */
+        const driftCorrection = { ...RESET_DRIFT_CORRECTION_FIELDS, column: resetColumn };
+        await scopedStore.updateTask(req.params.id, driftCorrection);
         await scopedStore.logEntry(
           req.params.id,
-          "Auto-corrected reset drift after moveTask — normalized task back to todo with cleared worktree/branch bindings",
+          `Auto-corrected reset drift after moveTask — normalized task back to ${resetColumn} with cleared worktree/branch bindings`,
           JSON.stringify(offendingSnapshot),
         );
         await emitResetDriftAudit(scopedStore, req.params.id, offendingSnapshot);
