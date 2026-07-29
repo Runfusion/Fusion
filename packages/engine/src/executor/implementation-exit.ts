@@ -35,35 +35,30 @@ routing move needs; the rest report nothing yet and the ledger, not this enum, i
 that gap.
 */
 
-/** How the implementation phase ended. Closed enum — ids only, never prose. */
-export type ImplementationExit =
-  /** fn_task_done (or implicit completion): handed back to the graph, which owns what follows. */
-  | "complete"
-  /** Completion reached on a retry session after the agent first failed to signal done. */
-  | "complete-after-retry"
-  /** Completion proven from live modified files when the session ended without a done signal. */
-  | "complete-from-live-files"
-  /**
-   * OUT OF BAND: the session paused after the work was already complete, and the executor
-   * finalized the card to review itself. The graph is told only `taskDone === false`.
-   */
-  | "review-handoff-paused-after-completion"
-  /**
-   * OUT OF BAND: the agent stopped without signalling done because a step is blocked on a
-   * pending review. The executor parks the card in review itself — a pending-review block is a
-   * wait, not a failure, and marking it failed deadlocks a row that is both in-review and failed.
-   */
-  | "review-handoff-pending-review";
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-28-22:20 (U8, PR #2507 review — greptile):
+THE UNION MOVED TO CORE. It was declared here and the public `NodeCompletedEvent.exit` was typed
+`string`, so the contract permitted ids no consumer routes — and that failure is silent (the card
+does not advance; nothing reports anything). A public contract cannot defer its vocabulary to one
+of its producers, so `ImplementationExit` now lives beside the event that carries it, is checked
+at the emit boundary against `IMPLEMENTATION_EXITS`, and is re-exported here for the call sites.
+
+What stays in the engine is POLICY, not contract: which of those endings are ones the EXECUTOR
+performed rather than the graph. That is a statement about this engine's current ownership split,
+it changes as U8 lands its routing moves, and core has no business knowing it.
+*/
+import type { ImplementationExit as CoreImplementationExit } from "@fusion/core";
+export type { ImplementationExit } from "@fusion/core";
 
 /** The exits where the EXECUTOR performs the lifecycle transition instead of the graph. */
-export const OUT_OF_BAND_IMPLEMENTATION_EXITS: readonly ImplementationExit[] = [
+export const OUT_OF_BAND_IMPLEMENTATION_EXITS: readonly CoreImplementationExit[] = [
   "review-handoff-paused-after-completion",
   "review-handoff-pending-review",
 ];
 
-export function isOutOfBandImplementationExit(exit: ImplementationExit | undefined): boolean {
+export function isOutOfBandImplementationExit(exit: CoreImplementationExit | undefined): boolean {
   return exit !== undefined && OUT_OF_BAND_IMPLEMENTATION_EXITS.includes(exit);
 }
 
 /** Reporter threaded into `runImplementation`; each instrumented exit calls it exactly once. */
-export type ImplementationExitReporter = (exit: ImplementationExit) => void;
+export type ImplementationExitReporter = (exit: CoreImplementationExit) => void;
