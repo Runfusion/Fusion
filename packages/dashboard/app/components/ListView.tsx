@@ -754,7 +754,7 @@ export function ListView({
 
   const listContextMenuColumns = useMemo<readonly TaskContextMenuColumnMetadata[] | undefined>(() => {
     if (!workflowMode) return undefined;
-    return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags }));
+    return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) }));
   }, [listColumns, workflowMode]);
 
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {

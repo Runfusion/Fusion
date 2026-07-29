@@ -54,6 +54,14 @@ export interface BoardWorkflowColumn {
   /** Optional author-defined explanatory copy from the workflow IR. */
   description?: string;
   flags: BoardWorkflowColumnFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+  Columns this one may move to, from the workflow's own graph adjacency
+  (`resolveAllowedColumns`, the same resolver `moveTaskInternal` validates against).
+  Optional so a client that predates the field keeps working; the move menu falls back
+  to approximating targets from neighbouring columns when it is absent.
+  */
+  moveTargets?: string[];
 }
 
 export interface BoardWorkflowDefinition {

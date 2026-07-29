@@ -502,6 +502,48 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
       // disables the rule.
       const building = transitions.find((transition) => transition.column === "building");
       expect(building?.label).toBe("Back to Building");
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+    When the payload carries `moveTargets`, the menu uses the workflow's REAL graph
+    adjacency instead of approximating from neighbouring columns. This fixture makes
+    the two disagree on purpose: `staging` sits between `backlog` and `building`, so
+    the neighbour approximation yields exactly those two — while the declared
+    adjacency also allows a jump to `shipped` and forbids going back to `backlog`.
+
+    REVERT CHECK: drop the `declaredTargets` branch and this fails — the neighbour
+    fallback returns ["backlog","building"], missing the legal `shipped` jump and
+    offering `backlog`, which the workflow's graph does not allow. That is precisely
+    the class of defect the old neighbour approximation shipped for every custom
+    workflow: menu entries the store would reject, and legal moves it never offered.
+    */
+    it("uses the workflow's declared adjacency, not neighbouring columns", () => {
+      const withAdjacency: TaskContextMenuColumnMetadata[] = renamedMoveColumns.map((column) =>
+        column.id === "staging"
+          ? { ...column, moveTargets: ["building", "shipped"] }
+          : column,
+      );
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-16", column: "staging" as Task["column"] }),
+        t,
+        columnLabel,
+        withAdjacency,
+      );
+      expect(transitions.map((transition) => transition.column)).toEqual(["building", "shipped"]);
+    });
+
+    it("drops an adjacency edge into a column this board cannot show", () => {
+      // An edge into a hidden column must not become a dead menu entry.
+      const withHidden: TaskContextMenuColumnMetadata[] = renamedMoveColumns.map((column) =>
+        column.id === "staging"
+          ? { ...column, moveTargets: ["building", "nowhere"] }
+          : column,
+      );
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-17", column: "staging" as Task["column"] }),
+        t,
+        columnLabel,
+        withHidden,
+      );
+      expect(transitions.map((transition) => transition.column)).toEqual(["building"]);
     });
 
     it("never offers a column the workflow does not declare", () => {

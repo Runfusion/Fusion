@@ -596,7 +596,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     for (const workflow of boardWorkflows?.workflows ?? []) {
       map.set(workflow.id, workflow.columns
         .filter((column) => !column.flags.hiddenFromBoard)
-        .map((column) => ({ id: column.id, label: column.name, flags: column.flags })));
+        .map((column) => ({ id: column.id, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) })));
     }
     return map;
   }, [boardWorkflows]);

@@ -528,7 +528,7 @@ function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<
 
   const moveColumns = workflow.columns
     .filter((column) => column.flags.hiddenFromBoard !== true)
-    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags }));
+    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) }));
   const currentColumnFlags = moveColumns.find((column) => column.id === task.column)?.flags;
   return { id: workflow.id, name, icon: workflow.icon, fields: workflow.fields ?? null, moveColumns, currentColumnFlags };
 }

@@ -3,7 +3,11 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as Re
 import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, isColumn } from "@fusion/core";
+import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
+// `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
+// the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
+// the note at `moveTransitions`); every workflow-resolved path now reads the payload's
+// own `moveTargets` adjacency.
 
 /*
 FNXC:ReviewLaneBypass 2026-07-09-00:00:
@@ -55,6 +59,9 @@ export interface TaskContextMenuColumnMetadata {
   id: ColumnId;
   label: string;
   flags?: TaskContextMenuColumnFlags;
+  /** Columns this one may move to, from the workflow's own graph adjacency. Optional:
+   *  a payload predating the field falls back to the neighbour approximation. */
+  moveTargets?: readonly string[];
 }
 
 export interface TaskReviewActionDescriptor {
@@ -143,11 +150,6 @@ export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenu
   return column === "triage" || flags?.intake === true || flags?.hold === true;
 }
 
-function isDefaultWorkflowColumnSet(columns: readonly TaskContextMenuColumnMetadata[]): boolean {
-  if (columns.length !== COLUMNS.length) return false;
-  const ids = new Set(columns.map((column) => column.id));
-  return COLUMNS.every((column) => ids.has(column));
-}
 
 /*
 FNXC:TaskContextMenu 2026-06-30-12:42:
@@ -159,33 +161,30 @@ Manual pull-request review has two separate operator intents: Start PR Review op
 function getWorkflowMoveTargets(task: Task | TaskDetail, columns: readonly TaskContextMenuColumnMetadata[]): ColumnId[] {
   const visibleColumns = columns.filter((column) => column.flags?.hiddenFromBoard !== true);
   /*
-  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8, KNOWN REMAINING GAP):
-  This `VALID_TRANSITIONS` shortcut is the LAST legacy-vocabulary read in this file and
-  it is deliberately KEPT, because removing it today would silently SHRINK the move
-  menu for every default-workflow project rather than fix anything.
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+  REAL ADJACENCY, when the payload carries it. `moveTargets` comes from
+  `resolveAllowedColumns` — the same resolver `moveTaskInternal` validates against — so
+  the menu offers exactly what the store will accept, for ANY workflow.
 
-  The reason is a missing wire field, not a missing idea. `TaskContextMenuColumnMetadata`
-  carries id/label/flags but NO adjacency, so the workflow branch below can only guess
-  targets from a column's neighbours in the declared order — [previous, next]. Measured
-  against the real graph that is a strict loss:
+  This replaces the `VALID_TRANSITIONS` shortcut that used to run whenever a workflow's
+  column-id set matched the six built-ins. That shortcut existed because the fallback
+  below approximates targets from a column's NEIGHBOURS in declared order, which is
+  strictly weaker than the graph (in-progress: 4 real targets vs 2 neighbours), so
+  deleting it without adjacency would have SHRUNK every default-workflow move menu.
 
-      in-progress  VALID_TRANSITIONS: in-review, todo, triage, done   (4)
-                   neighbour-derived: todo, in-review                 (2)
-      todo         VALID_TRANSITIONS: in-progress, triage, archived   (3)
-                   neighbour-derived: triage, in-progress             (2)
-      done         VALID_TRANSITIONS: todo, triage, archived          (3)
-                   neighbour-derived: in-review, archived             (2)
+  With adjacency on the wire the shortcut is not merely removable, it is redundant:
+  `resolveAllowedColumns(BUILTIN_CODING_WORKFLOW_IR, c)` is byte-identical to
+  `VALID_TRANSITIONS[c]` for all six columns, ORDER included — measured, and pinned by
+  `@fusion/core`'s `builtin-adjacency-matches-legacy-transitions` test so the
+  equivalence cannot drift silently. Custom workflows stop being guessed at.
 
-  So "delete the legacy read" here is not a cleanup — it is a UI regression that drops
-  real operator moves (archive from Todo, straight-to-Done from In progress). The
-  correct fix is to put each column's allowed targets on the board-workflows payload
-  and read THOSE, which changes the server, the wire shape and this file, and is its own
-  slice. Note the guard is keyed on the COLUMN ID SET, so a workflow that merely renames
-  the six built-in columns still takes this path and still gets correct targets; only a
-  workflow that reorders or replaces them falls through to the weaker neighbour logic.
+  Targets are filtered to columns this board can show, so an adjacency edge into a
+  hidden column never becomes a dead menu entry.
   */
-  if (isDefaultWorkflowColumnSet(visibleColumns) && isColumn(task.column)) {
-    return task.column === "in-review" ? ["todo", "in-progress"] : [...VALID_TRANSITIONS[task.column]];
+  const declaredTargets = columns.find((column) => column.id === task.column)?.moveTargets;
+  if (declaredTargets) {
+    const visibleIds = new Set(visibleColumns.map((column) => column.id));
+    return declaredTargets.filter((target) => visibleIds.has(target)) as ColumnId[];
   }
 
   const currentIndex = visibleColumns.findIndex((column) => column.id === task.column);

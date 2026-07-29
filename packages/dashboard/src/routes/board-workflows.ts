@@ -23,6 +23,7 @@ import {
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
   parseWorkflowIr,
+  resolveAllowedColumns,
   resolveColumnFlags,
   resolveWorkflowIrById,
   type Settings,
@@ -48,6 +49,22 @@ export interface BoardWorkflowColumn {
   /** Optional author-defined explanatory copy; omitted keeps client lifecycle fallback. */
   description?: string;
   flags: TraitFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+  The columns this one may move to, resolved from the workflow's OWN graph adjacency
+  (`resolveAllowedColumns`) — the same function `moveTaskInternal` validates against,
+  so the menu offers exactly what the store will accept.
+
+  This field exists to retire the client's two remaining legacy-vocabulary reads. The
+  context menu previously had no adjacency at all, so it approximated targets by a
+  column's NEIGHBOURS in declared order and kept a `VALID_TRANSITIONS` shortcut for
+  workflows whose column-id set matched the six built-ins — because the neighbour
+  approximation is strictly weaker (in-progress: 4 real targets vs 2 neighbours).
+
+  Optional on the wire so a client older than this field keeps its previous behaviour
+  rather than losing its move menu.
+  */
+  moveTargets?: string[];
 }
 
 /** A workflow definition in use by visible cards. */
@@ -124,6 +141,7 @@ function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWo
     name: displayColumnName(col.id, col.name, canonicalizeLifecycle),
     ...(col.description ? { description: col.description } : {}),
     flags: resolveColumnFlags(col),
+    moveTargets: resolveAllowedColumns(ir, col.id),
   }));
 }
 
