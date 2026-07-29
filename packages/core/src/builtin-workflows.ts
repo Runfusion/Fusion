@@ -490,6 +490,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "code-review-remediation": { x: 910, y: 320 },
       "completion-summary": { x: 1080, y: 160 },
       review: { x: 1250, y: 160 },
+      /* U8: the pending-review park sits off the main line — it is an exit, not a stage. */
+      "review-pending-handoff": { x: 570, y: 320 },
       "merge-gate": { x: 1420, y: 160 },
       "branch-group-member-integration": { x: 1590, y: 80 },
       "branch-group-promotion": { x: 1760, y: 80 },
