@@ -701,6 +701,12 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
     by reading: forcing the hydration back to the `todo` literal fails exactly that
     file's renamed case. It was listed here as unproven because I had assumed a
     separate E2E was needed; it was not.
+  - merger-ai.ts  resolveFinalizeReboundColumn — the LIVE merge path's rebound column
+    (workflow-merge-rebound-live-e2e.pg.test.ts; mutation-verified). Weaker,
+    returned-decision evidence: the resolver returns a column and does not move a card,
+    so this proves the renamed board resolves correctly through a real store and a real
+    persisted workflow, NOT that a card lands there. It was in the "needs real git"
+    bucket by association; it is EXPORTED and takes (store, taskId) and touches no git.
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -714,8 +720,15 @@ consumer is still to land, or it should be deleted. Not resolved here: it is pro
 by the U4 slice, and guessing which is a decision for its author.
 
 NOT PROVEN end to end — real callers this suite does not reach:
-  - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
-  - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
+  - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn /
+    resolveReboundTarget — DEAD PATH, do not build a lane for these. Every call sits
+    inside `aiMergeTask`, which is soft-deprecated, exported only with an @deprecated
+    tag, and has NO production caller (verified by grep across all packages; the live
+    merge path is merger-ai's runAiMerge / landWorkspaceTask, which project-engine
+    imports). Phase B converted a path production never executes. Not deleted here —
+    it is production code owned by another slice — but proving it would prove nothing.
+  - merger-ai.ts:1039        isAlreadyFinalizedColumn — LIVE, but module-private and
+    reached only from runAiMerge, so it does need the real-git lane
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
   - mesh-lease-manager.ts:61 resolveReboundTarget
   - core/live-agent-count.ts    columnIsIntakeOrHold (the WAITING predicate) — the running
@@ -724,12 +737,13 @@ NOT PROVEN end to end — real callers this suite does not reach:
 
 WHY, and what each would take. Two lanes, and neither is another table row:
 
-  LANE 1 — REAL GIT (engine-slow). merger.ts's `resolveMergerLifecycleColumn` and
-  executor.ts's `resolveReboundColumnFor` are module-private helpers whose only
-  callers sit inside merge/session machinery that needs a real worktree, branch and
-  squash. merger-ai.ts is the same. Re-checked with the lens that freed
-  auto-merge-finalization and both self-healing rebounds — these genuinely do need
-  the lane; the earlier over-broad claim does not apply to them.
+  LANE 1 — REAL GIT (engine-slow), now SMALLER than it looked. Only two things
+  genuinely need it: merger-ai's `isAlreadyFinalizedColumn` and executor's
+  `resolveReboundColumnFor`, both module-private and reached only from inside
+  merge/session machinery. merger.ts's three sites do NOT need the lane because they
+  are dead (see above), and merger-ai's `resolveFinalizeReboundColumn` did not need it
+  at all — it is now covered. Third time the "this family needs git" inference has
+  been wrong; check what the FUNCTION touches before costing a lane for it.
 
   LANE 2 — DASHBOARD HTTP. register-task-workflow-routes' four sites live behind
   `registerTaskWorkflowRoutes(ctx, deps)`, which needs a full ApiRoutesContext plus
