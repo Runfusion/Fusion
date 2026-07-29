@@ -63,7 +63,7 @@ import {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn, normalizeColumnId,
+  normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 } from "./types/board.js";
@@ -73,7 +73,7 @@ export {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn, normalizeColumnId,
+  normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 };

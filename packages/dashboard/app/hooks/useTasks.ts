@@ -82,7 +82,7 @@ function writeTaskCacheSnapshot(cacheKey: string, tasks: Task[]): boolean {
 FNXC:WorkflowColumns 2026-07-19-2b:05 (U12 / R2 / R11):
 Every task the dashboard ingests — initial list, SWR revalidation, and each SSE event — passes
 through here, so this one line decided whether custom columns exist in the UI at all. It used
-`normalizeColumn`, which keeps only the six legacy ids and rewrites everything else to `triage`:
+`normalizeColumn` (since DELETED in U12), which kept only the six legacy ids and rewrote everything else to `triage`:
 a card sitting in a user-authored `Merging` column rendered in Triage, and dragging it appeared to
 do nothing. The move handler below already worked around this for its own `to` id ("normalizeColumn
 alone would drop custom ids"), which fixed the symptom for one event and left the ingest path lossy.
@@ -817,7 +817,7 @@ export function useTasks(options?: UseTasksOptions) {
         return;
       }
       // Preserve a custom (non-legacy) target id verbatim; only coerce empty/garbage
-      // back to the task's current column. normalizeColumn alone would drop custom ids.
+      // back to the task's current column. The old normalizeColumn (deleted in U12) would drop custom ids.
       const nextColumn: ColumnId = typeof to === "string" && to ? to : normalizedTask.column;
       const movedTask = { ...normalizedTask, column: nextColumn };
       setTasks((prev) => {
