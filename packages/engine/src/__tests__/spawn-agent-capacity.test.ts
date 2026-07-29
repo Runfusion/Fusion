@@ -120,4 +120,46 @@ describe("fn_spawn_agent capacity", () => {
     expect(result.content[0]?.text).toContain("Max Concurrent Tasks");
     expect(result.content[0]?.text).not.toMatch(/spawn limit/i);
   });
+  /*
+  FNXC:CapacityModel 2026-07-29-19:20 (PR #2579 review — greptile P1, TOCTOU):
+  Two parents with ONE slot left must not both spawn.
+
+  The check read capacity, then several awaits followed (createAgent, createWorktree,
+  updateAgentState) before the count was incremented — so both calls passed and both
+  spawned, producing more agents and more worktrees than Max Concurrent Tasks
+  permits. That is the very hole this change set out to close, reintroduced by the
+  fix for it.
+  */
+  it("reserves the slot before awaiting, so two concurrent spawns cannot both pass", async () => {
+    const { executor } = executorWithSpawnState({
+      claimedTasks: [{ id: "FN-1", column: "in-progress" }],
+      liveChildren: 0,
+      maxConcurrent: 2, // 1 claimed task + 1 free slot
+    });
+
+    // Both callers race the same free slot without awaiting between them.
+    const [first, second] = await Promise.all([
+      trySpawn(executor, "FN-1", 2),
+      trySpawn(executor, "FN-1", 2),
+    ]);
+
+    const refused = [first, second].filter((r) => r.content[0]?.text?.includes("Agent capacity reached"));
+    expect(refused, "exactly one of two racing spawns must be refused").toHaveLength(1);
+  });
+
+  it("returns the reserved slot when the spawn fails", async () => {
+    const { executor } = executorWithSpawnState({
+      claimedTasks: [{ id: "FN-1", column: "in-progress" }],
+      liveChildren: 0,
+      maxConcurrent: 4,
+    });
+    (executor as unknown as { options: { agentStore: { createAgent: unknown } } }).options.agentStore.createAgent =
+      vi.fn(async () => { throw new Error("agent store unavailable"); });
+
+    const result = await trySpawn(executor, "FN-1", 4);
+    expect(result.content[0]?.text).toContain("Failed to spawn agent");
+
+    // A failed spawn must not permanently consume capacity.
+    expect((executor as unknown as { totalSpawnedCount: number }).totalSpawnedCount).toBe(0);
+  });
 });

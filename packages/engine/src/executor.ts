@@ -21022,6 +21022,28 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             details: { agentId: "", state: "error" },
           };
         }
+        /*
+        FNXC:CapacityModel 2026-07-29-19:20 (PR #2579 review — greptile P1, TOCTOU):
+        RESERVE THE SLOT SYNCHRONOUSLY, before the first await.
+
+        The check above reads capacity, then several awaits follow (createAgent,
+        createWorktree, updateAgentState) before `totalSpawnedCount` was incremented.
+        Two parents calling fn_spawn_agent with one slot left both passed the check
+        and both spawned — more agents and more worktrees than Max Concurrent Tasks
+        permits, which is the very hole this change set out to close.
+
+        JS is single-threaded, so incrementing here — with NO await between the read
+        and the increment — makes check-and-reserve atomic against every other spawn
+        call. The reservation is rolled back on any failure below, and the success
+        path no longer double-counts.
+        */
+        this.totalSpawnedCount++;
+        let spawnReservationHeld = true;
+        const releaseSpawnReservation = () => {
+          if (!spawnReservationHeld) return;
+          spawnReservationHeld = false;
+          this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
+        };
 
         try {
           // Create agent in AgentStore with reportsTo = parent task ID
@@ -21135,7 +21157,9 @@ Child agent: ${agent.id} (${name})`;
             this.spawnedAgents.set(taskId, new Set());
           }
           this.spawnedAgents.get(taskId)!.add(agent.id);
-          this.totalSpawnedCount++;
+          // The slot was already reserved before the awaits above; converting the
+          // reservation into the live count is a no-op rather than a second increment.
+          spawnReservationHeld = false;
 
           // Run child asynchronously (don't await — parent continues working)
           this.runSpawnedChild(agent.id, childSession, taskPrompt).catch((err: unknown) => {
@@ -21156,6 +21180,10 @@ Child agent: ${agent.id} (${name})`;
             details: result,
           };
         } catch (err: unknown) {
+          // FNXC:CapacityModel 2026-07-29-19:20: a failed spawn must return the slot
+          // it reserved, or a project permanently loses capacity to a spawn that
+          // never happened.
+          releaseSpawnReservation();
           const errorMessage = err instanceof Error ? err.message : String(err);
           return {
             content: [{ type: "text" as const, text: `Failed to spawn agent: ${errorMessage}` }],
