@@ -1,4 +1,5 @@
-import type { MissionStore, Task, TaskStore } from "@fusion/core";
+import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { createLogger } from "./logger.js";
 import { filterPathsByIgnoreList, pathsOverlap } from "./scheduler.js";
 
@@ -60,8 +61,27 @@ export class GridlockDetector {
     ]);
 
     const now = Date.now();
+    /*
+    FNXC:UnownedHoldColumnGates 2026-07-29-13:20 (U7 / R3):
+    "Schedulable" is the HOLD role, not the id `todo`. Keyed on the literal, a
+    renamed workflow produced an EMPTY schedulable set, and the detector returns
+    early on empty — so it reported "no gridlock" on precisely the boards where
+    every card was stuck. A detector that goes quiet on the boards it cannot parse
+    is worse than one that is absent, because its silence reads as health.
+
+    One IR cache for the pass, so N cards on M workflows cost M resolutions (the
+    shape `runHoldReleaseSweep` and triage discovery both use). A card whose
+    workflow will not resolve is NOT schedulable — this decides whether to raise an
+    alarm, and inventing candidates would raise false ones.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const holdByTask = new Map<string, string | undefined>();
+    for (const task of tasks) {
+      holdByTask.set(task.id, (await resolveTaskLifecycleColumns(this.store, task.id, irCache))?.hold);
+    }
     const schedulable = tasks.filter((task) => {
-      if (task.column !== "todo" || task.paused) return false;
+      const hold = holdByTask.get(task.id);
+      if (hold === undefined || task.column !== hold || task.paused) return false;
       if (task.nextRecoveryAt && new Date(task.nextRecoveryAt).getTime() > now) return false;
       if (this.isMissionBlocked(task)) return false;
       return true;
@@ -72,7 +92,25 @@ export class GridlockDetector {
       return null;
     }
 
-    const active = tasks.filter((task) => task.column === "in-progress" || (task.column === "in-review" && Boolean(task.worktree)));
+    /*
+    FNXC:UnownedHoldColumnGates 2026-07-29-13:45 (U7 / R3):
+    The ACTIVE filter is the same bug as the schedulable one above, and converting
+    only the `todo` half would have left the detector just as blind: `active` is
+    empty on a renamed board, and an empty active set is ALSO an early return. Two
+    literals, one silence — which is why this is converted in the same change rather
+    than counted as out of scope because `in-progress` is not `todo`.
+    */
+    const rolesByTask = new Map<string, { wip?: string; review?: string }>();
+    for (const task of tasks) {
+      const roles = await resolveTaskLifecycleColumns(this.store, task.id, irCache);
+      rolesByTask.set(task.id, { wip: roles?.wip, review: roles?.review });
+    }
+    const active = tasks.filter((task) => {
+      const roles = rolesByTask.get(task.id);
+      if (!roles) return false;
+      if (roles.wip !== undefined && task.column === roles.wip) return true;
+      return roles.review !== undefined && task.column === roles.review && Boolean(task.worktree);
+    });
     if (active.length === 0) {
       this.clearGridlockState();
       return null;

@@ -19,7 +19,7 @@
  * - `completing` → `inactive`: Mission complete
  */
 
-import { AsyncMissionStore } from "@fusion/core";
+import { AsyncMissionStore, resolveTaskLifecycleColumns } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
@@ -376,9 +376,25 @@ export class MissionAutopilot {
         { taskId, featureId: feature.id, retryCount, maxRetries },
       );
 
+      /*
+      FNXC:UnownedHoldColumnGates 2026-07-29-13:20 (U7 / R3):
+      Retry returns the card to its workflow's HOLD column. Keyed on the literal
+      `todo`, a renamed workflow answered "not there" on every retry AND moved the
+      card to `todo` — a column it may not declare (R7), on every single retry.
+
+      No resolvable hold column: leave the card where it is rather than relocating
+      it somewhere nothing renders. The error/status clear below still runs, so the
+      retry is not lost — the card simply stays put for the scheduler to pick up
+      from its own lane.
+      */
       const task = await this.taskStore.getTask(taskId);
-      if (task?.column !== "todo") {
-        await this.taskStore.moveTask(taskId, "todo");
+      const holdColumn = (await resolveTaskLifecycleColumns(this.taskStore, taskId))?.hold;
+      if (!holdColumn) {
+        autopilotLog.warn(
+          `Mission retry for ${taskId}: workflow declares no hold column — leaving the card in ${task?.column ?? "its current column"}`,
+        );
+      } else if (task?.column !== holdColumn) {
+        await this.taskStore.moveTask(taskId, holdColumn);
       }
 
       await this.taskStore.updateTask(taskId, { error: null, status: null, paused: false });
