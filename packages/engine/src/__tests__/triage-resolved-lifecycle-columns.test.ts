@@ -143,7 +143,14 @@ function createStore(opts: {
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
-    updateTask: vi.fn(),
+    /*
+    MUST resolve. Several triage paths do `await store.updateTask(...).catch(...)`,
+    so a bare `vi.fn()` throws on `.catch` and aborts the caller mid-way — which
+    presents as the branch under test "not running" and sends you hunting a
+    production bug that is not there. Sixth instance of this shape in U7; see the
+    PR body.
+    */
+    updateTask: vi.fn().mockResolvedValue(undefined),
     updateTaskAtomic: vi.fn(async (id: string, patch: unknown) => {
       const live = byId(id);
       if (!live) return undefined;
@@ -609,4 +616,78 @@ describe("the synchronous planning handlers read the published lane", () => {
       });
     }
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Stuck-abort: recognising a handoff that already completed
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:TriageLifecycleColumns 2026-07-28-14:10 (U7 / R3):
+The last planning-lane decision keyed on a literal. When the stuck detector kills a
+planner, `handleStuckAbortRequeue` asks whether the handoff had ALREADY completed —
+the card resting in the hold column with no planning-stage status. If so it must
+preserve that released state; otherwise it requeues, which for a card with a draft
+means stamping `needs-replan`.
+
+Keyed on `column === "todo"`, a renamed workflow answered NO to a card sitting in
+its own hold column with a finished spec. The stuck handler then took the requeue
+path and wrote `needs-replan` OVER a completed handoff — re-stranding an approved
+plan. That is exactly the regression the FN-8361 / PR #2326 notes above the branch
+describe and guard against, reintroduced for every renamed workflow.
+
+Both statuses matter, so both are asserted: a released card (status cleared) must be
+preserved, and a card still carrying a planning-stage status must still requeue —
+the distinction the `planningStageStatus` half draws, which a column-only fix would
+quietly flatten.
+*/
+describe("stuck-abort recognises a completed handoff in the workflow's own hold column", () => {
+  let rootDir = "";
+
+  beforeEach(async () => {
+    resetExecutorMocks();
+    vi.clearAllMocks();
+    rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-stuck-"));
+    vi.spyOn(planLog, "log").mockImplementation(() => {});
+    vi.spyOn(planLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  /** Run the stuck-abort cleanup and report every status it wrote. */
+  async function stuckAbort(
+    names: { intake: string; hold: string; wip: string },
+    task: Task,
+  ): Promise<Array<string | null>> {
+    const store = createStore({ tasks: [task], workflowIr: ir(names) });
+    const processor = new TriageProcessor(store, rootDir);
+    await (processor as unknown as {
+      handleStuckAbortRequeue: (t: Task, c: "in-loop" | "catch") => Promise<void>;
+    }).handleStuckAbortRequeue(task, "in-loop");
+
+    return vi.mocked(store.updateTask).mock.calls
+      .map(([, patch]) => (patch as { status?: string | null }).status)
+      .filter((status) => status !== undefined) as Array<string | null>;
+  }
+
+  for (const [label, names] of [["default", DEFAULT_NAMES], ["renamed", RENAMED]] as const) {
+    it(`preserves a RELEASED ${label} card instead of stamping needs-replan over it`, async () => {
+      const released = createTask({ id: "FN-REL", column: names.hold, status: null });
+
+      // No status write at all: the handoff completed, so only the kill count moves.
+      expect(await stuckAbort(names, released)).toEqual([]);
+    });
+
+    it(`still requeues a ${label} card that is mid-planning in the hold column`, async () => {
+      // Plan-in-place: resting in the hold column but NOT released — the
+      // `planningStageStatus` half of the predicate, which must survive the
+      // column conversion rather than being flattened by it.
+      const midPlan = createTask({ id: "FN-MID", column: names.hold, status: "planning" });
+
+      expect(await stuckAbort(names, midPlan)).not.toEqual([]);
+    });
+  }
 });
