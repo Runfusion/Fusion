@@ -54,6 +54,8 @@ import {
   localeDisplayName,
   parsePlanningPlanMd,
   type NearDuplicateCandidate,
+  resolveLifecycleColumns,
+  type WorkflowIr,
 } from "@fusion/core";
 
 
@@ -287,6 +289,41 @@ export type PlanningHandoffOutcome = "released" | "parked" | "withheld";
  *  `finalizeApprovedTask` for why this is a report object and not a return value. */
 export interface PlanningHandoffReport {
   outcome: PlanningHandoffOutcome;
+}
+
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-08:40 (U11 conversion — triage planner lanes):
+The PLANNER LANES for a task: the columns where specification happens, resolved
+from its own workflow.
+
+Triage's eight column decisions are all one of two questions — "is this card in a
+planner lane?" (hold or intake) and "where does a finished plan get released to?"
+(hold) — and both were answered with literals. Under a renamed workflow every one
+silently stops matching; after U11 deletes `todo` from the builtins, they stop
+matching everywhere.
+
+SYNCHRONOUS on purpose: several call sites are inside event listeners and pure
+filter predicates, and introducing an `await` there would reorder handlers
+relative to a synchronous emitter (see the scheduler conversion, where exactly
+that broke five pre-existing tests).
+
+Fail-soft to the legacy pair so an unresolvable or column-less workflow behaves
+exactly as before.
+
+NOTE FOR U11: once `triage` carries the capacity hold, `hold` and `intake` resolve
+to the SAME column. Every `hold || intake` check below then collapses to one
+column, and the release move becomes a no-op the guard already skips — which is
+the intended end state, not a degenerate case.
+*/
+function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string } {
+  try {
+    const ir = (store as unknown as { resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr }).resolveTaskWorkflowIrSync?.(taskId);
+    const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
+    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+  } catch {
+    return { hold: "todo", intake: "triage" };
+  }
 }
 
 export class TriageProcessor {
@@ -610,7 +647,8 @@ export class TriageProcessor {
     */
     this.taskColumnWakeHandler = (task: Task) => {
       if (!task?.id) return;
-      if (task.column !== "todo" && task.column !== "triage") return;
+      const wakeLanes = resolvePlannerLanes(this.store, task.id);
+      if (task.column !== wakeLanes.hold && task.column !== wakeLanes.intake) return;
       if (task.paused === true || task.userPaused === true) return;
       // Already being planned (or mid-plan) — the running poll/session owns it.
       if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
@@ -648,7 +686,8 @@ export class TriageProcessor {
       an unrelated update.
       */
       if (typeof task.column !== "string") return;
-      if (task.column === "todo" || task.column === "triage" || task.column === "in-progress") return;
+      const disposeLanes = resolvePlannerLanes(this.store, task.id);
+      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {
         this.disposeSubagentsForTask(task.id, `task moved to ${task.column}`);
       }
@@ -738,7 +777,8 @@ export class TriageProcessor {
     try {
       const stale = allTasks.filter((t) => {
         if (t.status !== "planning") return false;
-        if (t.column !== "triage" && t.column !== "todo") return false;
+        const lanes = resolvePlannerLanes(this.store, t.id);
+        if (t.column !== lanes.intake && t.column !== lanes.hold) return false;
         if (this.processing.has(t.id)) return false;
         if (t.userPaused === true || t.paused === true) return false;
         const touchedAt = Date.parse(t.updatedAt ?? t.columnMovedAt ?? "");
@@ -766,8 +806,13 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
     In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a planning admission slot and blocks new triage work. (The separate maxTriageConcurrent pool AND its setting are both gone — FN-8453 removed the pool, the capacity simplification removed the dead key; planning shares the one agent count.)
     */
-    const triageTasks = await this.store.listTasks({ column: "triage", slim: true });
-    const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+    /* Both planner lanes, resolved from the DEFAULT workflow — this startup sweep
+       is board-wide and has no single task to resolve against. Cards belonging to
+       a workflow with different lane names are picked up by the per-task filter
+       below rather than by this query. */
+    const sweepLanes = resolvePlannerLanes(this.store, "");
+    const triageTasks = await this.store.listTasks({ column: sweepLanes.intake, slim: true });
+    const todoTasks = await this.store.listTasks({ column: sweepLanes.hold, slim: true });
     const stale = [...triageTasks, ...todoTasks].filter(
       (t) => t.status === "planning" && !this.processing.has(t.id),
     );
@@ -1085,7 +1130,11 @@ export class TriageProcessor {
     const recoverableStatus =
       task.status === "planning"
       || (task.status == null && this.hasPassedPlanReview(task));
-    if (task.column !== "triage" || !recoverableStatus) {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-29-09:05 (U11): the INTAKE lane, not
+       the literal. Converting only the `todo` sites left this one rejecting every
+       card whose workflow renames its planner column, so the release below was
+       unreachable for exactly the workflows the conversion was for. */
+    if (task.column !== resolvePlannerLanes(this.store, task.id).intake || !recoverableStatus) {
       return false;
     }
 
@@ -1282,7 +1331,7 @@ export class TriageProcessor {
       freshTask.status === "planning"
       || freshTask.status === "needs-replan"
       || freshTask.status === "plan-review-unavailable";
-    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    const releasedToTodo = freshTask.column === resolvePlannerLanes(this.store, freshTask.id).hold && !planningStageStatus;
     if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
@@ -4003,7 +4052,8 @@ export class TriageProcessor {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }
 
-    if (task.column !== "todo") {
+    const releaseTarget = resolvePlannerLanes(this.store, task.id).hold;
+    if (task.column !== releaseTarget) {
       const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
       if (typeof moveTaskIf !== "function") {
         // FNXC:TriageFinalizeVisibility 2026-07-26-19:05: the release move is the handoff. If it
@@ -4016,7 +4066,7 @@ export class TriageProcessor {
         report.outcome = "withheld";
         return;
       }
-      const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
+      const release = await moveTaskIf.call(this.store, task.id, releaseTarget, isTaskStillInPlanningStage);
       if (!release.moved) {
         planLog.warn(
           `${task.id}: planning handoff to todo REFUSED by the planning-stage guard `
