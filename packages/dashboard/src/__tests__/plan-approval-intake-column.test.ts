@@ -127,3 +127,63 @@ describe("plan approval on the merged planning column (post-#2515)", () => {
     expect(res.status).toBe(400);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+Reset must verify against the column it actually TARGETED.
+
+`resolveReboundColumnForTask` picks the rebound column from the task's workflow, but both
+post-reset checks compared against the literal `todo`. On any workflow whose rebound
+column is not `todo` — Coding (Ideas), any custom or renamed lineage — a reset that
+SUCCEEDED was reported as a "limbo state" conflict: the mover and its own verification
+disagreed about where the card was supposed to land.
+
+REVERT CHECK: restore either `updated.column !== "todo"` and this fails with a 409,
+because the card lands in `backlog`, which is where its workflow says a reset belongs.
+*/
+describe("reset verification uses the resolved rebound column", () => {
+  const REBOUND_IR = {
+    version: "v2",
+    name: "custom",
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+    edges: [{ from: "start", to: "end" }],
+  };
+
+  it("does not report a limbo-state conflict when the card lands in its own rebound column", async () => {
+    const resetTask = {
+      ...PLANNING_TASK,
+      id: "FN-300",
+      column: "backlog",
+      status: undefined,
+      worktree: null,
+      branch: null,
+      checkedOutBy: null,
+    } as unknown as TaskDetail;
+
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(resetTask),
+      moveTask: vi.fn().mockResolvedValue(resetTask),
+      updateTask: vi.fn().mockResolvedValue(resetTask),
+      getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "wf-custom" }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({ id: "wf-custom", name: "Custom", ir: REBOUND_IR }),
+    });
+
+    // The route is destructive and demands explicit confirmation; without it the request
+    // 400s before ever reaching the column check, which would make this case vacuous.
+    const res = await performRequest(
+      createApp(store),
+      "POST",
+      "/api/tasks/FN-300/reset",
+      JSON.stringify({ confirm: true }),
+      { "content-type": "application/json" },
+    );
+    // The specific failure: a 409 whose message calls a correctly-reset card "limbo".
+    expect(res.status).not.toBe(409);
+    expect(JSON.stringify(res.body ?? {})).not.toMatch(/limbo/i);
+  });
+});

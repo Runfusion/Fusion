@@ -1118,6 +1118,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       the heuristic instead of turning a board load into thousands of reads.
       */
       try {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8, DELIBERATELY NOT CONVERTED):
+        This filter names `todo`, so a workflow whose waiting lane is called something else
+        gets no enrichment and silently falls back to the heuristic. I converted it and then
+        REVERTED: resolving each task's hold column needs a per-task workflow read, and this
+        is the board-load path whose own comment above exists because unbounded reads here
+        "turn a board load into thousands of reads". My version did those reads for every
+        task BEFORE the enrich limit applied — trading a silent degradation for a load-time
+        regression on every board.
+
+        Converting it properly needs the hold column resolved per WORKFLOW from data the
+        board payload already carries, not per task from the store. That is a real change
+        with a measurable cost, not a rename, so it is left for one — with the cost stated
+        rather than the conversion quietly skipped.
+        */
         const todoRows = tasks.filter((task) => task.column === "todo");
         const enrichable = todoRows.slice(0, AWAITING_PLANNING_ENRICH_LIMIT);
         if (todoRows.length > enrichable.length) {
@@ -2884,7 +2899,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw notFound(`Task ${req.params.id} not found after reset`);
       }
 
-      const needsDriftCorrection = updated.column !== "todo"
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      Verify against the column the reset actually TARGETED. The mover two lines up already
+      resolves `resetColumn` from the task's workflow, but both post-reset checks compared
+      against the literal `todo` — so on any workflow whose rebound column is not `todo`
+      (Coding (Ideas), any custom or renamed lineage) a reset that SUCCEEDED was reported
+      as a "limbo state" conflict. The mover and its own verification disagreed about
+      where the card was supposed to land.
+      */
+      const needsDriftCorrection = updated.column !== resetColumn
         || (updated.worktree ?? null) !== null
         || (updated.branch ?? null) !== null
         || (updated.checkedOutBy ?? null) !== null
@@ -2914,7 +2938,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      if (updated.column !== "todo" || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
+      // Same target as the drift check above: the resolved rebound column, not `todo`.
+      if (updated.column !== resetColumn || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
         throw conflict(
           `Reset refused to return task ${req.params.id} in limbo state (${updated.column}, branch=${updated.branch ?? "null"}, worktree=${updated.worktree ?? "null"})`,
         );
