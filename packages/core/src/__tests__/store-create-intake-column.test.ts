@@ -86,14 +86,23 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(task.column).toBe("ideas");
   });
 
-  it("lands a task explicitly selecting builtin:coding in triage even when the project default is coding-ideas", async () => {
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-12:25 (U11):
+  The INVARIANT here is "an explicit create-time workflowId beats the project default", not "the
+  answer is the literal `triage`". U11 merges Todo into Planning on builtin:coding, so its intake
+  column is now `todo` — the test asserts the invariant through the selected workflow's own
+  resolved intake column so it cannot drift again the next time a column id moves.
+  */
+  it("lands a task explicitly selecting builtin:coding in ITS intake column, even when the project default is coding-ideas", async () => {
     const store = h.store();
     await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({
       description: "explicit default coding workflow task",
       workflowId: "builtin:coding",
     });
-    expect(task.column).toBe("triage");
+    // builtin:coding's merged Planning column; explicitly NOT coding-ideas' `ideas` intake.
+    expect(task.column).toBe("todo");
+    expect(task.column).not.toBe("ideas");
   });
 
   it("does not throw and falls back to triage when workflowId is explicitly null (\"No workflow\")", async () => {

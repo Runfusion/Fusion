@@ -420,12 +420,26 @@ describe("built-in workflows", () => {
 
   // FNXC:Workflows 2026-07-05-00:00: FN-7599 — hand-authored default workflows (stepwise-coding, pr-workflow)
   // must also label the intake column "Planning" while keeping the "triage" id, matching builtin-coding.
-  it("hand-authored default workflows label the intake column 'Planning' (FN-7599)", () => {
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-12:10 (U11):
+  The invariant is "the intake column is labelled Planning", which FN-7599 established and U11
+  preserves — but the intake column's ID now differs per workflow, so the test resolves it by
+  TRAIT instead of by the literal `triage`. Asserting the label through the trait is what makes
+  this survive the merge; asserting it through the id is what made it fail.
+
+  Kept covering BOTH workflows deliberately: the stepwise IR merged (intake now rides on `todo`)
+  while the PR workflow did not (still `triage`), so this now proves the label invariant holds
+  across the two shapes rather than only the one.
+  */
+  it("hand-authored default workflows label their intake column 'Planning' (FN-7599)", () => {
     for (const ir of [BUILTIN_STEPWISE_CODING_WORKFLOW_IR, BUILTIN_PR_WORKFLOW_IR]) {
       expect(ir.version).toBe("v2");
       if (ir.version !== "v2") throw new Error("expected v2");
-      const triageColumn = ir.columns.find((column) => column.id === "triage");
-      expect(triageColumn).toEqual({ id: "triage", name: "Planning", traits: [{ trait: "intake" }] });
+      const intakeColumns = ir.columns.filter(
+        (column) => column.traits.some((trait) => trait.trait === "intake"),
+      );
+      expect(intakeColumns).toHaveLength(1);
+      expect(intakeColumns[0]!.name).toBe("Planning");
     }
   });
 
@@ -488,8 +502,15 @@ describe("built-in workflows", () => {
       [
         "builtin:coding",
         [
-          { id: "triage", traits: ["intake"] },
-          { id: "todo", traits: ["hold", "reset-on-entry"] },
+          /*
+          FNXC:MergedPlanningColumn 2026-07-29-12:10 (U11):
+          The DEFAULT lineage declares ONE pre-implementation column. `triage` is gone and `todo`
+          carries intake + hold + reset-on-entry. Every OTHER entry in this map still lists
+          `triage` on purpose — legacy-coding, pr-workflow, marketing and the rest keep the split
+          shape, and R11 commits to that continuing to work. If a future change collapses them
+          too, that is a decision to make deliberately, not a diff to accept here.
+          */
+          { id: "todo", traits: ["intake", "hold", "reset-on-entry"] },
           { id: "in-progress", traits: ["wip", "abort-on-exit", "timing"] },
           { id: "in-review", traits: ["merge-blocker", "human-review", "stall-detection", "merge"] },
           { id: "done", traits: ["complete"] },
@@ -510,8 +531,10 @@ describe("built-in workflows", () => {
       [
         "builtin:stepwise-coding",
         [
-          { id: "triage", traits: ["intake"] },
-          { id: "todo", traits: ["hold", "reset-on-entry"] },
+          // FNXC:MergedPlanningColumn 2026-07-29-12:20 (U11): merged with builtin:coding above —
+          // this IS the IR the default lineage clones, so the two must agree here or the default
+          // board and its base would have drifted apart silently.
+          { id: "todo", traits: ["intake", "hold", "reset-on-entry"] },
           { id: "in-progress", traits: ["wip", "abort-on-exit", "timing"] },
           { id: "in-review", traits: ["merge-blocker", "human-review", "stall-detection", "merge"] },
           { id: "done", traits: ["complete"] },
@@ -571,8 +594,13 @@ describe("built-in workflows", () => {
     expect(ir.version).toBe("v2");
     if (ir.version !== "v2") throw new Error("expected v2");
 
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-12:10 (U11):
+    Five columns, not the legacy six. This is the assertion that would have caught the merge
+    landing on the wrong constant, so it is updated rather than deleted: it still pins the exact
+    column set and trait order of the OPERATOR'S default board.
+    */
     expect(ir.columns.map((column) => column.id)).toEqual([
-      "triage",
       "todo",
       "in-progress",
       "in-review",
@@ -580,8 +608,7 @@ describe("built-in workflows", () => {
       "archived",
     ]);
     expect(ir.columns.map((column) => column.traits.map((trait) => trait.trait))).toEqual([
-      ["intake"],
-      ["hold", "reset-on-entry"],
+      ["intake", "hold", "reset-on-entry"],
       ["wip", "abort-on-exit", "timing"],
       ["merge-blocker", "human-review", "stall-detection", "merge"],
       ["complete"],
