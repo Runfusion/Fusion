@@ -16,6 +16,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   TaskStore,
+  createLogger,
   resolvePlanningSettingsModel,
   AgentStore,
   THINKING_LEVELS,
@@ -71,6 +72,8 @@ import {
 import type { AiSessionStore } from "./ai-session-store.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection } from "./routes/branch-selection.js";
 
+const missionRoutesLog = createLogger("dashboard-mission-routes");
+
 /** Resolve the mission-start override through the planning settings hierarchy. */
 export function resolveMissionInterviewThinkingLevel(
   settings: Partial<Settings> | undefined,
@@ -99,8 +102,12 @@ export async function pauseMissionTasksForOperatorStop(
         try {
           await store.pauseTask(feature.taskId, true, undefined, { userPaused: true });
           pausedTaskIds.push(feature.taskId);
-        } catch (_err) {
-          // Continue stopping the mission if a linked task is already gone.
+        } catch (error) {
+          // Continue stopping the mission if a linked task is already gone, but
+          // keep unexpected pause failures visible to operators.
+          missionRoutesLog.warn(
+            `Failed to pause mission-linked task ${feature.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
     }
@@ -3042,7 +3049,7 @@ export function createMissionRouter(
       const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
 
       // Pause all tasks linked to features in this mission.
-      const pausedTaskIds = await pauseMissionTasksForOperatorStop(store, hierarchy);
+      const pausedTaskIds = await pauseMissionTasksForOperatorStop(getScopedStore(), hierarchy);
 
       res.json({ ...updated, pausedTaskIds });
     })
