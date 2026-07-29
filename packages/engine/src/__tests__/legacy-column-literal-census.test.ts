@@ -18,9 +18,27 @@ this program has found actually lived:
 Each was found by hand, one at a time, by someone who happened to look. This test makes
 the size of the remaining surface a fact the suite maintains.
 
-WHAT IT COUNTS: `x.column === "<legacy id>"` / `!==` in production source. That is a
-LIFECYCLE DECISION KEYED TO A NAME. It deliberately does NOT count string literals in
-general — a column id in a fixture, a log line, or a migration is not a decision.
+WHAT IT COUNTS, in two shapes:
+
+  COMPARISON  `x.column === "<legacy id>"` / `!==`   — deciding BY name
+  FALLBACK    `?? "<legacy id>"`                     — DEFAULTING to a name
+
+Both are lifecycle decisions keyed to a name. It deliberately does NOT count string
+literals in general — a column id in a fixture, a log line, or a migration is not a
+decision.
+
+THE SECOND SHAPE WAS MISSING FROM THE FIRST CUT OF THIS TEST, and the way that was
+found is worth keeping: the census header lists five motivating defects, so the census
+was run against its own five examples. It counted two of them. The pool-id sentinel,
+the rebound strand and the terminal fallback are all `??` defaults and were invisible
+to a comparison-only regex — a census that could not see three of the five bugs it
+cites as its reason to exist.
+
+`?? "builtin:coding"` — the pool-id sentinel — is deliberately still NOT counted here.
+It defaults a WORKFLOW id, not a column, and it is legitimately correct at most of its
+sites (an IR-resolution key needs a resolvable workflow id). It has its own, stronger
+guard: scripts/check-capacity-pool-id.mjs, an AST check that bans it only where the
+value reaches a capacity counter.
 
 WHAT A HIT IS NOT: a bug. Many are correct — deliberate legacy fallbacks (see
 live-agent-count's documented `??` defaults), the legacy-adoption path, or code that is
@@ -46,14 +64,22 @@ import { resolve } from "node:path";
 /** Repo root, derived from this file rather than cwd (vitest chdirs per worker). */
 const REPO_ROOT = resolve(__dirname, "../../../..");
 
-/** A lifecycle decision keyed to a legacy column NAME. */
-const LEGACY_COLUMN_DECISION = /\.column\s*(?:===|!==)\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
+/** Deciding BY a legacy column name. */
+const LEGACY_COLUMN_COMPARISON = /\.column\s*(?:===|!==)\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
+
+/** DEFAULTING to a legacy column name when a role does not resolve. */
+const LEGACY_COLUMN_FALLBACK = /\?\?\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
+
+const LEGACY_COLUMN_DECISION = new RegExp(
+  `(?:${LEGACY_COLUMN_COMPARISON.source})|(?:${LEGACY_COLUMN_FALLBACK.source})`,
+);
 
 /*
-The pinned ceiling. Measured 2026-07-29 on main at the U12-part-9 tip.
-LOWER THIS when a conversion slice reduces the count — in the same PR.
+The pinned ceiling. Measured 2026-07-29 on main at the U12-part-9 tip:
+417 comparisons + 31 fallbacks, of which 2 lines carry both shapes -> 446 lines. LOWER THIS when a conversion slice reduces the count —
+in the same PR.
 */
-const CEILING = 417;
+const CEILING = 446;
 
 function productionSources(): string[] {
   const out = execFileSync(
@@ -131,6 +157,25 @@ describe("legacy column-literal census — the unconverted lifecycle surface", (
       );
     }
     expect(total).toBeGreaterThanOrEqual(0);
+  });
+
+  it("sees the defects it cites as its reason to exist", () => {
+    /*
+    THE CASE THAT CAUGHT THE HOLE. The header lists five motivating defects; a
+    comparison-only regex saw two. A census blind to three of its own examples is worse
+    than no census — it reports a number that feels like coverage. Pinning the examples
+    means the pattern cannot narrow back without this failing.
+    */
+    const motivating = [
+      'if (task.column !== "todo") return;',
+      'if (task.column === "done" || task.column === "archived") return false;',
+      'return resolveReboundTarget(ir) ?? "todo";',
+      'completeColumn: resolveCompleteColumn(ir) ?? "done",',
+      'mergeColumn: resolveMergeOrchestrationColumn(ir) ?? "in-review",',
+    ];
+    for (const line of motivating) {
+      expect(LEGACY_COLUMN_DECISION.test(line), `census is blind to: ${line}`).toBe(true);
+    }
   });
 
   it("counts a DECISION, not a mention", () => {
