@@ -36,6 +36,7 @@ import { VALID_TRANSITIONS } from "./types.js";
 import type { Column } from "./types.js";
 import type { WorkflowIr, WorkflowIrV2 } from "./workflow-ir-types.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS } from "./workflow-ir.js";
+import { resolveReboundTarget } from "./workflow-lifecycle-traits.js";
 
 /** A column→allowed-target-columns adjacency map. */
 export type ColumnAdjacency = Map<string, string[]>;
@@ -98,7 +99,33 @@ export function resolveColumnAdjacency(ir: WorkflowIr): ColumnAdjacency {
  * legal targets").
  */
 export function resolveAllowedColumns(ir: WorkflowIr, fromColumn: string): string[] {
-  return resolveColumnAdjacency(ir).get(fromColumn) ?? [];
+  const adjacency = resolveColumnAdjacency(ir).get(fromColumn);
+  if (adjacency) return adjacency;
+
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-10:25 (U11 migration):
+  A card can outlive the column it is stored in — U11 removes `triage` from the default coding
+  workflow, so after upgrade every card still sitting there is in a column its own workflow no
+  longer declares. Adjacency is derived from the graph, so an undeclared source has none, and this
+  returned `[]`: EVERY move rejected with "Valid targets: none", including the one that would
+  rescue the card. `reconcileUndeclaredTaskColumns` re-homes such rows, but only when it runs; in
+  between, an operator dragging the card got a hard rejection with nothing actionable in it.
+
+  So an undeclared source column resolves to the workflow's own rebound target (hold -> intake ->
+  first declared column). This is an ESCAPE HATCH, not a relaxation: there is no adjacency to
+  violate from a column that is not in the graph, and every declared column keeps exactly the
+  targets its graph gives it — the `if (adjacency) return adjacency` above is unconditional.
+
+  Deliberately the rebound target ONLY, not "any declared column". A stranded card needs a way back
+  INTO the lifecycle, not a way to skip it; allowing any target would let a card jump from a removed
+  planning column straight to a review or complete column, which the ordinary adjacency rules exist
+  to prevent. An operator who wants it elsewhere moves it twice.
+
+  A workflow with no declared columns (v1 IR) has nothing to rebound to and still resolves to `[]`,
+  so callers keep their conservative rejection rather than being handed an invented target.
+  */
+  const rebound = resolveReboundTarget(ir);
+  return rebound ? [rebound] : [];
 }
 
 /** True when `toColumn` is a defined column of the workflow. */
