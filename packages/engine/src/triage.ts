@@ -1156,7 +1156,25 @@ export class TriageProcessor {
        the literal. Converting only the `todo` sites left this one rejecting every
        card whose workflow renames its planner column, so the release below was
        unreachable for exactly the workflows the conversion was for. */
-    if (task.column !== resolvePlannerLanes(this.store, task.id).intake || !recoverableStatus) {
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-29-23:10 (U11 #2515 audit):
+    ADDITIVE: the resolved intake lane OR the legacy `triage` id.
+
+    Resolving the lane (above) fixed recovery for renamed and merged workflows and
+    silently broke it for cards still SITTING in `triage` — the migration population
+    U11's re-homing has not reached yet. A default-workflow card there resolves
+    intake to `todo`, fails this gate, and its approved spec is discarded: the
+    stale-planning sweep clears the status, ordinary discovery re-plans from scratch,
+    and a fresh LLM pass is burned on the path FN-1312 built to avoid exactly that.
+
+    Trading "cannot recover post-U11 cards" for "cannot recover pre-U11 cards" is not
+    a fix. `triage` stays a legal column id for stored rows (R11), so accepting both
+    is compatibility, not a second source of truth — once a row is re-homed the
+    resolved lane is what matches.
+    */
+    const inPlannerColumn = task.column === resolvePlannerLanes(this.store, task.id).intake
+      || task.column === "triage";
+    if (!inPlannerColumn || !recoverableStatus) {
       return false;
     }
 
