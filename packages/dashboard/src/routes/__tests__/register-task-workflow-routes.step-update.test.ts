@@ -2,11 +2,17 @@
 
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
-import type { TaskStore } from "@fusion/core";
+import { TaskNotFoundError, type TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../../routes.js";
 import { request as REQUEST } from "../../test-request.js";
 
-function createHarness() {
+interface HarnessOptions {
+  missing?: boolean;
+  rejectStepTransition?: boolean;
+  wedgeEpisodeId?: string;
+}
+
+function createHarness(options: HarnessOptions = {}) {
   const task = {
     id: "FN-001",
     description: "legacy checklist task",
@@ -18,25 +24,43 @@ function createHarness() {
     ],
     currentStep: 0,
     log: [],
+    wedgeNotification: {
+      reasonKey: "failed:stale",
+      episodeId: options.wedgeEpisodeId ?? "episode-observed",
+      status: "active",
+      transitionedAt: "2026-07-29T00:00:00.000Z",
+    },
     createdAt: "2026-07-29T00:00:00.000Z",
     updatedAt: "2026-07-29T00:00:00.000Z",
   } as any;
-  const updateStep = vi.fn(async (_id: string, index: number, status: string) => {
-    task.steps[index].status = status;
+  const getTask = vi.fn(async () => {
+    if (options.missing) throw new TaskNotFoundError("FN-001");
     return task;
   });
-  const claimTaskWedgeNotificationEpisode = vi.fn(async () => ({ claimed: false }));
+  const updateStep = vi.fn(async (_id: string, index: number, status: string) => {
+    if (!options.rejectStepTransition) task.steps[index].status = status;
+    return task;
+  });
+  const updateTaskAtomic = vi.fn(async (
+    _id: string,
+    updater: (current: typeof task) => Record<string, unknown> | null | undefined,
+  ) => {
+    if (options.missing) throw new TaskNotFoundError("FN-001");
+    const updates = await updater(task);
+    if (updates) Object.assign(task, updates);
+    return task;
+  });
   const store = {
     getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
-    getTask: vi.fn(async () => task),
+    getTask,
     updateStep,
-    claimTaskWedgeNotificationEpisode,
+    updateTaskAtomic,
   } as unknown as TaskStore;
   const app = express();
   app.use(express.json());
   app.use("/api", createApiRoutes(store));
-  return { app, updateStep, claimTaskWedgeNotificationEpisode };
+  return { app, getTask, updateStep, updateTaskAtomic, task };
 }
 
 describe("task checklist step update route", () => {
@@ -58,6 +82,7 @@ describe("task checklist step update route", () => {
   it.each([
     ["not-an-index", { status: "done" }],
     ["-1", { status: "done" }],
+    ["2", { status: "done" }],
     ["0", { status: "invalid" }],
   ])("rejects invalid step update %s", async (index, body) => {
     const { app, updateStep } = createHarness();
@@ -73,8 +98,51 @@ describe("task checklist step update route", () => {
     expect(updateStep).not.toHaveBeenCalled();
   });
 
-  it("resolves a stale task wedge episode through the live store", async () => {
-    const { app, claimTaskWedgeNotificationEpisode } = createHarness();
+  it("returns 409 when the store rejects the requested step transition", async () => {
+    const { app } = createHarness({ rejectStepTransition: true });
+    const response = await REQUEST(
+      app,
+      "PATCH",
+      "/api/tasks/FN-001/steps/1",
+      JSON.stringify({ status: "done" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual(expect.objectContaining({ error: expect.stringContaining("was rejected") }));
+  });
+
+  it("resolves only the observed stale task wedge episode", async () => {
+    const { app, updateTaskAtomic } = createHarness();
+    const response = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks/FN-001/wedge/resolve",
+      JSON.stringify({ episodeId: "episode-observed" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(updateTaskAtomic).toHaveBeenCalledOnce();
+    expect((response.body as { wedgeNotification: { status: string } }).wedgeNotification.status).toBe("resolved");
+  });
+
+  it("does not clear a replacement wedge episode", async () => {
+    const { app, task } = createHarness({ wedgeEpisodeId: "episode-new" });
+    const response = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks/FN-001/wedge/resolve",
+      JSON.stringify({ episodeId: "episode-observed" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(409);
+    expect(task.wedgeNotification).toEqual(expect.objectContaining({ episodeId: "episode-new", status: "active" }));
+  });
+
+  it("requires the observed wedge episode id", async () => {
+    const { app, updateTaskAtomic } = createHarness();
     const response = await REQUEST(
       app,
       "POST",
@@ -83,7 +151,24 @@ describe("task checklist step update route", () => {
       { "content-type": "application/json" },
     );
 
-    expect(response.status).toBe(200);
-    expect(claimTaskWedgeNotificationEpisode).toHaveBeenCalledWith("FN-001", null);
+    expect(response.status).toBe(400);
+    expect(updateTaskAtomic).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["PATCH", "/api/tasks/FN-001/steps/0", { status: "done" }],
+    ["POST", "/api/tasks/FN-001/wedge/resolve", { episodeId: "episode-observed" }],
+  ])("maps a missing task to 404 for %s %s", async (method, path, body) => {
+    const { app } = createHarness({ missing: true });
+    const response = await REQUEST(
+      app,
+      method,
+      path,
+      JSON.stringify(body),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual(expect.objectContaining({ error: "Task FN-001 not found" }));
   });
 });

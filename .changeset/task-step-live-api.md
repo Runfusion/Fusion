@@ -1,5 +1,7 @@
 ---
-"@fusion/dashboard": patch
+"@runfusion/fusion": patch
 ---
 
-Add project-scoped API routes for updating individual task checklist steps and resolving stale wedge episodes so operators and clients can reconcile legacy workflow state through the live backend instead of opening a second embedded store.
+summary: Reconcile legacy task checklist and wedge state through the live dashboard backend.
+category: fix
+dev: Adds project-scoped task step-update and wedge-resolution API routes.
