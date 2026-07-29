@@ -685,6 +685,16 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
   - task-agent-sync.ts  resolveTaskLifecycleColumns — agent-link hygiene on a real
     TaskStore + real AgentStore + the real `task:moved` subscription
     (workflow-agent-link-live-e2e.pg.test.ts; mutation-verified)
+  - core/live-agent-count.ts  THREE of the four classifications, through the number
+    admission control actually compares against the cap
+    (persistedTopLevelAgentSlotsFromStore; workflow-agent-count-live-e2e.pg.test.ts):
+      countsTowardWip     -> mutation fails 3 renamed cases
+      terminal/complete   -> needed its OWN case; the plain complete-column test is
+                             rejected at the wip check anyway and stayed green under
+                             mutation. Only a complete card carrying a live-looking
+                             status discriminates.
+      mergeOrchestration/mergeBlocker -> needed its own case too (a review card with an
+                             active merge-pipeline status)
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -703,7 +713,8 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
   - mesh-lease-manager.ts:61 resolveReboundTarget
   - core/task-store/reads.ts:130      listTasks hydration
-  - core/live-agent-count.ts:63-75    five columnHasFlag classifications
+  - core/live-agent-count.ts    columnIsIntakeOrHold (the WAITING predicate) — the running
+    predicate never reads it, so the admission-count E2E cannot reach it
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
 
 WHY, and what each would take:
