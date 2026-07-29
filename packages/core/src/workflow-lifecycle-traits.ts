@@ -70,6 +70,32 @@ export function resolveMergeOrchestrationColumn(ir: WorkflowIr): string | undefi
 }
 
 /**
+ * The workflow's TERMINAL column pair — where a card rests when there is nothing
+ * left to do. Returns `[complete, archived]`.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
+ * THE FALLBACK IS PER-ROLE, NOT PER-SET, and that distinction is the whole reason
+ * this is a shared function instead of two inline expressions.
+ *
+ * A per-SET fallback — "if the workflow resolved any terminal role, use what it
+ * declared" — collapses to a one-element set for a workflow that declares
+ * `complete` but no `archived`, silently dropping the archived half of every
+ * already-finished check. That is a real P1 (PR #2471 review): an archived card
+ * then fell through a merge short circuit and threw "must be in 'in-review'" for
+ * a task whose actual state was "already done".
+ *
+ * Resolving each role against its OWN legacy id keeps both halves for a
+ * partially-declared workflow. `merger-ai` learned this the hard way and the
+ * logic lived only there; `executor`'s equivalent guard was still the raw
+ * `column === "done" || column === "archived"` literal pair and would have
+ * re-made the same mistake on conversion. One function, one lesson.
+ */
+export function resolveTerminalColumns(ir: WorkflowIr): readonly [string, string] {
+  const lifecycle = resolveLifecycleColumns(ir);
+  return [lifecycle?.complete ?? "done", lifecycle?.archived ?? "archived"] as const;
+}
+
+/**
  * KTD-10 rebound target: where a self-healing sweep requeues a recovered card.
  * Preference order — the workflow's `hold` column, else its `intake` column, else
  * its first column. Returns undefined only for a column-less (v1) IR, where the
