@@ -754,8 +754,51 @@ export function ListView({
 
   const listContextMenuColumns = useMemo<readonly TaskContextMenuColumnMetadata[] | undefined>(() => {
     if (!workflowMode) return undefined;
-    return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) }));
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+    NO `moveTargets` on the shared list. In the "All workflows" view `listColumns` is a
+    UNION across workflows keyed by column id, so two workflows that reuse an id but
+    declare different edges collapse into one entry — and every task would be handed
+    the first workflow's adjacency. That offers moves the store rejects and hides legal
+    ones. Adjacency is per-workflow and must be resolved per TASK, which
+    `taskContextMenuColumnsByTaskId` below does; this shared list keeps labels and
+    flags only, where the union is harmless.
+    */
+    return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags }));
   }, [listColumns, workflowMode]);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+  Per-task column metadata, mirroring Board's `taskContextMenuColumnsByTaskId`. Each
+  task gets ITS OWN workflow's columns — including that workflow's `moveTargets` — so
+  the aggregate view cannot serve one workflow's adjacency to another's card. Falls
+  back to the shared union when the task's workflow is unresolvable, which yields the
+  previous (neighbour-approximated) behaviour rather than a wrong answer.
+  */
+  const taskContextMenuColumnsByTaskId = useMemo(() => {
+    const map = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
+    if (!workflowMode || !boardWorkflows) return map;
+    const byWorkflowId = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
+    for (const workflow of boardWorkflows.workflows) {
+      byWorkflowId.set(
+        workflow.id,
+        workflow.columns
+          .filter((column) => column.flags?.hiddenFromBoard !== true)
+          .map((column) => ({
+            id: column.id,
+            label: column.name,
+            flags: column.flags,
+            ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}),
+          })),
+      );
+    }
+    for (const task of tasks) {
+      const workflowId = boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId;
+      const columns = workflowId ? byWorkflowId.get(workflowId) : undefined;
+      if (columns) map.set(task.id, columns);
+    }
+    return map;
+  }, [boardWorkflows, tasks, workflowMode]);
 
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
     const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
@@ -1888,7 +1931,7 @@ export function ListView({
       t,
       columnLabel: getListColumnLabel,
       currentColumnFlags: columnFlagsById.get(task.column),
-      workflowMoveColumns: listContextMenuColumns,
+      workflowMoveColumns: taskContextMenuColumnsByTaskId.get(task.id) ?? listContextMenuColumns,
       canRetryTask,
       hasDuplicateHandler: Boolean(onDuplicateTask),
       hasRetryHandler: Boolean(onRetryTask),
@@ -2015,7 +2058,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),

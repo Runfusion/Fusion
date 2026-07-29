@@ -502,6 +502,9 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
       // disables the rule.
       const building = transitions.find((transition) => transition.column === "building");
       expect(building?.label).toBe("Back to Building");
+    });
+
+    /*
     FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
     When the payload carries `moveTargets`, the menu uses the workflow's REAL graph
     adjacency instead of approximating from neighbouring columns. This fixture makes
