@@ -121,26 +121,38 @@ export class WorkflowSwitchRehomeFailedError extends Error {
   readonly fromColumn: string;
   readonly intendedColumn: string;
   readonly reason?: string;
+  /** True when the workflow selection was already COMMITTED — i.e. the card is torn
+   *  and needs recovery. False when the switch was rejected before any write, which
+   *  leaves the card fully consistent and is the ordinary case. */
+  readonly committed: boolean;
   constructor(args: {
     taskId: string;
     workflowId: string;
     fromColumn: string;
     intendedColumn: string;
     reason?: string;
+    committed: boolean;
   }) {
     super(
-      `Task '${args.taskId}' was switched to workflow '${args.workflowId}', but re-homing it ` +
-        `from '${args.fromColumn}' to '${args.intendedColumn}' was rejected` +
-        `${args.reason ? `: ${args.reason}` : ""}. The workflow selection IS committed and the ` +
-        `card remains in '${args.fromColumn}', which that workflow does not declare. Move the ` +
-        `card manually or make room in '${args.intendedColumn}'; startup reconciliation will ` +
-        `otherwise re-home it.`,
+      args.committed
+        ? `Task '${args.taskId}' was switched to workflow '${args.workflowId}', but re-homing it ` +
+            `from '${args.fromColumn}' to '${args.intendedColumn}' was rejected` +
+            `${args.reason ? `: ${args.reason}` : ""}. The workflow selection IS COMMITTED and the ` +
+            `card remains in '${args.fromColumn}', which that workflow does not declare — the card ` +
+            `is inconsistent. Make room in '${args.intendedColumn}' and move the card there, or ` +
+            `switch the task back; startup reconciliation will otherwise re-home it.`
+        : `Cannot switch task '${args.taskId}' to workflow '${args.workflowId}': it would have to ` +
+            `move from '${args.fromColumn}' to '${args.intendedColumn}'` +
+            `${args.reason ? `, but ${args.reason}` : ", but that move was rejected"}. Nothing was ` +
+            `changed — the task keeps its current workflow and column. Make room in ` +
+            `'${args.intendedColumn}' and retry.`,
     );
     this.name = "WorkflowSwitchRehomeFailedError";
     this.taskId = args.taskId;
     this.workflowId = args.workflowId;
     this.fromColumn = args.fromColumn;
     this.intendedColumn = args.intendedColumn;
+    this.committed = args.committed;
     if (args.reason !== undefined) this.reason = args.reason;
   }
 }

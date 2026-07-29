@@ -164,7 +164,7 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     expect((await store.getTask(task.id)).column).not.toBe("custom-hold");
   });
 
-  it("fails loudly when the re-home is rejected, leaving recoverable state (PR #2513 review)", async () => {
+  it("refuses the switch BEFORE committing the selection when the destination is full (PR #2512 review)", async () => {
     const store = h.store();
 
     /*
@@ -187,10 +187,12 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     // A card parked in a column the target workflow does not declare.
     const { task } = await seedOccupiedCustomColumn("Capacity source");
 
+    const before = await store.getTaskWorkflowSelectionAsync(task.id);
+
     /*
-    The selection has already committed by the time the re-home is attempted, so a
-    swallowed rejection would be a torn write: selection and column disagreeing with
-    nobody told. It must FAIL LOUDLY (PR #2513 review).
+    The ORDERING is the fix (PR #2512 review). The destination is full, so the switch
+    must be refused BEFORE the selection commits — leaving a consistent card — rather
+    than committing the selection and then discovering the re-home cannot happen.
     */
     await expect(store.selectTaskWorkflowAndReconcile(task.id, target.id)).rejects.toMatchObject({
       name: "WorkflowSwitchRehomeFailedError",
@@ -198,13 +200,15 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
       workflowId: target.id,
       fromColumn: "custom-hold",
       intendedColumn: "triage",
+      committed: false,
     });
 
-    // Recoverable state, deliberately left in place rather than rolled back: the
-    // selection stands and the card is still where it was, which is what the R7
-    // startup sweep re-homes.
+    // NOTHING was written: same column AND same workflow selection as before. This is
+    // the assertion that distinguishes the ordering fix from a louder error message —
+    // it fails if the selection is committed before the capacity pre-flight.
     expect((await store.getTask(task.id)).column).toBe("custom-hold");
-    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe(target.id);
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe(before?.workflowId);
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).not.toBe(target.id);
   });
 
   /*

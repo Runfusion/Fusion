@@ -11,6 +11,7 @@
 
 import { TaskStore } from "../store.js";
 import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflow-reconciliation.js";
+import {resolveColumnCapacity, resolveCapacityPoolId} from "../workflow-capacity.js";
 import {readTaskRow as readTaskRowAsync} from "./async-persistence.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
@@ -717,6 +718,56 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     enabledWorkflowSteps: string[];
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    PRE-FLIGHT BEFORE COMMITTING. The ordering, not the message, is the fix.
+
+    `selectTaskWorkflow` COMMITS the new selection. If the re-home that follows is then
+    rejected, the card's selection says one thing and its column says another, and
+    self-healing later has to GUESS which is authoritative. So the deterministic
+    rejection cause — the destination column being at its WIP limit — is checked HERE,
+    before anything is written. On that path nothing commits: the task keeps its old
+    workflow AND its old column, which is a consistent card, and the operator gets a
+    typed error naming the full column.
+
+    The target IR is resolved straight from `workflowId` rather than through the task's
+    selection, which is precisely what let this move ahead of the commit.
+    */
+    const preRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (preRow) {
+      const fromColumnPre = String(preRow.column);
+      const targetDef = await store.getWorkflowDefinition(workflowId);
+      if (targetDef) {
+        const targetIr = parseWorkflowIr(targetDef.ir);
+        const pre = resolveSwitchReconciliation(targetIr, fromColumnPre);
+        if (!pre.preserved && pre.targetColumn !== fromColumnPre) {
+          const settingsForCapacity = await store.getSettingsFast();
+          const capacity = resolveColumnCapacity(targetIr, pre.targetColumn, settingsForCapacity);
+          if (capacity.limit !== undefined && Number.isFinite(capacity.limit)) {
+            const occupied = await store.asyncLayer!.transactionImmediate(async (tx) =>
+              store.countActiveInCapacitySlotAsync({
+                tx,
+                targetColumn: pre.targetColumn,
+                workflowId: resolveCapacityPoolId(workflowId),
+                countPending: capacity.countPending === true,
+                excludeTaskId: taskId,
+              }),
+            );
+            if (occupied >= capacity.limit) {
+              throw new WorkflowSwitchRehomeFailedError({
+                taskId,
+                workflowId,
+                fromColumn: fromColumnPre,
+                intendedColumn: pre.targetColumn,
+                reason: `target column is at its limit (${occupied}/${capacity.limit})`,
+                committed: false,
+              });
+            }
+          }
+        }
+      }
+    }
+
     const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
@@ -766,11 +817,36 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
       back a committed selection.
       */
       if (!outcome.moved) {
+        /*
+        RESIDUAL RACE ONLY. The capacity pre-flight above already rejects the
+        deterministic case before any commit, so reaching here means the destination
+        filled up (or the move was otherwise rejected) between the pre-flight and the
+        move. The selection IS committed at this point, so this IS a torn card — and it
+        is RECORDED, not merely thrown, so self-healing and an operator both find the
+        divergence in run-audit instead of having to infer it from a card in a lane the
+        board cannot draw. Metadata stays ids/columns/outcomes-only.
+        */
+        void store.recordRunAuditEvent({
+          taskId,
+          agentId: "system",
+          runId: `workflow-switch-torn-${taskId}`,
+          domain: "database",
+          mutationType: "task:workflow-switch-torn",
+          target: taskId,
+          metadata: {
+            workflowId,
+            fromColumn,
+            intendedColumn: decision.targetColumn,
+            selectionCommitted: true,
+            reason: outcome.error,
+          },
+        });
         throw new WorkflowSwitchRehomeFailedError({
           taskId,
           workflowId,
           fromColumn,
           intendedColumn: decision.targetColumn,
+          committed: true,
           ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
         });
       }

@@ -471,6 +471,7 @@ export type { ColumnCapacity } from "./workflow-capacity.js";
 // ── U5: workflow lifecycle reconciliation (switch / edit / delete) ───────────
 export {
   OccupiedColumnsError,
+  WorkflowSwitchRehomeFailedError,
   InvalidRehomeTargetError,
   IncompatibleFieldChangeError,
   resolveEntryColumnId,
