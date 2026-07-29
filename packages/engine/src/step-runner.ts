@@ -57,7 +57,7 @@ export interface SessionRef {
  * for a single step (graph-owned runs force step-session physics, KTD-2/KTD-8);
  * tests inject a fake. Returns whether the step's session completed successfully.
  */
-export type RunSingleStep = (stepIndex: number) => Promise<{ success: boolean; error?: string }>;
+export type RunSingleStep = (stepIndex: number) => Promise<{ success: boolean; error?: string; exit?: ImplementationExit }>;
 
 // ── runTaskStep ─────────────────────────────────────────────────────────
 
@@ -211,7 +211,15 @@ export async function runTaskStep(
     return { outcome: "success", baselineSha, checkpointId };
   }
 
-  return { outcome: "failure", baselineSha, checkpointId };
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-12:40 (U8 / R4):
+  Carry the pass's ending outward. `runStep` is the graph's step driver, and a failure here can
+  mean two different things — the step did not complete, or the whole implementation pass stopped
+  on a WAIT (blocked on a pending review). The `stepExecute` seam routes those differently, so
+  dropping the exit at this boundary is what previously forced the wait to be transitioned out of
+  band. Absent for every ordinary step failure.
+  */
+  return { outcome: "failure", baselineSha, checkpointId, exit: result.exit };
 }
 
 // ── resetStepToBaseline ──────────────────────────────────────────────────
