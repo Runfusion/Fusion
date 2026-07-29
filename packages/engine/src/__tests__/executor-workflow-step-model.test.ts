@@ -242,6 +242,7 @@ describe("executor workflow-step model resolution", () => {
             validatorModelId: "workflow-validator-model",
             validatorFallbackProvider: "workflow-fallback-provider",
             validatorFallbackModelId: "workflow-fallback-model",
+            validatorFallbackThinkingLevel: "low",
           },
           defaultProvider: "default-provider",
           defaultModelId: "default-model",
@@ -253,6 +254,7 @@ describe("executor workflow-step model resolution", () => {
       defaultModelId: "workflow-validator-model",
       fallbackProvider: "workflow-fallback-provider",
       fallbackModelId: "workflow-fallback-model",
+      fallbackThinkingLevel: "low",
     });
   });
 
@@ -262,11 +264,14 @@ describe("executor workflow-step model resolution", () => {
         {
           validatorProvider: "project-validator-provider",
           validatorModelId: "project-validator-model",
+          validatorThinkingLevel: "medium",
         },
         {
           task: {
             validatorModelProvider: "task-validator-provider",
             validatorModelId: "task-validator-model",
+            validatorThinkingLevel: "high",
+            thinkingLevel: "low",
           },
           step: {
             name: "Code Review",
@@ -277,6 +282,7 @@ describe("executor workflow-step model resolution", () => {
     ).resolves.toMatchObject({
       defaultProvider: "task-validator-provider",
       defaultModelId: "task-validator-model",
+      defaultThinkingLevel: "high",
     });
 
     await expect(
@@ -297,6 +303,30 @@ describe("executor workflow-step model resolution", () => {
     ).resolves.toMatchObject({
       defaultProvider: "step-provider",
       defaultModelId: "step-model",
+    });
+  });
+
+  it.each([
+    ["provider only", { modelProvider: "partial-provider" }],
+    ["model only", { modelId: "partial-model" }],
+  ])("does not mix a %s step override with the validator lane", async (_label, partialOverride) => {
+    await expect(
+      runStepWithSettings(
+        {
+          validatorProvider: "validator-provider",
+          validatorModelId: "validator-model",
+        },
+        {
+          step: {
+            name: "Code Review",
+            optionalGroupId: "code-review",
+            ...partialOverride,
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      defaultProvider: "validator-provider",
+      defaultModelId: "validator-model",
     });
   });
 

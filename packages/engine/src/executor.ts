@@ -17557,9 +17557,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           settings,
           assignedRuntimeConfig,
         );
-    const primaryProvider = workflowStep.modelProvider || laneModel.provider;
-    const primaryModelId = workflowStep.modelId || laneModel.modelId;
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
+    const primaryProvider = useOverride ? workflowStep.modelProvider : laneModel.provider;
+    const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
 
     const workflowFallback = isReviewTypeWorkflowStep
       ? resolveValidatorFallbackModel(settings)
@@ -17569,8 +17569,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       ? workflowFallback
       : undefined;
     const fallbackSettingsHint = isReviewTypeWorkflowStep
-      ? "settings.validatorFallbackProvider/Id or fallbackProvider/Id"
-      : "settings.executionFallbackProvider/Id or fallbackProvider/Id";
+      ? "settings.validatorFallbackProvider/validatorFallbackModelId or fallbackProvider/fallbackModelId"
+      : "settings.executionFallbackProvider/executionFallbackModelId or fallbackProvider/fallbackModelId";
     const fallbackLaneLabel = isReviewTypeWorkflowStep ? "validator" : "executor";
 
     const timeoutMs = Math.max(60_000, settings.workflowStepTimeoutMs ?? 900_000);
@@ -17713,12 +17713,13 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
       /*
        * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then task override, then settings defaults/lane fallbacks.
+       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then the task override for their selected model lane, then settings defaults/lane fallbacks.
        *
        * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
        * The step's own `fallback` attempt already swaps to a distinct model (validator fallback OR global fallback pair) — it must honor THAT model's fallback thinking level, not silently reuse the primary lane's thinking level. Route by which candidate `fallback.label` actually matched instead of only special-casing `validatorFallback`.
        */
-      const workflowStepThinkingSource = workflowStep.thinkingLevel ?? task.thinkingLevel;
+      const workflowStepThinkingSource = workflowStep.thinkingLevel
+        ?? (isReviewTypeWorkflowStep ? task.validatorThinkingLevel ?? task.thinkingLevel : task.thinkingLevel);
       const workflowStepThinkingLevel = attemptLabel === "fallback"
         ? isReviewTypeWorkflowStep
           ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)

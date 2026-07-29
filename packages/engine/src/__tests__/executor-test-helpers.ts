@@ -159,15 +159,26 @@ vi.mock("../agent-session-helpers.js", async () => {
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveValidatorThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
-      (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
-      ?? taskThinkingLevel
+      taskThinkingLevel
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof settings?.validatorGlobalThinkingLevel === "string" ? settings.validatorGlobalThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorThinkingLevel as string
+        : undefined)
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveValidatorFallbackThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
       (typeof settings?.validatorFallbackThinkingLevel === "string" ? settings.validatorFallbackThinkingLevel : undefined)
       ?? (typeof settings?.fallbackThinkingLevel === "string" ? settings.fallbackThinkingLevel : undefined)
-      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorFallbackThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorFallbackThinkingLevel as string
+        : undefined)
       ?? taskThinkingLevel
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof settings?.validatorGlobalThinkingLevel === "string" ? settings.validatorGlobalThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorThinkingLevel as string
+        : undefined)
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveExecutorSessionModel: (
