@@ -34,6 +34,25 @@ describe("no lossy column coercion on the core public surface", () => {
     expect(normalizeColumnId(null, "todo")).toBe("todo");
   });
 
+  it("catches a two-required-argument lossy coercer, not just one-argument ones", () => {
+    /*
+    The arity hole, pinned directly rather than only in prose: this is the shape that
+    used to slip through, so the guard's own coverage is now measurable instead of
+    asserted.
+    */
+    const twoRequiredArgs = (value: unknown, fallback: string) =>
+      (["triage", "todo", "in-progress", "in-review", "done", "archived"] as string[]).includes(value as string)
+        ? (value as string)
+        : fallback;
+    expect(twoRequiredArgs.length).toBe(2);
+    // Probed WITH the fallback, a lossy coercer returns the legacy id — the signal the
+    // scan keys on. Probed without it, this same function returns undefined and the
+    // scan skipped it, which is the hole that made the arity filter's removal
+    // insufficient on its own.
+    expect(twoRequiredArgs("custom-hold", "triage")).toBe("triage");
+    expect(twoRequiredArgs("custom-hold", undefined as unknown as string)).toBeUndefined();
+  });
+
   it("exports no OTHER helper that maps a custom column id onto a legacy one", () => {
     /*
     Name-agnostic: exercise every exported single-argument function whose name mentions
@@ -44,12 +63,27 @@ describe("no lossy column coercion on the core public surface", () => {
     const offenders: string[] = [];
     for (const [name, value] of Object.entries(core)) {
       if (typeof value !== "function" || !/column/i.test(name)) continue;
-      if (value.length !== 1) continue;
+      /*
+      NO ARITY FILTER (PR #2535 review — greptile). An earlier version skipped anything
+      whose `Function.length !== 1`, which is the exact signature family this is meant to
+      police: `normalizeColumnId(value, fallback = DEFAULT)` reports length 1 because
+      defaults do not count, but a new coercer written `(value, fallback)` with both
+      required reports 2 and would have walked straight past the guard. A ratchet that
+      silently skips the shape it exists to catch is worse than no ratchet.
+
+      Probe with BOTH a custom id and a legacy fallback. One argument alone was not
+      enough either: a two-required-argument coercer returns its (undefined) fallback,
+      which is not a string, so the check skipped it — I verified that by injecting one.
+      Supplying the fallback makes a lossy coercer return the LEGACY id, which is the
+      signal; a passthrough returns the custom id; a one-argument function ignores the
+      extra parameter harmlessly. Anything that cannot take this shape throws, and a
+      function that rejects an unknown column is not silently losing it.
+      */
       let result: unknown;
       try {
-        result = (value as (input: unknown) => unknown)("custom-hold");
+        result = (value as (input: unknown, fallback: unknown) => unknown)("custom-hold", "triage");
       } catch {
-        continue; // throwing on an unknown column is fine — it is not silent loss
+        continue;
       }
       if (typeof result === "string" && result !== "custom-hold" && legacy.has(result)) {
         offenders.push(name);
