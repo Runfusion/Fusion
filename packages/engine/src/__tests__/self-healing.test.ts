@@ -2328,7 +2328,8 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
-      expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+      // self-healing.ts:2747 emits this at DEBUG level, not log.
+      expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
         "auto-archive: archived FN-030 (age 31d, threshold 30d)",
       );
     });
