@@ -682,6 +682,9 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
     (reconcileUndeclaredTaskColumns) and the session-start requeue
     (autoRecoverWorktreeSessionStartFailure); workflow-rebound-family-live-e2e.pg.test.ts,
     each mutation-verified independently
+  - task-agent-sync.ts  resolveTaskLifecycleColumns — agent-link hygiene on a real
+    TaskStore + real AgentStore + the real `task:moved` subscription
+    (workflow-agent-link-live-e2e.pg.test.ts; mutation-verified)
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -699,7 +702,6 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
   - mesh-lease-manager.ts:61 resolveReboundTarget
-  - task-agent-sync.ts:59    resolveTaskLifecycleColumns
   - core/task-store/reads.ts:130      listTasks hydration
   - core/live-agent-count.ts:63-75    five columnHasFlag classifications
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
