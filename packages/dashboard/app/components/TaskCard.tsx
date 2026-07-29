@@ -1433,7 +1433,15 @@ function TaskCardComponent({
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
-  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
+  Pass the card's column traits. Without them the planner-lane clause falls back to the
+  legacy ids, so a status-null card on the MERGED planning lane (id `todo`, intake+hold)
+  is not recognised as having fresh planner activity: the pulsing Planning state, the
+  optional-gate activity and the column's executing count all read idle. Threading
+  ListView alone left this path — the board cards — still broken.
+  */
+  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck, columnFlags: taskColumnFlags });
   /*
   FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
   Match FN-8055: optional-gate badges pulse only while the card is agent-active (queue/pause/stuck gates suppress the badge).
@@ -2505,7 +2513,16 @@ function TaskCardComponent({
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
-  }, [addToast, columnLabel, confirm, onMoveTask, task.id, task.steps, t]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
+  `taskMoveColumns` MUST be a dependency. The prompt now resolves the target column's
+  traits from it, so omitting it pins the callback to whatever metadata existed at first
+  render: once the board-workflows payload arrives or changes, a move into a custom
+  intake/hold lane would skip the preserve-progress confirmation entirely (silently
+  resetting work), while stale traits could prompt for a lane that is no longer
+  pre-implementation. I added the lookup and missed the dep.
+  */
+  }, [addToast, columnLabel, confirm, onMoveTask, task.id, task.steps, t, taskMoveColumns]);
 
   const handleTaskActionCheckPrStatus = useCallback(async () => {
     try {

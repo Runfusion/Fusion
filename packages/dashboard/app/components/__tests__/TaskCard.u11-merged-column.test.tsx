@@ -53,8 +53,27 @@ describe("TaskCard on the U11 merged planning column", () => {
     expect(document.querySelector(".card-delete-btn")).not.toBeNull();
   });
 
-  it("still shows the planner-active badge on a planning card", () => {
-    render(
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
+  REPLACED by the agent-active case below, which asserts the pulsing badge element.
+  The original matched `/planning/i` as TEXT and was not discriminating: before the
+  `columnFlags` threading the badge did not render at all, yet the case passed because
+  other "Planning" text is present on the card. Same mistake I made in the ListView DOM
+  test — matching a word that also appears in chrome.
+  */
+
+  it("reads as agent-active from fresh planner activity on the merged column", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
+    `isTaskAgentActive`'s planner-lane clause needs this card's column traits. Without
+    them it falls back to the legacy ids, and a status-null card on the merged lane reads
+    IDLE — pulsing Planning state gone, optional-gate activity suppressed, column header
+    undercounting executing work. Threading ListView alone left the board cards broken.
+
+    REVERT CHECK: drop `columnFlags` from TaskCard's `isTaskAgentActive` call and this
+    fails — the pulsing class disappears because the card is in `todo`, not `triage`.
+    */
+    const { container } = render(
       <TaskCard
         task={planningTask({ recentAgentActivityAt: new Date().toISOString() } as Partial<Task>)}
         taskColumnFlags={MERGED_PLANNING_FLAGS}
@@ -62,7 +81,7 @@ describe("TaskCard on the U11 merged planning column", () => {
         addToast={() => {}}
       />,
     );
-    expect(screen.getByText(/planning/i)).toBeTruthy();
+    expect(container.querySelector(".pulsing")).not.toBeNull();
   });
 
   it("does NOT offer Start on the merged column, which auto-triages", () => {

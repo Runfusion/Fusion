@@ -333,7 +333,10 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const activeTaskCount = useMemo(
     () => tasks.filter((task) =>
       isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))
-      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs) }),
+      // FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile): these
+      // tasks are IN this column, so the column's own flags are their column traits. Without
+      // them the header undercounts executing work on a merged planning lane.
+      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs), columnFlags }),
     ).length,
     [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
   );
