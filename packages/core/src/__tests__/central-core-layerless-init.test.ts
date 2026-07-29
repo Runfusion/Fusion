@@ -58,6 +58,7 @@ describe("CentralCore layer-less initialization", () => {
 
     await central.close();
 
+    expect(mocks.getLocalNode).not.toHaveBeenCalled();
     expect(mocks.shutdown).toHaveBeenCalledOnce();
   });
 });

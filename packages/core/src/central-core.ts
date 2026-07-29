@@ -362,10 +362,6 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       this.stopDiscovery();
     }
 
-    await this.markLocalNodeOffline().catch((error) => {
-      severityAuditLog.warn("[central-core] Failed to persist local node offline during close", error);
-    });
-
     // FNXC:CentralCore 2026-06-26-12:30: In backend mode there is no SQLite
     // CentralDatabase to close; the shared connection pool is owned by the
     // TaskStore/startup factory. CentralCore does not close the pool.
