@@ -121,6 +121,7 @@ import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   PRIORITY_EXECUTE,
+  computeTopLevelConcurrencyClaimedFromStore,
   dropPreHeldExecutorSlot,
   takePreHeldExecutorSlot,
   type AgentSemaphore,
@@ -20989,23 +20990,35 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           };
         }
 
-        // Read spawn limits from settings
-        const maxPerParent = settings.maxSpawnedAgentsPerParent ?? 5;
-        const maxGlobal = settings.maxSpawnedAgentsGlobal ?? 20;
+        /*
+        FNXC:CapacityModel 2026-07-29-14:10 (two numbers — spawned agents count):
+        `maxSpawnedAgentsPerParent` (5) and `maxSpawnedAgentsGlobal` (20) are DELETED.
+        They were a THIRD and FOURTH limiter with their own private budgets, invisible
+        to the two the operator configures — and they measured the wrong thing: a
+        child that finished still counted against `totalSpawnedCount` until its parent
+        task ended, so the cap throttled cumulative spawns rather than concurrent ones.
 
-        // Check per-parent limit
-        const currentPerParent = this.spawnedAgents.get(taskId)?.size ?? 0;
-        if (currentPerParent >= maxPerParent) {
-          return {
-            content: [{ type: "text" as const, text: `Per-parent spawn limit reached (${currentPerParent}/${maxPerParent}). Wait for children to finish or reduce parallelism.` }],
-            details: { agentId: "", state: "error" },
-          };
-        }
+        A spawned child IS an agent and runs in its own git worktree (branched from the
+        parent's), so it consumes both configured dimensions. It now checks the SAME
+        project agent count every other lane checks, via the shared live-claim helper —
+        one number, one answer, no private budget that can disagree with the board.
 
-        // Check global limit
-        if (this.totalSpawnedCount >= maxGlobal) {
+        This closes a real hole rather than only deleting knobs: children were counted
+        by NEITHER capacity gate, so a fan-out could put up to 20 extra worktrees on
+        disk while the scheduler believed the project was at its limit.
+        */
+        const spawnClaimed = await computeTopLevelConcurrencyClaimedFromStore({
+          store: this.store,
+          tasks: await this.store.listTasks({ slim: true, includeArchived: false }),
+        });
+        const spawnCap = settings.maxConcurrent ?? 2;
+        const liveChildren = this.totalSpawnedCount;
+        if (spawnClaimed + liveChildren >= spawnCap) {
           return {
-            content: [{ type: "text" as const, text: `Global spawn limit reached (${this.totalSpawnedCount}/${maxGlobal}). Cannot spawn more agents.` }],
+            content: [{
+              type: "text" as const,
+              text: `Agent capacity reached (${spawnClaimed + liveChildren}/${spawnCap} running, including ${liveChildren} spawned child agent(s)). Wait for work to finish, or raise Max Concurrent Tasks.`,
+            }],
             details: { agentId: "", state: "error" },
           };
         }

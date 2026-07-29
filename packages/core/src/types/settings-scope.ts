@@ -1908,14 +1908,6 @@ export interface ProjectSettings {
    *  steps, and sends the task back through the normal todo → in-progress flow. Set
    *  to 0 to disable. Default: 3. */
   maxPostReviewFixes?: number;
-  /** Maximum number of child agents a single parent agent can spawn.
-   *  Limits the fan-out per executor task to prevent resource exhaustion.
-   *  Default: 5. */
-  maxSpawnedAgentsPerParent?: number;
-  /** Maximum total spawned agents across all parent agents in a single executor instance.
-   *  Provides a global safety cap regardless of how many parent agents are running.
-   *  Default: 20. */
-  maxSpawnedAgentsGlobal?: number;
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;

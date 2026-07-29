@@ -660,8 +660,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   maxTotalRetriesBeforeFail: 25,
   preserveProgressOnStuckRequeue: true,
   // maxPostReviewFixes MOVED to workflow settings (U4).
-  maxSpawnedAgentsPerParent: 5,
-  maxSpawnedAgentsGlobal: 20,
   // Run maintenance (including WAL checkpointing) every 5 minutes by default.
   maintenanceIntervalMs: 300_000,
   autoArchiveDoneTasksEnabled: true,
