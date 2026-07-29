@@ -33,7 +33,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { attachAgentLinkSync } from "../task-agent-sync.js";
+import { attachAgentLinkSync, type AgentLinkSyncOutcome } from "../task-agent-sync.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live agent-link E2E: a finished card must release its agent", () => {
@@ -43,6 +43,8 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
 
   let agentStore: AgentStore;
   let detach: (() => void) | undefined;
+  let handled: AgentLinkSyncOutcome[] = [];
+  let waiters: Array<() => void> = [];
 
   beforeAll(h.beforeAll);
 
@@ -50,11 +52,20 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
     await h.beforeEach();
     agentStore = new AgentStore({ rootDir: h.rootDir(), asyncLayer: h.layer() });
     await agentStore.init();
-    // The REAL production wiring: in-process-runtime attaches exactly this.
+    handled = [];
+    waiters = [];
+    // The REAL production wiring: in-process-runtime attaches exactly this, plus the
+    // `onHandled` completion signal (see the note on AgentLinkSyncOutcome). Without
+    // it there is NO way to tell "the handler ran and correctly declined" from "the
+    // handler has not run yet", because declining has no observable effect.
     detach = attachAgentLinkSync({
       store: h.store(),
       agentStore,
       logger: { log: () => {}, warn: () => {} } as never,
+      onHandled: (outcome) => {
+        handled.push(outcome);
+        for (const w of waiters.splice(0)) w();
+      },
     });
   });
 
@@ -104,8 +115,31 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
     return linked as Agent;
   }
 
-  /** Poll the persisted agent row until it settles, or fail with what it actually is.
-   *  `task:moved` delivery is async; a fixed sleep would flake both ways. */
+  /** Await the handler ACTUALLY SETTLING for a move into `to` — the synchronization
+   *  point that replaces guessing. Rejects rather than hanging so a handler that
+   *  never runs fails loudly instead of silently reading unchanged state. */
+  async function awaitHandled(taskId: string, to: string): Promise<AgentLinkSyncOutcome> {
+    const found = (): AgentLinkSyncOutcome | undefined =>
+      handled.find((o) => o.taskId === taskId && o.to === to);
+    const existing = found();
+    if (existing) return existing;
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve);
+        setTimeout(resolve, 50);
+      });
+      const hit = found();
+      if (hit) return hit;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `agent-link handler never settled for ${taskId} → ${to}; settled moves so far: ${JSON.stringify(handled.map((o) => `${o.taskId}:${o.to}`))}`,
+        );
+      }
+    }
+  }
+
+  /** Poll the persisted agent row until it settles, or fail with what it actually is. */
   async function waitForAgent(
     agentId: string,
     predicate: (a: Agent | null) => boolean,
@@ -140,6 +174,10 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
         skipMergeBlocker: true,
       } as never);
 
+      const outcome = await awaitHandled(taskId, vocab.complete);
+      expect(outcome.matchedClearColumn).toBe(true);
+      expect(outcome.clearedAgentIds).toContain(agent.id);
+
       const settled = await waitForAgent(agent.id, (a) => a?.taskId === undefined || a?.taskId === null, "the link to clear");
 
       // Observed on the persisted AGENT row, not on the handler being called.
@@ -160,8 +198,16 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
         allowDirectInReviewMove: true,
       } as never);
 
-      // Give the async handler the same opportunity to run as the positive case.
-      await new Promise((r) => setTimeout(r, 250));
+      /* The handler is AWAITED to completion for this exact move rather than slept
+         past. A fixed delay cannot distinguish "ran and correctly declined" from
+         "had not run yet", so it passes even when the handler is broken or never
+         fires — a negative test that cannot fail. */
+      const outcome = await awaitHandled(taskId, vocab.review);
+
+      // It ran, and it declined for the right REASON: review is not a clear column.
+      expect(outcome.matchedClearColumn).toBe(false);
+      expect(outcome.clearedAgentIds).toEqual([]);
+
       const still = await agentStore.getAgent(agent.id);
       expect(still?.taskId).toBe(taskId);
       expect(still?.state).toBe("running");
