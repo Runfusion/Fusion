@@ -793,7 +793,22 @@ export function ListView({
       );
     }
     for (const task of tasks) {
-      const workflowId = boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2528 review — greptile):
+      VALIDATE the mapped id before trusting it. `taskWorkflowIds` can carry a STALE or
+      unknown entry — a workflow deleted since the payload was built, or an id the
+      client has not seen — and a bare `?? defaultWorkflowId` only covers the MISSING
+      case, not the invalid one. An unknown id then resolves to no columns, the task
+      silently drops back to the adjacency-free shared union, and the menu is wrong in
+      exactly the way this whole change exists to prevent.
+
+      Mirrors Board's `getEffectiveTaskWorkflowId`, which already validates against the
+      known-workflow set for the same reason.
+      */
+      const assigned = boardWorkflows.taskWorkflowIds[task.id];
+      const workflowId = assigned && byWorkflowId.has(assigned)
+        ? assigned
+        : boardWorkflows.defaultWorkflowId;
       const columns = workflowId ? byWorkflowId.get(workflowId) : undefined;
       if (columns) map.set(task.id, columns);
     }
