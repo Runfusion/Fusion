@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
-import { AgentSemaphore } from "../concurrency.js";
+import { AgentSemaphore, projectAdmissionCoordinator } from "../concurrency.js";
 // Resolves to the vi.mock factory above (the mocked merger-ai exports the real-shaped
 // workspace land error classes so the dispatch's `instanceof` matching is exercised).
 import { WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "../merger-ai.js";
@@ -3721,5 +3721,136 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     const count = await run([inReview("FN-explicit-false", { autoMerge: false })], { autoMerge: true });
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-explicit-false");
+  });
+});
+
+/*
+FNXC:MergeSafeguards 2026-07-28-19:40 (U9):
+Two merge safeguards were found to have ZERO test coverage during U9's mutation
+audit: deleting either guard produced no new test failure anywhere in the merge,
+project-engine, self-healing, or concurrency suites. Both guards work correctly
+today — what was missing is anything that would notice if they stopped. U9 moves
+merge behind graph nodes, so these must be pinned BEFORE the conversion, not after.
+
+Each test asserts BOTH directions (guard blocks / guard permits) so it fails if the
+guard is removed AND fails if the filter stops discriminating — a one-sided
+assertion would still pass against a guard that rejects everything.
+*/
+describe("U9 merge safeguards without prior coverage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /*
+  Safeguard 1 — user pause. The pause invariant re-ratified in #2486: never MUTATE
+  lifecycle state of a user-paused card. The merge admission provider is the seam
+  that decides which queued in-review cards are offered to the merge pump; without
+  its `paused || userPaused` filter a user-paused card is admitted and merged.
+  */
+  it("merge admission excludes a user-paused card and admits the same card once unpaused", async () => {
+    const registered = new Map<string, { refresh: () => Promise<unknown[]> }>();
+    const registerSpy = vi
+      .spyOn(projectAdmissionCoordinator, "registerProvider")
+      .mockImplementation((providerId: string, provider: never) => {
+        registered.set(providerId, provider as unknown as { refresh: () => Promise<unknown[]> });
+        return () => {};
+      });
+
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+
+    const mergeProvider = [...registered.entries()].find(([id]) => id.startsWith("merge:"))?.[1];
+    if (!mergeProvider) throw new Error("merge admission provider was not registered");
+
+    const privateEngine = engine as unknown as { mergeQueue: string[]; coordinatorAdmittedMergeTaskIds: Set<string> };
+    privateEngine.mergeQueue = ["FN-paused"];
+    privateEngine.coordinatorAdmittedMergeTaskIds.clear();
+
+    // User-paused: must NOT be offered for merge admission.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: false,
+      userPaused: true,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    await expect(mergeProvider.refresh()).resolves.toEqual([]);
+
+    // Same card, same queue, pause cleared: must now be offered. This half proves
+    // the exclusion above came from the pause flag and not from an unrelated gate.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    const admitted = (await mergeProvider.refresh()) as Array<{ taskId: string }>;
+    expect(admitted.map((c) => c.taskId)).toEqual(["FN-paused"]);
+
+    // Engine-level `paused` is the sibling half of the same filter.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: true,
+      userPaused: false,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    await expect(mergeProvider.refresh()).resolves.toEqual([]);
+
+    registerSpy.mockRestore();
+    await engine.stop();
+  });
+
+  /*
+  Safeguard 4 — capacity. `drainMergeQueue`'s `if (this.mergeRunning) return;` is
+  what makes merge single-flight. Without it a second drain enters the pump
+  concurrently, which is the double-merge class this program exists to prevent.
+  Asserted via `reconcileStaleMergeActive` — the first statement INSIDE the guard —
+  so the probe isolates the guard itself rather than running a real merge.
+  */
+  it("drainMergeQueue is single-flight: a second entry is refused while one is running", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+
+    const privateEngine = engine as unknown as {
+      mergeQueue: string[];
+      mergeRunning: boolean;
+      drainMergeQueue: () => Promise<void>;
+      reconcileStaleMergeActive: () => void;
+    };
+
+    const bodyEntered = vi.spyOn(privateEngine, "reconcileStaleMergeActive").mockImplementation(() => {});
+
+    // A drain is already in flight: the second entry must return before the body.
+    privateEngine.mergeRunning = true;
+    privateEngine.mergeQueue = ["FN-a"];
+    await privateEngine.drainMergeQueue();
+    expect(bodyEntered).not.toHaveBeenCalled();
+    expect(privateEngine.mergeQueue).toEqual(["FN-a"]);
+
+    // No drain in flight: the body must run. Proves the refusal above was the
+    // single-flight guard and not an unrelated early return. The queue is emptied
+    // first so the body enters and finds no work — this probes the guard, not a
+    // real merge dispatch.
+    privateEngine.mergeQueue = [];
+    privateEngine.mergeRunning = false;
+    await privateEngine.drainMergeQueue();
+    expect(bodyEntered).toHaveBeenCalledTimes(1);
+
+    bodyEntered.mockRestore();
+    await engine.stop();
   });
 });

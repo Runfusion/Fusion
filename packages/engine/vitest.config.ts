@@ -183,6 +183,11 @@ export default defineConfig({
             "src/__tests__/merger-landed-files-capture.test.ts",
             "src/__tests__/branch-attribution.test.ts",
             /*
+            FNXC:EngineTests 2026-07-28-20:10:
+            Gate admission evidence (U9 safeguard baseline). This one file proves FIVE of the merge lane's safeguards: user pause on merge admission, autoMerge:false, capacity single-flight, the pre-enqueue merge-proof consult, and at-most-once enqueue. A U9 mutation audit found NONE of them defended by blocking CI — and two (user pause, single-flight) had no test at all until this change. Merge is where irreversible work happens and U9 is about to move it behind graph nodes, so these must fail the gate, not a non-blocking run hours after the merge. Deterministic: the store, runtime, merger, and notifier are all mocked; no real git, no network. Measured 5.02s standalone / 103 tests.
+            */
+            "src/__tests__/project-engine.test.ts",
+            /*
             FNXC:EngineTests 2026-07-28-10:20:
             Gate admission evidence (U9): this pins which authority actually decides merge-region policy — the built-in IR declares `merge-retry.maxAttempts` / `manual-merge-hold.release` that no handler reads, while the live budgets sit in `settings.maxAutoMergeRetries` and `ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES`. Merge is where irreversible work happens, and the drift it guards is SILENT: a handler-only edit can quietly make the dead IR config live (or move the live budget) with no other test failing. Outside the gate the ratchet cannot fire on the defect it exists for. Deterministic and pure — no git subprocesses, no timers, no network, no store; 3 ms of assertions.
             */
