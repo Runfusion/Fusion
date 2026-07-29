@@ -442,6 +442,35 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
       ]);
     });
 
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+    The "Back to X" label must follow the workflow's TRAITS, not the hardcoded ids
+    `in-review`/`in-progress`. This workflow renames both lanes — `signoff` carries
+    `mergeBlocker`, `building` carries `countsTowardWip` — so leaving review backwards
+    into the work lane must read "Back to Building" and name the column the operator
+    actually sees.
+
+    REVERT CHECK: restore `column === "in-progress" && task.column === "in-review"` and
+    this fails twice over — the ids never match, so the label falls through to "Move to
+    Building"; and the old hardcoded string would have said "Back to In Progress", a
+    column name absent from this board entirely.
+    */
+    it("labels a backwards move using the workflow's own review/work traits and label", () => {
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-15", column: "signoff" as Task["column"] }),
+        t,
+        columnLabel,
+        renamedMoveColumns,
+      );
+      const building = transitions.find((transition) => transition.column === "building");
+      expect(building).toBeDefined();
+      expect(building!.label).toBe("Back to Building");
+      // The forward move keeps "Move to", so the rule stays a distinction and not a
+      // blanket relabel.
+      const shipped = transitions.find((transition) => transition.column === "shipped");
+      expect(shipped?.label).toBe("Move to Shipped");
+    });
+
     it("never offers a column the workflow does not declare", () => {
       const transitions = getTaskMoveTransitions(
         mkTask({ id: "FN-13", column: "in-review" }),

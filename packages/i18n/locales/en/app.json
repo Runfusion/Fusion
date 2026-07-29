@@ -7828,6 +7828,7 @@
     },
     "move": {
       "backToInProgress": "Back to In Progress",
+      "backTo": "Back to {{column}}",
       "cancelMove": "Cancel Move",
       "keepProgress": "Keep Progress",
       "movedTo": "Moved to {{column}}",

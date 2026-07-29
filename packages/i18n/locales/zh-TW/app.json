@@ -7791,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "返回進行中",
+      "backTo": "返回{{column}}",
       "cancelMove": "取消移動",
       "keepProgress": "保留進度",
       "movedTo": "已移至 {{column}}",

@@ -158,6 +158,32 @@ Manual pull-request review has two separate operator intents: Start PR Review op
 */
 function getWorkflowMoveTargets(task: Task | TaskDetail, columns: readonly TaskContextMenuColumnMetadata[]): ColumnId[] {
   const visibleColumns = columns.filter((column) => column.flags?.hiddenFromBoard !== true);
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8, KNOWN REMAINING GAP):
+  This `VALID_TRANSITIONS` shortcut is the LAST legacy-vocabulary read in this file and
+  it is deliberately KEPT, because removing it today would silently SHRINK the move
+  menu for every default-workflow project rather than fix anything.
+
+  The reason is a missing wire field, not a missing idea. `TaskContextMenuColumnMetadata`
+  carries id/label/flags but NO adjacency, so the workflow branch below can only guess
+  targets from a column's neighbours in the declared order — [previous, next]. Measured
+  against the real graph that is a strict loss:
+
+      in-progress  VALID_TRANSITIONS: in-review, todo, triage, done   (4)
+                   neighbour-derived: todo, in-review                 (2)
+      todo         VALID_TRANSITIONS: in-progress, triage, archived   (3)
+                   neighbour-derived: triage, in-progress             (2)
+      done         VALID_TRANSITIONS: todo, triage, archived          (3)
+                   neighbour-derived: in-review, archived             (2)
+
+  So "delete the legacy read" here is not a cleanup — it is a UI regression that drops
+  real operator moves (archive from Todo, straight-to-Done from In progress). The
+  correct fix is to put each column's allowed targets on the board-workflows payload
+  and read THOSE, which changes the server, the wire shape and this file, and is its own
+  slice. Note the guard is keyed on the COLUMN ID SET, so a workflow that merely renames
+  the six built-in columns still takes this path and still gets correct targets; only a
+  workflow that reorders or replaces them falls through to the weaker neighbour logic.
+  */
   if (isDefaultWorkflowColumnSet(visibleColumns) && isColumn(task.column)) {
     return task.column === "in-review" ? ["todo", "in-progress"] : [...VALID_TRANSITIONS[task.column]];
   }
@@ -195,19 +221,63 @@ export function getTaskMoveTransitions(
   columnLabel: (column: ColumnId) => string,
   workflowMoveColumns?: readonly TaskContextMenuColumnMetadata[],
 ): TaskMoveActionDescriptor[] {
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8, decision recorded):
+  The no-metadata `VALID_TRANSITIONS` fallback is KEPT. I removed it first, on the R8
+  principle, and measured the result: `workflowMoveColumns` is optional at both call
+  sites (`workflowMoveMetadata?.moveColumns`, `taskMoveColumns`) and is genuinely
+  undefined until board-workflows resolves, so dropping it left Task Detail with NO
+  move options during load — a live surface degraded to satisfy a purity rule. That is
+  a regression, not a cleanup, so it is not shipped.
+
+  Unlike Board and ListView, where the legacy path was provably unreachable, this one
+  is reachable and useful. It is retired the same way the shortcut above is: by putting
+  each column's allowed targets on the board-workflows payload so the load window has
+  real data instead of a guess.
+  */
   const moveTransitions: ColumnId[] = workflowMoveColumns
     ? getWorkflowMoveTargets(task, workflowMoveColumns)
     : isColumn(task.column)
       ? (task.column === "in-review" ? ["todo", "in-progress"] : [...VALID_TRANSITIONS[task.column]])
       : [];
-  const workflowLabelById = new Map((workflowMoveColumns ?? []).map((column) => [column.id, column.label]));
+  const visibleOrdered = (workflowMoveColumns ?? []).filter((column) => column.flags?.hiddenFromBoard !== true);
+  const workflowLabelById = new Map(visibleOrdered.map((column) => [column.id, column.label]));
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+  "Back to X" is derived from COLUMN TRAITS, not from the literals `in-review` and
+  `in-progress`. The old condition (`column === "in-progress" && task.column ===
+  "in-review"`) hardcoded two lifecycle ids AND a hardcoded English label ("Back to In
+  Progress"), so on a workflow that renames those columns it either failed to fire or
+  announced a column name that is not on the board.
+
+  The rule it was expressing is "leaving the review lane backwards into the work lane",
+  which the traits already say: the CURRENT column carries `mergeBlocker`, the TARGET
+  carries `countsTowardWip`. For builtin:coding those are exactly in-review and
+  in-progress, so the labelled set is unchanged — deliberately. I first generalised
+  this to "any target earlier in the workflow order", which is arguably nicer but
+  relabels moves this change never set out to touch (18 assertion sites across three
+  suites would have flipped from "Move to" to "Back to"). Same-set-different-derivation
+  is the honest scope here; widening which moves read as backwards is a separate,
+  visible product decision.
+
+  Load window (no metadata): fall back to the legacy id pair, matching the fallback
+  already kept for the targets themselves a few lines below.
+  */
+  const flagsById = new Map(visibleOrdered.map((column) => [column.id, column.flags]));
+  const currentFlags = flagsById.get(task.column);
+  const isBackwardsLabel = (target: ColumnId): boolean => {
+    if (visibleOrdered.length === 0) {
+      return target === "in-progress" && task.column === "in-review";
+    }
+    return currentFlags?.mergeBlocker === true && flagsById.get(target)?.countsTowardWip === true;
+  };
 
   return moveTransitions.map((column) => {
     const label = workflowLabelById.get(column) ?? columnLabel(column);
     return {
       column,
-      label: column === "in-progress" && task.column === "in-review"
-        ? t("taskDetail.move.backToInProgress", "Back to In Progress")
+      label: isBackwardsLabel(column)
+        ? t("taskDetail.move.backTo", "Back to {{column}}", { column: label })
         : t("taskDetail.move.moveTo", "Move to {{column}}", { column: label }),
       primaryLabel: t("taskDetail.move.moveTo", "Move to {{column}}", { column: label }),
     };

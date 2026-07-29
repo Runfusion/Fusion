@@ -7791,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "진행 중으로 돌아가기",
+      "backTo": "{{column}}(으)로 돌아가기",
       "cancelMove": "이동 취소",
       "keepProgress": "진행 상태 유지",
       "movedTo": "{{column}}으로 이동됨",

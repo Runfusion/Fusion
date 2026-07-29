@@ -7791,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "Volver a En progreso",
+      "backTo": "Volver a {{column}}",
       "cancelMove": "Cancelar movimiento",
       "keepProgress": "Conservar progreso",
       "movedTo": "Movido a {{column}}",
