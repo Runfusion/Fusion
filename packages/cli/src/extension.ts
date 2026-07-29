@@ -1444,6 +1444,30 @@ export default function kbExtension(pi: ExtensionAPI) {
               await store.selectTaskWorkflowAndReconcile(task.id, workflowId);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
+              /*
+              FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+              TRANSLATE the switch re-home failure here too. `fn_task_update` is a
+              second switch consumer alongside `fn_task_set_workflow`, and a bare
+              message string gives the caller no way to tell "nothing changed, retry
+              after making room" from "the selection committed and the task is now
+              INCONSISTENT" — which is exactly the distinction that decides whether it
+              may treat the switch as done.
+              */
+              const typed = error as { name?: string; committed?: boolean; taskId?: string; workflowId?: string; fromColumn?: string; intendedColumn?: string };
+              if (typed?.name === "WorkflowSwitchRehomeFailedError") {
+                return {
+                  content: [{ type: "text", text: `ERROR: ${message}` }],
+                  isError: true,
+                  details: {
+                    code: "workflow-switch-rehome-failed",
+                    taskId: typed.taskId,
+                    workflowId: typed.workflowId,
+                    fromColumn: typed.fromColumn,
+                    intendedColumn: typed.intendedColumn,
+                    selectionCommitted: typed.committed === true,
+                  },
+                };
+              }
               return {
                 content: [{ type: "text", text: `ERROR: ${message}` }],
                 isError: true,
