@@ -33,7 +33,7 @@ import {
 } from "../skill-resolver.js";
 
 vi.mock("../logger.js", () => {
-  const mk = () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() });
+  const mk = () => ({ log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() });
   return {
     createLogger: vi.fn(() => mk()),
     piLog: mk(),

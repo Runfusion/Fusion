@@ -5,7 +5,7 @@ import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, Au
 import { randomUUID } from "node:crypto";
 
 const cronLoggerSpies = vi.hoisted(() => ({
-  log: vi.fn(),
+  log: vi.fn(), debug: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 }));

@@ -14,11 +14,11 @@ import {
 
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn(() => ({
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   })),
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 function createStatefulMockAgentStore(agents: Agent[]): AgentStore & { getAgent(id: string): Agent | undefined } {

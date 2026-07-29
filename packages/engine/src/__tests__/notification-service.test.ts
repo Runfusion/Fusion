@@ -7,7 +7,7 @@ import { DEFAULT_NTFY_EVENTS } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 
 vi.mock("../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 type Listener = (...args: any[]) => void | Promise<void>;
 

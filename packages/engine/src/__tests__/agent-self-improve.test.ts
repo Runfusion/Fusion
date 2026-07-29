@@ -6,8 +6,8 @@ import { AgentSelfImproveService } from "../agent-self-improve.js";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
 
 vi.mock("../logger.js", () => ({
-  createLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
-  heartbeatLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  createLogger: () => ({ log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+  heartbeatLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
   formatError: (err: unknown) => ({ detail: err instanceof Error ? err.message : String(err) }),
 }));
 
