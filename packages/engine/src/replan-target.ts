@@ -82,6 +82,18 @@ export function hasAdvancedPastPlanning(
     // the execution-stamp branch). Optional so existing narrowed callers still compile; absent, the
     // branch keeps its prior "stamps mean advanced" answer.
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-29-10:20 (U11):
+  The workflow's PLANNER column. `triage` is only what the builtin coding workflow
+  calls it, and reading a renamed planner column as "advanced" is the dangerous
+  direction: the replan guards stop protecting a card that is still mid-plan, so
+  planning writes are skipped and it is never re-specified.
+
+  Defaults to the legacy id so every unconverted caller is byte-identical — which
+  includes the three call sites in self-healing.ts, deliberately left alone
+  because that file belongs to another worker's slice.
+  */
+  plannerColumn: string = "triage",
 ): boolean {
   if (
     task.column === "in-progress"
@@ -162,7 +174,7 @@ export function hasAdvancedPastPlanning(
     AFTER landing here has a stamp NEWER than its arrival, so it still reads advanced and stays with
     the advanced-recovery sweep.
     */
-    const inPlannerLane = task.column === "triage";
+    const inPlannerLane = task.column === plannerColumn;
     if (!(stampPredatesArrival && inPlannerLane)) {
       return true;
     }
@@ -170,7 +182,7 @@ export function hasAdvancedPastPlanning(
   }
   // The planner column itself is never "advanced" — nothing executes out of triage, and the steps
   // below belong to the card's previous planning pass.
-  if (task.column === "triage") {
+  if (task.column === plannerColumn) {
     return false;
   }
   // Plan-in-place planner lane ("todo"): a card explicitly parked for planning has not advanced.
@@ -191,13 +203,33 @@ the "not advanced" answer, and TypeScript could not flag it.
 export function isTaskStillInPlanningStage(
   task: Pick<Task, "column" | "worktree" | "steps" | "status">
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
+  plannerColumn: string = "triage",
 ): boolean {
-  return !hasAdvancedPastPlanning(task);
+  return !hasAdvancedPastPlanning(task, plannerColumn);
 }
 
 export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-10:40 (U11 — NOT CONVERTED, and why):
+    These two lookups look like `intake ?? hold` but they are not, and swapping
+    them for roles is WRONG. Coding (Ideas) declares `ideas` as its intake column
+    with `autoTriage: false` and does its planning in `todo` (the hold column,
+    plan-in-place). A role swap therefore sends its replans to the raw-ideas
+    column instead of the planning lane — caught here by the pre-existing
+    "targets todo for Coding (Ideas)" test rather than in production.
+
+    The real discriminator is which lane the triage service SCANS, which depends
+    on the intake column's `autoTriage` config, not on the intake/hold roles
+    alone. Resolving that correctly is its own change with its own evidence; it is
+    deliberately not smuggled into a conversion PR.
+
+    U11 IMPACT, flagged rather than assumed: the second lookup asks for `"todo"`,
+    which U11 deletes. For builtin coding the first lookup still matches `triage`
+    (which U11 keeps), so the builtins stay correct — but a workflow relying on the
+    `todo` branch loses it. That is a real follow-up, not a blocker for this PR.
+    */
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
     return "triage";
