@@ -2,7 +2,7 @@
 category: test-failures
 module: "@fusion/engine, @fusion/core"
 date: 2026-07-28
-problem_type: testing_convention
+problem_type: convention
 component: test-fixtures
 severity: high
 applies_when:
