@@ -841,6 +841,39 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     })
   ), [boardWorkflows, tasks, maxConcurrent]);
 
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (U12 — measured perf fix):
+  Bind `canDropTask` per (lane, column) ONCE per dependency change instead of creating
+  a new arrow inline in the render. `Column` is `React.memo`, and a fresh function
+  identity on any prop defeats that entirely — so before this, ANY Board state change
+  (collapsing the archived column, changing Done sort, opening the switcher)
+  re-rendered EVERY column and every card beneath it, not just the affected one.
+
+  This was invisible for a long time: the "keeps unaffected columns stable" regression
+  test measured the LEGACY single-lane board, whose props were all stable. Deleting
+  that board (U12 part 1) repointed the test at the real board, where it failed. I
+  instrumented `React.memo`'s comparator to list which props actually change identity
+  on a collapse toggle, and the answer was exactly one: `canDropTask`.
+
+  A `useRef` cache invalidated by `useEffect` does NOT work here, which is why my first
+  attempt at this failed and was reverted: the effect runs AFTER the render that
+  populated the cache, so it wipes the very bindings that render created and the next
+  render allocates fresh ones. `useMemo` keyed on the resolver has no such window —
+  the map lives exactly as long as the closure it belongs to.
+  */
+  const canDropTaskBinder = useMemo(() => {
+    const bindings = new Map<string, (taskId: string) => string | null>();
+    return (columnId: string, laneWorkflowId: string) => {
+      const key = `${laneWorkflowId}::${columnId}`;
+      let bound = bindings.get(key);
+      if (!bound) {
+        bound = (taskId: string) => canDropTask(taskId, columnId, laneWorkflowId);
+        bindings.set(key, bound);
+      }
+      return bound;
+    };
+  }, [canDropTask]);
+
   // FN-4380: GitHub badge state comes from persisted task fields (`task.prInfo`,
   // `task.issueInfo`, `task.githubTracking.issue`) and live WebSocket `badge:updated`
   // messages. We do NOT eagerly call `/api/github/batch-status` on board load.
@@ -999,7 +1032,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 showWorktreeGrouping={showWorktreeGrouping}
                 onMoveTask={onMoveTask}
                 onPromote={handlePromote}
-                canDropTask={(taskId) => canDropTask(taskId, columnDef.id, selectedWorkflow.id)}
+                canDropTask={canDropTaskBinder(columnDef.id, selectedWorkflow.id)}
                 getDraggingTaskId={getDraggingTaskId}
                 onPauseTask={onPauseTask}
                 onUnpauseTask={onUnpauseTask}
@@ -1059,7 +1092,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               showWorktreeGrouping={showWorktreeGrouping}
               onMoveTask={onMoveTask}
               onPromote={handlePromote}
-              canDropTask={(taskId) => canDropTask(taskId, selectedWorkflowArchivedColumn.id, selectedWorkflow.id)}
+              canDropTask={canDropTaskBinder(selectedWorkflowArchivedColumn.id, selectedWorkflow.id)}
               getDraggingTaskId={getDraggingTaskId}
               onPauseTask={onPauseTask}
               onUnpauseTask={onUnpauseTask}

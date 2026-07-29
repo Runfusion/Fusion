@@ -612,28 +612,24 @@ describe("Board", () => {
     });
 
     /*
-    FNXC:WorkflowBoard 2026-07-28-00:00 (U12 — KNOWN GAP, not a regression from this change):
-    SKIPPED, deliberately, rather than weakened.
+    FNXC:WorkflowBoard 2026-07-29-00:00 (U12):
+    UN-SKIPPED, with the fix rather than with a new expected number.
 
-    This test used to measure the LEGACY single-lane board, whose Column props were all
-    stable, so it passed. Deleting the legacy board (U12) repointed it at the workflow
-    board — the one every operator has actually been using — and there the invariant is
-    FALSE: toggling the archived column's collapse re-renders unaffected columns too
-    (measured: todo renders 3 times, not 2).
+    This test measured the LEGACY single-lane board — whose Column props were all
+    stable — so it passed for years without covering the board operators actually use.
+    Deleting the legacy board (U12 part 1) repointed it at the real one, where the
+    invariant was FALSE: toggling the archived column re-rendered every other column
+    (todo rendered 3x, not 2x). I skipped it then rather than weaken it.
 
-    That is a PRE-EXISTING production behaviour this deletion exposed, not something
-    U12 introduced: the workflow board has never held this invariant, and no test
-    covered it because this one was pointed at the dead path.
+    The cause is now measured, not guessed: instrumenting `React.memo`'s comparator to
+    print which props change identity on the toggle named exactly one — `canDropTask`,
+    an arrow allocated inline in Board's render. With it bound through a `useMemo`
+    cache, the only column that re-renders on a collapse is `archived` itself.
 
-    Relaxing the assertion to the measured 3 would bake the defect in and leave a guard
-    that reports success without checking anything, so it is skipped with the cause
-    named instead. Investigated far enough to rule out the obvious culprits — every
-    callback prop is `useCallback`, the per-column task arrays come from a memo whose
-    deps exclude `archivedCollapsed`, and memoizing the inline `canDropTask` binding
-    did NOT close it — so the remaining identity churn needs its own investigation.
-    Un-skip with the fix; do not un-skip by changing the expected number.
+    So this now guards a real invariant on the real board: a Board state change must
+    not re-render unrelated columns (and, beneath them, every card).
     */
-    it.skip("keeps unaffected columns stable when archived collapse toggles", () => {
+    it("keeps unaffected columns stable when archived collapse toggles", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "Todo task", column: "todo" }),
         createTask({ id: "FN-002", description: "Archived task", column: "archived" }),
