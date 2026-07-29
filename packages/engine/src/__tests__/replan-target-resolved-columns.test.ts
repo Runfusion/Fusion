@@ -31,9 +31,9 @@ so it sits inside U7's ownership question even though the file is listed elsewhe
 Flagging rather than assuming: if U5 has this in flight, this is the conflict.
 */
 import { describe, expect, it, vi } from "vitest";
-import type { TaskStore, WorkflowIr } from "@fusion/core";
+import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { resolveReplanTargetColumn } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolveReplanTargetColumn } from "../replan-target.js";
 
 const WF = "custom:replan-vocab";
 
@@ -162,5 +162,64 @@ describe("the replan rebound targets a column the workflow actually declares", (
     const target = await resolveReplanTargetColumn(storeWith(null), "FN-1");
 
     expect(target).toBe("triage");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The planner-lane predicate
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:PlannerLanePredicate 2026-07-29-11:20 (U7 / R3):
+`hasAdvancedPastPlanning` decides whether a card has left the planning stage, and
+it asked `task.column === "triage"` literally. On a renamed workflow that branch
+never matched, so a card resting in its OWN intake column fell through to the
+"steps parsed => advanced" tail and was reported ADVANCED while sitting exactly
+where planning puts it.
+
+That answer is load-bearing: `isTaskStillInPlanningStage` is the predicate handed to
+`moveTaskIf` and `deleteTaskIf` under the task lock, so a false "advanced" REFUSES
+the planning handoff. A renamed-workflow card whose previous pass parsed steps could
+never be released — finalize would report the guard refusal every time.
+
+The lane is a PARAMETER rather than a lookup because these predicates run under the
+task lock, where nothing may await. It defaults to the legacy pair, so every caller
+that has no roles behaves exactly as before.
+*/
+describe("the planner-lane predicate resolves the intake column", () => {
+  const card = (column: string, over: Partial<Task> = {}): Parameters<typeof hasAdvancedPastPlanning>[0] => ({
+    column,
+    worktree: undefined,
+    steps: [{ id: "s0", title: "Implement", status: "pending" }],
+    status: null,
+    ...over,
+  } as unknown as Parameters<typeof hasAdvancedPastPlanning>[0]);
+
+  it("reports NOT advanced for a card in the default intake column (no-regression half)", () => {
+    expect(hasAdvancedPastPlanning(card("triage"))).toBe(false);
+  });
+
+  it("reports NOT advanced for a card in a RENAMED intake column, when told the lane", () => {
+    // Pre-conversion this returned true — the card was reported as having advanced
+    // past planning while resting exactly where planning puts it, which made the
+    // under-the-lock guard refuse its own planning handoff.
+    expect(hasAdvancedPastPlanning(card("backlog"), { intake: "backlog" })).toBe(false);
+  });
+
+  it("still reports ADVANCED for a renamed card that genuinely left the lane", () => {
+    // The other side, so "never advanced" cannot pass for "correctly in the lane".
+    expect(hasAdvancedPastPlanning(card("in-progress"), { intake: "backlog" })).toBe(true);
+  });
+
+  it("keeps the legacy answer when no lane is supplied (strictly additive)", () => {
+    // A caller with no resolved roles gets byte-identical behavior: `triage` is the
+    // lane, and a renamed intake column reads as advanced exactly as it did before.
+    expect(hasAdvancedPastPlanning(card("backlog"))).toBe(true);
+    expect(hasAdvancedPastPlanning(card("triage"))).toBe(false);
+  });
+
+  it("isTaskStillInPlanningStage is the inverse, and threads the lane through", () => {
+    expect(isTaskStillInPlanningStage(card("backlog"), { intake: "backlog" })).toBe(true);
+    expect(isTaskStillInPlanningStage(card("backlog"))).toBe(false);
   });
 });

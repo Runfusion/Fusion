@@ -77,12 +77,40 @@ const REPLAN_PARK_STATUSES = new Set(
   [...PLANNING_STAGE_STATUSES].filter((status) => status !== TRANSIENT_PLANNING_STATUS),
 );
 
+/**
+ * FNXC:PlannerLanePredicate 2026-07-29-11:20 (U7 / R3):
+ * The planner lane this predicate reasons about, injected rather than hardcoded.
+ *
+ * WHY A PARAMETER AND NOT A LOOKUP: `isTaskStillInPlanningStage` is handed directly
+ * to `store.moveTaskIf(...)` and `store.deleteTaskIf(...)` as their under-the-lock
+ * predicate. Those must stay SYNCHRONOUS — the whole point of an in-transaction
+ * guard is that nothing awaits between the read and the write — so resolving an IR
+ * inside is not available. The caller that knows the workflow passes it in.
+ */
+export interface PlannerLaneColumns {
+  /** The column specification runs in / returns to. */
+  intake: string;
+}
+
+/**
+ * The legacy planner lane, used when a caller has no resolved roles to hand.
+ *
+ * FNXC:PlannerLanePredicate 2026-07-29-11:20 (U7 / R3):
+ * A compatibility default, exactly like triage's `LEGACY_PLANNING_LANE`: it makes
+ * this conversion STRICTLY ADDITIVE — byte-identical wherever the caller does not
+ * pass roles, correct wherever it does — which is the only shape that cannot
+ * regress a workflow that never renamed anything. It is deliberately NOT a second
+ * source of truth: every caller that can resolve roles should pass them.
+ */
+export const LEGACY_PLANNER_LANE: PlannerLaneColumns = { intake: "triage" };
+
 export function hasAdvancedPastPlanning(
   task: Pick<Task, "column" | "worktree" | "steps" | "status">
     // FNXC:WorkflowReplan 2026-07-26-18:30: `columnMovedAt` is the stale-stamp discriminator (see
     // the execution-stamp branch). Optional so existing narrowed callers still compile; absent, the
     // branch keeps its prior "stamps mean advanced" answer.
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
+  plannerLane: PlannerLaneColumns = LEGACY_PLANNER_LANE,
 ): boolean {
   if (
     task.column === "in-progress"
@@ -163,15 +191,15 @@ export function hasAdvancedPastPlanning(
     AFTER landing here has a stamp NEWER than its arrival, so it still reads advanced and stays with
     the advanced-recovery sweep.
     */
-    const inPlannerLane = task.column === "triage";
+    const inPlannerLane = task.column === plannerLane.intake;
     if (!(stampPredatesArrival && inPlannerLane)) {
       return true;
     }
     return false;
   }
-  // The planner column itself is never "advanced" — nothing executes out of triage, and the steps
-  // below belong to the card's previous planning pass.
-  if (task.column === "triage") {
+  // The planner column itself is never "advanced" — nothing executes out of the
+  // intake column, and the steps below belong to the card's previous planning pass.
+  if (task.column === plannerLane.intake) {
     return false;
   }
   // Plan-in-place planner lane ("todo"): a card explicitly parked for planning has not advanced.
@@ -192,8 +220,9 @@ the "not advanced" answer, and TypeScript could not flag it.
 export function isTaskStillInPlanningStage(
   task: Pick<Task, "column" | "worktree" | "steps" | "status">
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
+  plannerLane: PlannerLaneColumns = LEGACY_PLANNER_LANE,
 ): boolean {
-  return !hasAdvancedPastPlanning(task);
+  return !hasAdvancedPastPlanning(task, plannerLane);
 }
 
 /**

@@ -4153,7 +4153,21 @@ export class TriageProcessor {
         report.outcome = "withheld";
         return;
       }
-      const release = await moveTaskIf.call(this.store, task.id, holdColumn, isTaskStillInPlanningStage);
+      /*
+      FNXC:PlannerLanePredicate 2026-07-29-11:20 (U7 / R3):
+      Hand the predicate the task's OWN planner lane. It stays synchronous — it runs
+      under the task lock, where nothing may await — so the resolved intake column is
+      passed in rather than looked up. Without this the guard asked "is this card in
+      `triage`?" for a workflow whose intake is named something else, and answered
+      "it has advanced" for a card that had not moved at all.
+      */
+      const plannerLane = lifecycleColumns?.intake ? { intake: lifecycleColumns.intake } : undefined;
+      const release = await moveTaskIf.call(
+        this.store,
+        task.id,
+        holdColumn,
+        (live) => isTaskStillInPlanningStage(live, plannerLane),
+      );
       if (!release.moved) {
         planLog.warn(
           `${task.id}: planning handoff to ${holdColumn} REFUSED by the planning-stage guard `
