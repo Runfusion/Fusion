@@ -806,9 +806,28 @@ export function ListView({
       known-workflow set for the same reason.
       */
       const assigned = boardWorkflows.taskWorkflowIds[task.id];
-      const workflowId = assigned && byWorkflowId.has(assigned)
-        ? assigned
-        : boardWorkflows.defaultWorkflowId;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2525 review — greptile):
+      An UNMAPPED task is unknown, not default. `buildBoardWorkflowsPayload` writes an
+      entry for every task it is given (null selection included), so a MISSING entry
+      does not mean "no selection" — it means this task is NEWER than the payload,
+      which happens routinely because the SSE task list updates before board-workflows
+      does. Assuming the default workflow there would assert the default's adjacency on
+      a card that may belong to another workflow entirely — precisely the wrong answer,
+      confidently stated, for the cards most likely to be affected (freshly created
+      ones, which is exactly when a workflow was chosen).
+
+      Leave such a task without per-workflow metadata: it falls back to the shared
+      union and the neighbour approximation, which is the pre-existing behaviour and an
+      admitted guess rather than a false claim. Board additionally forces one
+      board-workflows refetch when it sees unmapped rendered tasks (FN-7591); porting
+      that self-heal to List is a real improvement and its own change.
+
+      A PRESENT but unknown id (stale/deleted workflow) still falls back to the default
+      — there the entry is a real answer that has simply gone out of date.
+      */
+      if (assigned === undefined) continue;
+      const workflowId = byWorkflowId.has(assigned) ? assigned : boardWorkflows.defaultWorkflowId;
       const columns = workflowId ? byWorkflowId.get(workflowId) : undefined;
       if (columns) map.set(task.id, columns);
     }
