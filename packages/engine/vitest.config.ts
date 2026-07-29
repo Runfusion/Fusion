@@ -188,6 +188,11 @@ export default defineConfig({
             */
             "src/__tests__/project-engine.test.ts",
             /*
+            FNXC:EngineTests 2026-07-28-21:05 (#2520 review — greptile P1):
+            Capacity single-flight IS covered — by this purpose-built file, not by anything in project-engine.test.ts. It was outside blocking CI, which is the real gap. Removing `if (this.mergeRunning) return;` fails "refuses a second concurrent drain while one merge is in flight" here and nowhere else. Deterministic, 3.69s / 3 tests.
+            */
+            "src/__tests__/merge-single-flight-invariant.test.ts",
+            /*
             FNXC:EngineTests 2026-07-28-10:20:
             Gate admission evidence (U9): this pins which authority actually decides merge-region policy — the built-in IR declares `merge-retry.maxAttempts` / `manual-merge-hold.release` that no handler reads, while the live budgets sit in `settings.maxAutoMergeRetries` and `ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES`. Merge is where irreversible work happens, and the drift it guards is SILENT: a handler-only edit can quietly make the dead IR config live (or move the live budget) with no other test failing. Outside the gate the ratchet cannot fire on the defect it exists for. Deterministic and pure — no git subprocesses, no timers, no network, no store; 3 ms of assertions.
             */
