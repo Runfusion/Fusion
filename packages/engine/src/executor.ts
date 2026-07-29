@@ -7337,6 +7337,18 @@ export class TaskExecutor {
             // Best-effort pause probe; fall through to the failure value.
           }
         }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-18:45 (U8 / R4):
+        THE PENDING-REVIEW ENDING IS A ROUTED OUTCOME, not a transition this phase performs. The
+        implementation phase used to call `handoffTaskToReview` itself and let the graph discover
+        the move afterwards; it now reports and stops, and this value routes the run to the
+        workflow's `review-pending-handoff` node, which performs the handoff and ends the run —
+        the same two effects in the same order, with the graph as the owner. Checked before the
+        pause probe because a pending-review stop is not a pause.
+        */
+        if (result.exit === "review-handoff-pending-review") {
+          return { outcome: "failure", value: "review-pending", data: result };
+        }
         return {
           outcome: "failure",
           value: paused ? "implementation-paused" : "implementation-incomplete",
@@ -10972,6 +10984,24 @@ export class TaskExecutor {
       }
       const wipColumn = lifecycleIr ? resolveLifecycleColumns(lifecycleIr)?.wip : "in-progress";
       const holdColumn = lifecycleIr ? resolveReboundTarget(lifecycleIr) : "todo";
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-29-18:55 (U8 / R4):
+      COMPAT PATH for user-authored graphs, deliberately named. Every BUILT-IN shape declares the
+      `outcome:review-pending` edge, so a built-in run never reaches here — it routed to its park
+      node and ended. A custom workflow without the edge falls through to its generic `failure`
+      edge and lands here, where the handoff the implementation phase used to perform inline
+      happens instead. For those graphs this is a relocation, not an elimination: the transition is
+      still executor-performed. What changes is that it is one named classifier in the failure
+      ladder rather than a call buried two thousand lines into a session loop.
+      */
+      if (failureValue === "review-pending") {
+        const compatMessage = "Implementation stopped on a pending review — parking in review (this workflow does not route the review-pending outcome)";
+        executorLog.log(`${task.id}: ${compatMessage}`);
+        await this.store.logEntry(task.id, compatMessage, undefined, this.getRunContextFor(task.id));
+        await this.handoffTaskToReview(live, "executor-exit-while-review-pending");
+        await this.persistTokenUsage(task.id);
+        return;
+      }
       const executeNodeSelfRequeued = failedNode === "execute" && this.graphExecuteSelfRequeued.has(task.id);
       if (failedNode === "execute" && ((holdColumn !== undefined && live.column === holdColumn) || executeNodeSelfRequeued)) {
         /*
@@ -13692,8 +13722,16 @@ export class TaskExecutor {
                 // the task in review without setting status=failed; otherwise the
                 // merge/review queue deadlocks on a task that is both in-review and
                 // failed.
+                /*
+                FNXC:WorkflowExecutionOwnership 2026-07-29-18:50 (U8 / R4):
+                The `handoffTaskToReview` call that stood here is GONE — the graph performs it via
+                the `review-pending-handoff` node the live primitive now routes to. What remains is
+                a report and a stop, which is all an implementation phase should do. Why review and
+                not `failed` (a pending-review block is a wait; status=failed on an in-review row
+                deadlocks the merge queue) now lives with the node in the IR, where the routing
+                decision is.
+                */
                 reportImplementationExit?.("review-handoff-pending-review");
-                await this.handoffTaskToReview(task, "executor-exit-while-review-pending");
                 pendingReviewParked = true;
                 break;
               }

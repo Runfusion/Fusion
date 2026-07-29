@@ -51,9 +51,19 @@ import type { ImplementationExit as CoreImplementationExit } from "@fusion/core"
 export type { ImplementationExit } from "@fusion/core";
 
 /** The exits where the EXECUTOR performs the lifecycle transition instead of the graph. */
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-29-19:20 (U8 / R4):
+The ledger of endings the implementation phase still transitions itself, and it SHRINKS as U8
+lands routing moves. `review-handoff-pending-review` left it: the phase reports the ending and
+stops, and the graph's `review-pending-handoff` node performs the handoff.
+
+Caveat so the list is not read as more than it is: a user-authored graph without the
+`outcome:review-pending` edge still gets an executor-performed handoff, from a single named
+classifier in `handleGraphFailure` — not from inside the session loop. "Out-of-band" here means
+the IMPLEMENTATION PHASE performs it.
+*/
 export const OUT_OF_BAND_IMPLEMENTATION_EXITS: readonly CoreImplementationExit[] = [
   "review-handoff-paused-after-completion",
-  "review-handoff-pending-review",
 ];
 
 export function isOutOfBandImplementationExit(exit: CoreImplementationExit | undefined): boolean {

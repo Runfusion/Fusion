@@ -173,7 +173,9 @@ outcome; raising one is a new out-of-graph lifecycle decision and needs a stated
 const LEDGER = {
   runImplementation: {
     "column transitions (store.moveTask)": 16,
-    "review transitions (handoffTaskToReview)": 3,
+    /* U8: 3 -> 2. The pending-review handoff left this method — the graph's
+       `review-pending-handoff` node performs it now. A decrement here is the unit working. */
+    "review transitions (handoffTaskToReview)": 2,
     "terminal parks (status: \"failed\")": 9,
     "graph handbacks (graphCompletion)": 3,
   },
@@ -185,7 +187,10 @@ const LEDGER = {
   */
   handleGraphFailure: {
     "column transitions (store.moveTask)": 0,
-    "review transitions (handoffTaskToReview)": 0,
+    /* U8: 0 -> 1. The named compat classifier for user-authored graphs that do not declare the
+       `outcome:review-pending` edge. For those shapes the transition is RELOCATED, not removed —
+       stated plainly so the ledger is not read as more progress than it is. */
+    "review transitions (handoffTaskToReview)": 1,
     "terminal parks (status: \"failed\")": 7,
   },
 } as const;
@@ -215,11 +220,11 @@ describe("U8 execution-lifecycle ownership ledger", () => {
 
   /*
   The headline number, stated once so a reader does not have to add the ledger up: the
-  implementation phase decides its own lifecycle 28 times and asks the graph 3 times.
+  implementation phase decides its own lifecycle 27 times and asks the graph 3 times (28 at baseline; the pending-review handoff moved to the graph).
   */
   it("states the U8 baseline ratio: the implementation phase decides far more than it asks", () => {
     const owned = EXECUTOR_OWNED_LABELS.reduce<number>((sum, label) => sum + LEDGER.runImplementation[label], 0);
     const handbacks = LEDGER.runImplementation[GRAPH_HANDBACK_LABEL];
-    expect({ owned, handbacks }).toEqual({ owned: 28, handbacks: 3 });
+    expect({ owned, handbacks }).toEqual({ owned: 27, handbacks: 3 });
   });
 });

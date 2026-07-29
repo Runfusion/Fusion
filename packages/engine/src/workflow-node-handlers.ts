@@ -387,7 +387,18 @@ export function createPrimitivePromptLikeHandler(
       active.checkpointId = result.checkpointId;
       return {
         outcome: result.outcome,
-        value: result.outcome === "success" ? "step-done" : "step-failed",
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-18:40 (U8 / R4):
+        `step-done` / `step-failed` was a two-value flattening of every possible ending, and it is
+        why the pending-review ending could never reach an edge on the stepwise shape. A pass that
+        stopped because a step is blocked on a pending review is a WAIT, not a step defect: the
+        outcome stays `failure` (the step genuinely did not complete) while the VALUE names the
+        ending, which `runForeach` propagates upward as the foreach node's own value so a
+        `outcome:review-pending` edge can claim it. Every other ending keeps `step-failed`.
+        */
+        value: result.outcome === "success"
+          ? "step-done"
+          : result.exit === "review-handoff-pending-review" ? "review-pending" : "step-failed",
         contextPatch: {
           [FOREACH_ACTIVE_CONTEXT_KEY]: active,
         },

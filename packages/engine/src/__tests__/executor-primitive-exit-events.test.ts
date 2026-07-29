@@ -72,12 +72,20 @@ describe("the LIVE implementation primitive announces the exit", () => {
     expect(completed[0]).not.toHaveProperty("exit");
   });
 
-  it("returns the unchanged routing outcome — announcing must not reroute", async () => {
-    const { primitives, ctx } = harness({ taskDone: false, modifiedFiles: [], exit: "review-handoff-pending-review" });
+  it("routes the pending-review ending, and leaves every other ending's value alone", async () => {
+    /*
+    This pin was "announcing must not reroute" while exits were reporting-only. The pending-review
+    ending is now a ROUTED outcome, so the row changed deliberately — declared here rather than
+    discovered. Every other ending keeps `implementation-incomplete`, which is what proves the
+    move is narrow.
+    */
+    const moved = await (harness({ taskDone: false, modifiedFiles: [], exit: "review-handoff-pending-review" })
+      .primitives.runCodingSession({ run: {}, node: { node: { id: "execute", kind: "prompt" }, context: {} } } as never, TASK, { worktreePath: "/tmp/wt", branchName: "b" } as never));
+    expect(moved).toMatchObject({ outcome: "failure", value: "review-pending" });
 
-    const result = await primitives.runCodingSession(ctx, TASK, { worktreePath: "/tmp/wt", branchName: "b" } as never);
-
-    expect(result).toMatchObject({ outcome: "failure", value: "implementation-incomplete" });
+    const unmoved = await (harness({ taskDone: false, modifiedFiles: [], exit: "review-handoff-paused-after-completion" })
+      .primitives.runCodingSession({ run: {}, node: { node: { id: "execute", kind: "prompt" }, context: {} } } as never, TASK, { worktreePath: "/tmp/wt", branchName: "b" } as never));
+    expect(unmoved).toMatchObject({ outcome: "failure", value: "implementation-incomplete" });
   });
 
   /*

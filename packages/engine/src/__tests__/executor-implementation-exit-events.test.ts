@@ -181,14 +181,13 @@ describe("execute seam announces the implementation phase's exit", () => {
     }
   });
 
-  it("classifies exactly the two executor-performed transitions as out-of-band", () => {
+  it("lists exactly the endings the implementation phase still transitions itself", () => {
     /*
     The ledger this unit closes: an out-of-band exit is one where the EXECUTOR moved the card.
     If a third appears without a routing move, U8 has gone backwards.
     */
     expect([...OUT_OF_BAND_IMPLEMENTATION_EXITS]).toEqual([
       "review-handoff-paused-after-completion",
-      "review-handoff-pending-review",
     ]);
     expect(isOutOfBandImplementationExit("complete")).toBe(false);
     expect(isOutOfBandImplementationExit(undefined)).toBe(false);
