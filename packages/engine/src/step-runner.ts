@@ -30,6 +30,7 @@ import { existsSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
 import type { TaskStore } from "@fusion/core";
+import type { ImplementationExit } from "@fusion/core";
 
 const execAsync = promisify(exec);
 
@@ -109,6 +110,17 @@ export interface RunTaskStepResult {
   outcome: "success" | "failure";
   baselineSha?: string;
   checkpointId?: string;
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-11:10 (U8 / R4 — workflow-owned lifecycle):
+  How the shared implementation pass ENDED, when that is finer than this step's outcome.
+  A pass can stop because a step is blocked on a pending review: every instance then reports
+  `failure`, but the ending is a WAIT, not a step defect, and the graph routes the two
+  differently. Without carrying it here the distinction dies at the `stepExecute` seam, which
+  flattens every ending to `step-done` / `step-failed` — so no edge can ever see it and the
+  transition has to be performed out of band instead.
+  Absent for every ordinary step outcome; the value space is `@fusion/core`'s ImplementationExit.
+  */
+  exit?: ImplementationExit;
 }
 
 /**

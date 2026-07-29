@@ -220,6 +220,25 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // browser-verification above.
     codeReviewOptionalGroupNode("in-review"),
     codeReviewRemediationNode("in-progress"),
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-11:40 (U8 / R4 — workflow-owned lifecycle):
+    THE PENDING-REVIEW PARK. An implementation pass can stop because a step is blocked on a
+    pending review: the agent cannot continue, and the card belongs in review rather than in an
+    error bucket (`status: failed` on an `in-review` row deadlocks the merge queue). The executor
+    used to perform that transition inline, mid-session, and the graph found out afterwards.
+
+    A `review-handoff` seam (pure lifecycle handoff, no reviewer invocation) whose ONLY edge is to
+    `end` — hand off and STOP, which is what the inline handoff did. Routing to the merge path
+    instead would carry work whose steps are incomplete into merge-gate.
+
+    Inherited by the final-review and Ideas variants, which clone this IR.
+    */
+    {
+      id: "review-pending-handoff",
+      kind: "prompt",
+      column: "in-review",
+      config: builtinPromptConfig("review-handoff", "Park for pending review"),
+    },
     completionSummaryNode("in-review"),
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -273,6 +292,15 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
     { from: "code-review", to: "code-review-remediation", condition: "failure" },
     { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-11:45 (U8 / R4):
+    `outcome:` edges match on the node's VALUE and take priority over the generic failure edge
+    below, so this claims ONLY the pending-review ending. `runForeach` returns a failing
+    instance's value as the foreach node's own, which is what carries `review-pending` from the
+    `step-execute` seam up to this edge.
+    */
+    { from: "steps", to: "review-pending-handoff", condition: "outcome:review-pending" },
+    { from: "review-pending-handoff", to: "end", condition: "success" },
     { from: "steps", to: "end", condition: "failure" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
