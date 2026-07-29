@@ -267,18 +267,57 @@ describe("triage resolves its planning-lane columns from the task's workflow", (
   });
 
   it("does not move a card that is ALREADY resting in its own hold column (plan-in-place)", async () => {
-    // The same-column skip must key on the resolved hold column, not on `!== "todo"`.
-    // Keyed on the literal, a renamed plan-in-place card was moved to a foreign
-    // column instead of being left where it already was.
+    /*
+    The same-column skip must key on the resolved hold column, not on `!== "todo"`.
+    Keyed on the literal, a renamed plan-in-place card was moved OUT of the column it
+    was already resting in, into a foreign one.
+
+    FNXC:TriageLifecycleColumns 2026-07-28-17:10 (PR #2517 review — CodeRabbit):
+    Driven through `finalizeApprovedTask` DIRECTLY, not through `recoverApprovedTask`.
+    That entry point gates on the intake column, so a hold-column card returned false
+    before finalize ever ran — `moveTaskIf` was trivially uncalled, the assertion
+    passed without exercising the branch it names, and the test was an exact
+    duplicate of the intake-gate case below it. A vacuous pass on the branch this
+    slice exists to convert.
+
+    Asserting the OUTCOME as well as the absent move is what makes it non-vacuous:
+    `released` proves finalize took the already-in-place path and completed the
+    handoff, rather than bailing out somewhere earlier for an unrelated reason.
+    */
     const task = createTask({ id: "FN-001", column: RENAMED.hold, status: "planning" });
     await seedPrompt("FN-001", REAL_SPEC);
     const store = createStore({ tasks: [task], workflowIr: ir(RENAMED) });
+    const settings = await store.getSettings();
 
-    // `recoverApprovedTask` gates on the intake column, so drive the hold-column
-    // shape through the same path the plan-in-place cards actually take.
-    await new TriageProcessor(store, rootDir).recoverApprovedTask(task);
+    const report = await (new TriageProcessor(store, rootDir) as unknown as {
+      finalizeApprovedTask: (
+        t: Task, written: string, s: Settings, o?: Record<string, unknown>,
+      ) => Promise<{ outcome: string }>;
+    }).finalizeApprovedTask(task, REAL_SPEC, settings);
 
     expect(store.moveTaskIf).not.toHaveBeenCalled();
+    expect(report.outcome).toBe("released");
+  });
+
+  it("DOES move a card that is resting in a column that is not its hold column", async () => {
+    /*
+    The other side of the same branch, so "never moves" cannot pass for "correctly
+    skips". Same workflow, same entry point — only the card's starting column
+    differs — and the move must target the resolved hold column.
+    */
+    const task = createTask({ id: "FN-001", column: RENAMED.intake, status: "planning" });
+    await seedPrompt("FN-001", REAL_SPEC);
+    const store = createStore({ tasks: [task], workflowIr: ir(RENAMED) });
+    const settings = await store.getSettings();
+
+    const report = await (new TriageProcessor(store, rootDir) as unknown as {
+      finalizeApprovedTask: (
+        t: Task, written: string, s: Settings, o?: Record<string, unknown>,
+      ) => Promise<{ outcome: string }>;
+    }).finalizeApprovedTask(task, REAL_SPEC, settings);
+
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-001", RENAMED.hold, expect.any(Function));
+    expect(report.outcome).toBe("released");
   });
 
   // ───────────────────────────────────────────────────────────────────────────
