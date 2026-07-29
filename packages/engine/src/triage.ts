@@ -329,6 +329,26 @@ export class TriageProcessor {
   */
   private static readonly LEGACY_PLANNING_LANE = { intake: "triage", hold: "todo" } as const;
 
+  /**
+   * FNXC:PlannerLanePredicate 2026-07-29-12:10 (U7 / R3):
+   * The planner lane to hand `isTaskStillInPlanningStage`, read SYNCHRONOUSLY from
+   * the snapshot the discovery pass publishes.
+   *
+   * Every consumer of that predicate is an under-the-lock guard — `moveTaskIf`,
+   * `deleteTaskIf`, `updateTaskAtomic` — where nothing may await, so this cannot
+   * become a lookup. The snapshot exists precisely because these paths are
+   * synchronous.
+   *
+   * Falls back to the legacy intake id for a task no pass has published yet, so the
+   * answer in that window is byte-identical to before this conversion. Named
+   * separately from `LEGACY_PLANNING_LANE` only because the predicate wants the
+   * intake column alone.
+   */
+  private plannerLaneFor(taskId: string): { intake: string } {
+    const intake = this.lifecycleRolesByTask.get(taskId)?.intake;
+    return { intake: intake ?? TriageProcessor.LEGACY_PLANNING_LANE.intake };
+  }
+
   private running = false;
   private polling = false;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -1589,7 +1609,7 @@ export class TriageProcessor {
     };
 
     const eligibleTriageTasks = allTasks.filter(
-      (t) => isAt(t, "intake") && isTaskStillInPlanningStage(t)
+      (t) => isAt(t, "intake") && isTaskStillInPlanningStage(t, { intake: rolesById.get(t.id)!.intake! })
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
@@ -3301,7 +3321,7 @@ export class TriageProcessor {
       // Compatibility adapters used by older embedded hosts do not expose the
       // core task lock; current TaskStore implementations always take the atomic path.
       const liveTask = await Promise.resolve(this.store.getTask(task.id)).catch(() => task) ?? task;
-      if (!isTaskStillInPlanningStage(liveTask)) {
+      if (!isTaskStillInPlanningStage(liveTask, this.plannerLaneFor(task.id))) {
         return false;
       }
       await this.store.updateTask(task.id, typeof patch === "function" ? patch(liveTask) : patch);
@@ -3310,7 +3330,7 @@ export class TriageProcessor {
 
     let persisted = false;
     await this.store.updateTaskAtomic(task.id, (liveTask) => {
-      if (!isTaskStillInPlanningStage(liveTask)) {
+      if (!isTaskStillInPlanningStage(liveTask, this.plannerLaneFor(task.id))) {
         /*
          * FNXC:Triage 2026-07-15-16:35:
          * FN-7977: a provider or validation failure must never overwrite an
@@ -3353,7 +3373,7 @@ export class TriageProcessor {
     }
     return store.withTaskLock(task.id, async () => {
       const live = await store.readTaskForMove(task.id);
-      if (!isTaskStillInPlanningStage(live)) {
+      if (!isTaskStillInPlanningStage(live, this.plannerLaneFor(task.id))) {
         planLog.warn(
           `${task.id}: planning-guarded write skipped — no longer in the planning stage `
           + `(column=${live?.column ?? "unknown"}, status=${live?.status ?? "null"}, `
@@ -3631,7 +3651,8 @@ export class TriageProcessor {
       if (resolution === "delete") {
         const deleteTaskIf = (this.store as unknown as { deleteTaskIf?: TaskStore["deleteTaskIf"] }).deleteTaskIf;
         if (typeof deleteTaskIf !== "function") return;
-        const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
+        const plannerLane = this.plannerLaneFor(task.id);
+        const result = await deleteTaskIf.call(this.store, task.id, (live) => isTaskStillInPlanningStage(live, plannerLane), {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
           auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },

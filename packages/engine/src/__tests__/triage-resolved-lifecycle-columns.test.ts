@@ -691,3 +691,102 @@ describe("stuck-abort recognises a completed handoff in the workflow's own hold 
     });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. The under-the-lock planning guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:PlannerLanePredicate 2026-07-29-12:10 (U7 / R3):
+`isTaskStillInPlanningStage` is the predicate handed to `moveTaskIf`,
+`deleteTaskIf` and `updateTaskAtomic` as their UNDER-THE-LOCK guard. It asked
+`column === "triage"` literally, so on a renamed workflow a card resting in its own
+intake column read as "advanced past planning" and every guarded write was REFUSED —
+the planning claim, the finalize handoff, the duplicate delete.
+
+That is the same class as the discovery and release literals, but strictly worse in
+consequence: those made planning not START, this makes planning unable to FINISH,
+and it fails as a refusal rather than as an absence, so the card sits with a
+half-written state and a warning nobody reads.
+
+These guards run under the task lock, where nothing may await, so the lane is read
+SYNCHRONOUSLY from the snapshot the discovery pass publishes. A task no pass has
+seen falls back to the legacy intake id, so the pre-first-poll window is unchanged —
+asserted below, because that fallback is the reason this cannot regress a workflow
+that never renamed anything.
+*/
+describe("the under-the-lock planning guards resolve the task's intake column", () => {
+  let rootDir = "";
+
+  beforeEach(async () => {
+    resetExecutorMocks();
+    vi.clearAllMocks();
+    rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-guard-"));
+    vi.spyOn(planLog, "log").mockImplementation(() => {});
+    vi.spyOn(planLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  /**
+   * A card resting in its own intake column, holding steps from a previous planning
+   * pass, with its status ALREADY CLEARED.
+   *
+   * The cleared status is load-bearing and it corrected my first fixture: with
+   * `status: "planning"` the predicate returns "still planning" from the
+   * planning-stage-status branch BEFORE it ever reaches the column check, so the
+   * literal could not have mattered and the test proved nothing. The column branch
+   * only bites once the status is gone — which is exactly the FN-8596 second strand
+   * the production comment describes: the stale-status sweep clears `planning` to
+   * null, and the card is then judged purely on its column and its leftover steps.
+   */
+  const replannedCard = (column: string): Task => createTask({
+    id: "FN-001",
+    column,
+    status: null,
+    steps: [{ id: "s0", title: "Implement", status: "pending" }],
+  } as Partial<Task>);
+
+  /** Did the guarded planning-state write land? */
+  async function guardedWriteLanded(
+    names: { intake: string; hold: string; wip: string },
+    opts: { publishRoles?: boolean } = { publishRoles: true },
+  ): Promise<boolean> {
+    const task = replannedCard(names.intake);
+    const store = createStore({ tasks: [task], workflowIr: ir(names) });
+    const processor = new TriageProcessor(store, rootDir);
+    if (opts.publishRoles) {
+      vi.spyOn(processor as unknown as { specifyTask: (t: Task) => Promise<void> }, "specifyTask")
+        .mockResolvedValue(undefined);
+      (processor as unknown as { running: boolean }).running = true;
+      await (processor as unknown as { poll: () => Promise<void> }).poll();
+      vi.mocked(store.updateTaskAtomic!).mockClear();
+    }
+
+    return (processor as unknown as {
+      updatePlanningStateIfStillCurrent: (t: Task, p: Partial<Task>) => Promise<boolean>;
+    }).updatePlanningStateIfStillCurrent(task, { status: "planning" });
+  }
+
+  it("permits the guarded write for a card in the DEFAULT intake column (no-regression half)", async () => {
+    expect(await guardedWriteLanded(DEFAULT_NAMES)).toBe(true);
+  });
+
+  it("permits the guarded write for a card in a RENAMED intake column", async () => {
+    // Pre-conversion this was refused: the card read as "advanced past planning"
+    // while resting exactly where planning puts it, so the planning claim, the
+    // finalize handoff and the duplicate delete were all rejected.
+    expect(await guardedWriteLanded(RENAMED)).toBe(true);
+  });
+
+  it("keeps the legacy answer for a card no discovery pass has published", async () => {
+    // The compatibility window, asserted rather than assumed: with no published
+    // roles the lane is the legacy `triage`, so a renamed intake column still reads
+    // as advanced — byte-identical to the behavior before this conversion.
+    expect(await guardedWriteLanded(RENAMED, { publishRoles: false })).toBe(false);
+    expect(await guardedWriteLanded(DEFAULT_NAMES, { publishRoles: false })).toBe(true);
+  });
+});
