@@ -534,12 +534,21 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
     });
 
     it("drops an adjacency edge into a column this board cannot show", () => {
-      // An edge into a hidden column must not become a dead menu entry.
-      const withHidden: TaskContextMenuColumnMetadata[] = renamedMoveColumns.map((column) =>
-        column.id === "staging"
-          ? { ...column, moveTargets: ["building", "nowhere"] }
-          : column,
-      );
+      /*
+      Two distinct exclusions, because they fail differently (PR #2525 review —
+      CodeRabbit): `hidden` is a DECLARED column carrying `hiddenFromBoard`, which only
+      the visibility filter removes, and `nowhere` is an id the workflow does not
+      declare at all. Testing only the unknown id would let the hidden-column filtering
+      be deleted with the case still green.
+      */
+      const withHidden: TaskContextMenuColumnMetadata[] = [
+        ...renamedMoveColumns.map((column) =>
+          column.id === "staging"
+            ? { ...column, moveTargets: ["building", "hidden", "nowhere"] }
+            : column,
+        ),
+        { id: "hidden" as ColumnId, label: "Hidden", flags: { hiddenFromBoard: true } },
+      ];
       const transitions = getTaskMoveTransitions(
         mkTask({ id: "FN-17", column: "staging" as Task["column"] }),
         t,
