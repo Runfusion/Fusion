@@ -1,3 +1,12 @@
+/*
+FNXC:WorkflowColumns 2026-07-29-12:15 (post-#2515 audit):
+Fixtures use the MERGED planning column ("todo"), not the deleted "triage". #2515
+collapsed the default lineage's two pre-implementation columns into one with id
+"todo" carrying `intake` + `hold`, so a default-workflow card is never in "triage"
+again. A fixture left there exercised a state the product can no longer produce —
+and, because the converted sweeps resolve intake by ROLE, would have quietly
+asserted that the sweeps do nothing.
+*/
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock node modules
@@ -8265,7 +8274,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-100",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8301,7 +8310,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-101",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [{ action: "Spec review: APPROVE" }],
@@ -8332,7 +8341,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-102",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8428,7 +8437,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-200",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8465,10 +8474,10 @@ describe("SelfHealingManager", () => {
     it.each([
       { column: "in-progress", status: null, worktree: "/tmp/claimed" },
       { column: "todo", status: null, worktree: undefined, steps: [{ id: "planned" }] },
-      { column: "triage", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
+      { column: "in-progress", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
     ])("does not clear a stale candidate advanced to $column", async (live) => {
       const candidate = {
-        id: "FN-8361", column: "triage", status: "planning", paused: false,
+        id: "FN-8361", column: "todo", status: "planning", paused: false,
         log: [], updatedAt: "2026-01-01T00:00:00.000Z",
       };
       const updateTaskAtomic = vi.fn(async (_id: string, updater: (row: any) => any) => updater({ ...candidate, ...live }));
@@ -8494,7 +8503,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-201",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8523,7 +8532,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-202",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8555,7 +8564,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-203",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: true,
           log: [],
@@ -8584,7 +8593,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-204",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -9409,7 +9418,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9450,7 +9459,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9485,7 +9494,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-101",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: REVISE" }],
@@ -9516,9 +9525,9 @@ describe("stale triage processing eviction before recovery", () => {
 
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-approved-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-orphan-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-refinement-live", column: "triage", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
+      { id: "FN-approved-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-orphan-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-refinement-live", column: "todo", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
       { id: "FN-peer-1", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:01:00.000Z" },
       { id: "FN-peer-2", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:02:00.000Z" },
       { id: "FN-peer-3", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:03:00.000Z" },
@@ -9551,9 +9560,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ]);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
 
@@ -9576,9 +9585,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     const planningTasks = [
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ];
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(planningTasks);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
@@ -11713,7 +11722,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         makeTask({ id: "FN-6770", column: "in-progress" }),
         makeTask({ id: "FN-6771", column: "todo" }),
         makeTask({ id: "FN-6780", column: "todo", status: "queued" }),
-        makeTask({ id: "FN-TRIAGE", column: "triage" }),
+        makeTask({ id: "FN-TRIAGE", column: "todo" }),
         makeTask({ id: "FN-DONE", column: "done" }),
       ]);
 

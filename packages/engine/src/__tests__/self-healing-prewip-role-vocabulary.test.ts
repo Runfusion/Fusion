@@ -58,10 +58,36 @@ type Internals = {
 };
 
 describe("self-healing pre-WIP column vocabulary", () => {
-  it("resolves triage/todo for the built-in coding workflow (byte-identical to the literals)", async () => {
+  /*
+  FNXC:WorkflowColumns 2026-07-29-12:15 (post-#2515 audit):
+  THE CASE THIS CONVERSION EXISTS FOR. #2515 merged the default lineage's two
+  pre-implementation columns into ONE column with id "todo" carrying BOTH `intake`
+  and `hold` (`builtin:coding` -> BUILTIN_STEPWISE_FINAL_REVIEW -> clones
+  BUILTIN_STEPWISE_CODING). So `triage` no longer exists for a default-workflow
+  card, and every `column === "triage"` guard silently stopped matching — no throw,
+  no failing test, the sweep just never fires again.
+
+  Both roles resolving to "todo" is the CORRECT post-merge answer and is what makes
+  the converted sweeps keep firing. Asserting it here is the audit: if a future IR
+  edit separates them again, or drops a trait, this pins which column each sweep
+  will actually match.
+  */
+  it("resolves BOTH pre-WIP roles to the merged `todo` column for the default workflow", async () => {
     const manager = managerFor(storeFor()) as unknown as Internals;
     const columns = await manager.resolvePreWipColumns("FN-1", new Map());
-    expect(columns).toEqual({ intake: "triage", hold: "todo" });
+    expect(columns).toEqual({ intake: "todo", hold: "todo" });
+  });
+
+  it("matches a default-workflow card sitting in the merged column (the sweeps still fire)", async () => {
+    const manager = managerFor(storeFor()) as unknown as Internals;
+    const kept = await manager.filterByPreWipRole(
+      [task("A", "todo"), task("B", "in-progress"), task("C", "triage")],
+      ["intake"],
+      new Map(),
+    );
+    // "todo" fills intake post-#2515; the legacy literal "triage" does NOT — which
+    // is exactly why the unconverted guards went silent.
+    expect(kept.map((t) => t.id)).toEqual(["A"]);
   });
 
   /*
@@ -97,19 +123,26 @@ describe("self-healing pre-WIP column vocabulary", () => {
   });
 
   /*
-  Recovery sweeps must keep working when a workflow cannot be read. Returning
-  nothing would drop the card out of EVERY converted sweep — a silent loss of
-  recovery, which is worse than continuing with the legacy vocabulary. Deliberately
-  different from conversions whose failure mode is a destructive move.
+  Recovery sweeps must keep working when a workflow cannot be read: returning
+  nothing would drop the card out of EVERY converted sweep, a silent loss of
+  recovery worse than resolving imperfectly.
+
+  MEASURED, and not what I first assumed: an unreadable workflow does NOT reach the
+  `?? "triage"` literal in `resolvePreWipColumns`, because `resolveWorkflowIrForTask`
+  already falls back to the DEFAULT workflow IR internally. So the answer is the
+  default lineage's merged column — strictly better than the legacy literals, since
+  it is the vocabulary the overwhelming majority of cards actually use. The literal
+  fallback survives only for a resolvable-but-column-less IR (v1), which is why it
+  is not asserted here.
   */
-  it("falls back to the legacy vocabulary when the workflow cannot be resolved", async () => {
+  it("falls back to the DEFAULT workflow vocabulary when the task's workflow cannot be read", async () => {
     const throwingStore = {
       getTaskWorkflowSelection: vi.fn(() => { throw new Error("unreadable"); }),
       getTaskWorkflowSelectionAsync: vi.fn(async () => { throw new Error("unreadable"); }),
       getWorkflowDefinition: vi.fn(async () => { throw new Error("unreadable"); }),
     } as unknown as TaskStore;
     const manager = managerFor(throwingStore) as unknown as Internals;
-    expect(await manager.resolvePreWipColumns("FN-1", new Map())).toEqual({ intake: "triage", hold: "todo" });
+    expect(await manager.resolvePreWipColumns("FN-1", new Map())).toEqual({ intake: "todo", hold: "todo" });
   });
 
   /*
