@@ -1542,14 +1542,33 @@ export class TriageProcessor {
 
     const eligibleTriageTasks = candidates.filter(
       // `!isAtHoldColumn` keeps the two branches disjoint for a merged intake+hold column.
-      (t) => isAtIntakeColumn(t) && !isAtHoldColumn(t) && isTaskStillInPlanningStage(t)
+      (t) => isAtIntakeColumn(t) && !isAtHoldColumn(t) && isTaskStillInPlanningStage(t, { intake: lifecycleByTaskId.get(t.id)?.intake ?? "triage" })
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
     );
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-16:55 (U11 #2515 fallout — PRODUCT BUG):
+    The hold rule needs the ADVANCEMENT guard the intake rule already had.
+
+    Before #2515 the two pre-implementation columns were distinct, so an advanced
+    card (worktree + execution stamps) sat in `triage` and was excluded by the intake
+    rule's `isTaskStillInPlanningStage`. After the merge one column carries BOTH
+    traits, the branches are made disjoint by testing hold FIRST — and the hold rule
+    never had that guard, because a card in the old `todo` could not be mid-planning.
+
+    Consequence: an advanced card whose PROMPT.md is missing hits the ENOENT
+    "treat as unplanned" branch below and is RE-DISPATCHED FOR PLANNING, discarding
+    the work it already has. That is the FN-7977 / FN-8594 class the guard exists to
+    prevent, reintroduced by the column merge rather than by any change to the guard.
+
+    Adding it here is safe for the ordinary case: an unplanned card in the hold
+    column has no worktree and no steps, so it is still admitted.
+    */
     const eligibleTodoTasksRaw = candidates.filter(
-      (t) => isAtHoldColumn(t) && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+      (t) => isAtHoldColumn(t) && isTaskStillInPlanningStage(t, { intake: lifecycleByTaskId.get(t.id)?.intake ?? "triage" })
+        && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && t.status !== "planning"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),

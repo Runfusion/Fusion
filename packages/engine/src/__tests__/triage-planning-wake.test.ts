@@ -308,7 +308,8 @@ describe("TriageProcessor planning discovery: missing PROMPT.md", () => {
       const { store } = createEventedStore();
       const task = createTask({
         id: "FN-REPLAN-EXECUTED",
-        column: "triage",
+        // U11 (#2515): the rebounded replan card now rests in the MERGED planning column.
+        column: "todo",
         status: "needs-replan",
         // A replan card carries the steps and spec of its previous (rejected) planning pass.
         steps: [{ name: "step-1", status: "pending" }],

@@ -202,6 +202,28 @@ function createTriageTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+/*
+FNXC:TriageSuitePostU11 2026-07-29-16:40 (U11 #2515 fallout):
+The default lineage no longer declares a `triage` column — U11 merged Todo into
+Planning, keeping the id `todo`. `createTriageTask` still places cards in `triage`,
+which is correct for the fixtures that exercise the LEGACY column, and wrong for
+every fixture that means "a card awaiting specification": discovery resolves the
+task's own workflow, finds no `triage` in it, and admits nothing.
+
+Discovery fixtures use this helper instead, so they name the ROLE they mean rather
+than an id that moved out from under them. Left as a separate helper rather than
+changing `createTriageTask`'s default, because the finalize/move tests legitimately
+start a card upstream of the hold column and asserting on `triage` there is still
+the point.
+*/
+/** The default lineage's pre-implementation column after U11 (#2515). */
+const PLANNING_COLUMN = "todo";
+
+function createPlannableTask(overrides: Partial<Task> = {}): Task {
+  return createTriageTask({ column: PLANNING_COLUMN, ...overrides });
+}
+
+
 describe("buildSpecificationPrompt", () => {
   const baseTask: TaskDetail = {
     ...mockTaskDetail,
@@ -1725,22 +1747,22 @@ Planner rewrote mission without the raw request.
   describe("poll ordering", () => {
     it("dispatches eligible triage tasks by createdAt asc", async () => {
       const tasks: Task[] = [
-        createTriageTask({
+        createPlannableTask({
           id: "FN-100",
           priority: "normal",
           createdAt: "2026-01-01T00:01:00.000Z",
         }),
-        createTriageTask({
+        createPlannableTask({
           id: "FN-101",
           priority: "urgent",
           createdAt: "2026-01-01T00:10:00.000Z",
         }),
-        createTriageTask({
+        createPlannableTask({
           id: "FN-102",
           priority: "high",
           createdAt: "2026-01-01T00:03:00.000Z",
         }),
-        createTriageTask({
+        createPlannableTask({
           id: "FN-103",
           priority: "high",
           createdAt: "2026-01-01T00:02:00.000Z",
@@ -1776,12 +1798,12 @@ Planner rewrote mission without the raw request.
     it("excludes paused, awaiting-approval, failed, stuck-killed, and recovery-gated tasks from ordered candidates", async () => {
       const future = new Date(Date.now() + 60_000).toISOString();
       const tasks: Task[] = [
-        createTriageTask({ id: "FN-200", priority: "urgent" }),
-        createTriageTask({ id: "FN-201", priority: "urgent", paused: true }),
-        createTriageTask({ id: "FN-202", priority: "urgent", status: "awaiting-approval" }),
-        createTriageTask({ id: "FN-203", priority: "urgent", status: "failed" }),
-        createTriageTask({ id: "FN-204", priority: "urgent", status: "stuck-killed" }),
-        createTriageTask({ id: "FN-205", priority: "urgent", nextRecoveryAt: future }),
+        createPlannableTask({ id: "FN-200", priority: "urgent" }),
+        createPlannableTask({ id: "FN-201", priority: "urgent", paused: true }),
+        createPlannableTask({ id: "FN-202", priority: "urgent", status: "awaiting-approval" }),
+        createPlannableTask({ id: "FN-203", priority: "urgent", status: "failed" }),
+        createPlannableTask({ id: "FN-204", priority: "urgent", status: "stuck-killed" }),
+        createPlannableTask({ id: "FN-205", priority: "urgent", nextRecoveryAt: future }),
       ];
 
       const triageStore = createMockStore({
@@ -1814,12 +1836,12 @@ Planner rewrote mission without the raw request.
     */
     it("does not repeatedly dispatch a triage row that already has executor advancement evidence", async () => {
       const tasks: Task[] = [
-        createTriageTask({
+        createPlannableTask({
           id: "FN-ADVANCED",
           worktree: "/tmp/fusion-fn-advanced",
           firstExecutionAt: new Date().toISOString(),
         }),
-        createTriageTask({ id: "FN-UNPLANNED" }),
+        createPlannableTask({ id: "FN-UNPLANNED" }),
       ];
       const triageStore = createMockStore({
         listTasks: vi.fn().mockResolvedValue(tasks),
@@ -1848,12 +1870,12 @@ Planner rewrote mission without the raw request.
     */
     it("leaves global concurrency room for live in-progress agents when admitting planners", async () => {
       const tasks: Task[] = [
-        createTriageTask({ id: "FN-300", priority: "urgent" }),
-        createTriageTask({ id: "FN-301", priority: "urgent" }),
-        createTriageTask({ id: "FN-302", priority: "urgent" }),
-        createTriageTask({ id: "FN-303", priority: "urgent" }),
+        createPlannableTask({ id: "FN-300", priority: "urgent" }),
+        createPlannableTask({ id: "FN-301", priority: "urgent" }),
+        createPlannableTask({ id: "FN-302", priority: "urgent" }),
+        createPlannableTask({ id: "FN-303", priority: "urgent" }),
         {
-          ...createTriageTask({ id: "FN-EXEC", priority: "normal" }),
+          ...createPlannableTask({ id: "FN-EXEC", priority: "normal" }),
           column: "in-progress",
           status: null,
           sessionFile: "/tmp/fusion-fn-exec-session.json",
@@ -1893,9 +1915,9 @@ Planner rewrote mission without the raw request.
     */
     it("continues dispatching unplanned and explicit replan tasks to the planning agent", async () => {
       const tasks = [
-        createTriageTask({ id: "FN-PLANNER-UNDEFINED", status: undefined } as Partial<Task>),
-        createTriageTask({ id: "FN-PLANNER-NULL", status: null } as Partial<Task>),
-        createTriageTask({
+        createPlannableTask({ id: "FN-PLANNER-UNDEFINED", status: undefined } as Partial<Task>),
+        createPlannableTask({ id: "FN-PLANNER-NULL", status: null } as Partial<Task>),
+        createPlannableTask({
           id: "FN-PLANNER-REPLAN",
           status: "needs-replan",
           log: [{ action: "AI spec revision requested", outcome: "Add verification details." } as any],
@@ -5160,7 +5182,7 @@ describe("taskCreate tool model inheritance", () => {
       const task = {
         id: "FN-101",
         description: "Test triage task past",
-        column: "triage",
+        column: PLANNING_COLUMN,
         dependencies: [],
         steps: [],
         currentStep: 0,
@@ -5813,7 +5835,7 @@ describe("awaiting-approval poll exclusion", () => {
     const awaitingTask: Task = {
       id: "FN-AW1",
       description: "Awaiting approval task",
-      column: "triage",
+      column: PLANNING_COLUMN,
       status: "awaiting-approval",
       dependencies: [],
       steps: [],
@@ -5825,7 +5847,7 @@ describe("awaiting-approval poll exclusion", () => {
     const normalTask: Task = {
       id: "FN-NT1",
       description: "Normal triage task",
-      column: "triage",
+      column: PLANNING_COLUMN,
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -6788,7 +6810,7 @@ describe("evictStaleProcessing", () => {
         id,
         title: "Hung planner",
         description: "Test",
-        column: "triage",
+        column: PLANNING_COLUMN,
         dependencies: [],
         steps: [],
         currentStep: 0,
