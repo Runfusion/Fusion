@@ -36,6 +36,25 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
       isRunning: false,
     }),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TestInfrastructure 2026-07-29-16:45:
+    surfaceDbCorruption REFRESHES health before reading the snapshot
+    (FNXC:IncompletePgPorts 2026-07-26-20:45 — so PG connectivity is re-checked
+    rather than trusting an always-healthy sentinel). This fake carried neither
+    refresher, so the async branch fell through to `this.store.refreshDatabaseHealth()`
+    — undefined — and the step threw before reaching dispatch. Every corruption
+    assertion in this file was then measuring zero calls against a step that had
+    already aborted.
+
+    Both are NO-OPS on purpose: production ignores the refresh return value and
+    reads `this.store.getDatabaseHealth()` immediately after, so the snapshot mock
+    stays the single source of truth. Delegating them to getDatabaseHealth instead
+    would consume a SECOND value per pass from the tests that queue
+    mockReturnValueOnce sequences (one per runMaintenance), silently shifting the
+    corruption -> clear -> corruption ordering they assert.
+    */
+    refreshDatabaseHealth: vi.fn(),
+    refreshDatabaseHealthAsync: vi.fn(async () => undefined),
     ...overrides,
   }) as unknown as TaskStore & EventEmitter;
 }
