@@ -21,6 +21,14 @@ interface Generation {
   readonly leases: Set<EmbeddedRuntimeLease>;
   latestRegistration: number;
   pendingOwnerStop: (() => Promise<void>) | null;
+  stopping: boolean;
+}
+
+export class EmbeddedRuntimeStoppingError extends Error {
+  constructor(readonly url: string) {
+    super(`Embedded PostgreSQL runtime is stopping: ${url}`);
+    this.name = "EmbeddedRuntimeStoppingError";
+  }
 }
 
 interface LeaseMetadata {
@@ -42,12 +50,13 @@ export function registerEmbeddedRuntimeUrl(
   options: { ownsProcess: boolean },
 ): EmbeddedRuntimeLease {
   let generation = generationsByUrl.get(url);
+  if (generation?.stopping) throw new EmbeddedRuntimeStoppingError(url);
   // FNXC:PostgresBackup 2026-07-16-12:40: An owner started a new postmaster,
   // so URL reuse must create a new generation rather than retain stale leases.
   if (!generation || options.ownsProcess) {
     const id = (nextGenerationByUrl.get(url) ?? 0) + 1;
     nextGenerationByUrl.set(url, id);
-    generation = { url, epoch: registryEpoch, id, leases: new Set(), latestRegistration: 0, pendingOwnerStop: null };
+    generation = { url, epoch: registryEpoch, id, leases: new Set(), latestRegistration: 0, pendingOwnerStop: null, stopping: false };
     generationsByUrl.set(url, generation);
   }
 
@@ -87,10 +96,24 @@ export async function releaseEmbeddedRuntimeLease(
     generation.pendingOwnerStop = options.stopOwner;
   }
   if (generation.leases.size === 0) {
-    generationsByUrl.delete(metadata.url);
     const stopOwner = generation.pendingOwnerStop;
     generation.pendingOwnerStop = null;
-    await stopOwner?.();
+    if (stopOwner) {
+      /*
+      FNXC:PostgresLifecycle 2026-07-29-16:26:
+      Keep the generation visible as stopping until the owner callback completes. A concurrent bootstrap must retry rather than join a postmaster that is already committed to termination.
+      */
+      generation.stopping = true;
+      try {
+        await stopOwner();
+      } finally {
+        if (generationsByUrl.get(metadata.url) === generation) {
+          generationsByUrl.delete(metadata.url);
+        }
+      }
+    } else {
+      generationsByUrl.delete(metadata.url);
+    }
   }
 }
 
@@ -118,7 +141,7 @@ export function invalidateEmbeddedRuntimeUrl(url: string, lease?: EmbeddedRuntim
 export function getActiveEmbeddedRuntimeUrl(): string | undefined {
   let latest: Generation | undefined;
   for (const generation of generationsByUrl.values()) {
-    if (generation.leases.size > 0 && (!latest || generation.latestRegistration > latest.latestRegistration)) {
+    if (!generation.stopping && generation.leases.size > 0 && (!latest || generation.latestRegistration > latest.latestRegistration)) {
       latest = generation;
     }
   }

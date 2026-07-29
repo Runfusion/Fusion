@@ -246,6 +246,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     if (!layer) {
       throw new Error("attachBackendLayer requires a non-null AsyncDataLayer");
     }
+    await this.initializationPromise?.catch(() => undefined);
     // Release a central-only pool before adopting the runtime's shared layer.
     if (this.ownedBackendReleaseConnections) {
       /*
@@ -376,6 +377,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Closes database connections and releases resources.
    */
   async close(): Promise<void> {
+    /*
+    FNXC:CentralPostgresCutover 2026-07-29-16:26:
+    Close and layer replacement wait for in-flight layerless initialization. Cleanup must observe and release the backend init publishes instead of returning early and leaking its pool or embedded-runtime lease.
+    */
+    await this.initializationPromise?.catch(() => undefined);
     if (this.nodeDiscovery) {
       this.stopDiscovery();
     }

@@ -82,4 +82,32 @@ describe("CentralCore layer-less initialization", () => {
     await central.close();
     expect(mocks.shutdown).toHaveBeenCalledOnce();
   });
+
+  it("waits for in-flight initialization before closing its owned backend", async () => {
+    const globalDir = mkdtempSync(join(tmpdir(), "fusion-central-cli-close-race-"));
+    cleanupDirs.push(globalDir);
+    const central = new CentralCore(globalDir);
+    let finishBackend!: (value: {
+      asyncLayer: typeof ownedLayer;
+      releaseConnections: typeof mocks.releaseConnections;
+      shutdown: typeof mocks.shutdown;
+    }) => void;
+    mocks.createCentralBackendLayer.mockReturnValueOnce(new Promise((resolve) => {
+      finishBackend = resolve;
+    }));
+
+    const initialization = central.init();
+    await vi.waitFor(() => expect(mocks.createCentralBackendLayer).toHaveBeenCalledOnce());
+    const closing = central.close();
+    expect(mocks.shutdown).not.toHaveBeenCalled();
+    finishBackend({
+      asyncLayer: ownedLayer,
+      releaseConnections: mocks.releaseConnections,
+      shutdown: mocks.shutdown,
+    });
+
+    await Promise.all([initialization, closing]);
+    expect(mocks.shutdown).toHaveBeenCalledOnce();
+    expect(central.backendMode).toBe(false);
+  });
 });

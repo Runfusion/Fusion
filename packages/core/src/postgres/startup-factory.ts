@@ -58,6 +58,7 @@ import { applySchemaBaseline, MIGRATION_BOOKKEEPING_TABLE } from "./schema-appli
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
 import {
+  EmbeddedRuntimeStoppingError,
   registerEmbeddedRuntimeUrl,
   releaseEmbeddedRuntimeLease,
   type EmbeddedRuntimeLease,
@@ -386,6 +387,15 @@ async function bootSchemaBackend(
       return await bootSchemaBackendOnce(options, bypassProjectIsolation);
     } catch (error) {
       if (
+        error instanceof EmbeddedRuntimeStoppingError &&
+        joinedRetryAttempt < JOINED_INSTANCE_RETRY_DELAYS_MS.length
+      ) {
+        const delayMs = JOINED_INSTANCE_RETRY_DELAYS_MS[joinedRetryAttempt];
+        joinedRetryAttempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      if (
         error instanceof JoinedInstanceUnreachableError &&
         joinedRetryAttempt < JOINED_INSTANCE_RETRY_DELAYS_MS.length
       ) {
@@ -473,6 +483,7 @@ async function bootSchemaBackendOnce(
       }
     } catch (error) {
       await embeddedLifecycle.stop().catch(() => undefined);
+      if (error instanceof EmbeddedRuntimeStoppingError) throw error;
       throw new Error(
         `startup-factory: failed to start embedded PostgreSQL: ${error instanceof Error ? error.message : String(error)}`,
       );
