@@ -435,7 +435,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   capacity is total agents only; it is a counting statement, not permission for
   concurrent agents to share one checkout.
   */
-  worktreesEnabled: true,
+  worktreeLimitEnabled: true,
   pollIntervalMs: 15000,
   heartbeatMultiplier: 1,
   autoClaimCandidatesInPrompt: 5,

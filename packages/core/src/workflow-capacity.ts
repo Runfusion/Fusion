@@ -40,7 +40,7 @@ The capacity model is two configurable numbers per project:
   1. total agents  (`maxConcurrent`)  — always binds
   2. `maxWorktrees`                   — binds ONLY when worktrees are enabled
 
-When `worktreesEnabled === false` the operator asked for "limit via total agents
+When `worktreeLimitEnabled === false` the operator asked for "limit via total agents
 only". This returns `null` for that case, and callers construct NO worktree gate
 at all — rather than a gate with a very high or infinite limit. That distinction
 is the whole point: a limiter that still exists and merely happens not to bind is
@@ -58,9 +58,9 @@ slider clamps it to a 1..50 range. Overloading a value as a mode is how sentinel
 become defects; the boolean says what it means.
 */
 export function resolveWorktreeCapacityLimit(
-  settings: Pick<Settings, "maxWorktrees" | "worktreesEnabled"> | undefined,
+  settings: Pick<Settings, "maxWorktrees" | "worktreeLimitEnabled"> | undefined,
 ): number | null {
-  if (settings?.worktreesEnabled === false) return null;
+  if (settings?.worktreeLimitEnabled === false) return null;
   const limit = settings?.maxWorktrees;
   return typeof limit === "number" && Number.isFinite(limit) ? limit : DEFAULT_MAX_WORKTREES;
 }

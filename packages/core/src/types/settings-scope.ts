@@ -1146,8 +1146,13 @@ export interface ProjectSettings {
   globalMaxConcurrent?: number;
   maxWorktrees: number;
   /**
-   * FNXC:CapacityModel 2026-07-28-11:20:
-   * Whether worktrees are a capacity dimension for this project. Default true.
+   * FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review):
+   * Whether Max Worktrees GATES DISPATCH for this project. Default true.
+   *
+   * Renamed from `worktreesEnabled`, which two reviewers read as "run tasks
+   * without worktrees" — it never meant that. Tasks always execute in their own
+   * git worktree; this only decides whether the worktree COUNT is a second limit
+   * alongside the agent count.
    *
    * When false the operator asked to "limit via total agents only": `maxWorktrees`
    * stops gating dispatch entirely — not raised, not skipped by convention, but
@@ -1156,12 +1161,14 @@ export interface ProjectSettings {
    * "maxWorktrees"). See `resolveWorktreeCapacityLimit` in workflow-capacity.ts
    * for why this is a boolean rather than `maxWorktrees: 0`.
    *
-   * SCOPE: this is a statement about COUNTING, not about isolation. It does not
-   * make concurrent agents safe to share one checkout — the non-worktree paths
-   * that exist today are fallbacks to the operator's own tree, one of which
-   * caused FN-8600. Turning this off does not grant shared-checkout concurrency.
+   * SCOPE: this is a statement about COUNTING, not about isolation or execution.
+   * Both scheduler dispatch paths still allocate a worktree per task with this
+   * off, and planning still runs in the task's own worktree. It does not make
+   * concurrent agents safe to share one checkout — the non-worktree paths that
+   * exist today are fallbacks to the operator's own tree, one of which caused
+   * FN-8600. Turning this off does not grant shared-checkout concurrency.
    */
-  worktreesEnabled?: boolean;
+  worktreeLimitEnabled?: boolean;
   pollIntervalMs: number;
   /** Global multiplier applied to all agent heartbeat intervals.
    *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).

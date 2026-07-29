@@ -381,7 +381,7 @@ interface ConcurrencyGateDiagnostic {
   /*
   FNXC:CapacityModel 2026-07-28-11:35:
   OPTIONAL because worktrees can be turned off as a capacity dimension
-  (`settings.worktreesEnabled === false` → "limit via total agents only").
+  (`settings.worktreeLimitEnabled === false` → "limit via total agents only").
 
   When off, this field is ABSENT — there is no worktree gate object, not a gate
   holding Infinity and not a comparison skipped by convention. That is deliberate
@@ -432,7 +432,7 @@ function computeConcurrencyGateDiagnostic(params: {
   /*
   FNXC:CapacityModel 2026-07-28-11:35:
   `null` means worktrees are not a capacity dimension for this project
-  (`settings.worktreesEnabled === false`) — NOT "unlimited". Callers resolve it
+  (`settings.worktreeLimitEnabled === false`) — NOT "unlimited". Callers resolve it
   through `resolveWorktreeCapacityLimit` so the OFF convention has exactly one
   expression; passing a raw number here cannot accidentally re-enable the gate
   because the resolver is the only thing that produces this value.
@@ -1595,10 +1595,10 @@ export class Scheduler {
   private async runHoldReleaseSweepPass(tasks: Task[], settings: Settings): Promise<void> {
     try {
       // FNXC:CapacityModel 2026-07-28-11:35: null = worktrees are not a capacity
-      // dimension for this project (worktreesEnabled false), NOT unlimited.
+      // dimension for this project (worktreeLimitEnabled false), NOT unlimited.
       const maxWorktrees = resolveWorktreeCapacityLimit({
         maxWorktrees: settings.maxWorktrees ?? this.options.maxWorktrees ?? 4,
-        worktreesEnabled: settings.worktreesEnabled,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled,
       });
       const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
       /*

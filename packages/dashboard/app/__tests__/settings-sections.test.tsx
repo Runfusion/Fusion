@@ -298,7 +298,7 @@ describe("WorktreesSection", () => {
 
   /*
   FNXC:CapacityModel 2026-07-28-13:45:
-  Capacity is two configurable numbers per project; `worktreesEnabled` decides
+  Capacity is two configurable numbers per project; `worktreeLimitEnabled` decides
   whether the SECOND one applies. These pin the UI half of the "inert means
   incapable, not ignored" rule: with worktrees off the Max Worktrees control is
   DISABLED, so an operator cannot set a number the engine will not consult. A live
@@ -318,7 +318,7 @@ describe("WorktreesSection", () => {
   it("enables the Max Worktrees control while worktrees are on", () => {
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreesEnabled: true } as SettingsFormState}
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
         setForm={vi.fn()}
         {...worktreeCapacityProps}
       />,
@@ -329,7 +329,7 @@ describe("WorktreesSection", () => {
   it("disables the Max Worktrees control while worktrees are off", () => {
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreesEnabled: false } as SettingsFormState}
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: false } as SettingsFormState}
         setForm={vi.fn()}
         {...worktreeCapacityProps}
       />,
@@ -337,8 +337,8 @@ describe("WorktreesSection", () => {
     expect(screen.getByLabelText("Max Worktrees")).toBeDisabled();
   });
 
-  it("treats an absent worktreesEnabled as on, so existing projects keep their worktree cap", () => {
-    // Every project row predating this setting has no `worktreesEnabled` key. If
+  it("treats an absent worktreeLimitEnabled as on, so existing projects keep their worktree cap", () => {
+    // Every project row predating this setting has no `worktreeLimitEnabled` key. If
     // absence read as OFF, an upgrade would silently drop a limiter operators rely
     // on — and the control would grey out with no one having asked for it.
     render(
@@ -348,26 +348,26 @@ describe("WorktreesSection", () => {
         {...worktreeCapacityProps}
       />,
     );
-    expect(screen.getByLabelText("Run tasks in worktrees")).toBeChecked();
+    expect(screen.getByLabelText("Limit concurrent worktrees")).toBeChecked();
     expect(screen.getByLabelText("Max Worktrees")).not.toBeDisabled();
   });
 
-  it("toggling worktrees off writes worktreesEnabled false", () => {
+  it("toggling the worktree limit off writes worktreeLimitEnabled false", () => {
     const setForm = vi.fn((updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState)) =>
       typeof updater === "function"
-        ? updater({ recycleWorktrees: false, worktreesEnabled: true } as SettingsFormState)
+        ? updater({ recycleWorktrees: false, worktreeLimitEnabled: true } as SettingsFormState)
         : updater,
     );
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreesEnabled: true } as SettingsFormState}
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
         setForm={setForm}
         {...worktreeCapacityProps}
       />,
     );
-    fireEvent.click(screen.getByLabelText("Run tasks in worktrees"));
+    fireEvent.click(screen.getByLabelText("Limit concurrent worktrees"));
     expect(setForm).toHaveBeenCalledTimes(1);
-    expect(setForm.mock.results[0]?.value).toMatchObject({ worktreesEnabled: false });
+    expect(setForm.mock.results[0]?.value).toMatchObject({ worktreeLimitEnabled: false });
   });
 
   it("renders and toggles the board worktree grouping checkbox", () => {

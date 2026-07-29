@@ -490,7 +490,7 @@ describe("Scheduler workflow cutover", () => {
     const store = storeWith([...active, ready], {
       maxConcurrent: 10,
       maxWorktrees: 4,
-      worktreesEnabled: false,
+      worktreeLimitEnabled: false,
     });
     const onSchedule = vi.fn();
     const scheduler = new Scheduler(store, { onSchedule });
@@ -516,7 +516,7 @@ describe("Scheduler workflow cutover", () => {
     const store = storeWith([ready], {
       maxConcurrent: 4,
       maxWorktrees: 0,
-      worktreesEnabled: false,
+      worktreeLimitEnabled: false,
     });
     const onSchedule = vi.fn();
     const scheduler = new Scheduler(store, { onSchedule });

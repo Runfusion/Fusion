@@ -11,18 +11,19 @@ import type { SettingsSearchEntry } from "../search/types";
 export const worktreesSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "worktrees",
-    key: "worktreesEnabled",
-    labelKey: "settings.worktrees.worktreesEnabled",
-    labelFallback: "Run tasks in worktrees",
-    helpKey: "settings.worktrees.worktreesEnabledHelp",
-    helpFallback: "Each task — planning included — gets its own git worktree. Turn off to limit capacity by agent count alone. Default: on.",
+    key: "worktreeLimitEnabled",
+    labelKey: "settings.worktrees.worktreeLimitEnabled",
+    labelFallback: "Limit concurrent worktrees",
+    helpKey: "settings.worktrees.worktreeLimitEnabledHelp",
+    helpFallback: "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on.",
     /*
     FNXC:SettingsSearch 2026-07-28-13:20:
-    An operator reaching for this is usually asking a CAPACITY question ("why
-    won't more tasks start?"), not a worktree question, so the keywords carry the
-    capacity vocabulary the label and help never spell out.
+    An operator reaching for this is asking a CAPACITY question ("why won't more
+    tasks start?"). "isolation" is deliberately NOT a keyword: this setting does
+    not affect isolation, and matching that word would re-create the same false
+    impression the old label gave (PR #2502 review).
     */
-    keywords: ["capacity", "parallelism", "agents only", "isolation", "git", "concurrency"],
+    keywords: ["capacity", "parallelism", "agents only", "max worktrees", "concurrency", "limit"],
   },
   {
     sectionId: "worktrees",
