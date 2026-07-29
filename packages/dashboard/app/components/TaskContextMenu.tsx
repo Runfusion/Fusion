@@ -48,6 +48,8 @@ export interface TaskContextMenuColumnFlags {
   hiddenFromBoard?: boolean;
   hold?: boolean;
   intake?: boolean;
+  /** Intake WITHOUT auto-triage: the operator promotes the card by hand. */
+  manualIntake?: boolean;
   mergeBlocker?: boolean;
   humanReview?: boolean;
   /* FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8): surfaced so column-trait consumers

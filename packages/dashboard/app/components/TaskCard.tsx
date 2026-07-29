@@ -980,10 +980,41 @@ function TaskCardComponent({
   const [fileDragOver, setFileDragOver] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Column ROLES, resolved from this card's own workflow traits. Every `task.column ===
+  "triage"` in this file previously asked "is this the planning lane?" by naming the
+  Default workflow's id for it — which is live breakage the moment U11 lands, since the
+  merged column keeps the id `todo` and DELETES `triage`. Each of those comparisons would
+  silently become false and the affordance behind it would vanish from the board.
+
+  `isIntakeColumn` is the planning/pre-work lane; `isHoldColumn` is the capacity-gated
+  wait. Both survive the two merging into one. Flags come from the card's resolved
+  workflow, so a renamed or custom workflow is correct with no change here.
+
+  The move-progress prompt deliberately does NOT use these: it tests the move TARGET, not
+  this card, and resolves that column's own flags at the call site.
+
+  ONE fallback, not eight. `getTaskColumnFlags` (Column.tsx) returns undefined when the
+  card's column is absent from the resolved metadata and is not the rendering column —
+  the pre-load window and a card stranded in a vanished lane. Converting the eight sites
+  to bare trait reads would have silently dropped every planning affordance in exactly
+  those states, so the legacy ids survive HERE, once, as the no-metadata fallback, rather
+  than scattered through the file. When flags are present — which is every card on a
+  loaded board whose column its workflow declares — the traits decide and the U11 merge
+  is a non-event. The fallback retires with the load window, not with this change.
+  */
+  const isIntakeColumn = taskColumnFlags
+    ? taskColumnFlags.intake === true
+    : task.column === "triage";
+  const isHoldColumn = taskColumnFlags
+    ? taskColumnFlags.hold === true
+    : task.column === "todo";
+
   const [isSaving, setIsSaving] = useState(false);
   const [showSteps, setShowSteps] = useState(
     task.column === "in-progress" ||
-    (task.column === "triage" && task.steps.some(s => s.status === "done" || s.status === "skipped"))
+    (isIntakeColumn && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
@@ -1398,7 +1429,7 @@ function TaskCardComponent({
   know approval is required because Plan Review exhausted automatic REVISE replans without
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
-  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
@@ -1429,7 +1460,7 @@ function TaskCardComponent({
   */
   const awaitingPlanning = task.awaitingPlanning ?? ((task.steps?.length ?? 0) === 0);
   const showIdleTodoBadge = !isPaused
-    && task.column === "todo"
+    && isHoldColumn
     && !visualStatus
     && !planReviewRunning
     && !isAgentActive;
@@ -1924,7 +1955,15 @@ function TaskCardComponent({
     || Boolean(task.blockedBy)
     || Boolean(task.overlapBlockedBy)
     || Boolean(fanout && fanout.totalCount > 0);
-  const showStartAction = taskColumnFlags?.intake === true && task.column !== "triage" && Boolean(onMoveTask);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+  `manualIntake`, not `intake && column !== "triage"`. The old form used a hardcoded id to
+  stand in for a fact the payload did not carry: an intake column that does NOT auto-triage.
+  It also inverts under U11 — `triage` is deleted, so `column !== "triage"` becomes
+  vacuously true and Start would appear on every planning card. The flag is derived
+  server-side from the intake trait's `autoTriage: false` config.
+  */
+  const showStartAction = taskColumnFlags?.manualIntake === true && Boolean(onMoveTask);
   /*
   FNXC:CodingIdeasWorkflow 2026-07-04-12:30:
   The Start action promotes a card out of a manual intake into the workflow's first working column. Derive the target from the ordered workflow columns instead of hard-coding "todo" so a workflow whose intake feeds a differently-named stage transitions correctly. Falls back to "todo" when the column metadata is unavailable (e.g. the all-workflows board aggregate).
@@ -2419,7 +2458,24 @@ function TaskCardComponent({
     if (!onMoveTask) return;
     try {
       const hasStepProgress = task.steps.some((step) => step.status !== "pending");
-      const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      The TARGET column's role, not this card's. My first conversion of this site read the
+      card's own column and was WRONG: the original `(column === "todo" || column ===
+      "triage")` tests the MOVE DESTINATION — moving a card BACK into a pre-implementation
+      lane is what risks discarding step progress. The regression test for this
+      (`confirms preserving progress before moving`) moves in-progress -> todo and caught
+      it immediately, which is the whole reason each site is converted red-green rather
+      than by pattern-matching the comparison.
+
+      Falls back to the legacy ids when the destination's flags are unavailable, matching
+      the single fallback documented at the role helpers above.
+      */
+      const targetFlags = taskMoveColumns?.find((candidate) => candidate.id === column)?.flags;
+      const targetIsPreImplementation = targetFlags
+        ? targetFlags.intake === true || targetFlags.hold === true
+        : column === "todo" || column === "triage";
+      const shouldPrompt = targetIsPreImplementation && hasStepProgress;
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
@@ -3090,7 +3146,7 @@ function TaskCardComponent({
   FNXC:TaskStatusBadge 2026-07-28-12:00:
   FN-8300 keeps Planning cards visually consistent with their fresh planner-log timeline: a transient client signal renders the existing pulsing Planning badge even while the authoritative status is null. ListView uses the same condition on both render paths.
   */
-  const isTransientPlannerActive = task.column === "triage"
+  const isTransientPlannerActive = isIntakeColumn
     && !visualStatus
     && Boolean(task.recentAgentActivityAt)
     && isAgentActive;
@@ -3148,7 +3204,7 @@ function TaskCardComponent({
     || Boolean(task.missionId);
   const hasHeaderActions = Boolean(isAwaitingInput && onOpenDetailWithTab)
     || Boolean(canEdit)
-    || Boolean(task.column === "triage" && onDeleteTask)
+    || Boolean(isIntakeColumn && onDeleteTask)
     || Boolean(task.column === "done" && onArchiveTask)
     || Boolean(task.column === "archived" && onUnarchiveTask)
     || Boolean((task.column === "done" || task.column === "archived") && onRevertTask && isRevertable)
@@ -3579,7 +3635,7 @@ function TaskCardComponent({
               <Pencil size={12} />
             </button>
           )}
-          {task.column === "triage" && onDeleteTask && (
+          {isIntakeColumn && onDeleteTask && (
             <button
               className="card-delete-btn"
               onClick={handleDeleteClick}

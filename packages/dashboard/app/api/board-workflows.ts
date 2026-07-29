@@ -41,6 +41,10 @@ export interface BoardWorkflowColumnFlags {
   hiddenFromBoard?: boolean;
   hold?: boolean;
   intake?: boolean;
+  /** An intake column that does NOT auto-triage — cards wait for an operator to promote
+   *  them. Derived server-side from the `intake` trait's `autoTriage: false` config,
+   *  which is configuration rather than a flag and was therefore invisible to clients. */
+  manualIntake?: boolean;
   mergeBlocker?: boolean;
   /** Merge/review lane membership used by the shared live-agent predicate. */
   mergeOrchestration?: boolean;

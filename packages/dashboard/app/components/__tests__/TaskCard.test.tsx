@@ -8001,7 +8001,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={vi.fn()}
@@ -8025,7 +8025,14 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     expect(screen.queryByTestId("card-start-FN-001")).toBeNull();
   });
 
-  it("omits the Start button for the triage column even when intake is flagged", () => {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Retitled and re-fixtured. The rule was never about the id `triage` — it was "an intake
+  lane that AUTO-triages needs no Start button, because the engine picks the card up on
+  its own". That is now expressed by the absence of `manualIntake` rather than by naming
+  a column, which is what makes it survive U11 deleting `triage`.
+  */
+  it("omits the Start button for an AUTO-triaging intake column", () => {
     render(
       <TaskCard
         task={makeTask({ column: "triage" })}
@@ -8043,7 +8050,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -8066,7 +8073,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         taskMoveColumns={taskMoveColumns}
         onOpenDetail={noop}
         addToast={addToast}
@@ -8084,7 +8091,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={onMoveTask}
@@ -8106,7 +8113,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8138,7 +8145,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8158,7 +8165,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
