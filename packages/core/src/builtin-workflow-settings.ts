@@ -139,7 +139,7 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     type: "number",
     /*
      * FNXC:WorkflowOptionalStepCycle 2026-06-29-17:55:
-     * This global budget remains the fallback for custom optional gates and explicitly capped built-in gates. Most built-in Code Review groups set `maxRevisions: "unbounded"`; Compound Engineering authors a two-pass cap so persistent CE reviewer findings park instead of rebounding forever.
+     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Most built-in Code Review groups set `maxRevisions: "unbounded"`; Compound Engineering authors a two-pass cap so persistent CE reviewer findings park instead of rebounding forever.
      *
      * FNXC:WorkflowOptionalStepCycle 2026-07-26-19:35:
      * Raised 3 -> 10 (operator request). Three passes is below the observed convergence length for

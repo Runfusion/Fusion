@@ -151,9 +151,9 @@ describe("built-in workflows", () => {
     })).toBe(4);
     expect(resolveOptionalReviewRevisionBudget({
       optionalGroupId: "code-review",
-      workflowSettings: { codeReviewMaxRevisions: "unbounded" },
+      workflowSettings: { codeReviewMaxRevisions: 0 },
       nodeMaxRevisions: codeReview?.config?.maxRevisions,
-    })).toBe("unbounded");
+    })).toBe(0);
   });
 
   it("engineering built-in review failures loop through graph-owned remediation", () => {

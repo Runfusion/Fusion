@@ -409,7 +409,7 @@ FNXC:FastOptionalSteps 2026-06-30-10:48:
 Fast creation surfaces submit explicit `enabledWorkflowSteps: []` even before optional-step metadata loads, so asynchronous dropdown loading cannot accidentally turn default-on gates back on.
 -->
 
-Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once** when the group is enabled for the task, and passes through (skips) when disabled. There is no iteration and no rework budget — a single pass — and rework edges inside the template are rejected by `validateOptionalGroup`.
+Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once per enabled graph attempt**, and passes through (skips) when disabled. The template contains no internal iteration or rework edges (`validateOptionalGroup` rejects them), but the outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
 Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
 
