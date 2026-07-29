@@ -320,17 +320,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async init(): Promise<void> {
     if (this.initialized) return;
 
-    /*
-    FNXC:SqliteDualPathCleanup 2026-07-26-14:15:
-    CentralCore.init is PostgreSQL-only. When no asyncLayer is attached yet, mark initialized without opening SQLite; attachBackendLayer bootstraps PG later.
-    */
     if (this.asyncLayer) {
       await asyncCentralCore.ensureBackendBootstrap(this.asyncLayer);
       this.initialized = true;
       return;
     }
-    this.initialized = true;
-    return;
 
     /*
      * FNXC:CentralPostgresCutover 2026-07-14-17:14:
