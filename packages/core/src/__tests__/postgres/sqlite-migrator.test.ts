@@ -1173,6 +1173,55 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
   });
 
   /*
+  FNXC:CapacityModel 2026-07-29-18:10 (PR #2555 review — greptile P1):
+  A LEGACY SQLite central database still carries `globalConcurrency`, and migration
+  0037 removed its PostgreSQL destination. Without an explicit disposable
+  classification the migrator sees a source table with no mapping and fails the WHOLE
+  cutover — an operator upgrading from SQLite blocked by a table whose contents we
+  deliberately discard.
+
+  Discarding is correct: the cap is deleted, and currently_active/queued_count were
+  written only by acquire/releaseGlobalSlot, which had no production caller.
+  */
+  it("skips a legacy globalConcurrency table instead of failing the cutover", async () => {
+    ctx = await setupCtx();
+    const sqlitePath = join(ctx!.fusionDir, "fusion-central.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`
+        CREATE TABLE centralSettings (id INTEGER PRIMARY KEY, defaultProjectId TEXT, updatedAt TEXT NOT NULL);
+        CREATE TABLE globalConcurrency (id INTEGER PRIMARY KEY, globalMaxConcurrent INTEGER, currentlyActive INTEGER, queuedCount INTEGER, updatedAt TEXT);
+      `);
+      legacy.prepare(`INSERT INTO centralSettings VALUES (?, ?, ?)`).run(1, "p", "2026-06-01");
+      legacy.prepare(`INSERT INTO globalConcurrency VALUES (?, ?, ?, ?, ?)`).run(1, 10, 0, 0, "2026-06-02");
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(ctx!.db, [{ sqlitePath, pgSchema: "central" as const }]);
+
+    expect(report.tables).toContainEqual(expect.objectContaining({ table: "central_settings", verified: true }));
+
+    /*
+    THE ASSERTION THAT MATTERS. The obsolete table must appear as an INTENTIONAL
+    SKIP carrying a reason — not as an unverified non-skip. `migrateTest` does not
+    throw either way; it is automated STARTUP that fails closed on an unverified,
+    non-skipped entry (see the completeness-contract note in sqlite-migrator.ts).
+    So asserting "the migration did not throw" proves nothing — my first version of
+    this test did exactly that and passed with the classification removed.
+    */
+    const obsolete = report.tables.find((t) => t.table === "global_concurrency" || t.table === "globalConcurrency");
+    expect(obsolete, "the legacy table must appear in the completeness report").toBeDefined();
+    expect(obsolete!.skipped, "it must be an INTENTIONAL skip, not an unverified entry that fails startup").toBe(true);
+    expect(obsolete!.skipReason ?? "").toContain("0037");
+    // ...and the obsolete table is neither migrated nor recreated.
+    const present = await ctx!.db.execute(sql`
+      SELECT to_regclass('central.global_concurrency') AS present
+    `) as unknown as Array<{ present: string | null }>;
+    expect(present[0]?.present ?? null).toBeNull();
+  });
+
+  /*
   FNXC:PluginLegacyMigration 2026-07-14-22:50:
   PostgreSQL cutover must split each retained project plugin row into one newer-wins global installation and an independent project-path state. The same plugin ID may be enabled in one project and disabled in another; repeated migration and older SQLite backups must never overwrite newer central operator changes.
   */

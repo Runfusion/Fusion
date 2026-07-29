@@ -1196,6 +1196,26 @@ function disposableSqliteTableReason(virtualTables: readonly string[], table: st
   }
 
   /*
+  FNXC:CapacityModel 2026-07-29-18:10 (PR #2555 review — greptile P1):
+  A legacy central SQLite database still carries `globalConcurrency`, and migration
+  0037 removed its PostgreSQL destination. Without an explicit disposable
+  classification the migrator finds a source table with no mapping and FAILS THE
+  WHOLE CUTOVER — an operator upgrading from SQLite would be blocked by a table
+  whose contents we deliberately discard.
+
+  Discarding is correct, not merely convenient: `global_max_concurrent` held the
+  deleted machine-wide cap, and `currently_active` / `queued_count` were maintained
+  only by acquire/releaseGlobalSlot, which had no production caller — the counters
+  were always zero in practice. There is nothing to carry forward.
+
+  Named explicitly rather than pattern-matched, so a future unmapped central table
+  still fails closed. This is the one table we know is obsolete.
+  */
+  if (table === "globalConcurrency" || table === "global_concurrency") {
+    return "cross-project concurrency cap removed; table dropped in migration 0037";
+  }
+
+  /*
   FNXC:PostgresMigrationCompleteness 2026-07-14-09:27:
   tasks_fts and archived_tasks_fts contain derived search indexes, not the authoritative task records. PostgreSQL regenerates both surfaces from migrated task rows through generated tsvector columns, so the two canonical virtual tables and their shadows are intentional skips; extension-owned FTS tables still fail closed.
   */
