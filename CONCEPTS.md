@@ -88,7 +88,7 @@ A Feature's position in the execution loop (being implemented, awaiting or under
 ## Merge lifecycle
 
 ### Task
-The core board entity: a unit of work that moves through columns (triage, todo, in-progress, in-review, done, archived) and is executed by agents. A Task carries its own per-task settings that can override project-level defaults.
+The core board entity: a unit of work that moves through the columns its **workflow declares**, and is executed by agents. A Task's board position is a column id validated against its resolved workflow, not a fixed set — a workflow may rename, reorder, add or omit columns, and two Tasks on the same board may have entirely different column sets. The Default workflow happens to declare six columns whose ids match the historical enum (`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`), which is why those ids appear throughout stored data; they are that workflow's choice, not the model's. A Task carries its own per-task settings that can override project-level defaults.
 
 ### Workflow Runtime
 The authoritative task lifecycle runtime. It resolves a Task to workflow IR, walks the graph, routes node outcomes, and invokes runtime primitives for side effects. The engine substrate still owns scheduling, routing claims, persistence, concurrency, process supervision, storage, and audit plumbing; lifecycle policy lives in workflow nodes and built-in workflow IR.
@@ -262,7 +262,7 @@ Composable column configuration: declarative flags (e.g. `complete`, `archived`,
 ### Column agent
 A permanent agent binding on a workflow-defined column — a registry agent plus a mode — staffing all session-running work attributable to that column (custom nodes, the execute seam's coding session, per-step sessions; foreach template nodes inherit the enclosing foreach's column unless they declare their own). `defer` makes the column agent the default, applying only when the work carries no own agent identity and no complete model pair; `override` supersedes node- and task-level agent/model settings wholesale.
 
-Requires both the workflow-columns and graph-executor flags; with either off, bindings are inert at execution time. A missing or deleted agent degrades to normal resolution without aborting a live session. Binding an agent whose permission policy is broader than the project default requires explicit confirmation at save time on every write surface.
+Participates in every graph run. It used to require the workflow-columns and graph-executor flags, and was inert with either off; that kill switch was removed, so a stale persisted `workflowColumns: false` cannot silently disable custom-node, seam or watcher bindings. A missing or deleted agent degrades to normal resolution without aborting a live session. Binding an agent whose permission policy is broader than the project default requires explicit confirmation at save time on every write surface.
 
 ### Effective agent (execution principal)
 The agent identity that actually runs a piece of work after column-agent precedence resolves — and the principal every identity-keyed subsystem must consult: permission gating, heartbeat serialization in both directions, resume re-dispatch, and mid-flight change detection. It may differ from the task's assigned agent under an override binding, and one task may have multiple effective agents across concurrent branch sessions.
