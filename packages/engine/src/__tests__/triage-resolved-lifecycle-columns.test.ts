@@ -160,7 +160,13 @@ function createStore(opts: {
     }),
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
     readTaskForMove: vi.fn(async (id: string) => byId(id)),
-    logEntry: vi.fn(),
+    /*
+    MUST resolve a promise. The periodic sweep does `await store.logEntry(...).catch(...)`,
+    so a bare `vi.fn()` returning undefined throws on `.catch` and aborts the sweep after
+    its FIRST card — which reads as "the sweep only matches one column" and sends you
+    looking for a production bug that is not there.
+    */
+    logEntry: vi.fn().mockResolvedValue(undefined),
     recordActivity: vi.fn().mockResolvedValue(undefined),
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
@@ -343,5 +349,130 @@ describe("triage resolves its planning-lane columns from the task's workflow", (
     await expect(
       new TriageProcessor(store, rootDir).recoverApprovedTask(task),
     ).resolves.toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. The two stale-planning-status sweeps
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:TriageLifecycleColumns 2026-07-28-12:30 (U7 / R3):
+Both sweeps clear a `planning` status left by a planner that never finished, and
+both were gated on the literal pair `triage`/`todo`. On a renamed workflow neither
+fired, so a crashed planner's card kept `status:"planning"` forever — and that
+status is itself dispatch-blocking (`isUnplannedForExecution`) and makes the card
+invisible to rediscovery, which skips cards already marked `planning`. The card was
+therefore stuck in a state only these sweeps clear, on workflows where neither
+sweep could see it. FN-8596 is that strand on the DEFAULT vocabulary; a renamed
+workflow had no working repair at all.
+
+The periodic sweep and the startup sweep are tested separately because they select
+their candidates differently — the periodic one filters a task list it is handed,
+the startup one issued its own per-column queries — and only the first was covered.
+*/
+describe("the stale-planning sweeps resolve their planning lane", () => {
+  let rootDir = "";
+
+  beforeEach(async () => {
+    resetExecutorMocks();
+    vi.clearAllMocks();
+    rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-sweep-"));
+    vi.spyOn(planLog, "log").mockImplementation(() => {});
+    vi.spyOn(planLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  /** A `planning` card left behind long enough to be past the staleness floor. */
+  const stalePlanner = (id: string, column: string, over: Partial<Task> = {}): Task => createTask({
+    id,
+    column,
+    status: "planning",
+    updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    ...over,
+  });
+
+  /** Ids whose `status` the sweep cleared. */
+  function clearedIds(store: TaskStore): string[] {
+    return vi.mocked(store.updateTask)
+      .mock.calls.filter(([, patch]) => (patch as { status?: unknown }).status === null)
+      .map(([id]) => id as string);
+  }
+
+  describe("periodic sweep (runs every poll)", () => {
+    async function sweep(names: { intake: string; hold: string; wip: string }, tasks: Task[]) {
+      const store = createStore({ tasks, workflowIr: ir(names) });
+      const processor = new TriageProcessor(store, rootDir);
+      /*
+      Stub the planner. Once the sweep clears a stale status the card becomes an
+      ordinary planning candidate in the SAME poll, so a real `specifyTask` runs —
+      reaching module-mocked provider code and throwing ASYNCHRONOUSLY, after the
+      test has already passed. That surfaces as a suite exit code 1 with every test
+      green, i.e. exactly the kind of noise a CI run gets told to ignore.
+      */
+      vi.spyOn(processor as unknown as { specifyTask: (t: Task) => Promise<void> }, "specifyTask")
+        .mockResolvedValue(undefined);
+      (processor as unknown as { running: boolean }).running = true;
+      await (processor as unknown as { poll: () => Promise<void> }).poll();
+      return clearedIds(store);
+    }
+
+    for (const [label, names] of [["default", DEFAULT_NAMES], ["renamed", RENAMED]] as const) {
+      it(`clears a stale planner in the ${label} intake and hold columns`, async () => {
+        const cleared = await sweep(names, [
+          stalePlanner("FN-INTAKE", names.intake),
+          stalePlanner("FN-HOLD", names.hold),
+        ]);
+
+        expect(cleared.sort()).toEqual(["FN-HOLD", "FN-INTAKE"]);
+      });
+
+      it(`never clears a ${label} card resting outside the planning lane`, async () => {
+        expect(await sweep(names, [stalePlanner("FN-WIP", names.wip)])).toEqual([]);
+      });
+
+      it(`never clears a user-paused ${label} card (an operator park is authoritative)`, async () => {
+        const cleared = await sweep(names, [
+          stalePlanner("FN-PAUSED", names.hold, { userPaused: true }),
+        ]);
+
+        expect(cleared).toEqual([]);
+      });
+    }
+  });
+
+  describe("startup sweep (runs once at start)", () => {
+    async function sweep(names: { intake: string; hold: string; wip: string }, tasks: Task[]) {
+      const store = createStore({ tasks, workflowIr: ir(names) });
+      const processor = new TriageProcessor(store, rootDir);
+      await (processor as unknown as { clearStaleSpecifyingStatuses: () => Promise<void> })
+        .clearStaleSpecifyingStatuses();
+      return clearedIds(store);
+    }
+
+    for (const [label, names] of [["default", DEFAULT_NAMES], ["renamed", RENAMED]] as const) {
+      it(`clears a stale planner in the ${label} intake and hold columns`, async () => {
+        // No staleness floor here: at startup nothing this process owns can be live,
+        // so any surviving `planning` status is by definition a leftover.
+        const cleared = await sweep(names, [
+          createTask({ id: "FN-INTAKE", column: names.intake, status: "planning" }),
+          createTask({ id: "FN-HOLD", column: names.hold, status: "planning" }),
+        ]);
+
+        expect(cleared.sort()).toEqual(["FN-HOLD", "FN-INTAKE"]);
+      });
+
+      it(`never clears a ${label} card resting outside the planning lane`, async () => {
+        const cleared = await sweep(names, [
+          createTask({ id: "FN-WIP", column: names.wip, status: "planning" }),
+        ]);
+
+        expect(cleared).toEqual([]);
+      });
+    }
   });
 });

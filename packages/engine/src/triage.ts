@@ -735,17 +735,49 @@ export class TriageProcessor {
       node/process that this process's `processing` set cannot see.
   User-paused cards are never touched (an operator park is authoritative).
   */
+  /**
+   * FNXC:TriageLifecycleColumns 2026-07-28-12:30 (U7 / R3):
+   * Is this card resting in ITS OWN workflow's planning lane — the intake or hold
+   * column? Shared by both stale-planning sweeps so the two cannot drift, which is
+   * the failure mode they already have a history of: the startup sweep and the
+   * periodic sweep were added a month apart and each open-coded the same literal
+   * pair.
+   *
+   * An unresolvable workflow answers `false`: these sweeps CLEAR a status, and
+   * clearing one on a card whose lifecycle cannot be read is a mutation made in
+   * ignorance. Leaving it is visible and repairable; a wrong clear re-admits the
+   * card for planning.
+   */
+  private async isInPlanningLane(task: Task, cache?: Map<string, WorkflowIr>): Promise<boolean> {
+    const roles = await resolveTaskLifecycleColumns(this.store, task.id, cache);
+    if (!roles) return false;
+    return task.column === roles.intake || task.column === roles.hold;
+  }
+
   private async sweepStalePlanningStatuses(allTasks: Task[], now: number): Promise<void> {
     try {
-      const stale = allTasks.filter((t) => {
+      /*
+      FNXC:TriageLifecycleColumns 2026-07-28-12:30 (U7 / R3):
+      Narrow on the CHEAP predicates before resolving any workflow: only a card
+      already carrying `status:"planning"` past the staleness floor can be a
+      candidate, so a board of N cards costs a handful of IR resolutions rather
+      than N. Gated on the literal pair, this sweep never fired for a renamed
+      workflow — and the status it clears is itself dispatch-blocking AND makes the
+      card invisible to rediscovery, so those cards had no working repair at all.
+      */
+      const candidates = allTasks.filter((t) => {
         if (t.status !== "planning") return false;
-        if (t.column !== "triage" && t.column !== "todo") return false;
         if (this.processing.has(t.id)) return false;
         if (t.userPaused === true || t.paused === true) return false;
         const touchedAt = Date.parse(t.updatedAt ?? t.columnMovedAt ?? "");
         if (!Number.isFinite(touchedAt)) return false;
         return now - touchedAt >= STALE_PLANNING_STATUS_GRACE_MS;
       });
+      const irCache = new Map<string, WorkflowIr>();
+      const stale: Task[] = [];
+      for (const t of candidates) {
+        if (await this.isInPlanningLane(t, irCache)) stale.push(t);
+      }
       for (const t of stale) {
         planLog.warn(
           `Stale 'planning' status on ${t.id} (column=${t.column}, no live planner) — clearing so triage can re-pick it`,
@@ -767,11 +799,27 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
     In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a planning admission slot and blocks new triage work. (The separate maxTriageConcurrent pool AND its setting are both gone — FN-8453 removed the pool, the capacity simplification removed the dead key; planning shares the one agent count.)
     */
-    const triageTasks = await this.store.listTasks({ column: "triage", slim: true });
-    const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
-    const stale = [...triageTasks, ...todoTasks].filter(
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-12:30 (U7 / R3):
+    One unfiltered scan plus a role filter, replacing two column-filtered queries.
+    The queries named `triage` and `todo` literally, so a renamed workflow's crashed
+    planner was never cleared at startup either — and the periodic sweep could not
+    reach it, so the card kept a dispatch-blocking `planning` status forever.
+
+    A role-keyed query does not exist at the store layer, so the choice is a scan or
+    a new query API. A scan is right here: this runs ONCE at startup, replaces two
+    round-trips with one, and the `status === "planning"` narrowing happens before
+    any workflow is resolved, so only genuine candidates cost a resolution.
+    */
+    const allTasks = await this.store.listTasks({ slim: true });
+    const candidates = allTasks.filter(
       (t) => t.status === "planning" && !this.processing.has(t.id),
     );
+    const irCache = new Map<string, WorkflowIr>();
+    const stale: Task[] = [];
+    for (const t of candidates) {
+      if (await this.isInPlanningLane(t, irCache)) stale.push(t);
+    }
     for (const t of stale) {
       planLog.log(`Startup sweep: clearing stale 'planning' status on ${t.id}`);
       await this.store.updateTask(t.id, { status: null });
