@@ -43,13 +43,31 @@ import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../../../..");
 
-/** Production source roots. Test files legitimately name the literal. */
-const SOURCE_ROOTS = [
-  "packages/core/src",
-  "packages/engine/src",
-  "packages/dashboard/src",
-  "packages/cli/src",
-];
+/**
+ * Production source roots, DISCOVERED rather than listed.
+ *
+ * FNXC:PlanningClaimSingleWriter 2026-07-28-16:20 (PR #2527 review — greptile):
+ * This was a hardcoded four-package list, which made a repo-wide claim while
+ * scanning a subset: `packages/desktop` and `packages/plugin-sdk` both touch
+ * TaskStore and were never looked at, and any package added later would have been
+ * silently out of scope forever. A guard whose blind spot grows as the repo grows
+ * is not a guard. Enumerating `packages/<name>/src` means new packages are covered
+ * the day they appear, with no allowlist to forget to update.
+ */
+function sourceRoots(base: string = REPO_ROOT): string[] {
+  const packagesDir = join(base, "packages");
+  return readdirSync(packagesDir)
+    .filter((name) => {
+      const src = join(packagesDir, name, "src");
+      try {
+        return statSync(src).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .map((name) => `packages/${name}/src`)
+    .sort();
+}
 
 /**
  * The single module permitted to claim a task for planning.
@@ -59,6 +77,17 @@ const SOURCE_ROOTS = [
  * is genuinely intended, the justification belongs beside the new entry.
  */
 const PLANNING_CLAIM_WRITERS = ["packages/engine/src/triage.ts"];
+
+/**
+ * Modules permitted to BIND the planning literal to a constant.
+ *
+ * `replan-target.ts` binds it to EXCLUDE it — `planning` is the transient in-flight
+ * claim, deliberately filtered out of the durable planning-stage set — and writes no
+ * task status anywhere. It is here because binding the literal is the indirection
+ * route around the write patterns, so a NEW entry deserves a look even when the
+ * module turns out, like this one, to be a reader.
+ */
+const PLANNING_CLAIM_BINDERS = ["packages/engine/src/replan-target.ts"];
 
 /**
  * Mission planning is a different entity with its own `status` column. Excluded by
@@ -97,8 +126,55 @@ function stripComments(text: string): string {
 
 const executableSource = (file: string): string => stripComments(readFileSync(file, "utf-8"));
 
-/** A WRITE, not a comparison: `status: "planning"` inside an object literal. */
-const CLAIM_WRITE = /status:\s*"planning"/;
+/**
+ * The planning literal in EVERY spelling JavaScript allows.
+ *
+ * FNXC:PlanningClaimSingleWriter 2026-07-28-16:20 (PR #2527 review — greptile):
+ * The original pattern matched only the exact double-quoted form, so a second
+ * writer could evade the whole ratchet by typing a single quote. That is a
+ * spelling check wearing a single-writer guarantee's name — the sixth
+ * guard-that-cannot-fire on this program, and the third I have written or found.
+ */
+const PLANNING_LITERAL = String.raw`(?:"planning"|'planning'|\x60planning\x60)`;
+
+/**
+ * A WRITE, not a READ. The distinction is load-bearing: several modules
+ * legitimately COMPARE against the claim (`t.status === "planning"` in the
+ * self-healing orphan sweeps, membership in a status array), and flagging those
+ * would force an allowlist so large the guard would mean nothing.
+ *
+ * Covered write shapes: object-literal property, plain assignment, and a computed
+ * `["status"]` key. Reads (`===`, `!==`, `includes`) are excluded by requiring a
+ * single `:` or `=` that is not part of a comparison operator.
+ */
+const CLAIM_WRITE = new RegExp(
+  String.raw`(?:\bstatus\s*:\s*|\bstatus\s*=(?!=)\s*|\[\s*["']status["']\s*\]\s*(?::|=(?!=))\s*)` + PLANNING_LITERAL,
+);
+
+/**
+ * A constant bound to the planning literal. Without this, indirection defeats the
+ * write patterns above — `const CLAIM = "planning"; store.updateTask(id, { status: CLAIM })`
+ * is a second writer the shape-matching alone cannot see. Binding the literal at all,
+ * outside the allowlisted module, is the reviewable event.
+ */
+const CLAIM_BINDING = new RegExp(
+  String.raw`\b(?:const|let|var|readonly)\s+\w+\s*(?::\s*[^=;]+)?=\s*` + PLANNING_LITERAL,
+);
+
+/*
+FNXC:PlanningClaimSingleWriter 2026-07-28-16:40 (PR #2527 review — greptile):
+WRITES and BINDINGS are reported SEPARATELY, with separate allowlists, because
+conflating them produces a false accusation. Widening the detector immediately
+flagged `replan-target.ts` — which binds the literal ONLY to exclude it from a
+status set (`PLANNING_STAGE_STATUSES.filter(s => s !== TRANSIENT_PLANNING_STATUS)`)
+and never writes a task status at all. Calling that a second writer would have been
+wrong, and the tempting fixes — dropping the binding rule, or allowlisting it as a
+"writer" — would have either reopened the indirection hole or made the guard lie.
+
+So: the WRITE list stays at exactly one module, and the BINDING list is its own
+contract — a new module binding the claim is reviewable precisely because binding is
+the route around the write patterns.
+*/
 
 /**
  * Every module under `roots` whose EXECUTABLE source writes the planning claim.
@@ -107,21 +183,36 @@ const CLAIM_WRITE = /status:\s*"planning"/;
  * over a fixture tree. Re-implementing the scan in the test would prove only that
  * the copy works — which is the failure mode this whole program keeps finding.
  */
-function planningClaimWriters(roots: readonly string[] = SOURCE_ROOTS, base: string = REPO_ROOT): string[] {
-  const writers: string[] = [];
-  for (const root of roots) {
+function scanFor(
+  matches: (source: string) => boolean,
+  roots?: readonly string[],
+  base: string = REPO_ROOT,
+): string[] {
+  const hits: string[] = [];
+  for (const root of roots ?? sourceRoots(base)) {
     for (const file of sourceFiles(root, base)) {
       const rel = file.slice(base.length + 1);
       if (NON_TASK_STATUS_MODULES.includes(rel)) continue;
-      if (CLAIM_WRITE.test(executableSource(file))) writers.push(rel);
+      if (matches(executableSource(file))) hits.push(rel);
     }
   }
-  return writers.sort();
+  return hits.sort();
 }
+
+const planningClaimWriters = (roots?: readonly string[], base?: string): string[] =>
+  scanFor((src) => CLAIM_WRITE.test(src), roots, base);
+
+const planningClaimBinders = (roots?: readonly string[], base?: string): string[] =>
+  scanFor((src) => CLAIM_BINDING.test(src), roots, base);
 
 describe("the planning claim has a single writer (U7 / FN-8504)", () => {
   it("is written by exactly the allowlisted module", () => {
     expect(planningClaimWriters()).toEqual([...PLANNING_CLAIM_WRITERS].sort());
+  });
+
+  it("is bound to a constant only by the allowlisted modules", () => {
+    // The indirection route: `const CLAIM = "planning"` defeats the write patterns.
+    expect(planningClaimBinders()).toEqual([...PLANNING_CLAIM_BINDERS].sort());
   });
 
   it("writes the claim only through the planning-stage-guarded helper", () => {
@@ -166,12 +257,63 @@ describe("the planning claim has a single writer (U7 / FN-8504)", () => {
       return fixtureRoot;
     };
 
-    it("FINDS an injected second writer", () => {
-      const base = newFixtureRoot();
-      fixture("pkg/src/innocent.ts", "export const x = 1;\n");
-      fixture("pkg/src/sneaky.ts", 'await store.updateTask(id, { status: "planning" });\n');
+    /*
+    FNXC:PlanningClaimSingleWriter 2026-07-28-16:40 (PR #2527 review — greptile):
+    EVERY spelling, because the original detector matched only the double-quoted
+    form and a second writer could have evaded the entire ratchet by typing a
+    single quote. Each row is a form that previously slipped past.
+    */
+    const EVASIONS: ReadonlyArray<[string, string]> = [
+      ["double quotes", 'await store.updateTask(id, { status: "planning" });'],
+      ["single quotes", "await store.updateTask(id, { status: 'planning' });"],
+      ["template literal", "await store.updateTask(id, { status: `planning` });"],
+      ["extra whitespace", 'await store.updateTask(id, { status  :   "planning" });'],
+      ["plain assignment", "task.status = 'planning';"],
+      ["computed key", `await store.updateTask(id, { ["status"]: 'planning' });`],
+    ];
 
-      expect(planningClaimWriters(["pkg/src"], base)).toEqual(["pkg/src/sneaky.ts"]);
+    for (const [label, code] of EVASIONS) {
+      it(`FINDS an injected second writer using ${label}`, () => {
+        const base = newFixtureRoot();
+        fixture("pkg/src/innocent.ts", "export const x = 1;\n");
+        fixture("pkg/src/sneaky.ts", `${code}\n`);
+
+        expect(planningClaimWriters(["pkg/src"], base)).toEqual(["pkg/src/sneaky.ts"]);
+      });
+    }
+
+    it("FINDS the constant-indirection route the write patterns alone cannot see", () => {
+      const base = newFixtureRoot();
+      fixture(
+        "pkg/src/indirect.ts",
+        "const CLAIM = 'planning';\nawait store.updateTask(id, { status: CLAIM });\n",
+      );
+
+      // Not a WRITE by shape — the write patterns see `status: CLAIM`, not a literal.
+      expect(planningClaimWriters(["pkg/src"], base)).toEqual([]);
+      // Caught by the binding contract instead, which is why that exists.
+      expect(planningClaimBinders(["pkg/src"], base)).toEqual(["pkg/src/indirect.ts"]);
+    });
+
+    it("does NOT flag a module that only COMPARES against the claim", () => {
+      // The distinction that keeps the allowlist small enough to mean something:
+      // self-healing's orphan sweeps read this literal and must stay unflagged.
+      const base = newFixtureRoot();
+      fixture(
+        "pkg/src/reader.ts",
+        "if (t.status === 'planning') return;\nconst S = new Set([\"planning\", \"done\"]);\nif (S.has(t.status)) return;\n",
+      );
+
+      expect(planningClaimWriters(["pkg/src"], base)).toEqual([]);
+    });
+
+    it("scans EVERY package under packages/, not a hardcoded subset", () => {
+      // The scope hole: a package outside the old four-entry list was never looked
+      // at, and a package added later would have been out of scope forever.
+      const base = newFixtureRoot();
+      fixture("packages/brand-new/src/writer.ts", "task.status = 'planning';\n");
+
+      expect(planningClaimWriters(undefined, base)).toEqual(["packages/brand-new/src/writer.ts"]);
     });
 
     it("is not fooled by a comment that merely names the literal", () => {
