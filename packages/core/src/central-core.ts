@@ -216,6 +216,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private ownedBackendShutdown: (() => Promise<void>) | null = null;
   private ownedBackendReleaseConnections: (() => Promise<void>) | null = null;
   private initializationPromise: Promise<void> | null = null;
+  private lifecycleOperation: Promise<void> = Promise.resolve();
+
+  private runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleOperation.then(operation, operation);
+    this.lifecycleOperation = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   /**
    * FNXC:CentralCore 2026-06-26-12:30:
@@ -246,7 +253,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     if (!layer) {
       throw new Error("attachBackendLayer requires a non-null AsyncDataLayer");
     }
-    await this.initializationPromise?.catch(() => undefined);
+    return this.runLifecycleOperation(() => this.attachBackendLayerOnce(layer));
+  }
+
+  private async attachBackendLayerOnce(layer: AsyncDataLayer): Promise<void> {
     // Release a central-only pool before adopting the runtime's shared layer.
     if (this.ownedBackendReleaseConnections) {
       /*
@@ -272,7 +282,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     // post-construction injection point.
     (this as { asyncLayer: AsyncDataLayer | null }).asyncLayer = layer;
     this.initialized = false;
-    await this.init();
+    await this.initializeOnce();
   }
 
   private readonly onDiscoveryNodeDiscovered = (node: DiscoveredNode): void => {
@@ -327,12 +337,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
      * Layer-less initialization allocates an owned PostgreSQL lifecycle. Concurrent callers must share one in-flight attempt so a second backend cannot be orphaned when ownership fields are overwritten. Clear the promise after either outcome so a failed bootstrap remains retryable.
      */
     if (!this.initializationPromise) {
-      this.initializationPromise = this.initializeOnce();
+      this.initializationPromise = this.runLifecycleOperation(() => this.initializeOnce());
     }
+    const initialization = this.initializationPromise;
     try {
-      await this.initializationPromise;
+      await initialization;
     } finally {
-      this.initializationPromise = null;
+      if (this.initializationPromise === initialization) this.initializationPromise = null;
     }
   }
 
@@ -377,11 +388,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Closes database connections and releases resources.
    */
   async close(): Promise<void> {
+    return this.runLifecycleOperation(() => this.closeOnce());
+  }
+
+  private async closeOnce(): Promise<void> {
     /*
     FNXC:CentralPostgresCutover 2026-07-29-16:26:
-    Close and layer replacement wait for in-flight layerless initialization. Cleanup must observe and release the backend init publishes instead of returning early and leaking its pool or embedded-runtime lease.
+    Initialization, layer replacement, and close share one lifecycle queue. Cleanup must observe and release the backend the preceding operation publishes instead of returning early, leaking it, or letting attachment revive a core after shutdown.
     */
-    await this.initializationPromise?.catch(() => undefined);
     if (this.nodeDiscovery) {
       this.stopDiscovery();
     }

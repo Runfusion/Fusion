@@ -110,4 +110,30 @@ describe("CentralCore layer-less initialization", () => {
     expect(mocks.shutdown).toHaveBeenCalledOnce();
     expect(central.backendMode).toBe(false);
   });
+
+  it("serializes close behind an in-flight layer attachment", async () => {
+    const globalDir = mkdtempSync(join(tmpdir(), "fusion-central-cli-attach-close-race-"));
+    cleanupDirs.push(globalDir);
+    const central = new CentralCore(globalDir);
+    await central.init();
+    const sharedLayer = { db: { shared: true } };
+    let finishAttachment!: () => void;
+    mocks.ensureBackendBootstrap.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishAttachment = resolve;
+      }),
+    );
+
+    const attachment = central.attachBackendLayer(
+      sharedLayer as unknown as Parameters<CentralCore["attachBackendLayer"]>[0],
+    );
+    await vi.waitFor(() => expect(mocks.ensureBackendBootstrap).toHaveBeenCalledTimes(2));
+    const closing = central.close();
+    expect(mocks.shutdown).not.toHaveBeenCalled();
+    finishAttachment();
+
+    await Promise.all([attachment, closing]);
+    expect(mocks.shutdown).toHaveBeenCalledOnce();
+    expect(central.backendMode).toBe(false);
+  });
 });
