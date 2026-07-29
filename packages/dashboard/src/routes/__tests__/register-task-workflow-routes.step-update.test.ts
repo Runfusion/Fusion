@@ -25,16 +25,18 @@ function createHarness() {
     task.steps[index].status = status;
     return task;
   });
+  const claimTaskWedgeNotificationEpisode = vi.fn(async () => ({ claimed: false }));
   const store = {
     getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
     getTask: vi.fn(async () => task),
     updateStep,
+    claimTaskWedgeNotificationEpisode,
   } as unknown as TaskStore;
   const app = express();
   app.use(express.json());
   app.use("/api", createApiRoutes(store));
-  return { app, updateStep };
+  return { app, updateStep, claimTaskWedgeNotificationEpisode };
 }
 
 describe("task checklist step update route", () => {
@@ -69,5 +71,19 @@ describe("task checklist step update route", () => {
 
     expect(response.status).toBe(400);
     expect(updateStep).not.toHaveBeenCalled();
+  });
+
+  it("resolves a stale task wedge episode through the live store", async () => {
+    const { app, claimTaskWedgeNotificationEpisode } = createHarness();
+    const response = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks/FN-001/wedge/resolve",
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(claimTaskWedgeNotificationEpisode).toHaveBeenCalledWith("FN-001", null);
   });
 });

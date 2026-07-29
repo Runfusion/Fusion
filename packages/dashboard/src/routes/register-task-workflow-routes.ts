@@ -4913,6 +4913,19 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     res.json(updated);
   });
 
+  // Resolve stale durable wedge metadata through the live project store.
+  router.post("/tasks/:id/wedge/resolve", async (req, res) => {
+    const { store: scopedStore } = await getProjectContext(req);
+    const { id } = req.params;
+    const task = await scopedStore.getTask(id);
+    if (!task) {
+      throw badRequest(`Task not found: ${id}`);
+    }
+
+    await scopedStore.claimTaskWedgeNotificationEpisode(id, null);
+    res.json(await scopedStore.getTask(id));
+  });
+
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
