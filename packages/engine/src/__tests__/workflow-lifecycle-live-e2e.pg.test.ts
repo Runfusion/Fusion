@@ -700,6 +700,12 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
     mutation-verified). The audit half is the one that rotted silently: it named a
     column the card never reached, which on a renamed board the workflow does not even
     declare. `decisionPath` deliberately keeps its legacy wording and is pinned as such.
+  - core/task-store/reads.ts  the listTasks hold-column hydration — ALREADY proven by
+    core's store-stale-paused-renamed-hold.pg.test.ts, which is a real-store test that
+    drives listTasks against a renamed hold column. Confirmed by mutation rather than
+    by reading: forcing the hydration back to the `todo` literal fails exactly that
+    file's renamed case. It was listed here as unproven because I had assumed a
+    separate E2E was needed; it was not.
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -716,33 +722,27 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
-  - core/task-store/reads.ts:130      listTasks hydration
   - core/live-agent-count.ts    columnIsIntakeOrHold (the WAITING predicate) — the running
     predicate never reads it, so the admission-count E2E cannot reach it
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
 
-WHY, and what each would take:
-  - The merge/rebound family (merger, merger-ai, the executor rebound path, mesh-lease-manager)
-    needs a REAL git worktree, branch, and squash.
+WHY, and what each would take. Two lanes, and neither is another table row:
 
-    CORRECTION (2026-07-28): this bullet used to include auto-merge-finalization, and that was
-    too broad. `finalizeProvenAutoMergeTask` needs NO git — the merge proof is a field on the
-    row — so it was reachable all along and is now covered. The lesson is worth keeping: "needs
-    a real-git lane" was inferred from the family the code sits in rather than from what the
-    function actually touches, and that inference parked reachable coverage for a whole slice.
-    Re-check the remaining entries the same way before assuming they need the lane.
+  LANE 1 — REAL GIT (engine-slow). merger.ts's `resolveMergerLifecycleColumn` and
+  executor.ts's `resolveReboundColumnFor` are module-private helpers whose only
+  callers sit inside merge/session machinery that needs a real worktree, branch and
+  squash. merger-ai.ts is the same. Re-checked with the lens that freed
+  auto-merge-finalization and both self-healing rebounds — these genuinely do need
+  the lane; the earlier over-broad claim does not apply to them.
 
-    A second correction from the same slice: `resolveMergeOrchestrationColumn` was FIRST claimed
-    as covered because it sits in the same resolver as the other two. Mutation-testing it showed
-    all cases passing with it hardcoded — it changes only whether finalization records a
-    column-mismatch REPAIR, never where the card lands. It needed a dedicated audit-row
-    assertion. Sitting next to covered code is not coverage. This suite deliberately has
-    none — `merge-gate` is pure policy and the `merge` seam is scripted. They need an engine-slow
-    real-git lane, not another table row.
-  - The dashboard sites need an HTTP route test with a live store: reachable, different lane.
-  - `reads.ts:130` and `live-agent-count.ts` are read/hydration paths already covered at store level
-    by core's `store-stale-paused-renamed-hold.pg.test.ts`; what is missing is the end-to-end claim,
-    not the unit one.
+  LANE 2 — DASHBOARD HTTP. register-task-workflow-routes' four sites live behind
+  `registerTaskWorkflowRoutes(ctx, deps)`, which needs a full ApiRoutesContext plus
+  twelve injected deps. Standing up that shell is the "mock-the-world" pattern
+  FN-5048 tells us not to add, and the narrower alternative — exporting the two
+  private resolvers — would yield UNIT evidence while looking like E2E. Deliberately
+  not done rather than done badly and overclaimed. The same applies to
+  live-agent-count's `columnIsIntakeOrHold`: it is read only by the WAITING
+  predicate, whose consumers are dashboard-side.
 
 TABLE FIT. Three rows fit. The merge/rebound family does NOT — not because the table is too rigid,
 but because those sweeps have no observable persisted effect without a real repository, so `acted`
