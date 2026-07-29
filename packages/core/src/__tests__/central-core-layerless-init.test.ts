@@ -27,12 +27,13 @@ vi.mock("../async-central-core.js", async (importOriginal) => {
 import { CentralCore } from "../central-core.js";
 
 const cleanupDirs: string[] = [];
+const ownedLayer = { db: {} };
 
 describe("CentralCore layer-less initialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createCentralBackendLayer.mockResolvedValue({
-      asyncLayer: { db: {} },
+      asyncLayer: ownedLayer,
       releaseConnections: mocks.releaseConnections,
       shutdown: mocks.shutdown,
     });
@@ -45,6 +46,10 @@ describe("CentralCore layer-less initialization", () => {
     }
   });
 
+  /**
+   * FNXC:CentralCore 2026-07-29-16:10:
+   * Standalone callers must bootstrap the exact layer they own and release that lifecycle on close; concurrent init calls share the same allocation.
+   */
   it("boots and owns a PostgreSQL layer for standalone CLI callers", async () => {
     const globalDir = mkdtempSync(join(tmpdir(), "fusion-central-cli-init-"));
     cleanupDirs.push(globalDir);
@@ -53,12 +58,28 @@ describe("CentralCore layer-less initialization", () => {
     await central.init();
 
     expect(mocks.createCentralBackendLayer).toHaveBeenCalledWith({ globalSettingsDir: globalDir });
-    expect(mocks.ensureBackendBootstrap).toHaveBeenCalledOnce();
+    expect(mocks.ensureBackendBootstrap).toHaveBeenCalledWith(ownedLayer);
+    expect(central.asyncLayer).toBe(ownedLayer);
     expect(central.backendMode).toBe(true);
 
     await central.close();
 
     expect(mocks.getLocalNode).not.toHaveBeenCalled();
+    expect(mocks.shutdown).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces concurrent layer-less initialization into one owned backend", async () => {
+    const globalDir = mkdtempSync(join(tmpdir(), "fusion-central-cli-concurrent-init-"));
+    cleanupDirs.push(globalDir);
+    const central = new CentralCore(globalDir);
+
+    await Promise.all([central.init(), central.init()]);
+
+    expect(mocks.createCentralBackendLayer).toHaveBeenCalledOnce();
+    expect(mocks.ensureBackendBootstrap).toHaveBeenCalledOnce();
+    expect(mocks.ensureBackendBootstrap).toHaveBeenCalledWith(ownedLayer);
+
+    await central.close();
     expect(mocks.shutdown).toHaveBeenCalledOnce();
   });
 });

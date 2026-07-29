@@ -215,6 +215,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private readonly ensureGitRepositoryForProjectPath: typeof ensureGitRepositoryForProjectPath;
   private ownedBackendShutdown: (() => Promise<void>) | null = null;
   private ownedBackendReleaseConnections: (() => Promise<void>) | null = null;
+  private initializationPromise: Promise<void> | null = null;
 
   /**
    * FNXC:CentralCore 2026-06-26-12:30:
@@ -318,6 +319,23 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Idempotent — safe to call multiple times.
    */
   async init(): Promise<void> {
+    if (this.initialized) return;
+
+    /*
+     * FNXC:CentralCore 2026-07-29-16:10:
+     * Layer-less initialization allocates an owned PostgreSQL lifecycle. Concurrent callers must share one in-flight attempt so a second backend cannot be orphaned when ownership fields are overwritten. Clear the promise after either outcome so a failed bootstrap remains retryable.
+     */
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initializeOnce();
+    }
+    try {
+      await this.initializationPromise;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
     if (this.initialized) return;
 
     if (this.asyncLayer) {

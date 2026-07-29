@@ -4,8 +4,8 @@
  * while backup construction resolves synchronously. This process-local registry
  * bridges that gap without logging credentials. Leases represent individual
  * lifecycles within a physical cluster generation: a joiner's release cannot
- * clear a newer generation, and owner shutdown invalidates every lease because
- * it is the only lifecycle that actually stops the postmaster.
+ * clear a newer generation, and owner shutdown waits for every live lease
+ * because physical process ownership is not exclusive logical usage.
  */
 
 /** Opaque handle for one embedded-backend lifecycle registration. */
@@ -20,6 +20,7 @@ interface Generation {
   readonly id: number;
   readonly leases: Set<EmbeddedRuntimeLease>;
   latestRegistration: number;
+  pendingOwnerStop: (() => Promise<void>) | null;
 }
 
 interface LeaseMetadata {
@@ -46,7 +47,7 @@ export function registerEmbeddedRuntimeUrl(
   if (!generation || options.ownsProcess) {
     const id = (nextGenerationByUrl.get(url) ?? 0) + 1;
     nextGenerationByUrl.set(url, id);
-    generation = { url, epoch: registryEpoch, id, leases: new Set(), latestRegistration: 0 };
+    generation = { url, epoch: registryEpoch, id, leases: new Set(), latestRegistration: 0, pendingOwnerStop: null };
     generationsByUrl.set(url, generation);
   }
 
@@ -62,8 +63,16 @@ export function registerEmbeddedRuntimeUrl(
   return lease;
 }
 
-/** Release exactly one lifecycle lease; stale generation handles are inert. */
-export function releaseEmbeddedRuntimeLease(lease: EmbeddedRuntimeLease): void {
+/**
+ * Release exactly one lifecycle lease; stale generation handles are inert.
+ *
+ * FNXC:PostgresResourceLifecycle 2026-07-29-16:10:
+ * An embedded-process owner may close before joined consumers. Record its stop callback and run it only after the final lease releases so short-lived central/CLI cleanup cannot terminate PostgreSQL beneath another live store.
+ */
+export async function releaseEmbeddedRuntimeLease(
+  lease: EmbeddedRuntimeLease,
+  options: { stopOwner?: () => Promise<void> } = {},
+): Promise<void> {
   const metadata = leaseMetadata.get(lease);
   if (!metadata) return;
   const generation = generationsByUrl.get(metadata.url);
@@ -74,8 +83,14 @@ export function releaseEmbeddedRuntimeLease(lease: EmbeddedRuntimeLease): void {
   ) return;
 
   generation.leases.delete(lease);
+  if (metadata.ownsProcess && options.stopOwner) {
+    generation.pendingOwnerStop = options.stopOwner;
+  }
   if (generation.leases.size === 0) {
     generationsByUrl.delete(metadata.url);
+    const stopOwner = generation.pendingOwnerStop;
+    generation.pendingOwnerStop = null;
+    await stopOwner?.();
   }
 }
 
