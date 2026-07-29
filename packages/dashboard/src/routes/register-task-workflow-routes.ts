@@ -4890,6 +4890,29 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  // Update one checklist step through the live project-scoped store.
+  router.patch("/tasks/:id/steps/:stepIndex", async (req, res) => {
+    const { store: scopedStore } = await getProjectContext(req);
+    const stepIndex = Number(req.params.stepIndex);
+    const validStatuses = ["pending", "in-progress", "done", "skipped"] as const;
+    const status = req.body?.status;
+
+    if (!Number.isInteger(stepIndex) || stepIndex < 0) {
+      throw badRequest("stepIndex must be a non-negative integer");
+    }
+    if (!validStatuses.includes(status)) {
+      throw badRequest(`status must be one of: ${validStatuses.join(", ")}`);
+    }
+
+    const task = await scopedStore.getTask(req.params.id);
+    if (stepIndex >= (task.steps?.length ?? 0)) {
+      throw badRequest(`stepIndex ${stepIndex} is out of range`);
+    }
+
+    const updated = await scopedStore.updateStep(req.params.id, stepIndex, status);
+    res.json(updated);
+  });
+
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
