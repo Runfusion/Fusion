@@ -383,3 +383,80 @@ describe("TriageProcessor planning discovery: missing PROMPT.md", () => {
     expect(await discover(store, [task])).toEqual([]);
   });
 });
+
+/*
+FNXC:MergedPlanningPreFilter 2026-07-29-19:30 (PR #2576 review — greptile P1):
+The cheap pre-filter must never drop a card the real admission filters would keep.
+
+`couldBeCandidate` runs BEFORE lifecycle resolution — its whole purpose is to avoid
+a workflow-selection read per card — so it cannot know the task's lane. It called
+`isTaskStillInPlanningStage(t)` with the LEGACY lane, which reads a card resting in
+any renamed intake column as "advanced past planning".
+
+For a card carrying `status: "planning"` AND execution stamps that is fatal: the
+hold half (`status !== "planning"`) is false too, so the card is dropped before
+resolution and the lane-aware intake filter — which has no `status !== "planning"`
+condition and would have admitted it — never sees it.
+
+MY FIRST REPRO WAS WRONG and the failure said so: I used the MERGED column, where
+intake and hold are the same column, so the intake branch is disjointed away by
+`!isAtHoldColumn` and the hold branch excludes `status: "planning"` regardless. No
+loss there. The loss needs a workflow with SEPARATE renamed intake and hold columns
+— which is exactly the shape a pre-filter keyed on one hardcoded id cannot see.
+
+A pre-filter is an OVER-approximation by contract: it may only remove cards no real
+filter could want.
+*/
+const PREFILTER_WF = "custom:separate-lanes";
+
+function separateLanesIr() {
+  return {
+    version: "v2",
+    id: PREFILTER_WF,
+    name: PREFILTER_WF,
+    columns: [
+      { id: "backlog", name: "Intake", traits: [{ trait: "intake" }] },
+      { id: "drafting", name: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [],
+    edges: [],
+  };
+}
+
+describe("the discovery pre-filter never drops a card the real filters would admit", () => {
+  it("keeps a mid-planning card that already executed once, in a renamed INTAKE column", async () => {
+    const selection = { workflowId: PREFILTER_WF, stepIds: [] };
+    const task = createTask({
+      id: "FN-PREFILTER",
+      column: "backlog",
+      // Both halves of the pre-filter fail on this shape with the legacy lane:
+      // `status === "planning"` kills the hold half, and the execution stamps make
+      // the legacy advancement guard kill the intake half.
+      status: "planning",
+      firstExecutionAt: "2026-07-26T04:35:29.068Z",
+      executionStartedAt: "2026-07-26T04:35:29.068Z",
+      // Arrived in the planner column AFTER those stamps — the FN-8596
+      // discriminator. Without it the stamp branch reads "advanced" whatever the
+      // lane says, and the test would prove nothing about the lane.
+      columnMovedAt: "2026-07-27T00:00:00.000Z",
+      steps: [{ name: "step-1", status: "pending" }],
+    } as never);
+    const { store } = createEventedStore({
+      listTasks: vi.fn().mockResolvedValue([task]),
+      getTask: vi.fn().mockResolvedValue(task),
+      getTaskWorkflowSelection: vi.fn(() => selection),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: separateLanesIr() })),
+    });
+    const processor = new TriageProcessor(store, "/tmp/root");
+    (processor as unknown as { running: boolean }).running = true;
+
+    const discovered = await (processor as unknown as {
+      discoverReadyPlanningTasks: (tasks: never[], now: number) => Promise<Array<{ id: string }>>;
+    }).discoverReadyPlanningTasks([task] as never, Date.now());
+
+    expect(discovered.some((t) => t.id === "FN-PREFILTER")).toBe(true);
+  });
+});

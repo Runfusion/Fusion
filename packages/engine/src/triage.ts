@@ -1517,7 +1517,24 @@ export class TriageProcessor {
       if (this.processing.has(t.id) || this.hasLivePlanningWork(t.id) || t.paused) return false;
       if (t.status === "awaiting-approval" || t.status === "failed" || t.status === "stuck-killed") return false;
       if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
-      const couldBeIntake = isTaskStillInPlanningStage(t) && !this.advancedRecoveryReservations.has(t.id);
+      /*
+      FNXC:MergedPlanningPreFilter 2026-07-29-19:10 (PR #2576 review — greptile P1):
+      NO advancement guard here. This pre-filter runs BEFORE lifecycle resolution —
+      that is its whole purpose, to avoid a workflow-selection read per card — so it
+      cannot know the task's lane, and `isTaskStillInPlanningStage` with the legacy
+      lane reads a card in the MERGED Planning column as "advanced past planning".
+
+      For a card carrying `status: "planning"` AND execution stamps that was fatal:
+      the hold half below is false too, so the card was dropped before resolution
+      and the lane-aware filters — the ones this PR corrects — never saw it. The fix
+      admitted the card in theory while the pre-filter denied it in practice.
+
+      A pre-filter is an OVER-approximation by contract: it may only remove cards no
+      real filter could want. The advancement guard belongs to the real filters,
+      which have the lane; here it can only be wrong in the direction that loses
+      work. The reservation check stays because it is lane-independent.
+      */
+      const couldBeIntake = !this.advancedRecoveryReservations.has(t.id);
       const couldBeHold = t.status !== "planning";
       return couldBeIntake || couldBeHold;
     };
@@ -1538,11 +1555,24 @@ export class TriageProcessor {
     // An unresolved task id means the card was filtered out before resolution, so it is not a
     // candidate and both predicates are correctly false for it.
     const isAtHoldColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.hold === t.column;
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-16:55:
+    A lane is MERGED when intake and hold resolve to the same id — U11's shape.
+    Reported per task so `hasAdvancedPastPlanning` can apply the merged-column rule
+    only where it actually applies, rather than assuming the default lineage.
+    */
+    const mergedPlanningColumnFor = (t: Task): string | undefined => {
+      const lanes = lifecycleByTaskId.get(t.id);
+      return lanes?.intake !== undefined && lanes.intake === lanes.hold ? lanes.intake : undefined;
+    };
     const isAtIntakeColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.intake === t.column;
 
     const eligibleTriageTasks = candidates.filter(
       // `!isAtHoldColumn` keeps the two branches disjoint for a merged intake+hold column.
-      (t) => isAtIntakeColumn(t) && !isAtHoldColumn(t) && isTaskStillInPlanningStage(t, { intake: lifecycleByTaskId.get(t.id)?.intake ?? "triage" })
+      (t) => isAtIntakeColumn(t) && !isAtHoldColumn(t)
+        && isTaskStillInPlanningStage(t, lifecycleByTaskId.get(t.id)?.intake ?? "triage", {
+          mergedPlanningColumn: mergedPlanningColumnFor(t),
+        })
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
@@ -1567,7 +1597,32 @@ export class TriageProcessor {
     column has no worktree and no steps, so it is still admitted.
     */
     const eligibleTodoTasksRaw = candidates.filter(
-      (t) => isAtHoldColumn(t) && isTaskStillInPlanningStage(t, { intake: lifecycleByTaskId.get(t.id)?.intake ?? "triage" })
+      /*
+      FNXC:MergedPlanningColumn 2026-07-29-16:55 (U11 #2515 fallout — PRODUCT BUG):
+      The hold rule needs the ADVANCEMENT guard the intake rule already had.
+
+      Before #2515 the two pre-implementation columns were distinct, so an advanced
+      card (worktree + execution stamps) sat in `triage` and was excluded by the
+      intake rule's `isTaskStillInPlanningStage`. After the merge one column carries
+      BOTH traits, the branches are made disjoint by testing hold FIRST — and the
+      hold rule never had that guard, because a card in the old `todo` could not be
+      mid-planning.
+
+      Consequence: an advanced card whose PROMPT.md is missing hits the ENOENT
+      "treat as unplanned" branch below and is RE-DISPATCHED FOR PLANNING, discarding
+      the work it already has. That is the FN-7977 / FN-8594 class, reintroduced by
+      the column merge rather than by any change to the guard.
+
+      Passed the task's OWN planner column AND its merged-planning column, so the
+      distinction `hasAdvancedPastPlanning` draws between them is preserved: a merged
+      lane participates in the FN-8596 arrival-order rescue but not in the "planner
+      column is never advanced" shortcut, because on a merged lineage the same id
+      also means "released, awaiting capacity".
+      */
+      (t) => isAtHoldColumn(t)
+        && isTaskStillInPlanningStage(t, lifecycleByTaskId.get(t.id)?.intake ?? "triage", {
+          mergedPlanningColumn: mergedPlanningColumnFor(t),
+        })
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && t.status !== "planning"
