@@ -291,6 +291,44 @@ export interface PlanningHandoffReport {
 }
 
 export class TriageProcessor {
+  /*
+  FNXC:TriageLifecycleColumns 2026-07-28-13:15 (U7 / R3):
+  Planning-lane columns per task, refreshed by every discovery pass.
+
+  WHY A SNAPSHOT AND NOT A LOOKUP. The two consumers are SYNCHRONOUS `task:updated`
+  listeners. Making them async to resolve an IR would mean a store read on every
+  task update on the board, and — worse for the evacuation handler — it would delay
+  an abort that is synchronous today, opening a window in which a session it decided
+  to kill has already moved on. A vocabulary conversion must not introduce a race
+  into a path that terminates live agent work.
+
+  The poll already resolves these roles for every task, so publishing them costs
+  nothing extra. Staleness is bounded by one poll interval, and the two readers are
+  chosen so that a stale answer is safe: see each handler for its own fallback.
+  */
+  private lifecycleRolesByTask = new Map<string, { intake?: string; hold?: string }>();
+
+  /*
+  FNXC:TriageLifecycleColumns 2026-07-28-13:40 (U7 / R3):
+  What the synchronous handlers assume for a task no discovery pass has published
+  roles for yet — a card created moments ago, or the window before the first poll.
+
+  The legacy pair, deliberately, and NOT a permissive or a conservative guess. Both
+  of those were tried first and both changed documented behavior in the unpublished
+  window: "always wake" broke the contract that a non-planning column does not wake
+  the poll, and "never evacuate" made planning-evacuation silently inert until a
+  poll had run. Falling back to the literals makes this conversion STRICTLY
+  ADDITIVE — identical to today wherever roles are unknown, correct wherever they
+  are known — which is the only fallback that cannot regress a workflow that never
+  renamed anything.
+
+  It is a compatibility default, not a second source of truth: as soon as a
+  discovery pass has seen the card its real roles win. For the evacuation handler
+  that is guaranteed before it can matter, since a live planning session only
+  exists because a poll admitted the card.
+  */
+  private static readonly LEGACY_PLANNING_LANE = { intake: "triage", hold: "todo" } as const;
+
   private running = false;
   private polling = false;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -611,10 +649,23 @@ export class TriageProcessor {
     */
     this.taskColumnWakeHandler = (task: Task) => {
       if (!task?.id) return;
-      if (task.column !== "todo" && task.column !== "triage") return;
       if (task.paused === true || task.userPaused === true) return;
       // Already being planned (or mid-plan) — the running poll/session owns it.
       if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
+      /*
+      FNXC:TriageLifecycleColumns 2026-07-28-13:15 (U7 / R3):
+      Match the task's OWN planning lane. Keyed on the literals, a renamed
+      workflow's card never woke the poll on a Start — the operator pressed the
+      button and nothing happened until the next 15s tick, which is the exact
+      symptom this wake was built to remove, reintroduced for every workflow that
+      renamed a column.
+
+      A card no discovery pass has published roles for falls back to the legacy
+      pair — see `LEGACY_PLANNING_LANE` for why that specific fallback and not a
+      permissive one.
+      */
+      const roles = this.lifecycleRolesByTask.get(task.id) ?? TriageProcessor.LEGACY_PLANNING_LANE;
+      if (task.column !== roles.intake && task.column !== roles.hold) return;
       this.requestImmediatePoll();
     };
 
@@ -649,7 +700,27 @@ export class TriageProcessor {
       an unrelated update.
       */
       if (typeof task.column !== "string") return;
-      if (task.column === "todo" || task.column === "triage" || task.column === "in-progress") return;
+      /*
+      FNXC:TriageLifecycleColumns 2026-07-28-13:15 (U7 / R3):
+      Evacuation means "the card left ITS OWN planning lane". Keyed on the literal
+      trio, a renamed workflow inverted this: moving a card from its intake column
+      into its own HOLD column looked like an evacuation, so the handler KILLED the
+      live planning session and cleared the status of a card that was simply
+      progressing normally.
+
+      A card with no published roles falls back to the legacy pair
+      (`LEGACY_PLANNING_LANE`), so behavior in that window is byte-identical to
+      today — which matters more here than anywhere else in this conversion,
+      because this path terminates live agent work and discards a partly-written
+      spec.
+
+      `in-progress` stays a literal on purpose: it is not a role lookup but the
+      "legitimately advanced into execution" case, whose session is already
+      unwinding on its own. It is resolved as the WIP role in the same pass that
+      publishes intake/hold, which is a separate change with its own risk.
+      */
+      const roles = this.lifecycleRolesByTask.get(task.id) ?? TriageProcessor.LEGACY_PLANNING_LANE;
+      if (task.column === roles.intake || task.column === roles.hold || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {
         this.disposeSubagentsForTask(task.id, `task moved to ${task.column}`);
       }
@@ -1348,7 +1419,29 @@ export class TriageProcessor {
       freshTask.status === "planning"
       || freshTask.status === "needs-replan"
       || freshTask.status === "plan-review-unavailable";
-    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-14:10 (U7 / R3):
+    "Released" means the card reached ITS OWN workflow's hold column with no
+    planning-stage status. Keyed on the literal `todo`, a renamed workflow answered
+    NO for a card sitting in its own hold column with a finished spec — so this
+    handler took the requeue path and stamped `needs-replan` OVER a completed
+    handoff, re-stranding an approved plan. That is precisely the regression the
+    FN-8361 / PR #2326 notes above this branch exist to prevent, reintroduced for
+    every workflow that renamed a column.
+
+    Resolved directly rather than from the published snapshot (unlike the two
+    synchronous handlers): this path is already async and runs once per stuck kill,
+    so it can afford the read and should prefer the freshest answer — it decides
+    whether to overwrite a finished spec.
+
+    Unresolvable workflow: NOT released, which is the pre-existing behavior for any
+    column that did not match the literal. Requeueing a card we cannot place is
+    recoverable; preserving one that never actually landed would strand it.
+    */
+    const holdColumn = (await resolveTaskLifecycleColumns(this.store, freshTask.id))?.hold;
+    const releasedToTodo = holdColumn !== undefined
+      && freshTask.column === holdColumn
+      && !planningStageStatus;
     if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
@@ -1477,7 +1570,18 @@ export class TriageProcessor {
     const irCache = new Map<string, WorkflowIr>();
     const rolesById = new Map<string, LifecycleColumns | undefined>();
     for (const t of allTasks) {
-      rolesById.set(t.id, await resolveTaskLifecycleColumns(this.store, t.id, irCache));
+      const roles = await resolveTaskLifecycleColumns(this.store, t.id, irCache);
+      rolesById.set(t.id, roles);
+      // Publish for the synchronous event handlers (see `lifecycleRolesByTask`).
+      if (roles) this.lifecycleRolesByTask.set(t.id, { intake: roles.intake, hold: roles.hold });
+      else this.lifecycleRolesByTask.delete(t.id);
+    }
+    /*
+    Drop rows that left the board, so a long-lived processor does not accumulate
+    roles for deleted tasks. Bounded by the live task set, refreshed every pass.
+    */
+    for (const id of [...this.lifecycleRolesByTask.keys()]) {
+      if (!rolesById.has(id)) this.lifecycleRolesByTask.delete(id);
     }
     const isAt = (t: Task, role: "intake" | "hold"): boolean => {
       const roles = rolesById.get(t.id);
