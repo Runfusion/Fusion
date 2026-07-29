@@ -15,7 +15,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { emitWorkflowLifecycleEvent } from "@fusion/core";
+import { emitWorkflowLifecycleEvent, resolveTaskLifecycleColumns } from "@fusion/core";
 import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -11848,7 +11848,11 @@ export class TaskExecutor {
     if (!isActiveTask) {
       const tasksDir = join(this.store.getFusionDir(), "tasks");
       const promptPath = getPromptPath(tasksDir, task.id);
-      const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
+      // FNXC:SpecStalenessPostU11 2026-07-29-18:25: pass the task's OWN planner lane so a
+      // card resting in the merged Planning column is still checked for a stale spec.
+      const stalenessLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.intake;
+      const staleness = await evaluateSpecStaleness({ settings, promptPath, task,
+        ...(stalenessLane ? { plannerLane: { intake: stalenessLane } } : {}) });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
         // Move to the workflow-aware replan column first, then set status so the task

@@ -50,6 +50,13 @@ export interface EvaluateSpecStalenessOptions {
    */
   nowMs?: number;
   /**
+   * FNXC:SpecStalenessPostU11 2026-07-29-18:25 (U11 #2515 audit):
+   * The task's own planner lane. Callers that can resolve the workflow pass it so
+   * the preserved-progress exemption keys on the ROLE; omitting it keeps the legacy
+   * intake id and today's behavior exactly.
+   */
+  plannerLane?: SpecStalenessPlannerLane;
+  /**
    * Optional task metadata. When provided, evaluation skips already-started,
    * parked work so preserved progress is not sent back through triage solely
    * because the original PROMPT.md mtime exceeded the staleness threshold.
@@ -89,10 +96,40 @@ export interface EvaluateSpecStalenessOptions {
  * @param options - Evaluation options including settings and PROMPT.md path
  * @returns Spec staleness decision with staleness flag, metrics, and skip indicator
  */
+/**
+ * FNXC:SpecStalenessPostU11 2026-07-29-18:10 (U11 #2515 audit):
+ * The planner lane, injected. This function is PURE and SYNCHRONOUS — one caller
+ * invokes it inside a scheduler filter — so it cannot resolve an IR itself.
+ * Defaults to the legacy intake id, which keeps every existing caller
+ * byte-identical.
+ */
+export interface SpecStalenessPlannerLane {
+  intake: string;
+}
+
+const LEGACY_SPEC_STALENESS_LANE: SpecStalenessPlannerLane = { intake: "triage" };
+
 export function shouldSkipSpecStalenessForPreservedProgress(
   task: EvaluateSpecStalenessOptions["task"] | undefined,
+  plannerLane: SpecStalenessPlannerLane = LEGACY_SPEC_STALENESS_LANE,
 ): boolean {
-  if (!task || task.column === "triage" || task.status === "needs-replan" || task.status === "planning") {
+  /*
+  FNXC:SpecStalenessPostU11 2026-07-29-18:10 (U11 #2515 audit):
+  A card resting in the PLANNER LANE never earns the preserved-progress exemption —
+  its leftover steps belong to a previous planning pass, so its spec is exactly what
+  needs re-checking. Keyed on the literal `triage`, that clause stopped matching when
+  #2515 removed the column from the default lineage, and a card in the merged
+  Planning column with leftover steps and no planning-stage status was EXEMPTED from
+  staleness evaluation entirely: the scheduler's stale-spec rebound never fired and
+  the card could be dispatched against a superseded spec.
+
+  Not exotic — finalize clears `status` to null after the handoff while the previous
+  pass's steps remain on the row. That is the FN-8596 shape.
+
+  The two STATUS conditions are untouched on purpose: `needs-replan` and `planning`
+  are statuses, not columns, and U11 moved a column.
+  */
+  if (!task || task.column === plannerLane.intake || task.status === "needs-replan" || task.status === "planning") {
     return false;
   }
   if ((task.currentStep ?? 0) > 0) {
@@ -117,7 +154,7 @@ export async function evaluateSpecStaleness(
     };
   }
 
-  if (shouldSkipSpecStalenessForPreservedProgress(task)) {
+  if (shouldSkipSpecStalenessForPreservedProgress(task, options.plannerLane)) {
     return {
       isStale: false,
       ageMs: undefined,

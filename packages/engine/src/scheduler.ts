@@ -11,6 +11,7 @@ import {
   type PrInfo,
   type AgentStore,
   type Settings,
+  resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -1779,7 +1780,11 @@ export class Scheduler {
 
           if (typeof this.store.getTasksDir === "function") {
             const promptPath = getPromptPath(this.store.getTasksDir(), task.id);
-            const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
+            // FNXC:SpecStalenessPostU11 2026-07-29-18:25: pass the task's OWN planner lane so a
+            // card resting in the merged Planning column is still checked for a stale spec.
+            const stalenessLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.intake;
+            const staleness = await evaluateSpecStaleness({ settings, promptPath, task,
+              ...(stalenessLane ? { plannerLane: { intake: stalenessLane } } : {}) });
             if (staleness.isStale) {
               schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
               await moveTaskToReplanColumn(this.store, task);
