@@ -11825,7 +11825,8 @@ export class TaskExecutor {
     try {
       await this.executeCore(task);
     } finally {
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
     }
   }
 
@@ -11853,7 +11854,8 @@ export class TaskExecutor {
     */
     if (task.deletedAt) {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       return;
     }
     /*
@@ -11875,14 +11877,16 @@ export class TaskExecutor {
       await this.clearStalePauseAbortBeforeDispatch(task);
       if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
         // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
         return;
       }
       // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
       // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
       // them can claim the task, so the single check covers all three entry points.
       if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
         return;
       }
       /*
@@ -11962,7 +11966,8 @@ export class TaskExecutor {
     executorLog.debug(`execute() called for ${task.id} (claimed=${claimed}, perInstanceExecuting=${this.executing.has(task.id)})`);
     if (!claimed) {
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: graph fallback may have re-registered a pre-held slot; drop it when this process cannot claim the executor lock.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       return;
     }
 
@@ -11976,7 +11981,8 @@ export class TaskExecutor {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       return;
     }
 
@@ -11985,7 +11991,8 @@ export class TaskExecutor {
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: work-engine ownership never take()s the legacy handoff registration — release the reserved global slot.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       return;
     }
 
@@ -12004,7 +12011,8 @@ export class TaskExecutor {
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: heartbeat defer must free any re-registered pre-held global slot so capacity is not stranded until the next dispatch.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       return;
     }
 
@@ -12077,7 +12085,8 @@ export class TaskExecutor {
         await this.store.updateTask(task.id, { status: "needs-replan" });
         await this.store.logEntry(task.id, staleness.reason, undefined, this.getRunContextFor(task.id));
         // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: replan handoff never starts agent work — free any re-registered pre-held slot before leaving execute().
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
         return;
       }
     }
@@ -12094,7 +12103,8 @@ export class TaskExecutor {
       if (await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "execute-preflight")) {
         this.executing.delete(task.id);
         executingTaskLock.release(task.id);
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
         return;
       }
     }
@@ -14953,7 +14963,8 @@ export class TaskExecutor {
       release any still-registered slot before lock/executing cleanup. execute()'s outer
       finally also drops (no-op once take/drop already cleared the registration).
       */
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
 
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);

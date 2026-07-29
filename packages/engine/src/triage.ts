@@ -1124,7 +1124,8 @@ export class TriageProcessor {
       invariant holds either way.
       */
       this.coordinatorAdmittedTaskIds.delete(taskId);
-      dropPreHeldExecutorSlot(taskId, this.options.semaphore);
+      dropPreHeldExecutorSlot(taskId);
+      this.options.semaphore?.release();
       evicted.add(taskId);
     }
 
@@ -2009,7 +2010,8 @@ export class TriageProcessor {
       // FNXC:ConcurrencyAdmission 2026-08-06-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       this.coordinatorAdmittedTaskIds.delete(task.id);
       return;
     }
@@ -2981,7 +2983,8 @@ export class TriageProcessor {
       // can exist before planner setup reaches takePreHeldExecutorSlot(). Every
       // early setup failure must return that untransferred host slot; after a
       // successful transfer this is intentionally a no-op.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      dropPreHeldExecutorSlot(task.id);
+      this.options.semaphore?.release();
       /*
       FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
       Release the planner's registry entry on EVERY exit path (success, planning failure, abort,
