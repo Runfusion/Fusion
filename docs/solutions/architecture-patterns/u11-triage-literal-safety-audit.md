@@ -123,3 +123,64 @@ The instruction that produced this audit was correct: verify per site, do not as
 result is that the work list is **32% smaller** than the tracked figure, that **15 sites must not
 be converted at all**, and that at least one site changes an operator-visible affordance in a way
 no column-conversion sweep would have surfaced.
+
+
+---
+
+# Post-merge blast-radius pass (2026-07-29)
+
+#2515 merged, so the `triage` guards are live-broken for default-workflow cards rather than
+hypothetically so. This section answers, per high-stakes site: **does it still fire, what silently
+stops happening, and is there a backup?**
+
+Prioritised by blast radius rather than count. A recovery sweep that stops running matters more
+than a label that reads wrong.
+
+## Headline: no hard stall found in the recovery block
+
+The alarming reading — "the orphaned-planning-status sweeps stop finding default cards, so a card
+whose planner died sits with `status:"planning"` forever, invisible to discovery" — **does not
+hold**, and the reason is worth recording so nobody re-derives the panic.
+
+`triage.ts`'s `sweepStalePlanningStatuses` is the PERIODIC primary for that repair and it already
+tests `t.column !== "triage" && t.column !== "todo"` — it covers the merged column. The two
+self-healing sweeps below perform the same repair and are **redundant safety nets**, not the sole
+rescue.
+
+That distinction is the difference between a P0 and a cleanup, and it is only visible by reading
+the backup path rather than the broken guard.
+
+| site | fires for a default card? | what stops happening | backup | verdict |
+|---|---|---|---|---|
+| `self-healing.ts:12106` `recoverOrphanedApprovedTriageTasks` | **no** | clearing a stale `planning` status | `triage.sweepStalePlanningStatuses` (periodic, covers `todo`) | redundant net lost — **cleanup** |
+| `self-healing.ts:12427` `recoverOrphanedPlanningTasks` | **no** | same repair | same | redundant net lost — **cleanup** |
+| `self-healing.ts:2961/2981/3016` `recoverAdvancedTriageTasks` | **no** | re-homing a card with a worktree + durable IR pin to its pinned resume column | hold-release still releases it on capacity (it has a real spec, so `isUnplannedForExecution` is false) | **degraded, not stuck** — the card takes the capacity path instead of resuming at its pinned node |
+| `self-healing.ts:12254` `recoverStarvedRefinementTriageTasks` | **no** | a bounded priority nudge for starved refinements | none needed — the doc comment states it is a nudge, not a rescue | **low** |
+| `self-healing.ts:12151` | **yes** | — | already ORs `triage \|\| todo` | **safe** |
+| `self-healing.ts:9151` | **yes** | — | already ORs `dep.column === "triage" \|\| "todo"` | **safe** |
+
+`recoverAdvancedTriageTasks` is the one worth fixing first in that file: it is the only site in the
+block whose loss changes where a card resumes rather than merely removing a duplicate repair.
+
+Note `:3016` has a second-order effect. It skips when `resumeColumn === "triage"` — a guard against
+resuming a card into the column it already occupies. Post-merge the pinned column would be `todo`,
+which is no longer skipped, so if the sweep is repaired by pairing the literal at `:2961` **without
+also pairing `:3016`**, it will attempt a `todo → todo` move. Repair the three together.
+
+## Already resolved — do not re-fix
+
+Two sites in the ownership split are already handled, and one of them has a **wrong** obvious fix:
+
+- **`usage-limit-detector.ts:126`** — fixed in PR #2567. Real breakage: the planning lane stopped
+  being recognised, so a card being planned was neither parked when its provider hit a usage limit
+  nor resumed when it recovered.
+- **`spec-staleness.ts:95`** — proven safe as-is and merged with #2515. **The mechanical conversion
+  is wrong here.** Adding `|| task.column === "todo"` breaks the parked-preserved-progress path:
+  after the merge `todo` is both the planner column and the capacity-hold column, so the column can
+  no longer distinguish "being planned" from "waiting for a slot". Only status can — and the guard
+  already tests status. Leave it alone.
+
+The second is the general warning for this whole audit: **on the merged column, `todo` answers two
+different questions.** Any site that used `triage` to mean "is being planned" cannot simply be
+paired with `todo`, because `todo` also means "is parked waiting for capacity". Those sites need
+status or a trait, not a wider literal.
