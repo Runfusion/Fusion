@@ -10,7 +10,7 @@
  */
 
 import { TaskStore } from "../store.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
+import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflow-reconciliation.js";
 import {readTaskRow as readTaskRowAsync} from "./async-persistence.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
@@ -755,7 +755,25 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     const fromColumn = String(currentRow.column);
     const decision = resolveSwitchReconciliation(newIr, fromColumn);
     if (!decision.preserved && decision.targetColumn !== fromColumn) {
-      await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      const outcome = await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      /*
+      FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2513 review):
+      FAIL LOUDLY. `rehomeOccupant` swallows a rejected move by design, which is right
+      for the best-effort sweep callers but wrong here: the new selection has ALREADY
+      committed, so a swallowed rejection is a torn write — selection and column
+      disagree and nobody is told. Throw instead, leaving the recoverable state in
+      place (the R7 startup sweep re-homes an undeclared column) rather than rolling
+      back a committed selection.
+      */
+      if (!outcome.moved) {
+        throw new WorkflowSwitchRehomeFailedError({
+          taskId,
+          workflowId,
+          fromColumn,
+          intendedColumn: decision.targetColumn,
+          ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
+        });
+      }
     }
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
@@ -775,16 +793,19 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     lock across selection + reconciliation, which changes the locking contract and is
     left as a separate, testable change rather than smuggled into a flag flip.
     */
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    ABSENT IS ABSENT, decided by the pure `buildSwitchReconciliation` seam. An earlier
+    version fell back to `fromColumn`, so a task SOFT-DELETED between the first read
+    and this one was reported as having its old column PRESERVED — a live column
+    fabricated for a row that is gone.
+    */
     const afterRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
-    const actualColumn = afterRow ? String(afterRow.column) : fromColumn;
-    return {
-      enabledWorkflowSteps,
-      reconciliation: {
-        preserved: actualColumn === fromColumn,
-        fromColumn,
-        toColumn: actualColumn,
-      },
-    };
+    const reconciliation = buildSwitchReconciliation(
+      fromColumn,
+      afterRow ? String(afterRow.column) : undefined,
+    );
+    return { enabledWorkflowSteps, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 export function pruneAgentLogFilesImpl(store: TaskStore, retentionDays: number): { prunedFiles: number; prunedEntries: number; freedBytes: number } {

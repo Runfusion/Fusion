@@ -164,7 +164,7 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     expect((await store.getTask(task.id)).column).not.toBe("custom-hold");
   });
 
-  it("reports the ACTUAL column when the re-home is blocked by capacity (PR #2512 review)", async () => {
+  it("fails loudly when the re-home is rejected, leaving recoverable state (PR #2513 review)", async () => {
     const store = h.store();
 
     /*
@@ -187,15 +187,34 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     // A card parked in a column the target workflow does not declare.
     const { task } = await seedOccupiedCustomColumn("Capacity source");
 
-    const result = await store.selectTaskWorkflowAndReconcile(task.id, target.id);
+    /*
+    The selection has already committed by the time the re-home is attempted, so a
+    swallowed rejection would be a torn write: selection and column disagreeing with
+    nobody told. It must FAIL LOUDLY (PR #2513 review).
+    */
+    await expect(store.selectTaskWorkflowAndReconcile(task.id, target.id)).rejects.toMatchObject({
+      name: "WorkflowSwitchRehomeFailedError",
+      taskId: task.id,
+      workflowId: target.id,
+      fromColumn: "custom-hold",
+      intendedColumn: "triage",
+    });
 
-    // The card could not move, so the response must say so rather than claiming the
-    // entry column. Reverting the re-read makes toColumn "triage" and preserved false.
+    // Recoverable state, deliberately left in place rather than rolled back: the
+    // selection stands and the card is still where it was, which is what the R7
+    // startup sweep re-homes.
     expect((await store.getTask(task.id)).column).toBe("custom-hold");
-    expect(result.reconciliation!.toColumn).toBe("custom-hold");
-    expect(result.reconciliation!.preserved).toBe(true);
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe(target.id);
   });
 
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+  The soft-delete-mid-switch case is NOT here. `selectTaskWorkflow` rejects an
+  already-deleted task up front with `TaskDeletedError`, so the window between the
+  switch's first read and its final one cannot be driven from outside the call. It is
+  covered directly against the pure seam in
+  `__tests__/workflow-switch-reconciliation-report.test.ts`.
+  */
   it("preserves a task's column when the new workflow DOES declare it, with no flag set", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "stays put" });
