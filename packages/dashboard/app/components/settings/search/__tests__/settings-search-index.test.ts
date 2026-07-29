@@ -68,7 +68,6 @@ const SECTION_FILE_TO_ID: Record<string, string> = {
   "ResearchGlobalSection.tsx": "research-global",
   "ResearchProjectSection.tsx": "research-project",
   "ScheduledEvalsSection.tsx": "scheduled-evals",
-  "SchedulingGlobalSection.tsx": "scheduling-global",
   "SchedulingSection.tsx": "scheduling",
   "SourceControlGlobalSection.tsx": "source-control-global",
   "SourceControlSection.tsx": "source-control",

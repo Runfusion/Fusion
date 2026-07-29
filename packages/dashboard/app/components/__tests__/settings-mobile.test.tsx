@@ -1115,7 +1115,8 @@ describe("SettingsModal mobile adaptations", () => {
       const scopedPairs = [
         ["global-models", "project-models"],
         ["research-global", "research-project"],
-        ["scheduling-global", "scheduling"],
+        // FNXC:CapacityModel 2026-07-29-00:40: scheduling is no longer a scoped PAIR —
+        // its global half hosted only the deleted machine-wide concurrency cap.
         ["source-control-global", "source-control"],
         ["backups-global", "backups"],
       ];
@@ -1123,7 +1124,6 @@ describe("SettingsModal mobile adaptations", () => {
       const visibleScopedPairs = scopedPairs.filter(([globalId, projectId]) => optionIds.includes(globalId) && optionIds.includes(projectId));
       expect(visibleScopedPairs).toEqual(expect.arrayContaining([
         ["global-models", "project-models"],
-        ["scheduling-global", "scheduling"],
         ["source-control-global", "source-control"],
       ]));
       for (const [globalId, projectId] of visibleScopedPairs) {

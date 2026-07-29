@@ -2420,20 +2420,12 @@ export class InProcessRuntime
     this.lastActivityAt = new Date().toISOString();
   }
 
-  /**
-   * Get global concurrency limit from CentralCore.
-   */
-  private async getGlobalConcurrencyLimit(): Promise<number> {
-    try {
-      const state = await this.centralCore.getGlobalConcurrencyState();
-      return state.globalMaxConcurrent;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      runtimeLog.warn(`Failed to fetch global concurrency from CentralCore, falling back to default (4): ${msg}`);
-      // Fallback to default if CentralCore is unavailable
-      return 4;
-    }
-  }
+  /*
+  FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+  `getGlobalConcurrencyLimit` is DELETED. Its only caller was the global semaphore
+  construction removed in the enforcement half, so it has been reading a limit
+  nothing consults. Capacity is two numbers per project.
+  */
 
   /**
    * Record task completion in CentralCore.

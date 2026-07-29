@@ -949,7 +949,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
       expect(screen.getByLabelText("Global Max Concurrent")).toBeDisabled();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
       expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
       // FNXC:SettingsConcurrency 2026-07-24-03:10: FN-8453 (eef5eb751) removed
       // the duplicate "Max Triage Concurrent" control when concurrency

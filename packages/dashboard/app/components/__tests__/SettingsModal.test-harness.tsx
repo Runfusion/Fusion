@@ -481,7 +481,7 @@ export function installSettingsModalEnv(options?: { advancedSettings?: boolean }
       refresh: vi.fn(),
     });
     mockImportSettings.mockResolvedValue({ success: true, globalCount: 0, projectCount: 0 });
-    mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
+    mockFetchGlobalConcurrency.mockResolvedValue({ currentlyActive: 0, projectsActive: {} });
     mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
     mockFetchMemoryBackendStatus.mockResolvedValue({
       currentBackend: "file",

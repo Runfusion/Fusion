@@ -1,18 +1,27 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/*
+FNXC:CapacityModel 2026-07-29-00:50 (drop the cross-project cap — settings half):
+The hook is READ-ONLY now, so `updateGlobalConcurrency` and every case that drove a
+write are gone: the debounced PUT, the save-state machine and the
+keeps-counts-after-a-successful-PUT case. The cap they persisted no longer exists
+(capacity is two numbers PER PROJECT) and the PUT route is deleted.
+
+What is still covered is what the hook still does: populate live running counts,
+return zero for an absent project, and refuse to surface stale truthy counts while
+loading or in error — the last being a real past defect, where a failed load left
+consumers reading the previous fetch's numbers as if current.
+*/
 const legacyMocks = vi.hoisted(() => ({
   fetchGlobalConcurrency: vi.fn(),
-  updateGlobalConcurrency: vi.fn(),
 }));
 
 vi.mock("../../api/legacy", () => legacyMocks);
 
 type UseGlobalConcurrencyModule = typeof import("../useGlobalConcurrency");
 type GlobalConcurrencyApiState = {
-  globalMaxConcurrent: number;
   currentlyActive: number;
-  queuedCount: number;
   projectsActive: Record<string, number>;
 };
 
@@ -24,9 +33,7 @@ async function loadHook(): Promise<UseGlobalConcurrencyModule["useGlobalConcurre
 
 function concurrencyState(overrides: Partial<GlobalConcurrencyApiState> = {}): GlobalConcurrencyApiState {
   return {
-    globalMaxConcurrent: 6,
     currentlyActive: 3,
-    queuedCount: 0,
     projectsActive: { proj_123: 2 },
     ...overrides,
   };
@@ -36,7 +43,6 @@ describe("useGlobalConcurrency", () => {
   beforeEach(() => {
     vi.useRealTimers();
     legacyMocks.fetchGlobalConcurrency.mockResolvedValue(concurrencyState());
-    legacyMocks.updateGlobalConcurrency.mockResolvedValue(concurrencyState({ globalMaxConcurrent: 8 }));
   });
 
   afterEach(() => {
@@ -50,32 +56,12 @@ describe("useGlobalConcurrency", () => {
     const { result } = renderHook(() => useGlobalConcurrency());
 
     await waitFor(() => expect(result.current.status).toBe("loaded"));
-    expect(result.current.value).toBe(6);
     expect(result.current.currentlyActive).toBe(3);
     expect(result.current.projectActiveCount("proj_123")).toBe(2);
     expect(result.current.projectActiveCount("missing-project")).toBe(0);
     expect(result.current.projectActiveCount()).toBe(0);
   });
 
-  it("keeps last-known running counts after a successful PUT", async () => {
-    const useGlobalConcurrency = await loadHook();
-    const { result } = renderHook(() => useGlobalConcurrency());
-    await waitFor(() => expect(result.current.status).toBe("loaded"));
-
-    vi.useFakeTimers();
-    act(() => result.current.setValue("8"));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.resolve();
-    });
-    vi.useRealTimers();
-
-    await waitFor(() => expect(result.current.saveState).toBe("saved"));
-    expect(legacyMocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 8 });
-    expect(result.current.value).toBe(8);
-    expect(result.current.currentlyActive).toBe(3);
-    expect(result.current.projectActiveCount("proj_123")).toBe(2);
-  });
 
   it("does not surface stale truthy counts while loading or in error", async () => {
     const useGlobalConcurrency = await loadHook();

@@ -211,7 +211,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   pushRemote: "merge.gitRemoteToPushToEGOrigin",
   // NodeRouting / node sync covered above
   // SchedulingSection
-  globalMaxConcurrent: "scheduling.maximumConcurrentAgentsAcrossAllProjects",
   maxConcurrent: "scheduling.maxConcurrentTasksHint",
   maxConcurrentVerifications: "scheduling.maxConcurrentVerificationsHint",
   pollIntervalMs: "scheduling.pollIntervalMsHint",

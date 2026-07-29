@@ -39,7 +39,6 @@ import type {
   RegisteredProject,
   ProjectHealth,
   CentralActivityLogEntry,
-  GlobalConcurrencyState,
   IsolationMode,
   ProjectStatus,
   ActivityEventType,
@@ -160,7 +159,6 @@ export interface CentralCoreEvents {
   /** Emitted when a discovered node is lost */
   "discovery:node:lost": [name: string];
   /** Emitted when global concurrency state changes */
-  "concurrency:changed": [state: GlobalConcurrencyState];
   /** Emitted when a node's version info is updated */
   "node:version:updated": [payload: { nodeId: string; versionInfo: NodeVersionInfo }];
   /** Emitted when plugin sync comparison completes */
@@ -2075,118 +2073,34 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   // ── Global Concurrency API ─────────────────────────────────────────────
 
-  /**
-   * Get the current global concurrency state.
-   *
-   * @returns Current concurrency state including per-project active counts
-   */
-  async getGlobalConcurrencyState(): Promise<GlobalConcurrencyState> {
-    this.ensureInitialized();
+  /*
+  FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+  `getGlobalConcurrencyState`, `updateGlobalConcurrency`, `acquireGlobalSlot` and
+  `releaseGlobalSlot` are DELETED, along with the `concurrency:changed` event they
+  emitted. Capacity is two numbers PER PROJECT; a machine-wide cap was a third
+  limiter living in a separate authority (the `global_concurrency` singleton row).
 
-        return asyncCentralCore.getGlobalConcurrencyState(this.backendHandle);
-}
+  The slot pair was already dead before this change — measured in the enforcement
+  half: no production caller ever invoked it, so `currentlyActive` was never
+  incremented by real work and the durable counter it maintained was fiction.
 
-  /**
-   * FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
-   * Live running-agent counts from the registered side-effect-safe source.
-   * Falls back to persisted concurrency/health bookkeeping when no host source
-   * is registered so headless core callers keep their previous semantics.
-   */
+  `getLiveRunningAgentCounts` SURVIVES and is now the only global readout. It is
+  TELEMETRY, not a limiter: it derives live per-project agent counts from the
+  registered side-effect-safe source so the dashboard can show "N running (all
+  projects)". Nothing gates on it.
+  */
   async getLiveRunningAgentCounts(options?: { source?: RunningAgentCountSource }): Promise<RunningAgentCounts> {
     this.ensureInitialized();
 
     const source = options?.source ?? getRunningAgentCountSource();
     if (!source) {
-      const state = await this.getGlobalConcurrencyState();
-      return {
-        currentlyActive: state.currentlyActive,
-        projectsActive: state.projectsActive,
-      };
+      return { currentlyActive: 0, projectsActive: {} };
     }
 
     const projectIds = (await this.listProjects()).map((project) => project.id);
     const perProject = await source(projectIds);
     return deriveRunningAgentCounts(perProject);
   }
-
-  /**
-   * Update global concurrency settings.
-   * Only allows updating globalMaxConcurrent, currentlyActive, and queuedCount.
-   *
-   * @param updates — Partial concurrency state updates
-   * @returns Updated concurrency state
-   */
-  async updateGlobalConcurrency(
-    updates: Partial<Pick<GlobalConcurrencyState, "globalMaxConcurrent" | "currentlyActive" | "queuedCount">>
-  ): Promise<GlobalConcurrencyState> {
-    this.ensureInitialized();
-
-    if (
-      updates.globalMaxConcurrent !== undefined &&
-      (!Number.isFinite(updates.globalMaxConcurrent) || updates.globalMaxConcurrent < 1 || updates.globalMaxConcurrent > 10000)
-    ) {
-      throw new Error("globalMaxConcurrent must be between 1 and 10000");
-    }
-
-    const current = await this.getGlobalConcurrencyState();
-    const updated = {
-      ...current,
-      ...updates,
-    };
-
-        await asyncCentralCore.updateGlobalConcurrencyRow(
-      this.backendHandle,
-      updated,
-      new Date().toISOString(),
-    );
-    this.emit("concurrency:changed", updated);
-    return updated;
-}
-
-  /**
-   * Acquire a global concurrency slot.
-   * Atomically checks if a slot is available and acquires it if so.
-   *
-   * @param projectId — Project requesting the slot
-   * @returns true if slot acquired, false if at limit (queued)
-   */
-  async acquireGlobalSlot(projectId: string): Promise<boolean> {
-    this.ensureInitialized();
-
-    // Check if project exists
-    const project = await this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-    let acquired = false;
-
-        acquired = await asyncCentralCore.acquireGlobalSlotAtomic(this.asyncLayer!, projectId);
-    const state = await this.getGlobalConcurrencyState();
-    this.emit("concurrency:changed", state);
-    return acquired;
-}
-
-  /**
-   * Release a global concurrency slot.
-   * Decrements the global active count and project's active count.
-   *
-   * @param projectId — Project releasing the slot
-   */
-  async releaseGlobalSlot(projectId: string): Promise<void> {
-    this.ensureInitialized();
-
-    // Check if project exists
-    const project = await this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-        await asyncCentralCore.releaseGlobalSlotAtomic(this.asyncLayer!, projectId);
-    const state = await this.getGlobalConcurrencyState();
-    this.emit("concurrency:changed", state);
-    return;
-}
 
   // ── Utility Methods ─────────────────────────────────────────────────────
 
