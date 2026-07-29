@@ -39,7 +39,7 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
@@ -286,6 +286,39 @@ export function getUnmetSchedulingDependencies(
   });
 }
 
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-11:35 (U11 conversion):
+A task's HOLD and INTAKE columns, resolved from its own workflow.
+
+The scheduler's event handlers all ask a variant of "is this the backlog?" and
+answered it with the literal `"todo"`. That silently stops matching for a renamed
+workflow, and stops matching for EVERY workflow once U11 deletes `todo` from the
+builtins. Most of these failures are LATENCY rather than incorrectness — a wake
+that does not fire costs up to one poll interval — which is precisely why they
+would go unnoticed.
+
+Resolution is per task because a board spans workflows. Cost matches existing
+practice in this file, which already resolves per task at the dispatch-diagnostic
+and worktree-capacity sites; these handlers fire per move/update event, not per
+card in a sweep.
+
+Fail-soft to the legacy pair: an unresolvable workflow behaves exactly as before
+this conversion rather than losing the wake entirely.
+*/
+/* SYNCHRONOUS on purpose. These run inside `task:moved` / `task:updated`
+   listeners; introducing a new `await` before their existing synchronous work
+   defers everything after it to a microtask and reorders handlers relative to a
+   synchronous emitter. A file split must not change event ordering, so the
+   resolution uses the store's sync IR path. */
+function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string } {
+  try {
+    const lifecycle = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
+    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+  } catch {
+    return { hold: "todo", intake: "triage" };
+  }
+}
 
 export function shouldHoldActiveFileScopeLease(
   task: Task,
@@ -753,7 +786,8 @@ export class Scheduler {
      */
     this.store.on("task:moved", async ({ task, from, to, source }) => {
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
-      if (from === "todo" || to === "todo") {
+      const parked = resolveTaskParkedColumnsSync(this.store, task.id);
+      if (from === parked.hold || to === parked.hold) {
         this.options.snapshotManager?.invalidate(`task:moved:${from}->${to}`);
       }
       // PR Monitoring
@@ -793,7 +827,7 @@ export class Scheduler {
 
       // Mission failure tracking: status/error are cleared during moveTask(in-progress → todo),
       // so we pair this with failedTaskIds captured from task:updated events.
-      if (task.sliceId && to === "todo" && this.options.onTaskFailed) {
+      if (task.sliceId && to === parked.hold && this.options.onTaskFailed) {
         if (task.status === "failed" || this.failedTaskIds.has(task.id)) {
           this.failedTaskIds.delete(task.id);
           void Promise.resolve(this.options.onTaskFailed(task.id)).catch((err) => {
@@ -809,7 +843,7 @@ export class Scheduler {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
-            const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+            const todoTasks = await this.store.listTasks({ column: parked.hold, slim: true });
             for (const dependent of todoTasks) {
               const mentionsCompletedTask = dependent.dependencies.includes(task.id);
               const currentlyBlockedByCompletedTask = dependent.blockedBy === task.id;
@@ -868,7 +902,7 @@ export class Scheduler {
         }
       }
 
-      if (from === "in-progress" && to === "todo") {
+      if (from === "in-progress" && to === parked.hold) {
         if (source === "engine") {
           this.recentEngineTodoRequeues.set(task.id, task.columnMovedAt ?? new Date().toISOString());
         } else {
@@ -891,7 +925,7 @@ export class Scheduler {
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
-      if (to === "done" || to === "todo") {
+      if (to === "done" || to === parked.hold) {
         schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
@@ -943,7 +977,8 @@ export class Scheduler {
             schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on unpause: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
-        if (this.running && (task.column === "todo" || task.column === "triage")) {
+        const unpausedParked = resolveTaskParkedColumnsSync(this.store, task.id);
+        if (this.running && (task.column === unpausedParked.hold || task.column === unpausedParked.intake)) {
           schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
           this.schedule();
         }
@@ -969,12 +1004,13 @@ export class Scheduler {
         this.planningTaskIds.add(task.id);
       } else if (this.planningTaskIds.has(task.id)) {
         this.planningTaskIds.delete(task.id);
+        const planningParked = resolveTaskParkedColumnsSync(this.store, task.id);
         if (
           this.running
           && !task.status
           && !task.paused
           && !task.userPaused
-          && (task.column === "todo" || task.column === "triage")
+          && (task.column === planningParked.hold || task.column === planningParked.intake)
         ) {
           schedulerLog.log(`Task ${task.id} finished planning — triggering scheduling`);
           this.schedule();
@@ -1019,7 +1055,8 @@ export class Scheduler {
             return;
           }
 
-          const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+          const deletedParked = resolveTaskParkedColumnsSync(this.store, task.id);
+          const todoTasks = await this.store.listTasks({ column: deletedParked.hold, slim: true });
           const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
           const dependents = [...todoTasks, ...inProgressTasks];
 
@@ -1058,7 +1095,7 @@ export class Scheduler {
                   dependent.id,
                   `Auto-reblocked (FN-5496): unresolved dependency ${nextBlocker} remains after blocker ${task.id} was soft-deleted`,
                 );
-              } else if (dependent.column === "todo") {
+              } else if (dependent.column === deletedParked.hold) {
                 await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
                 await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`);
               } else {
@@ -1283,11 +1320,22 @@ export class Scheduler {
 
     for (const agent of linkedAgents) {
       const activeRun = await agentStore.getActiveHeartbeatRun?.(agent.id);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-11:50 (U11 conversion):
+      The synthetic column here stands for "this task is parked in the backlog",
+      which is what `evaluateParkedAgentTaskLink` gates on. Passing the literal
+      made a renamed workflow read as UNPARKED, so a running agent's task link was
+      dropped instead of preserved — the worse direction of that safeguard.
+      `parkedColumns` is passed too, so the helper's own check resolves against the
+      same vocabulary rather than its legacy default.
+      */
+      const rollbackParked = resolveTaskParkedColumnsSync(this.store, taskId);
       const proof = evaluateParkedAgentTaskLink({
         agent,
-        linkedTask: { column: "todo" } as Pick<Task, "column">,
+        linkedTask: { column: rollbackParked.hold } as Pick<Task, "column">,
         activeRun,
         hasActiveAgentExecution: this.options.hasActiveAgentExecution,
+        parkedColumns: [rollbackParked.hold, rollbackParked.intake],
       });
       if (proof.shouldPreserveParkedLink) {
         schedulerLog.log(
