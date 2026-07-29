@@ -695,6 +695,11 @@ two self-healing sweeps verified PER SITE — reverting one fails exactly its ow
                              status discriminates.
       mergeOrchestration/mergeBlocker -> needed its own case too (a review card with an
                              active merge-pipeline status)
+  - mesh-lease-manager.ts  resolveReboundTarget — the recovered-lease rebound AND the
+    unreachable-owner audit's `newColumn` (workflow-lease-rebound-live-e2e.pg.test.ts;
+    mutation-verified). The audit half is the one that rotted silently: it named a
+    column the card never reached, which on a renamed board the workflow does not even
+    declare. `decisionPath` deliberately keeps its legacy wording and is pinned as such.
   - auto-merge-finalization.ts  completeColumn / mergeColumn / isCompleteColumn
     (workflow-merge-family-live-e2e.pg.test.ts; each of the three mutation-verified
     INDEPENDENTLY — the mergeColumn one needed its own case, see below)
@@ -711,7 +716,6 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - merger.ts:324-326        resolveCompleteColumn / resolveMergeOrchestrationColumn / resolveReboundTarget
   - merger-ai.ts:1022,1039   resolveReboundTarget, resolveLifecycleColumns
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
-  - mesh-lease-manager.ts:61 resolveReboundTarget
   - core/task-store/reads.ts:130      listTasks hydration
   - core/live-agent-count.ts    columnIsIntakeOrHold (the WAITING predicate) — the running
     predicate never reads it, so the admission-count E2E cannot reach it
