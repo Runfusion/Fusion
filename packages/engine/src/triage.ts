@@ -1419,7 +1419,29 @@ export class TriageProcessor {
       freshTask.status === "planning"
       || freshTask.status === "needs-replan"
       || freshTask.status === "plan-review-unavailable";
-    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    /*
+    FNXC:TriageLifecycleColumns 2026-07-28-14:10 (U7 / R3):
+    "Released" means the card reached ITS OWN workflow's hold column with no
+    planning-stage status. Keyed on the literal `todo`, a renamed workflow answered
+    NO for a card sitting in its own hold column with a finished spec — so this
+    handler took the requeue path and stamped `needs-replan` OVER a completed
+    handoff, re-stranding an approved plan. That is precisely the regression the
+    FN-8361 / PR #2326 notes above this branch exist to prevent, reintroduced for
+    every workflow that renamed a column.
+
+    Resolved directly rather than from the published snapshot (unlike the two
+    synchronous handlers): this path is already async and runs once per stuck kill,
+    so it can afford the read and should prefer the freshest answer — it decides
+    whether to overwrite a finished spec.
+
+    Unresolvable workflow: NOT released, which is the pre-existing behavior for any
+    column that did not match the literal. Requeueing a card we cannot place is
+    recoverable; preserving one that never actually landed would strand it.
+    */
+    const holdColumn = (await resolveTaskLifecycleColumns(this.store, freshTask.id))?.hold;
+    const releasedToTodo = holdColumn !== undefined
+      && freshTask.column === holdColumn
+      && !planningStageStatus;
     if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
