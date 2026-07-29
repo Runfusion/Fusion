@@ -84,16 +84,38 @@ function createApp(store: TaskStore) {
 describe("plan approval on the merged planning column (post-#2515)", () => {
   it("does NOT reject approve-plan for a card in the merged intake column", async () => {
     const res = await performRequest(createApp(createMockStore()), "POST", "/api/tasks/FN-200/approve-plan");
-    // The specific failure this exists to catch: a 400 whose message names a column that
-    // no longer exists in the default lineage.
-    expect(res.status).not.toBe(400);
-    expect(JSON.stringify(res.body)).not.toMatch(/must be in 'triage'/i);
+    /*
+    Assert the SUCCESS status, not merely "not 400" (PR #2571 review — greptile). A
+    not-400 assertion also passes on a 404 or a 500, so it would keep this case green
+    while the route was broken in a different way — a guard that reports success without
+    checking, which is the class this whole audit exists to remove.
+    */
+    expect(res.status).toBe(200);
   });
 
   it("does NOT reject reject-plan for a card in the merged intake column", async () => {
     const res = await performRequest(createApp(createMockStore()), "POST", "/api/tasks/FN-200/reject-plan");
-    expect(res.status).not.toBe(400);
-    expect(JSON.stringify(res.body)).not.toMatch(/must be in 'triage'/i);
+    expect(res.status).toBe(200);
+  });
+
+  /*
+  The two `task_refine` routes share the same converted guard, so they share the same
+  failure mode (PR #2571 review — greptile): before the fix they rejected every card on a
+  lineage without `triage`, which is how a stranded refinement became unrecoverable from
+  the UI. Covering only approve/reject would have left that guard unprotected.
+  */
+  it("does NOT reject the stranded-refinement read for a merged-lineage card", async () => {
+    // The read path also consults the stranded-refinement list; stub it so a 500 from
+    // missing store surface cannot masquerade as the guard passing.
+    const store = createMockStore({ listStrandedRefinements: vi.fn().mockResolvedValue([]) });
+    const res = await performRequest(createApp(store), "GET", "/api/tasks/FN-200/stranded-refinement");
+    expect(res.status).toBe(200);
+  });
+
+  it("does NOT reject expedite-refinement for a merged-lineage card", async () => {
+    const store = createMockStore({ listStrandedRefinements: vi.fn().mockResolvedValue([]) });
+    const res = await performRequest(createApp(store), "POST", "/api/tasks/FN-200/expedite-refinement");
+    expect(res.status).toBe(200);
   });
 
   it("still rejects a card that is NOT in its workflow's intake column", async () => {
