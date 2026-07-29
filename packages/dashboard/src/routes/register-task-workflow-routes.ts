@@ -3699,9 +3699,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to approve plan");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — P0, post-#2515):
+      Resolve the workflow's INTAKE column; do not name `triage`. #2515 removed `triage`
+      from the default lineage — the single pre-implementation column is now id `todo`
+      displayed as "Planning" — so `task.column !== "triage"` became TRUE for every
+      default-workflow card and this route rejected all of them. A card parked
+      `awaiting-approval` could not be approved OR rejected (same guard below), i.e. it
+      was STUCK with no operator action able to release it. The guard did not stop
+      firing; it started firing on everything.
+      */
+      const approveIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      // WIDEN, never narrow: accept the resolved intake column OR the legacy id, so this
+      // P0 fix cannot reject a card the route previously allowed.
+      if (task.column !== approveIntakeColumn && task.column !== "triage") {
+        throw badRequest(`Task must be in the '${approveIntakeColumn}' column to approve plan`);
       }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to approve plan");
@@ -3760,9 +3772,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to reject plan");
+      // Same P0 as approve-plan above: resolve the intake column rather than naming
+      // `triage`, which #2515 removed from the default lineage.
+      const rejectIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== rejectIntakeColumn && task.column !== "triage") {
+        throw badRequest(`Task must be in the '${rejectIntakeColumn}' column to reject plan`);
       }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to reject plan");
@@ -3818,8 +3832,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.sourceType !== "task_refine") {
         throw badRequest("Task must have sourceType 'task_refine'");
       }
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column");
+      // Intake column, resolved from the task's workflow (#2515 removed `triage` from
+      // the default lineage, so the literal rejected every default-workflow card).
+      const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== refineIntakeColumn && task.column !== "triage") {
+        throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
 
       const stranded = await scopedStore.listStrandedRefinements();
@@ -3869,8 +3886,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.sourceType !== "task_refine") {
         throw badRequest("Task must have sourceType 'task_refine'");
       }
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column");
+      // Intake column, resolved from the task's workflow (#2515 removed `triage` from
+      // the default lineage, so the literal rejected every default-workflow card).
+      const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== refineIntakeColumn && task.column !== "triage") {
+        throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
       if (task.paused) {
         throw badRequest("Paused refinements cannot be expedited");
