@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask } from "@fusion/core";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
@@ -268,12 +269,35 @@ describe("resolveReplanTargetColumn", () => {
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("falls back to triage for workflows declaring neither triage nor todo (never a custom column)", async () => {
-    // builtin:marketing declares ideation/backlog/drafting/... — no triage, no todo.
-    // A custom entry column would strand the needs-replan card (triage only scans
-    // "triage" and "todo") and the legacy move path throws on custom targets.
+  it("targets a workflow's OWN hold column when it declares neither legacy id", async () => {
+    /*
+    FNXC:ReplanTargetLifecycleColumns 2026-07-29-10:15 (U7 / R7):
+    CONTRACT CHANGED — deliberately, and this is the expectation edit that IS the
+    change rather than churn around it. This previously asserted `"triage"` for
+    builtin:marketing, which declares ideation/backlog/drafting/... and NO triage
+    column: the engine moved the card into a column the workflow does not declare,
+    which is the R7 violation `reconcileUndeclaredTaskColumns` then cleaned up after.
+
+    Both reasons the old fallback gave for preferring a wrong-but-legacy column are
+    now obsolete, and one of them was removed by an earlier slice of this same unit:
+
+      "triage only scans triage and todo" — no longer true. Discovery resolves the
+      task's own intake/hold roles (U7 PR4), so marketing's `backlog` IS scanned.
+
+      "the legacy move path throws on custom targets" — no longer true either; a
+      move out of a non-legacy source column resolves targets from the task's own
+      workflow adjacency (FN-7591).
+
+    Asserted as "a column this workflow declares" as well as by id, because the id
+    is incidental and the INVARIANT is what matters.
+    */
     const store = storeWithSelection("builtin:marketing");
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    const target = await resolveReplanTargetColumn(store, "FN-1");
+
+    expect(target).toBe("backlog");
+    const ir = await resolveWorkflowIrForTask(store as never, "FN-1");
+    expect((ir as unknown as { columns: Array<{ id: string }> }).columns.map((c) => c.id))
+      .toContain(target);
   });
 
   it("falls back to triage when workflow resolution throws", async () => {

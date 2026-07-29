@@ -1,5 +1,6 @@
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveLifecycleColumns, workflowHasColumn } from "@fusion/core";
+import { schedulerLog } from "./logger.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:15:
@@ -195,14 +196,59 @@ export function isTaskStillInPlanningStage(
   return !hasAdvancedPastPlanning(task);
 }
 
-export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string> {
+/**
+ * Where a Plan Review REVISE bounce sends the card to be re-specified.
+ *
+ * FNXC:ReplanTargetLifecycleColumns 2026-07-29-09:30 (U7 / R3, R7):
+ * Resolved from the task's OWN workflow roles. This asked
+ * `workflowHasColumn(ir, "triage")` then `"todo"` and fell back to `"triage"` —
+ * twice by literal id, once by fiat. On a workflow that renames both, all three
+ * answers moved the card into a column the workflow does not declare: the R7
+ * violation reached by DESIGN rather than by drift, since the fallback returned the
+ * literal unconditionally including when the workflow could not be resolved at all.
+ * `reconcileUndeclaredTaskColumns` then had to clean up after a move the engine
+ * made on purpose.
+ *
+ * THE LEGACY IDS ARE PREFERRED FIRST, deliberately, and the trait resolution is the
+ * FALLBACK rather than the replacement. Both built-ins keep their existing target
+ * byte-for-byte: `builtin:coding` -> `triage`, Coding (Ideas) -> `todo`. Only a
+ * workflow that declares NEITHER legacy id — which previously got `"triage"` by
+ * fiat — reaches the resolved answer.
+ *
+ * WHY NOT SIMPLY "intake, else hold". I wrote that first and the existing suite
+ * caught it: Coding (Ideas) declares `ideas` as its intake, and `ideas` is MANUAL
+ * CAPTURE WITH NO AI (plan R10). Sending a rejected plan there stops it being
+ * replanned at all — it becomes an idea waiting for a human to press Start. The old
+ * code got Ideas right by ACCIDENT (it did not recognise `ideas` as intake at all
+ * and fell through to `todo`); a trait rule that "corrects" it would have shipped a
+ * regression dressed as a cleanup.
+ *
+ * So for a renamed workflow the fallback prefers HOLD over intake — the hold column
+ * is the planning lane and it has a releaser, whereas an intake column may be a
+ * manual-capture lane with nothing that auto-plans in it. That follows the Ideas
+ * precedent rather than contradicting it.
+ *
+ * `undefined` means "this workflow declares nowhere to replan" — the plan's U5
+ * contract is that such a task is skipped with a log rather than moved arbitrarily.
+ * Callers must park it visibly; inventing a column is what this change removes.
+ */
+export async function resolveReplanTargetColumn(
+  store: TaskStore,
+  taskId: string,
+): Promise<string | undefined> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
-    return "triage";
+    const roles = resolveLifecycleColumns(ir);
+    return roles?.hold ?? roles?.intake;
   } catch {
-    return "triage";
+    /*
+    Unreachable in practice: `resolveWorkflowIrForTask` is TOTAL — every failure
+    path returns the default coding IR rather than throwing. Kept as belt-and-braces
+    and documented as such, so nobody writes a test for a state that cannot occur.
+    */
+    return undefined;
   }
 }
 
@@ -236,8 +282,20 @@ export async function moveTaskToReplanColumn(
   store: TaskStore,
   task: Pick<Task, "id" | "column">,
   target?: string,
-): Promise<string> {
+): Promise<string | undefined> {
   const replanColumn = target ?? await resolveReplanTargetColumn(store, task.id);
+  /*
+  FNXC:ReplanTargetLifecycleColumns 2026-07-29-09:30 (U7 / R7):
+  No declared replan column: do NOT move. Every caller treats the return value as
+  "where the card now is", so a silent no-op would be a lie; returning `undefined`
+  makes the caller state the outcome instead of assuming one.
+  */
+  if (!replanColumn) {
+    schedulerLog.warn(
+      `${task.id}: replan rebound skipped — the task's workflow declares no intake or hold column to replan in; card left in ${task.column}`,
+    );
+    return undefined;
+  }
   if (task.column !== replanColumn) {
     await store.moveTask(task.id, replanColumn, { preserveWorktree: true });
   }

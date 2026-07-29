@@ -5164,6 +5164,26 @@ export class TaskExecutor {
       in an undeclared "triage" column, which the board rendered back in the intake lane.
       */
       const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
+      /*
+      FNXC:ReplanTargetLifecycleColumns 2026-07-29-09:30 (U7 / R7):
+      No declared replan column: park VISIBLY rather than log a move to `undefined`
+      and then not make it. `false` fails the graph's plan-replan node with
+      `remediation-not-scheduled`, which is the same shape as the zero-budget and
+      no-verdict branches above — a card left in place with an operator-readable
+      reason, not a silent no-op.
+      */
+      if (!replanColumn) {
+        executorLog.warn(
+          `${taskId}: plan-review replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left parked in ${liveTask.column}.`,
+        );
+        await this.store.logEntry(
+          taskId,
+          "Plan Review failed, but this task's workflow declares no planning column to replan in — left in place for a human.",
+          optionalStepRevisionLogOutcome(feedback, revisionKey),
+          this.getRunContextFor(taskId),
+        ).catch(() => undefined);
+        return false;
+      }
       await this.store.logEntry(
         taskId,
         `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
@@ -5293,6 +5313,25 @@ export class TaskExecutor {
     }
 
     const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
+    /*
+    FNXC:ReplanTargetLifecycleColumns 2026-07-29-09:30 (U7 / R7):
+    Same contract as the plan-review replan above: no declared column means no
+    move, said out loud. Returning here leaves the recovery-retry bookkeeping
+    unwritten on purpose — a retry that cannot relocate the card would just burn
+    the budget without changing anything.
+    */
+    if (!replanColumn) {
+      executorLog.warn(
+        `${task.id}: artifact-recovery replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left in place.`,
+      );
+      await this.store.logEntry(
+        task.id,
+        "Required workflow artifact missing, but this task's workflow declares no planning column to recover into — left in place for a human.",
+        `Missing artifact keys: ${artifactKeys.join(", ")}`,
+        context,
+      ).catch(() => undefined);
+      return;
+    }
     await this.store.logEntry(
       task.id,
       `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
