@@ -437,3 +437,137 @@ describe("the stale-planning sweeps resolve their planning lane", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. The two synchronous task:updated handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+FNXC:TriageLifecycleColumns 2026-07-28-13:40 (U7 / R3):
+The planning wake and the planning-evacuation abort are SYNCHRONOUS `task:updated`
+listeners, so they cannot resolve an IR without either a store read per board
+update or — for evacuation — delaying an abort that is synchronous today. They read
+a snapshot the discovery pass publishes instead.
+
+The two failures they had on a renamed workflow are opposites, which is why both
+directions are asserted:
+  - the WAKE never fired, so pressing Start did nothing until the next 15s tick —
+    the exact symptom the wake was built to remove, reintroduced;
+  - the EVACUATION fired when it should not have: moving a card from its intake
+    column into its own HOLD column looked like a withdrawal, so a live planning
+    session was KILLED and its status cleared for a card that was progressing
+    normally.
+
+The unpublished-roles window falls back to the legacy literals, so behavior there is
+byte-identical to today. That fallback is asserted too — it is the reason this
+conversion cannot regress a workflow that never renamed anything.
+*/
+describe("the synchronous planning handlers read the published lane", () => {
+  let rootDir = "";
+
+  beforeEach(async () => {
+    resetExecutorMocks();
+    vi.clearAllMocks();
+    rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-handlers-"));
+    vi.spyOn(planLog, "log").mockImplementation(() => {});
+    vi.spyOn(planLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  /** Build a processor whose discovery pass has already published `names`. */
+  async function processorWithPublishedRoles(
+    names: { intake: string; hold: string; wip: string },
+    task: Task,
+  ): Promise<TriageProcessor> {
+    const store = createStore({ tasks: [task], workflowIr: ir(names) });
+    const processor = new TriageProcessor(store, rootDir);
+    vi.spyOn(processor as unknown as { specifyTask: (t: Task) => Promise<void> }, "specifyTask")
+      .mockResolvedValue(undefined);
+    (processor as unknown as { running: boolean }).running = true;
+    await (processor as unknown as { poll: () => Promise<void> }).poll();
+    return processor;
+  }
+
+  describe("wake", () => {
+    /** Did a move into `column` wake the poll? */
+    async function wakes(
+      names: { intake: string; hold: string; wip: string },
+      column: string,
+      opts: { publish?: boolean } = { publish: true },
+    ): Promise<boolean> {
+      const task = createTask({ id: "FN-WAKE", column: names.intake, status: null });
+      const processor = opts.publish
+        ? await processorWithPublishedRoles(names, task)
+        : new TriageProcessor(createStore({ tasks: [task], workflowIr: ir(names) }), rootDir);
+      const handler = (processor as unknown as { taskColumnWakeHandler: (t: Task) => void })
+        .taskColumnWakeHandler;
+      const nudge = vi
+        .spyOn(processor as unknown as { requestImmediatePoll: () => boolean }, "requestImmediatePoll")
+        .mockReturnValue(true);
+
+      handler({ ...task, column } as Task);
+
+      return nudge.mock.calls.length > 0;
+    }
+
+    for (const [label, names] of [["default", DEFAULT_NAMES], ["renamed", RENAMED]] as const) {
+      it(`wakes for a move into the ${label} intake and hold columns`, async () => {
+        expect(await wakes(names, names.intake)).toBe(true);
+        expect(await wakes(names, names.hold)).toBe(true);
+      });
+
+      it(`does not wake for a move into the ${label} wip column`, async () => {
+        expect(await wakes(names, names.wip)).toBe(false);
+      });
+    }
+
+    it("falls back to the legacy lane for a card no pass has published yet", async () => {
+      // Byte-identical to pre-conversion behavior in this window: `todo` wakes,
+      // an unrelated column does not — regardless of what the workflow declares.
+      expect(await wakes(RENAMED, "todo", { publish: false })).toBe(true);
+      expect(await wakes(RENAMED, RENAMED.wip, { publish: false })).toBe(false);
+    });
+  });
+
+  describe("evacuation", () => {
+    /** Did a move into `column` terminate the live planning session? */
+    async function evacuates(
+      names: { intake: string; hold: string; wip: string },
+      column: string,
+    ): Promise<boolean> {
+      const task = createTask({ id: "FN-EVAC", column: names.intake, status: "planning" });
+      const processor = await processorWithPublishedRoles(names, task);
+      const dispose = vi.fn();
+      (processor as unknown as { activeSessions: Map<string, unknown> })
+        .activeSessions.set("FN-EVAC", { dispose, abort: async () => {} });
+      const handler = (processor as unknown as {
+        taskEvacuatedFromPlanningHandler: (t: Task) => void;
+      }).taskEvacuatedFromPlanningHandler;
+
+      handler({ ...task, column } as Task);
+
+      return dispose.mock.calls.length > 0;
+    }
+
+    for (const [label, names] of [["default", DEFAULT_NAMES], ["renamed", RENAMED]] as const) {
+      it(`does NOT evacuate a ${label} card moving between its own planning columns`, async () => {
+        // The renamed half is the regression: intake -> hold looked like a
+        // withdrawal, so a healthy planner was killed mid-spec.
+        expect(await evacuates(names, names.hold)).toBe(false);
+        expect(await evacuates(names, names.intake)).toBe(false);
+      });
+
+      it(`does NOT evacuate a ${label} card that legitimately advanced into execution`, async () => {
+        expect(await evacuates(names, "in-progress")).toBe(false);
+      });
+
+      it(`evacuates a ${label} card withdrawn to a column outside the lane`, async () => {
+        expect(await evacuates(names, "ideas")).toBe(true);
+      });
+    }
+  });
+});
