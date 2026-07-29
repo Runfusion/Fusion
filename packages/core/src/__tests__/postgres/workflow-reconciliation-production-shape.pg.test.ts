@@ -179,8 +179,18 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
     entry.traits = [...entry.traits, { trait: "wip", config: { limit: 1 } }];
     const target = await store.createWorkflowDefinition({ name: "Capped target", ir: targetIr, layout: {} });
 
-    // Occupy the single slot in the target workflow's entry column.
-    const filler = await store.createTask({ description: "fills the cap" });
+    /*
+    Occupy the single slot in the TARGET workflow's entry column.
+
+    FNXC:MergedPlanningColumn 2026-07-29-15:40 (U11 post-merge audit):
+    The filler's column must be explicit. It is created before the workflow switch, so it lands in
+    the PROJECT DEFAULT's intake column — which U11 merged to `todo`. The cap under test is on the
+    TARGET workflow's `triage` entry column (the target clones legacy-coding, which keeps the split
+    shape), so a filler in `todo` occupies nothing and the switch is no longer refused. Naming the
+    column here makes the fixture independent of whatever the project default's intake happens to
+    be, which is what let this drift in the first place.
+    */
+    const filler = await store.createTask({ description: "fills the cap", column: "triage" });
     await store.selectTaskWorkflow(filler.id, target.id);
     expect((await store.getTask(filler.id)).column).toBe("triage");
 

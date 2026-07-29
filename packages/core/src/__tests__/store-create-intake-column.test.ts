@@ -29,10 +29,22 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     await h.afterEach();
   });
 
-  it("lands a default-workflow task in triage (byte-identical regression guard)", async () => {
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-14:55 (U11 post-merge audit):
+  This guarded "a default-workflow create lands in triage" and was byte-identical for as long as
+  the default workflow declared a `triage` column. U11 merged Todo into Planning, so the default's
+  intake column IS `todo` — the create landing there is the change working, and the assertion is
+  updated to name the invariant (the DEFAULT WORKFLOW'S OWN intake column) rather than the id that
+  used to hold it.
+
+  Kept as a guard rather than deleted: it is the assertion that catches a regression back to the
+  hard-coded `"triage"` fallback, which is exactly the defect this commit fixes.
+  */
+  it("lands a default-workflow task in the default workflow's intake column", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "default workflow task" });
-    expect(task.column).toBe("triage");
+    expect(task.column).toBe("todo");
+    expect(task.column).not.toBe("triage");
   });
 
   it("lands a Coding (Ideas) task in the ideas intake column when selected explicitly", async () => {
@@ -58,6 +70,37 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
   a seed, so the card would sit in Planning forever with no log line in any lane — FN-8587's exact
   failure mode, for every new card rather than one edge case.
   */
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-14:20 (U11 post-merge audit):
+  A project that has never explicitly set a default workflow has no persisted default row, so
+  `materializeDefaultWorkflowSteps()` returns nothing, `resolvedEntryColumn` stays undefined, and
+  the create falls through to the hard-coded `|| "triage"`.
+
+  That column no longer exists in the default workflow. Measured post-merge: a plain
+  `createTask({ description })` on such a project lands in `triage` while the same project's
+  default workflow declares intake as `todo`. Triage discovery resolves intake by trait, so
+  `isAtIntakeColumn` is false for that card and it is never admitted for planning; it is not in
+  the hold column either, so hold-release ignores it too. The card is only rescued when
+  `reconcileUndeclaredTaskColumns` re-homes it.
+
+  This is the out-of-the-box state for a fresh project — `builtin:coding` is the IMPLICIT default
+  via DEFAULT_WORKFLOW_ID, and nothing writes a default-workflow row until an operator picks one.
+  */
+  it("lands a plain create in the default workflow's intake column when no default row is persisted", async () => {
+    const store = h.store();
+    // Deliberately NO setDefaultWorkflowId — the implicit-default, fresh-project shape.
+    const task = await store.createTask({ description: "plain create, no default workflow row" });
+    expect(task.column).toBe("todo");
+    expect(task.column).not.toBe("triage");
+  });
+
+  it("still writes a bootstrap PROMPT.md for that create, so triage can discover it", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "plain create, no default workflow row" });
+    const prompt = await readFile(join(store.getTasksDir(), task.id, "PROMPT.md"), "utf-8");
+    expect(prompt).toBe(buildBootstrapPrompt(task.id, task.title, task.description));
+  });
+
   it("lands a Coding (Ideas) task in ideas even when enabledWorkflowSteps is supplied", async () => {
     const store = h.store();
     await store.setDefaultWorkflowId("builtin:coding-ideas");

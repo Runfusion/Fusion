@@ -385,7 +385,10 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     });
 
     /* FNXC:MissionAdmission 2026-07-23-21:10: a late same-fingerprint task claimed by another feature is not a duplicate eligible for archival. */
-    expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "triage" });
+    /* FNXC:MergedPlanningColumn 2026-07-29-15:30 (U11): the assertion is "not archived" — the card
+       stays where it was created, which for the default lineage is now the merged planning column
+       `todo` rather than `triage`. */
+    expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "todo" });
     expect(await m.getFeature(siblingFeature.id)).toMatchObject({ taskId: siblingTask.id, status: "triaged" });
     expect(await m.getFeature(firstFeature.id)).toMatchObject({ taskId: claimedTask.id, status: "triaged" });
   });

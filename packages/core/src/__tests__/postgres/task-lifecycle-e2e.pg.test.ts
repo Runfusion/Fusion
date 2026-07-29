@@ -3,7 +3,7 @@
  * VAL-CROSS-001 — End-to-end task lifecycle (create → move columns → archive)
  *
  * Validates that the full task lifecycle works against PostgreSQL backend mode,
- * covering: create, move through columns (triage → todo → in-progress → in-review → done),
+ * covering: create, move through columns (todo → in-progress → in-review → done),
  * archive, and unarchive. This is the critical cross-area flow that must work
  * after SQLite removal.
  */
@@ -30,7 +30,13 @@ pgTest("VAL-CROSS-001: End-to-end task lifecycle (PostgreSQL)", () => {
     const store = h.store();
     const task = await store.createTask({ description: "E2E lifecycle task" });
     expect(task.id).toBeTruthy();
-    expect(task.column).toBe("triage");
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-15:25 (U11 post-merge audit):
+    A freshly created default-workflow card now rests in the merged planning column `todo` — U11
+    removed `triage` from the default lineage. The lifecycle being exercised is unchanged; only its
+    first column's id moved.
+    */
+    expect(task.column).toBe("todo");
 
     const fetched = await store.getTask(task.id);
     expect(fetched.id).toBe(task.id);

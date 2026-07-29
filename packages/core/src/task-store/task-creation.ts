@@ -25,6 +25,7 @@ import {generateTaskLineageId} from "../task-lineage.js";
 import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {resolveWorkflowIrById} from "../workflow-ir-resolver.js";
+import {DEFAULT_WORKFLOW_ID} from "../builtin-workflows.js";
 import {columnsWithFlag} from "../workflow-lifecycle-traits.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -82,8 +83,14 @@ Unresolvable workflow returns undefined and the caller keeps its existing legacy
 */
 async function resolveDefaultWorkflowIntakeColumn(store: TaskStore): Promise<string | undefined> {
   try {
-    const workflowId = await store.getDefaultWorkflowId();
-    if (!workflowId) return undefined;
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-14:40 (U11 post-merge audit):
+    Fall back to DEFAULT_WORKFLOW_ID when no default row is persisted. A fresh project has none —
+    `builtin:coding` is the IMPLICIT default that every other resolver already uses — so returning
+    undefined here sent the create to the hard-coded `"triage"` literal, a column the merged
+    default workflow does not declare.
+    */
+    const workflowId = (await store.getDefaultWorkflowId()) ?? DEFAULT_WORKFLOW_ID;
     const ir = await resolveWorkflowIrById(store, workflowId);
     return columnsWithFlag(ir, "intake")[0];
   } catch {
@@ -349,6 +356,28 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     const normalizedTitle = normalizeTitleForTaskId(title, id);
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-14:30 (U11 post-merge audit):
+    A project that has never explicitly set a default workflow has no persisted default row, so
+    `materializeDefaultWorkflowSteps()` returns nothing, `resolvedEntryColumn` stays undefined, and
+    the row below fell through to the hard-coded `|| "triage"`. That column no longer exists in the
+    default workflow, so the card landed in a lane its own workflow does not declare: triage
+    discovery resolves intake BY TRAIT and never admits it, hold-release ignores it, and only
+    `reconcileUndeclaredTaskColumns` eventually re-homes it.
+
+    This is the OUT-OF-THE-BOX shape — `builtin:coding` is the IMPLICIT default via
+    DEFAULT_WORKFLOW_ID and nothing writes a default-workflow row until an operator picks one — so
+    it affected every new task on a fresh project rather than an edge case.
+
+    Resolved side-effect-free and ONLY as a last resort before the literal, so every path that
+    already has an explicit column or a resolved entry column is untouched. The literal survives as
+    the final fallback for a store that cannot resolve any workflow at all.
+    */
+    // `workflowId: null` is an explicit "No workflow" opt-out — there is no workflow whose intake
+    // column could be resolved, so that path keeps the legacy literal.
+    const fallbackIntakeColumn = (input.column || options?.resolvedEntryColumn || input.workflowId === null)
+      ? undefined
+      : await resolveDefaultWorkflowIntakeColumn(store);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
       id,
@@ -375,7 +404,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       // FNXC:CodingIdeasWorkflow 2026-07-05-19:45: land the task in its
       // workflow's manual intake column (e.g. Coding (Ideas) → "ideas") when
       // no explicit column is given (main FN-7591 parity).
-      column: input.column || options?.resolvedEntryColumn || "triage",
+      column: input.column || options?.resolvedEntryColumn || fallbackIntakeColumn || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
       noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
@@ -490,8 +519,17 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       const isUnplannedStartCreate = options?.resolvedEntryColumn !== undefined
         && options.resolvedEntryColumn !== "triage"
         && task.column === "todo";
+      /*
+      FNXC:MergedPlanningColumn 2026-07-29-14:50 (U11 post-merge audit):
+      `fallbackIntakeColumn` must be honoured here too. Without it the card lands in the resolved
+      intake column (correct) but is classified NOT-intake and receives `generateSpecifiedPrompt`
+      instead of the bootstrap seed — and triage admits a card for planning only when its PROMPT.md
+      reads as a seed, so it would sit in Planning already looking "planned". That is FN-8587's
+      failure mode, reached by a different route.
+      */
       const isIntakeColumn = task.column === "triage"
         || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn)
+        || (fallbackIntakeColumn !== undefined && task.column === fallbackIntakeColumn)
         || isUnplannedStartCreate;
       const usedBootstrapPrompt = !options?.promptOverride && isIntakeColumn;
       const prompt = options?.promptOverride
@@ -761,6 +799,28 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     const now = options?.createdAt ?? new Date().toISOString();
     // FN-5077: null normalized titles are treated as "no title" and allow standard fallback/summarization behavior.
     const normalizedTitle = normalizeTitleForTaskId(title, id);
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-14:30 (U11 post-merge audit):
+    A project that has never explicitly set a default workflow has no persisted default row, so
+    `materializeDefaultWorkflowSteps()` returns nothing, `resolvedEntryColumn` stays undefined, and
+    the row below fell through to the hard-coded `|| "triage"`. That column no longer exists in the
+    default workflow, so the card landed in a lane its own workflow does not declare: triage
+    discovery resolves intake BY TRAIT and never admits it, hold-release ignores it, and only
+    `reconcileUndeclaredTaskColumns` eventually re-homes it.
+
+    This is the OUT-OF-THE-BOX shape — `builtin:coding` is the IMPLICIT default via
+    DEFAULT_WORKFLOW_ID and nothing writes a default-workflow row until an operator picks one — so
+    it affected every new task on a fresh project rather than an edge case.
+
+    Resolved side-effect-free and ONLY as a last resort before the literal, so every path that
+    already has an explicit column or a resolved entry column is untouched. The literal survives as
+    the final fallback for a store that cannot resolve any workflow at all.
+    */
+    // `workflowId: null` is an explicit "No workflow" opt-out — there is no workflow whose intake
+    // column could be resolved, so that path keeps the legacy literal.
+    const fallbackIntakeColumn = (input.column || options?.resolvedEntryColumn || input.workflowId === null)
+      ? undefined
+      : await resolveDefaultWorkflowIntakeColumn(store);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
       id,
@@ -787,7 +847,7 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       // FNXC:CodingIdeasWorkflow 2026-07-05-19:45: land the task in its
       // workflow's manual intake column (e.g. Coding (Ideas) → "ideas") when
       // no explicit column is given (main FN-7591 parity).
-      column: input.column || options?.resolvedEntryColumn || "triage",
+      column: input.column || options?.resolvedEntryColumn || fallbackIntakeColumn || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
       noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
