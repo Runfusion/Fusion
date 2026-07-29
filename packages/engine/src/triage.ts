@@ -55,7 +55,6 @@ import {
   parsePlanningPlanMd,
   type NearDuplicateCandidate,
   resolveLifecycleColumns,
-  type WorkflowIr,
 } from "@fusion/core";
 
 
@@ -806,16 +805,35 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
     In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a planning admission slot and blocks new triage work. (The separate maxTriageConcurrent pool AND its setting are both gone — FN-8453 removed the pool, the capacity simplification removed the dead key; planning shares the one agent count.)
     */
-    /* Both planner lanes, resolved from the DEFAULT workflow — this startup sweep
-       is board-wide and has no single task to resolve against. Cards belonging to
-       a workflow with different lane names are picked up by the per-task filter
-       below rather than by this query. */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-16:40 (U11 — self-review of this PR):
+    A board-wide startup sweep has NO single task to resolve lanes against, so it
+    queries the UNION of the legacy planner ids and the default workflow's resolved
+    lanes rather than picking one answer.
+
+    The union is load-bearing, not defensive. Resolving the two queries from the
+    default workflow alone looked equivalent and was not: post-#2515 that workflow's
+    `intake` and `hold` are the SAME merged column, so both queries collapsed onto
+    `todo` and nothing ever swept `triage`. A legacy or Coding (Ideas) card left
+    holding a stale `planning` status would then occupy a planning admission slot
+    permanently — exactly the failure the 2026-07-04 note above describes. Caught by
+    `triage.test.ts`'s rebounded-replan case.
+
+    Querying extra columns is free here: the sweep only READS and every row is
+    filtered on `status === "planning"` before anything is written.
+    */
     const sweepLanes = resolvePlannerLanes(this.store, "");
-    const triageTasks = await this.store.listTasks({ column: sweepLanes.intake, slim: true });
-    const todoTasks = await this.store.listTasks({ column: sweepLanes.hold, slim: true });
-    const stale = [...triageTasks, ...todoTasks].filter(
-      (t) => t.status === "planning" && !this.processing.has(t.id),
+    const sweepColumns = [...new Set(["triage", "todo", sweepLanes.intake, sweepLanes.hold])];
+    const swept = await Promise.all(
+      sweepColumns.map((column) => this.store.listTasks({ column, slim: true })),
     );
+    const seen = new Set<string>();
+    const stale = swept.flat().filter((t) => {
+      if (t.status !== "planning" || this.processing.has(t.id)) return false;
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
     for (const t of stale) {
       planLog.log(`Startup sweep: clearing stale 'planning' status on ${t.id}`);
       await this.store.updateTask(t.id, { status: null });

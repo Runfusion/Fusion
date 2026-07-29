@@ -75,6 +75,26 @@ function defaultIr(): WorkflowIr {
   } as unknown as WorkflowIr;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-16:05 (P0 audit — #2515):
+The MERGED default lineage as #2515 actually shipped it: ONE pre-implementation
+column, id `todo`, carrying intake AND hold. This is the shape that broke
+`recoverApprovedTask`, whose guard was a bare `task.column !== "triage"`.
+*/
+function mergedDefaultIr(): WorkflowIr {
+  return {
+    version: "v2",
+    id: WF,
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as unknown as WorkflowIr;
+}
+
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-001",
@@ -179,6 +199,27 @@ describe("triage planning handoff releases into the workflow's hold column", () 
     await new TriageProcessor(store, rootDir).recoverApprovedTask(task);
 
     expect(moveTaskIf).toHaveBeenCalledWith("FN-001", "todo", expect.any(Function));
+  });
+
+  it("P0: admits a MERGED-lineage card sitting in the Planning column (#2515)", async () => {
+    /*
+    THE STALL. `recoverApprovedTask` opened with a bare `task.column !== "triage"`.
+    #2515 merged Todo into Planning on the default lineage, so every default card
+    now sits in `todo` and this guard rejected all of them — an approved plan whose
+    finalize was interrupted was never released, and nothing else owns that card.
+
+    `triage` stayed a legal id, so nothing threw; the guard just stopped matching.
+    The assertion is the RETURN VALUE, because on a merged lineage the card is
+    already where the release would send it — so "no move issued" is what BOTH the
+    broken and the fixed code do, and only the outcome discriminates.
+    */
+    const task = createTask({ column: "todo" });
+    const { store, moveTaskIf } = createStore(task, mergedDefaultIr());
+
+    const recovered = await new TriageProcessor(store, rootDir).recoverApprovedTask(task);
+
+    expect(recovered).toBe(true);
+    expect(moveTaskIf).not.toHaveBeenCalled();
   });
 
   it("does NOT move a card already resting in the hold column", async () => {
