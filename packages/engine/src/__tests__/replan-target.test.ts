@@ -253,14 +253,22 @@ describe("planning-stage guard", () => {
 });
 
 describe("resolveReplanTargetColumn", () => {
-  it("targets triage for the default Coding workflow", async () => {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-15:25 (U11 — post-#2515 audit):
+#2515 removed `triage` from the DEFAULT lineage, so the default workflow's replan
+column is now its merged Planning column, `todo`. `resolveReplanTargetColumn`
+already reads the IR rather than a literal, so it self-healed to the right answer
+and these expectations were the stale half — they were left RED on main by #2515.
+Updated to the post-merge truth, not loosened: each still pins one exact column.
+*/
+  it("targets the merged Planning column for the default Coding workflow", async () => {
     const store = storeWithSelection("builtin:coding");
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("targets triage when the task has no workflow selection", async () => {
+  it("targets the merged Planning column when the task has no workflow selection", async () => {
     const store = storeWithSelection(undefined);
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
   it("targets todo for Coding (Ideas), which declares no triage column", async () => {
@@ -276,14 +284,20 @@ describe("resolveReplanTargetColumn", () => {
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
   });
 
-  it("falls back to triage when workflow resolution throws", async () => {
+  /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
+     the error and hands back the default IR, whose planner lane is now `todo`. The
+     two literal `return "triage"` fallbacks survive only for workflows that declare
+     neither column (see the marketing case above) — a pre-existing wart, since that
+     names a column the default lineage no longer has. Left for the owner of the
+     replan-target column policy rather than widened here. */
+  it("falls back to the default lineage planner when workflow resolution throws", async () => {
     const store = {
       getTaskWorkflowSelection: vi.fn(() => {
         throw new Error("boom");
       }),
       getWorkflowDefinition: vi.fn().mockRejectedValue(new Error("boom")),
     } as unknown as TaskStore;
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 });
 
@@ -325,7 +339,7 @@ moves.
 describe("replan bounces preserve the task worktree (FN-8603)", () => {
   const REPLAN_BOUNCE_ORIGINS = ["in-progress", "in-review", "done"] as const;
   const REPLAN_COLUMN_SHAPES = [
-    { workflowId: undefined, expected: "triage", label: "default Coding (triage replan column)" },
+    { workflowId: undefined, expected: "todo", label: "default Coding (merged Planning replan column, post-#2515)" },
     { workflowId: "builtin:coding-ideas", expected: "todo", label: "Coding (Ideas) (plan-in-place todo)" },
   ] as const;
 
