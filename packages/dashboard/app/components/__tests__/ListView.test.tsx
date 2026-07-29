@@ -922,7 +922,17 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeInTheDocument();
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+    "In progress", not "In Progress". The label is now interpolated from the WORKFLOW's
+    own column name (`BUILTIN_CODING_WORKFLOW_IR` declares "In progress") instead of the
+    hardcoded English string `taskDetail.move.backToInProgress`. This assertion is the
+    visible proof that the label follows the workflow: rename that column and the menu
+    renames with it. Task Detail cases that render before board-workflows resolves still
+    read "Back to In Progress" — they go through the no-metadata fallback, which uses
+    the legacy column label map.
+    */
+    expect(screen.getByRole("menuitem", { name: "Back to In progress" })).toBeInTheDocument();
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-006"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
