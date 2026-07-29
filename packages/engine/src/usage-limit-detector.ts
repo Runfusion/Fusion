@@ -122,8 +122,25 @@ export class UsageLimitPauser {
     settings: Awaited<ReturnType<TaskStore["getSettings"]>>,
     agentType: string,
   ): boolean {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:20 (P0 audit after the Planning-column merge):
+    The planning lane was identified by the LITERAL `triage`. The default coding lineage no
+    longer declares that column, so this comparison stopped matching for every default-workflow
+    card — silently. Nothing throws; the lane simply resolves to no providers, so when a provider
+    hits a usage limit during a PLANNING session the fan-out that pauses other tasks on that same
+    provider skips every default card, and they keep hammering the rate-limited provider. The
+    triggering task is still paused by the explicit fallback below, so no card is stranded — what
+    is lost is the blast-radius containment.
+
+    A planning session runs while the card is PRE-IMPLEMENTATION. The caller has already excluded
+    `done`/`archived`, so that is exactly "not the implementation column and not the review
+    column" — which matches `todo`, `triage`, `ideas`, and a renamed planner alike. The two
+    literals that remain here name the wip and review lanes and belong to the executor/scheduler
+    vocabulary conversion, not to this fix.
+    */
+    const isPreImplementation = task.column !== "in-progress" && task.column !== "in-review";
     const providersByActiveLane = agentType === "triage"
-      ? (task.column === "triage" ? [
+      ? (isPreImplementation ? [
           resolvePlanningSessionModel(task.planningModelProvider, task.planningModelId, settings).provider,
           resolveValidatorSessionModel(task.validatorModelProvider, task.validatorModelId, settings).provider,
         ] : [])

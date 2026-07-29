@@ -16392,8 +16392,21 @@ export class TaskExecutor {
 
     // Update task: clear worktree and status, move to triage
     await this.store.updateTask(taskId, { worktree: null, status: null });
-    await this.store.moveTask(taskId, "triage");
-    await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-planning");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:10 (P0 audit after the Planning-column merge):
+    This wrote the LITERAL `triage`. The default coding lineage no longer declares that column —
+    it has one pre-implementation column, id `todo` — so a card that gained a dependency
+    mid-execution had its work discarded and was then parked in a column its own workflow does
+    not define. Nothing in the graph routes a card out of an undeclared column, and the only
+    rescue is `reconcileUndeclaredTaskColumns` on the NEXT ENGINE START, so between the abort and
+    a restart the card is stalled with no automatic recovery. It does not throw, which is why it
+    would have surfaced as a user report rather than a red test.
+
+    Resolve the rebound target from the task's own workflow (hold -> intake -> first declared
+    column), the same helper the other ~16 executor rebounds already use.
+    */
+    await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId));
+    await this.store.logEntry(taskId, "Execution stopped — work discarded, requeued for re-planning");
   }
 
   /**
