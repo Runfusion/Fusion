@@ -36,7 +36,7 @@ import { VALID_TRANSITIONS } from "./types.js";
 import type { Column } from "./types.js";
 import type { WorkflowIr, WorkflowIrV2 } from "./workflow-ir-types.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS } from "./workflow-ir.js";
-import { resolveReboundTarget } from "./workflow-lifecycle-traits.js";
+import { resolveLifecycleColumns, resolveReboundTarget } from "./workflow-lifecycle-traits.js";
 
 /** A column→allowed-target-columns adjacency map. */
 export type ColumnAdjacency = Map<string, string[]>;
@@ -74,6 +74,83 @@ function orderDerivedAdjacency(ir: WorkflowIrV2): ColumnAdjacency {
   return adj;
 }
 
+
+/*
+FNXC:MergedPlanningColumn 2026-07-29-11:05 (U11):
+`isDefaultWorkflowColumns` recognises the default workflow by matching the legacy SIX column ids
+as a set. U11 merges Todo into Planning, so the default declares FIVE — the match stops firing and
+the default board silently falls through to `orderDerivedAdjacency`, which is neighbor-only.
+
+That is a real, operator-visible loss, not a cosmetic one. Measured against `VALID_TRANSITIONS`,
+neighbor adjacency both DROPS legal moves and INVENTS an illegal one:
+
+  in-progress -> done       DROPPED — the mission-validation cross edge, which is the exact case
+                            `custom-review-lane-merge-blocker` covers
+  in-review   -> todo       DROPPED — sending review work back to planning
+  todo/done   -> archived   DROPPED — the FN-4892 direct-archival edges
+  done        -> in-review  INVENTED — a backward edge into review that no rule ever allowed
+
+So adjacency is derived from lifecycle ROLES instead of column ids. `VALID_TRANSITIONS` is a
+role-level statement wearing legacy id clothing; expressing it that way makes it survive a rename
+or a merge, which is the whole point of this program. Applied only when the workflow declares the
+full lifecycle role set — anything less is a genuinely custom shape and keeps neighbor adjacency,
+so no existing custom workflow changes behavior.
+
+For the legacy six, intake and hold are distinct columns and this reproduces `VALID_TRANSITIONS`
+verbatim (asserted). For the merged shape the two roles resolve to the SAME column, so the
+self-edges collapse and the remaining edges are exactly the legacy ones with `triage` folded in.
+*/
+const ROLE_TRANSITIONS: Record<string, string[]> = {
+  intake: ["hold", "archived"],
+  hold: ["wip", "intake", "archived"],
+  wip: ["review", "hold", "intake", "complete"],
+  review: ["complete", "wip", "hold", "intake"],
+  complete: ["hold", "intake", "archived"],
+  archived: ["complete"],
+};
+
+/** Role→column-id for this workflow, or `undefined` when a lifecycle role is missing. */
+function resolveRoleColumns(ir: WorkflowIrV2): Record<string, string> | undefined {
+  const lifecycle = resolveLifecycleColumns(ir);
+  if (!lifecycle) return undefined;
+  const { intake, hold, wip, review, complete, archived } = lifecycle;
+  // A workflow missing any lifecycle role is a genuinely custom shape; neighbor adjacency is the
+  // honest answer there rather than a half-applied lifecycle.
+  if (!wip || !review || !complete || !archived) return undefined;
+  const planning = hold ?? intake;
+  if (!planning) return undefined;
+  return {
+    intake: intake ?? planning,
+    hold: planning,
+    wip,
+    review,
+    complete,
+    archived,
+  };
+}
+
+function roleDerivedAdjacency(ir: WorkflowIrV2): ColumnAdjacency | undefined {
+  const roles = resolveRoleColumns(ir);
+  if (!roles) return undefined;
+  const declared = new Set(ir.columns.map((c) => c.id));
+  const adj: ColumnAdjacency = new Map();
+  for (const [role, targetRoles] of Object.entries(ROLE_TRANSITIONS)) {
+    const fromColumn = roles[role];
+    if (!fromColumn || !declared.has(fromColumn)) continue;
+    const targets: string[] = [];
+    for (const targetRole of targetRoles) {
+      const toColumn = roles[targetRole];
+      // Skip self-edges (merged roles resolve to the same column) and undeclared targets.
+      if (!toColumn || toColumn === fromColumn || !declared.has(toColumn)) continue;
+      if (!targets.includes(toColumn)) targets.push(toColumn);
+    }
+    // Merged roles write the same key twice; union rather than overwrite.
+    const existing = adj.get(fromColumn) ?? [];
+    adj.set(fromColumn, [...existing, ...targets.filter((t) => !existing.includes(t))]);
+  }
+  return adj;
+}
+
 /**
  * Resolve the full column adjacency for a workflow IR. The default workflow
  * reproduces `VALID_TRANSITIONS` exactly; custom workflows use order-derived
@@ -89,6 +166,8 @@ export function resolveColumnAdjacency(ir: WorkflowIr): ColumnAdjacency {
   if (isDefaultWorkflowColumns(v2)) {
     return defaultWorkflowAdjacency();
   }
+  const roleDerived = roleDerivedAdjacency(v2);
+  if (roleDerived) return roleDerived;
   return orderDerivedAdjacency(v2);
 }
 
