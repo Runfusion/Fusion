@@ -7129,13 +7129,24 @@ export class TaskExecutor {
         };
       }
       const status = live.steps[stepIndex]?.status;
-      if (status === "done" || status === "skipped") return { success: true };
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-29-14:10 (U8 / R4, PR #2546 review — greptile P2):
+      Carry the pass's ending on the SUCCESS returns too. One pass serves every foreach instance,
+      so "this step completed" and "the pass stopped on a pending-review block" are independent
+      facts and both can hold. Reporting only on failure made the exit branch-dependent: with
+      `deferDoneToReview` every instance returns success, so the ending would never reach the seam
+      and the graph-owned park would be unreachable for that shape.
+
+      The seam still routes it only on FAILURE — a genuinely completed step must not be diverted
+      to the park — so this is inert today and correct once the seam flip lands.
+      */
+      if (status === "done" || status === "skipped") return { success: true, exit: phaseResult?.exit };
       // Step not terminal after the pass: when a review will author done-ness
       // (deferDoneToReview), the pass having RUN is the success signal — the review
       // gates the projection write. Otherwise the implementation pass failed to
       // complete this step, so report failure rather than masking it (FIX 3: the
       // prior code returned success on both branches, hiding step-session failures).
-      if (active?.deferDoneToReview === true) return { success: true };
+      if (active?.deferDoneToReview === true) return { success: true, exit: phaseResult?.exit };
       return {
         success: false,
         exit: phaseResult?.exit,
