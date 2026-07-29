@@ -286,26 +286,6 @@ export function getUnmetSchedulingDependencies(
   });
 }
 
-export function isRunnableQueuedOverlapCandidate(
-  task: Task,
-  tasks: Task[],
-  now = Date.now(),
-  activeScopes?: Map<string, string[]>,
-  scope: string[] = [],
-): boolean {
-  if (task.column !== "todo" || task.status !== "queued") return false;
-  if (task.paused || task.userPaused) return false;
-  if (task.nextRecoveryAt && new Date(task.nextRecoveryAt).getTime() > now) return false;
-  if (getUnmetSchedulingDependencies(task, tasks).length > 0) return false;
-  if (!activeScopes || activeScopes.size === 0) return true;
-
-  if (scope.length === 0) return true;
-  for (const activeScope of activeScopes.values()) {
-    if (!activeScope.length) continue;
-    if (pathsOverlap(scope, activeScope)) return false;
-  }
-  return true;
-}
 
 export function shouldHoldActiveFileScopeLease(
   task: Task,
