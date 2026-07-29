@@ -193,6 +193,13 @@ export default defineConfig({
             */
             "src/__tests__/merge-single-flight-invariant.test.ts",
             /*
+            FNXC:EngineTests 2026-07-29-12:40 (U9 review lane):
+            The merge half of U9's safeguards fires in blocking CI; this is the review half, which did not. `workflow-step-verdict-parsing.test.ts` holds the leniency guard: a prose REJECTION must never be promoted to APPROVE. Removing the REVISE/RETHINK/negated-approval disqualifiers in `proseSignalsClearApproval` fails 11 of its cases — a fail-OPEN defect on the path to an irreversible merge, so it belongs in the gate rather than a non-blocking run hours later. Deterministic, pure parser assertions, no mocks/git/network.
+
+            NOT admitted: `reviewer.test.ts`, which holds the sibling "a provider outage is not a review verdict" family. It is green in engine-default but fails 72 cases under engine-core, because that project resolves @fusion/core through the REDUCED `index.gate.ts` barrel/bundle and the suite reaches exports it does not carry (`__vite_ssr_import_0__.has…` TypeError). Admitting it needs the gate barrel widened, which trades away the bundle's whole reason for existing; left outside deliberately rather than papered over.
+            */
+            "src/__tests__/workflow-step-verdict-parsing.test.ts",
+            /*
             FNXC:EngineTests 2026-07-28-10:20:
             Gate admission evidence (U9): this pins which authority actually decides merge-region policy — the built-in IR declares `merge-retry.maxAttempts` / `manual-merge-hold.release` that no handler reads, while the live budgets sit in `settings.maxAutoMergeRetries` and `ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES`. Merge is where irreversible work happens, and the drift it guards is SILENT: a handler-only edit can quietly make the dead IR config live (or move the live budget) with no other test failing. Outside the gate the ratchet cannot fire on the defect it exists for. Deterministic and pure — no git subprocesses, no timers, no network, no store; 3 ms of assertions.
             */
