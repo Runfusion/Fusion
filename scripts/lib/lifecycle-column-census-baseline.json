@@ -3,8 +3,8 @@
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
-    "packages/engine/src/scheduler.ts": 26,
     "packages/core/src/store.ts": 12,
+    "packages/engine/src/scheduler.ts": 12,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
     "packages/dashboard/src/github-tracking-comments.ts": 9,
@@ -137,6 +137,8 @@
   "deliberateByFile": {
     "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
+    "packages/engine/src/scheduler.ts\u0000in-progress": 2,
+    "packages/engine/src/scheduler.ts\u0000in-review": 2,
     "packages/cli/src/commands/task.ts\u0000archived": 1,
     "packages/cli/src/commands/task.ts\u0000done": 1,
     "packages/cli/src/extension.ts\u0000archived": 1,
@@ -158,6 +160,8 @@
     "packages/engine/src/hold-release.ts\u0000archived": 1,
     "packages/engine/src/hold-release.ts\u0000done": 1,
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
+    "packages/engine/src/scheduler.ts\u0000archived": 1,
+    "packages/engine/src/scheduler.ts\u0000done": 1,
     "packages/engine/src/triage.ts\u0000triage": 1
   },
   "queryByFile": {
