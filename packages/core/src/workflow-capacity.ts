@@ -56,6 +56,26 @@ already means something to the gate (`used >= 0` is true on an empty board, so a
 0 limit deadlocks dispatch rather than disabling it) and the Command Center
 slider clamps it to a 1..50 range. Overloading a value as a mode is how sentinels
 become defects; the boolean says what it means.
+
+── AUDITED: the one other consumer of `maxWorktrees`, which does NOT come through here ──
+
+`SelfHealingManager.enforceWorktreeCap()` (packages/engine/src/self-healing.ts) reads
+`settings.maxWorktrees` RAW and caps on-disk worktree directories at `2 x` it. Measured: that
+is the only remaining raw read that bounds anything; every admission decision resolves through
+this function, whose single call site is `scheduler.ts`.
+
+It is deliberately left alone, because it is not the same kind of number. This function answers
+"is a worktree a CAPACITY dimension" — an admission question. `enforceWorktreeCap` answers "how
+many worktree directories may sit on disk" — a hygiene question, and it only ever removes IDLE
+ones. Worktrees still exist on disk in OFF mode (everything runs in a worktree, planning
+included), so that bound must keep applying or idle directories accumulate without limit.
+
+Consequence, recorded rather than fixed: with `worktreeLimitEnabled === false` the number still
+governs disk retention, so a very small `maxWorktrees` reaps idle worktrees eagerly even though
+it gates no admission. The operator scoped this out explicitly ("don't worry about worktrees off
+or worktree capacity 0 — that's unimportant"). Do NOT "unify" the two readers on that basis:
+routing hygiene through `resolveWorktreeCapacityLimit` would return `null` in OFF mode and
+silently remove the disk bound altogether, which is a leak, not a simplification.
 */
 export function resolveWorktreeCapacityLimit(
   settings: Pick<Settings, "maxWorktrees" | "worktreeLimitEnabled"> | undefined,
