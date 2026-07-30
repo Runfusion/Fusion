@@ -1,4 +1,4 @@
-import { columnsWithFlag, resolveWorkflowIrForTask, type WorkflowIr } from "@fusion/core";
+import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask, type WorkflowIr } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-08:45 (#2783 review — coderabbit):
@@ -95,6 +95,20 @@ which a complete-but-not-archived card is not.
 The two roles resolve independently and have failed independently before, so they get independent
 helpers rather than one flag argument — a caller that wants both asks `landedColumnsForTask`.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (batch-core, following #2821's review):
+THE EMPTY SET AND THE UNEXPRESSED ONE ARE DIFFERENT, and these three conflated them.
+
+Each read `resolved.length > 0 ? resolved : legacyId`, which is right for a v1 upgrade — every column
+emitted with `traits: []`, so the legacy id is the only vocabulary that exists — and wrong for a v2
+board that expresses traits and simply declares no lane of that role. There the legacy id is a column
+the board may still HAVE without meaning it: a `done` or `archived` column left untraited on purpose.
+Falling back onto it widens the guard onto a role the board explicitly did not assign.
+
+`declaresAnyLifecycleTrait` separates the two, matching the shape #2821's review established for
+`resolveNodeOverrideLanes`. A board that traits nothing keeps the legacy id; a board that traits
+something is taken at its word, including when the answer is "no such lane".
+*/
 export async function archivedColumnsForTask(
   store: LaneResolverStore,
   taskId: string,
@@ -102,8 +116,8 @@ export async function archivedColumnsForTask(
 ): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
-    const archived = columnsWithFlag(ir, "archived");
-    return new Set(archived.length > 0 ? archived : ["archived"]);
+    if (!declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
+    return new Set(columnsWithFlag(ir, "archived"));
   } catch {
     return new Set(["archived"]);
   }
@@ -122,8 +136,8 @@ export async function wipColumnsForTask(
 ): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
-    const wip = columnsWithFlag(ir, "countsTowardWip");
-    return new Set(wip.length > 0 ? wip : ["in-progress"]);
+    if (!declaresAnyLifecycleTrait(ir)) return new Set(["in-progress"]);
+    return new Set(columnsWithFlag(ir, "countsTowardWip"));
   } catch {
     return new Set(["in-progress"]);
   }
@@ -142,8 +156,8 @@ export async function preWipColumnsForTask(
 ): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
-    const preWip = [...columnsWithFlag(ir, "intake"), ...columnsWithFlag(ir, "hold")];
-    return new Set(preWip.length > 0 ? preWip : ["todo"]);
+    if (!declaresAnyLifecycleTrait(ir)) return new Set(["todo"]);
+    return new Set([...columnsWithFlag(ir, "intake"), ...columnsWithFlag(ir, "hold")]);
   } catch {
     return new Set(["todo"]);
   }
