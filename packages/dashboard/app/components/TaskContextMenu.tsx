@@ -200,7 +200,18 @@ export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenu
   So the census reaching zero for `triage` means "no unconverted guards remain", not "the string is
   gone". Recorded here rather than achieved by deleting a fallback to move a number.
   */
-  return flags ? (flags.intake === true || flags.hold === true) : column === "triage";
+  if (flags) return flags.intake === true || flags.hold === true;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:40 DELIBERATE-LITERAL: the fallback arm only.
+  Now that traits decide first, this is reachable ONLY when the caller supplies no flags at all —
+  the pre-load window before the board resolves columns, and a card stranded on an id its workflow
+  no longer declares. There is nothing to resolve FROM in that state, so this is not an unconverted
+  guard: deleting it does not remove a decision, it picks the other guess ("not a pre-implementation
+  lane") and silently drops the Plan affordance during first paint. Same class as the marked
+  fallbacks in `TaskCard.tsx`, `TaskDetailModal.tsx`, and `live-agent-count.ts`. Retires with the
+  pre-load window.
+  */
+  return column === "triage";
 }
 
 
