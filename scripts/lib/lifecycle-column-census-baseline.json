@@ -17,7 +17,7 @@
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
     "packages/dashboard/app/components/TaskCard.tsx": 3,
-    "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
+    "packages/dashboard/app/components/TaskDetailModal.tsx": 10,
     "packages/engine/src/scheduler.ts": 26,
     "packages/core/src/store.ts": 12,
     "packages/engine/src/mission-execution-loop.ts": 10,
