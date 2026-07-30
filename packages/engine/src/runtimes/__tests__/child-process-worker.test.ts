@@ -117,7 +117,9 @@ type MockWorker = {
 type MockRuntime = {
   config: ProjectRuntimeConfig;
   centralCore: {
-    getGlobalConcurrencyState?: () => Promise<unknown>;
+    /* FNXC:CapacityModel 2026-07-31-03:10: mirrors the worker's stub surface —
+       `getGlobalConcurrencyState` was DELETED with the cross-project cap. */
+    getLiveRunningAgentCounts?: () => Promise<unknown>;
     recordTaskCompletion?: () => Promise<void>;
   };
   status: RuntimeStatus;
