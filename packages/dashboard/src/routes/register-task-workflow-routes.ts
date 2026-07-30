@@ -2083,7 +2083,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      if (task.column !== "done" && task.column !== "archived") {
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-22:50 (fleet batch 3): terminal lanes by role; one
+         resolution answers both, legacy ids stay as the per-role fallback. */
+      const revertLifecycle = await resolveTaskLifecycleColumns(scopedStore, task.id);
+      if (task.column !== (revertLifecycle?.complete ?? "done")
+        && task.column !== (revertLifecycle?.archived ?? "archived")) {
         throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
       }
 
@@ -5801,7 +5805,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         })).task;
       } else {
         const hasActiveSession = Boolean(updatedTask.sessionFile);
-        if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+        const wipColumnForWake = (await resolveTaskLifecycleColumns(scopedStore, updatedTask.id))?.wip ?? "in-progress";
+        if (steeringCommentId && updatedTask.column === wipColumnForWake && updatedTask.assignedAgentId && !hasActiveSession) {
           await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
             triggeringCommentType: "steering",
             triggeringCommentIds: [steeringCommentId],
@@ -5828,7 +5833,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!prInfo) {
         throw badRequest("Task must have a linked pull request before PR feedback can be addressed");
       }
-      if (task.column !== "in-review" && task.column !== "in-progress") {
+      const prFeedbackLifecycle = await resolveTaskLifecycleColumns(scopedStore, task.id);
+      if (task.column !== (prFeedbackLifecycle?.review ?? "in-review")
+        && task.column !== (prFeedbackLifecycle?.wip ?? "in-progress")) {
         throw badRequest("PR feedback can only be addressed for in-review or in-progress tasks");
       }
 
@@ -5870,7 +5877,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const hasActiveSession = Boolean(updatedTask.sessionFile);
-      if (updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+      const wipColumnForWake = (await resolveTaskLifecycleColumns(scopedStore, updatedTask.id))?.wip ?? "in-progress";
+      if (updatedTask.column === wipColumnForWake && updatedTask.assignedAgentId && !hasActiveSession) {
         await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: [steeringCommentId],
