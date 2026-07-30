@@ -398,6 +398,16 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     // FNXC:WorkflowColumns 2026-07-30-04:00 (U12): resolved unconditionally — the gate is gone, so
     // `undefined` now means only "no IR on this path or a v1 column-less IR", never "flag off".
     const workflowIr: WorkflowIr | undefined = await resolveTaskWorkflowIrForMove(store, id);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: moves.ts):
+    ONE lifecycle resolution for the whole move, derived from the IR resolved on the line above — so
+    every role guard below costs nothing extra on the hottest lifecycle path in the system. The local
+    that used to compute this further down now aliases it rather than resolving a second time.
+    
+    `undefined` means no IR on this path or a v1 column-less IR, so each site keeps its legacy id as
+    the fallback: a move must behave exactly as before when there is no basis to resolve from.
+    */
+    const moveLifecycle = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
 
     if (task.column === toColumn) {
       if (internal.fromHandoff && toColumn === "in-review") {
@@ -475,13 +485,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         return task;
 }
 
-      if (toColumn === "done" && store.clearDoneTransientFields(task)) {
+      if (toColumn === (moveLifecycle?.complete ?? "done") && store.clearDoneTransientFields(task)) {
         task.updatedAt = new Date().toISOString();
         await store.atomicWriteTaskJson(dir, task);
         if (store.isWatching) store.taskCache.set(id, { ...task });
         store.emit("task:updated", task);
       }
-      if (toColumn === "done") {
+      if (toColumn === (moveLifecycle?.complete ?? "done")) {
         await store.clearNearDuplicateReferencesToFailSoft(id, {
           column: "done",
           reason: "done",
@@ -575,7 +585,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       // FNXC:WorkflowTransitionPolicy 2026-07-19-10:20:
       // The blocker fact is resolved only when the SOURCE column carries the
       // `merge-blocker` trait flag — the trait-level generalization of the legacy
-      // `fromColumn === "in-review"` gate. Resolving it for every complete-bound
+      // `fromColumn === (moveLifecycle?.review ?? "in-review")` gate. Resolving it for every complete-bound
       // move re-hardcoded the review lane: `getTaskMergeBlocker` rejects any
       // source column that is not literally "in-review", which broke the
       // six-column benchmark's merging → done edge and the builtin
@@ -757,7 +767,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         }
       }
 
-      if (fromColumn === "in-review" && toColumn === "done" && !options?.skipMergeBlocker) {
+      if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.complete ?? "done") && !options?.skipMergeBlocker) {
         const mergeBlocker = getTaskMergeBlocker(task);
         if (mergeBlocker) {
           throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
@@ -820,7 +830,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       or a v1 column-less IR; the hooks treat that as "no basis" and keep the legacy names,
       which is the only case where a legacy literal is legitimate.
       */
-      const moveLifecycleColumns = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
+      const moveLifecycleColumns = moveLifecycle;
       // ── Flag-ON: route the legacy per-column side effects through the
       //    default-workflow trait hooks (timing, reset-on-entry, abort-on-exit,
       //    merge.onEnter). "Moved, not duplicated" applies to this path; the
@@ -874,14 +884,14 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       }
       // Store-owned effects the hooks intentionally do NOT perform (filesystem /
       // store-private): clearing done transient fields + prompt-checkbox reset.
-      if (toColumn === "done") {
+      if (toColumn === (moveLifecycle?.complete ?? "done")) {
         store.clearDoneTransientFields(task);
       }
       if (isReopenToTodoOrTriage && !preserveStepProgress) {
         await store.resetPromptCheckboxes(dir);
       }
 
-    if (toColumn === "in-progress" && !task.worktree && options?.allocateWorktree) {
+    if (toColumn === (moveLifecycle?.wip ?? "in-progress") && !task.worktree && options?.allocateWorktree) {
       const allocator = options.allocateWorktree;
       const allocated = await store.withWorktreeAllocationLock(async () => {
         const others = await store.listTasks({ slim: true, includeArchived: false });
@@ -1039,7 +1049,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
 
       // FNXC:WorkflowReviewGates 2026-07-26-16:40: see isRecognizedInReviewEntry — a
       // graph-owned crossing into the review column is a legitimate arrival, not a violation.
-      if (toColumn === "in-review" && !isRecognizedInReviewEntry(options, internal)) {
+      if (toColumn === (moveLifecycle?.review ?? "in-review") && !isRecognizedInReviewEntry(options, internal)) {
         await recordRunAuditEventWithinTransaction(tx, {
           taskId: id,
           agentId: internal.runContext?.agentId ?? "system",
@@ -1190,7 +1200,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       }
     }
 
-    if (fromColumn === "in-review" && toColumn === "todo" && moveSource === "user") {
+    if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.hold ?? "todo") && moveSource === "user") {
       const handoffAccepted = await store.getCompletionHandoffAcceptedMarker(id);
       const mergeRequest = await store.getMergeRequestRecordAsync(id);
       if (handoffAccepted && mergeRequest && mergeRequest.state !== "succeeded" && mergeRequest.state !== "cancelled") {
@@ -1208,7 +1218,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
       void store.clearCompletionHandoffAcceptedMarker(id);
     }
-    if (toColumn === "todo" && moveSource === "user" && (fromIsImplementation || fromColumn === "in-review")) {
+    if (toColumn === (moveLifecycle?.hold ?? "todo") && moveSource === "user" && (fromIsImplementation || fromColumn === (moveLifecycle?.review ?? "in-review"))) {
       // FNXC:WorkflowTaskCancellation 2026-07-21-11:51:
       // The task move is already committed here. Continuation cleanup is
       // best-effort so a storage fault cannot suppress task:moved or strand
@@ -1227,7 +1237,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         });
       }
     }
-    if (toColumn === "done") {
+    if (toColumn === (moveLifecycle?.complete ?? "done")) {
       // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-16:00:
       // Backend mode: clearLinkedAgentTaskIds is a sync SQLite operation; skip
       // it in backend mode (the agent cleanup is best-effort and handled by
@@ -1322,7 +1332,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         ...(workflowSelectionForMove?.workflowId ? { workflowId: workflowSelectionForMove.workflowId } : {}),
       });
     }
-    if (toColumn === "done") {
+    if (toColumn === (moveLifecycle?.complete ?? "done")) {
       await store.clearNearDuplicateReferencesToFailSoft(id, {
         column: "done",
         reason: "done",
