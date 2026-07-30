@@ -6,10 +6,26 @@ problem_type: silent-wrong-answer
 applies_when: reading a task's workflow synchronously, or converting a column literal to a trait lookup
 ---
 
-# Every sync workflow-IR read answers for the DEFAULT workflow
+# Every sync workflow-IR read answers for the DEFAULT workflow — through the production `TaskStore`
 
 Found 2026-07-29 while clearing a review thread on PR #2593, which reported the problem as
-PostgreSQL-specific. It is not PG-specific — it is unconditional.
+PostgreSQL-specific. It is not PG-specific.
+
+SCOPE, corrected after review: "always" describes the production `TaskStore`, not the
+`WorkflowIrResolverStore` INTERFACE. That interface declares
+`getTaskWorkflowSelection(taskId): { workflowId; stepIds } | undefined` and a conforming
+implementation is free to return a real selection — the test fixtures do exactly that, which is
+also why the substitution is invisible under test (see "Why tests do not catch it" below).
+
+The unconditional `undefined` belongs to ONE implementation: `getTaskWorkflowSelectionImpl`, which
+the production store delegates to with no mode branch. So the accurate claim is "every sync read
+THROUGH THE PRODUCTION STORE answers for the default workflow", and the reason it is worth a
+document is that the production store is the only implementation that ships.
+
+Stating it loosely matters here in a specific way: a reader who takes "always" as a property of the
+interface would conclude the sync path is unusable and rewrite callers that are fine, while a reader
+who takes it as a property of the impl looks in the right place — at a stub left behind by the PG
+cutover.
 
 ## The chain (verified by reading, each link checkable)
 
