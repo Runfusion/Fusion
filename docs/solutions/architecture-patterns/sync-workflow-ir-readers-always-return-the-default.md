@@ -76,6 +76,24 @@ whether the task's workflow declares `triage`; it was always asking the default.
 tested `workflowIr ? … : true`, which is dead code against a non-optional return. Now uses
 `resolveWorkflowIrForTaskWithProvenance` and fails closed on `source: "default"`.
 
+**6. ALL planner-lane resolution in the engine is default-workflow-only — the largest one, found last.**
+`resolvePlannerLanes` (`replan-target.ts`) resolves `intake`/`hold`/`wip`/`review` by calling
+`resolveTaskWorkflowIrSync`, so it derives every lane from the DEFAULT workflow for every task.
+10 call sites in `executor.ts` and `triage.ts` depend on it — planning wake/dispose, replan
+targeting, and the approved-plan recovery gate.
+
+Consequence: for a workflow whose intake is renamed (say `inbox`), `lanes.intake` resolves to `todo`,
+so a card sitting in `inbox` is not recognised as being in its own planner column and the recovery
+never fires. That is the same class of bug as the U7 stall this program has been fixing, one layer
+down, and it is invisible because the lanes returned are a valid-looking set from the wrong workflow.
+
+THIS IS WHY THE TESTS PASS. On a bare mock store `resolveTaskWorkflowIrSync` is absent, so
+`resolvePlannerLanes` returns `LEGACY_PLANNER_LANES` (`intake: "triage"`) and a `triage` card matches
+the intake arm directly. In production the reader is present and returns the merged default
+(`intake: "todo"`), so that arm does NOT match and a different branch decides. The mock and
+production take different paths through the same function — the test does not exercise the
+production shape at all.
+
 ## The rule
 
 **Never read a task's workflow synchronously.** Use `resolveWorkflowIrForTaskWithProvenance` and
