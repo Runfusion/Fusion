@@ -116,6 +116,62 @@ same family of error this program is trying to stamp out.
 Harness: baseline run → assert patch applied (a no-op patch is an abort, not a
 pass) → mutated run → `comm -13` the sorted fail-sets → restore → assert clean.
 
+## Why the merge-region nodes cannot be tested as nodes (and what U9 actually is)
+
+Three attempts to give safeguard 2 (`autoMerge:false` is terminal-until-human) a
+graph-level E2E all failed, and the third failure found the reason. It is the single
+most useful thing in this document for whoever lands the conversion.
+
+`workflow-graph-executor.ts:310` says it plainly:
+
+> Until the workflow interpreter owns merge policy end-to-end, graph execution treats
+> any entry into this region as the terminal legacy `merge` seam so observable
+> lifecycle behavior stays byte-identical with the legacy executor.
+
+`MERGE_REGION_KINDS` is `merge-gate`, `merge-attempt`, `manual-merge-hold`,
+`retry-backoff`, `recovery-router`, `branch-group-member-integration`,
+`branch-group-promotion`. **Entering any of them short-circuits to the legacy merge
+seam, so none of their handlers ever runs.** Consequences worth stating separately,
+because each one burned an attempt:
+
+- `createMergeGateHandler` (`merge-runner.ts:44`) DOES read
+  `task.autoMerge !== false && settings.autoMerge !== false` and emit
+  `auto-on`/`auto-off` — and is **never called by the graph**. A test that drives a
+  graph and expects the gate to park an `autoMerge:false` card will watch the card
+  complete, no matter how the IR is shaped.
+- The `outcome:auto-on` / `outcome:auto-off` edges the builtin coding IR declares are
+  therefore unreachable in graph execution today.
+- This is the mechanism behind the very first U9 finding
+  (`u9-merge-region-node-config-authority.test.ts`): the IR's merge-region config is
+  unread not because a handler ignores it, but because the executor bypasses the whole
+  region.
+
+**So U9's conversion, stated concretely, is: stop short-circuiting
+`MERGE_REGION_KINDS` to the legacy seam and let those nodes run.** Everything else —
+S06's capability extraction, S07's completion handoff, S08's queue processing — hangs
+off that one behavioural change, and the safeguard table above is the contract it must
+not break. Safeguard 2 in particular has NO node-level representation today, so a
+conversion that simply enables the region without carrying the `autoMerge` contract
+into it would let an `autoMerge:false` card merge on PR-readiness alone.
+
+Attempts, recorded so they are not repeated:
+1. Fixture with an auto-off edge alongside its existing bare `success` edge — the
+   `autoMerge:false` card COMPLETED, because both edges match
+   `{ outcome: "success", value: "auto-off" }` and `end` won on target-id sort. (Real
+   IR-authoring hazard; the builtin routes `outcome:auto-on` explicitly for this
+   reason.)
+2. Dropped `merge-blocker` from the review column to isolate the gate — broke the route
+   to `end`, so the CONTROL card parked too and the flag was still not the
+   discriminator.
+3. Mirrored the builtin region (`merge-gate --auto-on--> merge-attempt --> end`,
+   `--auto-off--> manual-hold`) — control passed, `autoMerge:false` still completed.
+   That is what exposed the short-circuit: the nodes are not executing.
+
+Testing safeguard 2 at the node level requires a harness that does NOT substitute
+merge-region nodes, which is a change to the executor's substitution boundary rather
+than a test addition — i.e. it becomes possible as part of the conversion, not before
+it.
+
 ## What this baseline does not cover
 
 - **Reviewer-lane safeguards.** This is the merge lane only. The review nodes
