@@ -452,6 +452,28 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
 
   if (!semaphore) return { candidateSinceMs: null };
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:30 (FLAGGED, NOT FIXED — the last raw caller of the running-agent predicate):
+  `persistedTopLevelAgentSlots` takes RAW tasks, so `live-agent-count.ts`'s trait fields are undefined here
+  and its predicates fall back to the legacy ids (`in-progress` for wip, `done`/`archived` for terminal).
+
+  Traced every caller of that predicate before writing this: the live ADMISSION paths
+  (`executor.ts` fn_spawn_agent, `project-engine.ts`) both use
+  `computeTopLevelConcurrencyClaimedFromStore`, which enriches, and
+  `workflow-agent-count-live-e2e.pg.test.ts` pins that number end to end. `computeTopLevelConcurrencyClaimed`
+  (raw) has no production caller at all. THIS is the one live path left that does not enrich.
+
+  CONSEQUENCE on a renamed board: cards in a renamed wip lane are not counted, so `persistedActive` and
+  therefore `bound` are too low, and the continuous-excess timer below can see phantom excess and reclaim a
+  semaphore slot that is legitimately held. That is the same class of harm the FN-7017 note directly below
+  guards against for nested helper agents, arriving through the vocabulary door instead.
+
+  NOT FIXED HERE, deliberately. `persistedTopLevelAgentSlotsFromStore` is the enriching variant and it is
+  ASYNC; this is a synchronous leak-RECOVERY path, so adopting it changes the signature of a capacity repair
+  routine whose failure mode is reclaiming live work. That is a behaviour change in the capacity subsystem,
+  not a vocabulary conversion, and it wants an owner who can decide whether recovery should be able to await
+  a store read at all — the alternative being to pass pre-enriched tasks in from the caller.
+  */
   const persistedActive = persistedTopLevelAgentSlots(tasks);
   const bound = persistedActive + Math.max(0, Math.floor(inFlightCount));
   /*
