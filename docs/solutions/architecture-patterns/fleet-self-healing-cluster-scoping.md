@@ -65,3 +65,35 @@ one resolve-then-decide unit:
 `resolveWorkflowIrForTaskWithProvenance` (branch on `source`) or `resolveTaskLifecycleColumns`, and
 if neither is reachable at the site, FLAG AND SKIP per the fleet rules — a sync-resolved trait read
 is the "guard that cannot fire" pattern wearing better clothes.
+
+## Second rule, from sizing the dashboard clusters: traits-first does NOT lower the count
+
+Checked `TaskContextMenu.tsx` (9) next, expecting an easy cluster, and found the opposite lesson.
+
+Its guards live in ROLE HELPERS that already read traits:
+
+```ts
+// isReviewColumn
+return column === "in-review" || flags?.mergeBlocker === true || flags?.humanReview === true;
+```
+
+Rewriting that traits-first (`if (flags) return …; return column === "in-review"`) is the correct
+shape — it is what #2664 did to `isPreExecutionHoldColumn` — but **the census still counts it**,
+because the literal survives as the no-metadata fallback. The count is per literal, not per
+code-quality improvement.
+
+So for a file of role helpers, "N -> 0" is reached by MARKING the fallbacks
+(`DELIBERATE-LITERAL`), not by converting them. And the failure mode is specific: a worker chasing
+0 by DELETING the fallback silently breaks degraded mode — the pre-load window (board renders before
+the workflows fetch resolves) and a card stranded on an id its workflow no longer declares both
+arrive with no flags at all, so the helper starts answering "no role" for every column and
+affordances vanish during first paint.
+
+That is not hypothetical: `columnRoles.ts` documents the pre-load window explicitly, and the
+`Column.tsx` / `taskActivity.ts` conversions earlier in this program each had to keep exactly this
+fallback.
+
+**Rule for the fleet:** in a role helper, convert the ORDER (traits first, id as fallback) and then
+MARK the fallback. Deleting it is a behavior change in degraded mode — flag and skip per the rules.
+Expect the dashboard clusters (`TaskCard.tsx` 42, `TaskDetailModal.tsx` 30) to be mostly marks, and
+size them accordingly: the count moves the same either way, but only one of the two is safe.
