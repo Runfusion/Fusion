@@ -876,6 +876,18 @@ export function TaskDetailContent({
    */
   // FNXC:DuplicateIntake 2026-07-16-13:00: Issue #2225 reuses this linked banner for triage-marker Keep/Delete decisions.
   const isTriageMarkerDuplicate = workingTask.sourceMetadata?.duplicateSource === "triage-marker";
+  /*
+  FNXC:DuplicateIntake 2026-07-30-05:00 DELIBERATE-LITERAL: terminal check on THIS modal's own task,
+  and the flags for it are not resolved at this point in the render. `workflowMoveMetadata` (which
+  carries `currentColumnFlags`) is fetched asynchronously and is null on first paint, so reading it
+  here would suppress the near-duplicate warning for one frame on every open — a flicker on a
+  correctness banner. The terminal ids are stable for every board that has not renamed done/archived,
+  and the cost of the legacy answer is bounded: a renamed terminal column shows the banner one state
+  too long, versus hiding it wrongly on every open.
+
+  The real fix is to have the parent pass resolved flags in with the task rather than fetch them
+  after mount — recorded here, not attempted under batch pressure.
+  */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -3640,6 +3652,13 @@ export function TaskDetailContent({
   const overlapBlockerTask = workingTask.overlapBlockedBy
     ? tasks.find((candidate) => candidate.id === workingTask.overlapBlockedBy)
     : undefined;
+  /*
+  FNXC:OverlapBlocker 2026-07-30-05:00 DELIBERATE-LITERAL: asks about ANOTHER task's column.
+  `overlapBlockerTask` is a row found in `tasks` — this modal holds resolved flags for its OWN
+  column only, and nothing in scope maps an arbitrary other task's column to traits. Converting
+  needs a flags-by-column map threaded in (the shape `ListView` already has), which is a prop change
+  across callers, not a substitution. Sized, not guessed.
+  */
   const overlapBlockerActive = Boolean(
     overlapBlockerTask && (overlapBlockerTask.column === "in-progress" || overlapBlockerTask.column === "in-review"),
   );
