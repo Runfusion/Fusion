@@ -11054,8 +11054,29 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       };
       const inReview = await readContaminationBucket(contaminationReviewColumns);
       const inProgress = await readContaminationBucket(contaminationWipColumns);
-      /* Per-card lanes for the two verdicts below; legacy ids unioned for a degraded or mid-rename board. */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:15 (#2891 review, second round — greptile P1,
+      "fallback crosses workflow boundaries"): A CARD WHOSE BOARD CANNOT BE READ IS SKIPPED, NOT GUESSED.
+
+      Two wrong answers were tried before this one, and both are worth recording because each looked
+      correct in isolation:
+
+        1. LEGACY IDS ONLY (original). Guarantees rejection for exactly the renamed cards the
+           project-scoped query was widened to find — the sweep admits a card and then disowns it.
+        2. THE PROJECT UNION (my first fix). Removes that, and crosses workflow boundaries: a column
+           that carries a recovery role only in ANOTHER workflow starts admitting this card. This is an
+           ACTION site — the verdicts below clear a contamination pause — and rule 3 of
+           `project-union-versus-per-task-lanes.md` says over-inclusion is free for a read and costly
+           for an action. I widened on an action site, which my own note says not to do.
+
+      The honest third answer: without the card's board we cannot say whether its column carries the
+      role, so we do not decide. The card keeps the legacy ids seeded above — which is what it had
+      before any of this — and is REPORTED, so a card the sweep cannot classify is visible instead of
+      silently mis-decided in either direction. Same shape as the done-integrity sweep's unresolvable
+      report: the fix for "cannot answer" is to say so, not to pick a side.
+      */
       const contaminationLanes = new Map<string, { review: Set<string>; wip: Set<string> }>();
+      const unresolvedContaminationCards: string[] = [];
       for (const task of [...inReview, ...inProgress]) {
         if (contaminationLanes.has(task.id)) continue;
         const lanes = {
@@ -11082,19 +11103,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         */
         try {
           const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
-          if (source === "default") {
-            for (const id of contaminationReviewColumns) lanes.review.add(id);
-            for (const id of contaminationWipColumns) lanes.wip.add(id);
-          } else {
+          if (source === "default") unresolvedContaminationCards.push(task.id);
+          else {
             for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
             for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
           }
         } catch {
-          /* Unreadable is also "cannot say": same broad fallback, for the same reason. */
-          for (const id of contaminationReviewColumns) lanes.review.add(id);
-          for (const id of contaminationWipColumns) lanes.wip.add(id);
+          unresolvedContaminationCards.push(task.id);
         }
         contaminationLanes.set(task.id, lanes);
+      }
+      if (unresolvedContaminationCards.length > 0) {
+        log.warn(
+          `contamination sweep: ${unresolvedContaminationCards.length} card(s) left unclassified because their `
+          + `own workflow could not be resolved (${unresolvedContaminationCards.slice(0, 5).join(", ")}); `
+          + "a renamed lane there is neither cleared nor rejected.",
+        );
       }
       const contaminationLanesOf = (id: string) => contaminationLanes.get(id) ?? {
         review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
