@@ -3010,6 +3010,27 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   /** Filter `tasks` to those whose column fills one of the given pre-WIP roles. */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:40 (fleet: self-healing.ts):
+  Sibling of `filterByPreWipRole` for the REVIEW (merge-orchestration) lane.
+
+  It exists because converting a sweep's per-task guard while leaving its SOURCE QUERY on
+  `listTasks({ column: "in-review" })` produces a sweep that looks converted and does nothing: on a
+  renamed or merged board the query returns no rows, so the corrected guard never sees a candidate.
+  That is the defect #2560 repaired two hundred lines above this, and the reason the repair there is
+  described as "read the board and filter by role" rather than as a predicate change.
+  */
+  private async filterByReviewRole(
+    tasks: Task[],
+    cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<Task[]> {
+    const kept: Task[] = [];
+    for (const task of tasks) {
+      if (task.column === await this.resolveReviewColumn(task.id, cache)) kept.push(task);
+    }
+    return kept;
+  }
+
   private async filterByPreWipRole(
     tasks: Task[],
     roles: Array<"intake" | "hold">,
@@ -3177,9 +3198,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-12:45 (fleet: guard AND its source query):
+      Read the board and filter by role, matching the #2560 repair above. Converting only the
+      per-task guard below would leave this query naming a column a renamed or merged board does
+      not declare, so the sweep would receive zero candidates and recover nothing — converted to
+      the eye, dead in fact.
+      */
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const stale = tasks.filter((task) => {
-        if (task.column !== "in-review" || task.paused) return false;
+        if (task.paused) return false;
         /*
         FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
         Staleness now comes from the shared `isStaleMergeActiveStatus` leaf, which the dashboard's
