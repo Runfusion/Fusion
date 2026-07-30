@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, resolveWorkflowIrForTask, resolveReviewColumns } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-git-github");
 import { type NextFunction, type Request, type Response } from "express";
@@ -224,6 +224,38 @@ function ensureSafeGitRef(value: string, fieldName = "branch"): string {
 function getExecErrorCode(error: unknown): number | undefined {
   const code = (error as { code?: unknown } | undefined)?.code;
   return typeof code === "number" ? code : undefined;
+}
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (batch-core):
+"Is this card in a review lane?" for the PR routes below, resolved from the task's OWN workflow.
+
+MEMBERSHIP, so it takes the BROAD review set (`mergeOrchestration` u `mergeBlocker` u `humanReview`)
+rather than the single narrow lane: a board may declare a merge-orchestration lane AND a separate
+human sign-off lane, and a PR is legitimately opened from either. These guards only refuse or permit,
+never MOVE the card, so admitting one lane too many costs an operator nothing while admitting one too
+few refuses a request that should have worked.
+
+EMPTY MEANS UNEXPRESSED, NOT ABSENT — the v1 hazard, and the reason this is a shared helper rather
+than four inline resolutions. `synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph
+by emitting every default column with `traits: []`, so a v1-upgraded workflow resolves to an EMPTY
+review set while its `in-review` column plainly exists and holds its cards. Treating empty as "this
+board has no review lane" would refuse these routes on every pre-v2 project. Empty therefore takes the
+same legacy fallback as an unresolvable workflow.
+
+The CLI twin of this guard is `fn pr create` (packages/cli/src/commands/pr.ts); the two must agree,
+which is why both resolve the same way.
+*/
+export async function reviewColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
+  const ir = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+  const resolved = ir === undefined ? [] : resolveReviewColumns(ir);
+  return new Set(resolved.length > 0 ? resolved : ["in-review"]);
+}
+
+/** Renders a resolved review set for an operator-facing refusal, e.g. `'in-review'` or `'a' or 'b'`. */
+export function namedReviewColumns(columns: Set<string>): string {
+  return [...columns].map((c) => `'${c}'`).join(" or ");
 }
 
 async function runPrShellCommand(command: string, cwd: string, timeoutMs: number): Promise<string> {
@@ -2238,7 +2270,7 @@ async function applyChangesRequestedTransition(
   prInfo: PrInfo,
 ): Promise<void> {
   if (snapshot.decision !== "CHANGES_REQUESTED") return;
-  if (task.column !== "in-review") return;
+  if (!(await reviewColumnsForTask(store, task.id)).has(task.column)) return;
   if (task.prInfo?.lastReviewDecision === "CHANGES_REQUESTED") return;
 
   const reviewItems = snapshot.items.filter((item) => item.id.startsWith("gh-review-") && item.state === "CHANGES_REQUESTED");
@@ -5326,8 +5358,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       // Get task and validate
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to create a PR");
+      const prReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!prReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(prReviewColumns)} column to create a PR`);
       }
 
       if (!title || typeof title !== "string") {
@@ -5431,8 +5464,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to push PR branch");
+      const pushReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!pushReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(pushReviewColumns)} column to push PR branch`);
       }
 
       if (req.body?.base !== undefined && typeof req.body.base !== "string") {
@@ -5500,8 +5534,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore, engine } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to resolve PR conflicts");
+      const conflictReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!conflictReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(conflictReviewColumns)} column to resolve PR conflicts`);
       }
 
       if (req.body?.base !== undefined && typeof req.body.base !== "string") {
