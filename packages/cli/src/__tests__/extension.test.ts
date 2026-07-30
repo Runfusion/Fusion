@@ -4357,7 +4357,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-00:30 (#2843 review — greptile P1, "failed move reports
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:02 (#2843 review — greptile P1, "failed move reports
     successful delegation"):
 
     A FAILED LANDING MUST NOT LEAD WITH A SUCCESS CLAIM.

@@ -5185,15 +5185,16 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_delegate_task",
     label: "fn: Delegate Task",
     description:
-      "Create a new task and assign it to a specific agent for execution. The task goes to " +
-      "'todo' and will be picked up by the target agent on their next heartbeat cycle. " +
+      "Create a new task and assign it to a specific agent for execution. The task lands in the " +
+      "selected workflow's ready lane (`todo` on the built-in board, whatever that workflow calls " +
+      "it otherwise) and will be picked up by the target agent on their next heartbeat cycle. " +
       "Use fn_list_agents first to find available agents and their capabilities. " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
       "fn_workflow_list to discover valid IDs.",
     promptSnippet: "Delegate a task to a specific Fusion agent",
     promptGuidelines: [
       "Use fn_list_agents first to find available agents and their capabilities",
-      "The task is created in 'todo' and assigned to the target agent",
+      "The task is created in the workflow's ready (hold) lane and assigned to the target agent",
       "Cannot delegate to ephemeral/runtime agents",
       "Implementation tasks use executor by default; durable engineer supports explicit routing without override, other non-executor roles require override=true",
       "Optionally specify dependencies on other tasks",
@@ -5238,7 +5239,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const store = await getStore(ctx.cwd);
         const workflowId = params.workflow_id?.trim() || undefined;
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-30-23:55:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:30:
         Delegation lands in the HOLD lane of the workflow the card ACTUALLY got, not in the literal
         `todo` and not in a lane resolved from a second, independent read.
 
@@ -5276,8 +5277,38 @@ export default function kbExtension(pi: ExtensionAPI) {
 
         let landedColumn = task.column;
         let landingError: string | undefined;
-        const holdColumn = (await resolveTaskLifecycleColumns(store, task.id))?.hold;
-        if (holdColumn && holdColumn !== task.column) {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (#2843 review — coderabbit major / greptile P1):
+        AN UNRESOLVABLE WORKFLOW AND A WORKFLOW WITH NO HOLD LANE ARE DIFFERENT ANSWERS.
+
+        Reading `?.hold` off the result collapsed them: both produced `undefined`, the move was
+        skipped, and the tool reported success — so a split-lane workflow whose IR could not be read
+        left the card on intake while telling the caller it was on its way. That is the same
+        success-with-nothing-behind-it this branch was rewritten to remove, arriving one line earlier.
+
+        `resolveTaskLifecycleColumns` distinguishes them and this now reads both levels:
+          - `undefined` OBJECT — the workflow could not be resolved at all. Nothing can be verified,
+            so the landing is reported as failed rather than assumed.
+          - object with `hold: undefined` — the workflow resolved and declares NO hold lane. The
+            entry column is the only lane it has, so the card is already where it belongs and
+            success is honest. Reporting an error here would fail every workflow that never declared
+            one, which is a legitimate shape.
+
+        THE FIRST ARM IS UNREACHABLE TODAY, and saying so is the point of writing it down rather than
+        shipping a claim I cannot test. `resolveWorkflowIrForTask` never throws: an unreadable
+        selection, a missing definition, a malformed one and a throwing lookup ALL degrade to the
+        default coding IR (branded `markFellBack`). So `resolveTaskLifecycleColumns` cannot return
+        `undefined` through this path, and an unreadable workflow instead yields the BUILT-IN lanes —
+        `hold: "todo"`. On a split-lane workflow that is a column the card's workflow does not
+        declare, so the move below is rejected and the error branch fires anyway; the caller gets the
+        failure the review asked for, by the other route. This arm is kept because it costs nothing
+        and is correct the day that resolver stops degrading, not because it runs.
+        */
+        const lanes = await resolveTaskLifecycleColumns(store, task.id);
+        const holdColumn = lanes?.hold;
+        if (!lanes) {
+          landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
+        } else if (holdColumn && holdColumn !== task.column) {
           try {
             await store.moveTask(task.id, holdColumn);
             landedColumn = holdColumn;
@@ -5289,7 +5320,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
         const workflow = workflowId ? ` (workflow: ${workflowId})` : "";
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-02:10 (#2843 review — greptile P1, and it is right):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:50 (#2843 review — greptile P1, and it is right):
         A FAILED landing is an ERROR result, not a success sentence with a warning appended.
 
         My first version kept the "will be picked up by X on their next heartbeat cycle" text and
@@ -5301,18 +5332,22 @@ export default function kbExtension(pi: ExtensionAPI) {
         The task id stays in `details` because the card DOES exist and the caller needs it to finish
         the job by hand; what changes is that nothing in this branch claims the delegation completed.
 
-        UNTESTED, and stated rather than papered over: I could not construct a real failure. I tried
-        a workflow declaring `parked` with the `hold` trait and no node on it, expecting the move to
-        be rejected — it SUCCEEDED and the card landed in `parked`. `moveTask` accepts any column the
-        workflow DECLARES; node reachability does not gate it. Since `holdColumn` here always comes
-        from the task's own IR, `workflowHasColumn` passes by construction, so this catch is
-        defensive rather than a live path. A test that stubbed `moveTask` to throw would prove only
-        that the catch block runs, which is not what needed proving.
+        The MOVE-REJECTED half of this is defensive rather than a live path: `holdColumn` comes from
+        the task's own resolved IR, so `moveTask`'s declared-column check passes by construction. I
+        tried to reach it with a workflow declaring a `hold` column with no node on it, expecting a
+        rejection — the move SUCCEEDED and the card landed there, because `moveTask` accepts any
+        column the workflow DECLARES and node reachability does not gate it. The unresolvable-workflow
+        half above is reachable. Both are covered by the message-shape test, which is explicit that it
+        pins the handling and not the reachability.
         */
         if (landingError) {
+          const target = holdColumn ? `the ready lane "${holdColumn}"` : "its ready lane";
+          const remedy = holdColumn
+            ? `move it to "${holdColumn}" to dispatch it`
+            : "resolve its workflow and move it to that workflow's ready lane to dispatch it";
           const text = `ERROR: Created ${task.id}${deps}${workflow} and assigned it to ${agent!.name} (${agent!.id}), `
-            + `but it could NOT be moved out of "${task.column}" into the ready lane "${holdColumn}": ${landingError}. `
-            + `It is stranded on intake and will NOT be picked up — move it to "${holdColumn}" to dispatch it.`;
+            + `but it could NOT be moved out of "${task.column}" into ${target}: ${landingError}. `
+            + `It is stranded on intake and will NOT be picked up — ${remedy}.`;
           return {
             content: [{ type: "text" as const, text }],
             isError: true,
