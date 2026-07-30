@@ -2721,16 +2721,39 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // `.fusion/tasks/{id}/` on disk, which downstream agents are told they
       // may read for sibling-spec context (executor prompt). Done/archived
       // dependents have already consumed the spec and don't block.
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (batch-engine — archiveStaleDoneTasks):
+      Lanes per task through one IR cache. Two DIFFERENT questions here and they must not be merged: the
+      dependent scan asks "is this dependent still active" (terminal = done OR archived), while the stale
+      scan asks specifically "is this card COMPLETE" — archived cards are already archived and must not be
+      re-archived. Folding them into one terminal set would make this sweep re-process the archive lane.
+      */
+      const archiveIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const archiveLanesById = new Map<string, { complete: Set<string>; terminal: Set<string> }>();
+      for (const t of tasks) {
+        if (archiveLanesById.has(t.id)) continue;
+        const complete = new Set<string>(["done"]);
+        const terminal = new Set<string>(["done", "archived"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, t.id, archiveIrCache);
+          if (ir) {
+            for (const id of columnsWithFlag(ir, "complete")) { complete.add(id); terminal.add(id); }
+            for (const id of columnsWithFlag(ir, "archived")) terminal.add(id);
+          }
+        } catch { /* degraded: legacy ids */ }
+        archiveLanesById.set(t.id, { complete, terminal });
+      }
+
       const tasksWithActiveDependents = new Set<string>();
       for (const t of tasks) {
-        if (t.column === "done" || t.column === "archived") continue;
+        if (archiveLanesById.get(t.id)?.terminal.has(t.column) === true) continue;
         for (const depId of t.dependencies ?? []) {
           tasksWithActiveDependents.add(depId);
         }
       }
 
       const stale = tasks.filter((t) => {
-        if (t.column !== "done") return false;
+        if (archiveLanesById.get(t.id)?.complete.has(t.column) !== true) return false;
         // Prefer columnMovedAt (when the task entered done); fall back to updatedAt
         // for legacy tasks that lack the field.
         const ts = t.columnMovedAt || t.updatedAt;
@@ -4628,9 +4651,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
       for (const dependent of dependents) {
         try {
+          const completedDepIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+          const completedDepLanes = new Map<string, Set<string>>();
+          for (const depId of dependent.dependencies) {
+            if (completedDepLanes.has(depId)) continue;
+            const satisfied = new Set<string>(["done", "in-review", "archived"]);
+            try {
+              const depIr = await resolveWorkflowIrForTask(this.store, depId, completedDepIrCache);
+              if (depIr) {
+                for (const flag of ["complete", "archived", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+                  for (const id of columnsWithFlag(depIr, flag)) satisfied.add(id);
+                }
+              }
+            } catch { /* degraded: legacy trio */ }
+            completedDepLanes.set(depId, satisfied);
+          }
           const unresolvedDeps = dependent.dependencies.filter((depId) => {
             const dep = taskById.get(depId);
-            return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+            /*
+            FNXC:WorkflowResolvedColumns 2026-07-31-04:40: satisfaction judged from the DEPENDENCY's own
+            workflow — dependencies span workflows — and the set includes REVIEW, as it always has here.
+            */
+            if (!dep) return false;
+            const depLanes = completedDepLanes.get(depId);
+            return !(depLanes?.has(dep.column) === true);
           });
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);

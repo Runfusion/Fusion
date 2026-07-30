@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 63,
+    "packages/engine/src/self-healing.ts": 57,
     "packages/core/src/store.ts": 11,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
