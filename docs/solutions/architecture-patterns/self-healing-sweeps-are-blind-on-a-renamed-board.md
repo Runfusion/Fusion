@@ -152,6 +152,35 @@ parameter at all, and every one of its callers sat behind a literal query. Nothi
 Parts 4 and 5 are both invisible to the census — one is string contents, the other is reachability — and
 each of the **43 remaining queries** carries both risks.
 
+## Testing a sweep: assert what happens ONLY when the change is correct
+
+Four assertions on this branch were vacuous — they passed with the fix reverted — and all four shared one
+shape: **I asserted something the sweep does regardless of the code under test.** The surface presentation
+differed every time, which is why recognising it took four rounds:
+
+| the assertion | why it proved nothing |
+| --- | --- |
+| `commitSha` stayed undefined | the write needs a real git repo, so it never happens in the fixture either way |
+| `toContain("must be in")` | **two** guards can refuse; the other one caught the card and produced the same substring |
+| a warn was emitted | the sweep warns on a path unrelated to the conversion |
+| `getSettings` was called | the sweep calls it **unconditionally on its first line** |
+
+The reliable question is not *"did something observable happen"* but *"what happens **only** when this
+change is correct"*. In a self-healing sweep that is almost always **candidacy** — the first thing that
+runs once per accepted row, after the filter:
+
+```ts
+// getSettings runs before the filter → useless
+// isBranchAheadOfBase runs once per CANDIDATE → separates accepted from declined
+const aheadCheck = vi.spyOn(manager as never, "isBranchAheadOfBase").mockResolvedValue(false);
+```
+
+**Asserting the query is only safe when nothing downstream can veto.** Once a sweep has a lane-sensitive
+guard (part 5), a query-only assertion passes while the guard silently rejects every row — which is
+precisely the bug being fixed. Where a guard exists, assert the end-to-end outcome instead.
+
+And run the revert. Every one of the four above was found that way and none by reading.
+
 ## Related
 
 - `docs/solutions/test-failures/optional-flags-seam-hides-unconverted-column-guards.md` — the same lesson one level down: the census counts syntax, and a green suite that omits the new parameter carries no information about the change.
