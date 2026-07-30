@@ -25,6 +25,8 @@ import {generateTaskLineageId} from "../task-lineage.js";
 import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {resolveWorkflowIrById} from "../workflow-ir-resolver.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import type {WorkflowIr} from "../workflow-ir-types.js";
 import {DEFAULT_WORKFLOW_ID} from "../builtin-workflows.js";
 import {columnsWithFlag} from "../workflow-lifecycle-traits.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -1074,6 +1076,38 @@ listTasks(includeDeleted, includeArchived), so FN-5233 sticky near-duplicate blo
 includes soft-deletes whose delete lifecycle puts them in `archived` on both
 persistence backends without a synchronous SQLite dependency.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
+Column trait flags for the intake duplicate guard, resolved from the candidates' OWN workflows.
+
+WHY THIS PATH MATTERS MORE THAN THE OTHER TWO. `findSameAgentDuplicates` gained
+`columnFlagsByColumnId` so a FINISHED sibling cannot be reused as the canonical for new work, and no
+caller passed it. On the agent-tools paths the cost is a bad suggestion. Here it is DESTRUCTIVE: a
+match either auto-archives the newly created task or, on the tombstoned branch, soft-deletes it and
+removes its directory. So on a renamed board a new task could be archived or deleted as a duplicate
+of work that had already finished.
+
+Resolution is scoped to the columns the candidate set actually occupies — a handful of distinct ids,
+not one read per card — and shares one IR cache.
+*/
+async function resolveIntakeDuplicateColumnFlags(
+  store: TaskStore,
+  candidates: ReadonlyArray<{ id: string; column: string }>,
+): Promise<ReadonlyMap<string, { complete?: boolean; archived?: boolean }>> {
+  const byColumn = new Map<string, { complete?: boolean; archived?: boolean }>();
+  const irCache = new Map<string, WorkflowIr>();
+  const seenColumns = new Set<string>();
+  for (const candidate of candidates) {
+    if (seenColumns.has(candidate.column)) continue;
+    seenColumns.add(candidate.column);
+    const lanes = await resolveTaskLifecycleColumns(store, candidate.id, irCache).catch(() => undefined);
+    if (!lanes) continue;
+    if (lanes.complete !== undefined) byColumn.set(lanes.complete, { ...byColumn.get(lanes.complete), complete: true });
+    if (lanes.archived !== undefined) byColumn.set(lanes.archived, { ...byColumn.get(lanes.archived), archived: true });
+  }
+  return byColumn;
+}
+
 export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
   const sourceAgentId = task.sourceAgentId ?? null;
   const sourceParentTaskId = task.sourceParentTaskId ?? null;
@@ -1113,7 +1147,7 @@ export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Ta
           sourceParentTaskId: candidate.sourceParentTaskId ?? null, tombstoned: false,
         }];
       }),
-      { nowMs, sourceAgentId },
+      { nowMs, sourceAgentId, columnFlagsByColumnId: await resolveIntakeDuplicateColumnFlags(store, allCandidates) },
     );
     if (matches.length === 0) return;
 
@@ -1140,7 +1174,16 @@ export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Ta
     const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
     if (settings.autoArchiveDuplicateTasksEnabled === true) {
       await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-      task.column = "archived";
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
+      Mirror the archive into the in-memory row using the board's OWN archived lane. Writing the
+      literal here made the returned object disagree with what the archive actually did on a renamed
+      board — the caller then saw a task claiming a column its workflow does not declare, the same
+      shape as the `"triage"` write fixed earlier in this program.
+      */
+      const archivedLane = (await resolveTaskLifecycleColumns(store, task.id).catch(() => undefined))?.archived;
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-14:20. */
+      task.column = archivedLane ?? "archived";
     } else {
       const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
       if (appliedPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
