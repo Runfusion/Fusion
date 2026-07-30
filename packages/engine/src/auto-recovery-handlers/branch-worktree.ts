@@ -139,6 +139,19 @@ export class BranchWorktreeAutoRecoveryHandler {
     */
     let wipColumns = new Set<string>(["in-progress"]);
     let reboundTarget = "todo";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:40 (#2797 review — coderabbit):
+    The catch no longer swallows. Falling back to the legacy ids stays — this is a RECOVERY path, and
+    refusing to act because a workflow could not be read would strand the very task the handler exists
+    to unstick — but the fallback is now RECORDED rather than silent, so "why did this land in `todo`"
+    is answerable after the fact.
+
+    Note the fallback is rarely what routes a custom board here: `resolveWorkflowIrForTask` degrades to
+    the BUILT-IN IR instead of throwing, so an unreadable custom workflow resolves `todo` through the
+    resolver and never reaches this catch. That is why the real protection is the move-rejection guard
+    below, not this branch — this one only makes the rare hard failure visible.
+    */
+    let laneResolutionError: string | undefined;
     try {
       const ir = await resolveWorkflowIrForTask(this.deps.taskStore, task.id);
       if (ir) {
@@ -146,7 +159,9 @@ export class BranchWorktreeAutoRecoveryHandler {
         if (resolvedWip.length > 0) wipColumns = new Set<string>(resolvedWip);
         reboundTarget = resolveReboundTarget(ir) ?? "todo";
       }
-    } catch { /* resolution failed — see the guard below */ }
+    } catch (err) {
+      laneResolutionError = err instanceof Error ? err.message : String(err);
+    }
 
 
     if (wipColumns.has(task.column)) {
@@ -185,6 +200,7 @@ export class BranchWorktreeAutoRecoveryHandler {
           class: failure.class,
           reason: "rebound-target-rejected",
           rationale,
+          ...(laneResolutionError ? { laneResolutionError } : {}),
           reboundTarget,
           column: task.column,
           error: err instanceof Error ? err.message : String(err),
@@ -200,6 +216,7 @@ export class BranchWorktreeAutoRecoveryHandler {
         class: failure.class,
         rationale,
         prevPausedReason: task.pausedReason ?? null,
+        ...(laneResolutionError ? { laneResolutionError } : {}),
         evidence,
       },
     });
