@@ -90,9 +90,24 @@ Placed directly on the declaration so it cannot be orphaned again by a future in
 */
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
   { id: "triage", match: (c) => TRIAGE_STAGE_COLUMN_ALIASES.has(c) },
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 DELIBERATE-LITERAL:
+  Markers, not a behaviour change. The JSDoc above already explains why this whole table is an ALIAS
+  TABLE rather than a lifecycle decision — it maps several vocabularies (`to-do`, `ready`, `review`,
+  `shipped`, ...) onto one DISPLAY stage, with an explicit `other` bucket for anything unrecognised, and
+  nothing branches on the result. Resolving these to traits would DROP the non-column aliases the table
+  exists to accept.
+
+  The marker is repeated per stage because the census reads a comparison node's LEADING comments: a
+  marker in the JSDoc above the declaration does not reach the arrow bodies inside the array. When the
+  `triage` stage was converted to a Set its count vanished and these three surfaced, turning `--strict`
+  red with the rationale already written three lines up but unreachable by the tool.
+  */
   { id: "todo", match: (c) => c === "todo" || c === "to-do" || c === "to do" || c === "ready" },
   { id: "in-progress", match: isInProgressColumn },
+  /* DELIBERATE-LITERAL: display alias, see the note above. */
   { id: "in-review", match: (c) => c === "in-review" || c === "in review" || c === "review" },
+  /* DELIBERATE-LITERAL: display alias, see the note above. */
   { id: "done", match: (c) => c === "done" || c === "complete" || c === "completed" || c === "shipped" },
 ];
 
