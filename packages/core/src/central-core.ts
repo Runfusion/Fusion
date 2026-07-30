@@ -217,6 +217,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private ownedBackendReleaseConnections: (() => Promise<void>) | null = null;
   private initializationPromise: Promise<void> | null = null;
   private lifecycleOperation: Promise<void> = Promise.resolve();
+  private closeRequested = false;
+  private closed = false;
 
   private runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.lifecycleOperation.then(operation, operation);
@@ -250,6 +252,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * call, backendMode is true and all methods delegate to PostgreSQL.
    */
   async attachBackendLayer(layer: AsyncDataLayer): Promise<void> {
+    this.assertAcceptingOperations();
     if (!layer) {
       throw new Error("attachBackendLayer requires a non-null AsyncDataLayer");
     }
@@ -257,6 +260,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private async attachBackendLayerOnce(layer: AsyncDataLayer): Promise<void> {
+    this.assertOpen();
     // Release a central-only pool before adopting the runtime's shared layer.
     if (this.ownedBackendReleaseConnections) {
       /*
@@ -330,6 +334,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Idempotent — safe to call multiple times.
    */
   async init(): Promise<void> {
+    this.assertAcceptingOperations();
     if (this.initialized) return;
 
     /*
@@ -348,6 +353,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private async initializeOnce(): Promise<void> {
+    this.assertOpen();
     if (this.initialized) return;
 
     if (this.asyncLayer) {
@@ -388,6 +394,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Closes database connections and releases resources.
    */
   async close(): Promise<void> {
+    this.closeRequested = true;
     return this.runLifecycleOperation(() => this.closeOnce());
   }
 
@@ -395,7 +402,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     /*
     FNXC:CentralPostgresCutover 2026-07-29-16:26:
     Initialization, layer replacement, and close share one lifecycle queue. Cleanup must observe and release the backend the preceding operation publishes instead of returning early, leaking it, or letting attachment revive a core after shutdown.
+
+    FNXC:CentralPostgresCutover 2026-07-29-17:43:
+    Close is terminal. Operations queued after cleanup must fail instead of allocating or attaching a backend after listeners and owned resources have been released.
     */
+    this.closed = true;
     if (this.nodeDiscovery) {
       this.stopDiscovery();
     }
@@ -415,6 +426,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
     this.initialized = false;
     this.removeAllListeners();
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error("CentralCore is closed");
+  }
+
+  private assertAcceptingOperations(): void {
+    if (this.closeRequested) throw new Error("CentralCore is closed");
   }
 
   /** Persist the local mesh node's terminal state before its backend closes. */

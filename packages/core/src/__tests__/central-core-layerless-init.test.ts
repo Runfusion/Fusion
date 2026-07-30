@@ -136,4 +136,34 @@ describe("CentralCore layer-less initialization", () => {
     expect(mocks.shutdown).toHaveBeenCalledOnce();
     expect(central.backendMode).toBe(false);
   });
+
+  /**
+   * FNXC:CentralPostgresCutover 2026-07-29-17:43:
+   * Closing CentralCore is terminal because cleanup removes listeners and releases owned resources. Later queued initialization or attachment must not revive a partially torn-down instance.
+   */
+  it("rejects initialization and layer attachment once close is requested", async () => {
+    const globalDir = mkdtempSync(join(tmpdir(), "fusion-central-cli-terminal-close-"));
+    cleanupDirs.push(globalDir);
+    const central = new CentralCore(globalDir);
+    await central.init();
+    let finishShutdown!: () => void;
+    mocks.shutdown.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishShutdown = resolve;
+    }));
+
+    const closing = central.close();
+    await vi.waitFor(() => expect(mocks.shutdown).toHaveBeenCalledOnce());
+    const sharedLayer = { db: { shared: true } };
+
+    await expect(central.init()).rejects.toThrow("CentralCore is closed");
+    await expect(central.attachBackendLayer(
+      sharedLayer as unknown as Parameters<CentralCore["attachBackendLayer"]>[0],
+    )).rejects.toThrow("CentralCore is closed");
+
+    finishShutdown();
+    await closing;
+
+    expect(mocks.createCentralBackendLayer).toHaveBeenCalledOnce();
+    expect(central.backendMode).toBe(false);
+  });
 });
