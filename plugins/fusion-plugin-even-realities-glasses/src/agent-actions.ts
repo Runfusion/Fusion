@@ -129,7 +129,24 @@ function destination(
   const resolved = lanes?.[role];
   if (resolved) return resolved;
   const legacy = LEGACY_DESTINATIONS[role];
-  return declared.has(legacy) ? legacy : undefined;
+  if (!declared.has(legacy)) return undefined;
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-19:20 (PR #2607 review — fourth finding, and the FOURTH
+  time I have made this mistake in this file):
+  "DECLARED SOMEWHERE" IS NOT "DECLARED FOR THIS ROLE". `declared` is every column id the workflow
+  has, so a board that declares no hold column but names its REVIEW lane `todo` satisfied
+  `declared.has("todo")` — and `approvePlan` then moved an approved plan straight into REVIEW,
+  skipping implementation entirely. That is worse than the refusal it replaced.
+
+  A legacy id may only stand in for a role the workflow leaves EMPTY. If the workflow has assigned
+  that id to a different lifecycle role, it means something else on this board and is not available
+  as a fallback. A LEGACY ID IS NOT A ROLE — the same sentence as the gate fix, in the destination
+  direction, which is where I keep failing to apply it.
+  */
+  const assignedElsewhere = Object.entries(lanes ?? {}).some(
+    ([laneRole, laneColumn]) => laneRole !== role && laneColumn === legacy,
+  );
+  return assignedElsewhere ? undefined : legacy;
 }
 
 

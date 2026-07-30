@@ -492,3 +492,58 @@ describe("a missing destination role conflicts instead of inventing a column", (
     expect(deps.moveTask).toHaveBeenCalledWith("FN-5", "todo");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-19:25 (PR #2607 review — fourth finding):
+
+"DECLARED SOMEWHERE" IS NOT "DECLARED FOR THIS ROLE", and this is the FOURTH time I have made the
+legacy-aliasing mistake in this file. `declared` holds every column id the workflow has, so a board
+that declares no hold column but names its REVIEW lane `todo` satisfied `declared.has("todo")` —
+and `approvePlan` moved an approved plan straight into REVIEW, skipping implementation. Worse than
+the refusal it replaced, which is the recurring signature of a half-applied rule.
+
+The rule, stated the same way as for the gate: a legacy id may stand in only for a role the
+workflow leaves EMPTY. If the board has assigned that id to another lifecycle role, it means
+something else there.
+*/
+const HOLDLESS_TODO_IS_REVIEW_IR = {
+  version: "v2", id: "wf-custom", name: "holdless-todo-review", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "todo", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+describe("a legacy destination may only fill a role the workflow leaves empty", () => {
+  it("refuses approve-plan rather than moving the plan into a lane named `todo` that is REVIEW", async () => {
+    // Pre-fix: moved to `todo` — this board's review lane — so an approved plan skipped
+    // implementation entirely.
+    const deps = createResolvingDeps(
+      makeTask({ column: "backlog", status: "awaiting-approval" }),
+      HOLDLESS_TODO_IS_REVIEW_IR,
+    );
+
+    await expect(approvePlan({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still uses the legacy id when the workflow declares it and assigns it to NO other role", async () => {
+    // The migration case the fallback exists for: a pre-U11 board really does have `todo` as its
+    // hold lane. Scoping the fallback must not delete it.
+    const migrationIr = {
+      version: "v2", id: "wf-custom", name: "pre-u11", nodes: [], edges: [],
+      columns: [
+        { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+        { id: "todo", name: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      ],
+    };
+    const deps = createResolvingDeps(makeTask({ column: "triage", status: "awaiting-approval" }), migrationIr);
+
+    await approvePlan({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+  });
+});
