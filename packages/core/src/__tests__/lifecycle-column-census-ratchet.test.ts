@@ -210,6 +210,49 @@ describe("lifecycle-column census ratchet", () => {
     }
   });
 
+  /*
+  THE OVERLOAD PROPERTY. `triage` is not only a column id in this codebase — it is also an AGENT ROLE,
+  a SESSION PURPOSE and a PROMPT-TEMPLATE family. Six comparisons in tree are agent-role checks
+  (agent-prompts.ts, AgentLogViewer.tsx, TaskChatTab.tsx) and they are CORRECT CODE: resolving them to
+  a column trait would ask "which column has the intake trait" about a thing that is not a column, and
+  a census that demanded their conversion could never reach zero because they must never change.
+
+  So the receiver is matched on shape — final segment `col` or ending in `column` — and a role
+  comparison must NOT be counted. Both directions are asserted: the column shapes that were previously
+  invisible must count, and the role shapes must not.
+  */
+  it("counts any column-shaped receiver but NEVER an agent-role comparison", () => {
+    const dir = mkdtempSync(join(tmpdir(), "census-receivers-"));
+    try {
+      const mustCount: Array<[string, string]> = [
+        ["bare-col.ts", 'export const a = (col: string) => col === "triage";'],
+        ["named-column.ts", 'export const b = (resumeColumn: string) => resumeColumn === "triage";'],
+        ["member.ts", 'export const c = (t: { column: string }) => t.column !== "triage";'],
+        ["destructured.ts", 'export const d = ({ column }: { column: string }) => column === "triage";'],
+      ];
+      for (const [name, body] of mustCount) {
+        const victim = join(dir, name);
+        writeFileSync(victim, `${body}\n`);
+        expect(runCensus(["--files", victim]).status, `${name} should COUNT`).toBe(1);
+      }
+
+      const mustNotCount: Array<[string, string]> = [
+        ["role.ts", 'export const e = (role: string) => role === "triage";'],
+        ["agent-type.ts", 'export const f = (agentType: string) => agentType === "triage";'],
+        ["session-purpose.ts", 'export const g = (purpose: string) => purpose === "triage";'],
+        ["entry-agent.ts", 'export const h = (entry: { agent: string }) => entry.agent === "triage";'],
+      ];
+      for (const [name, body] of mustNotCount) {
+        const victim = join(dir, name);
+        writeFileSync(victim, `${body}\n`);
+        const { status, out } = runCensus(["--files", victim]);
+        expect(status, `${name} must NOT count — it is not a column: ${out}`).toBe(0);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the ledger honest: every ceiling names a real file and the total agrees", () => {
     const ledger = JSON.parse(readFileSync(LEDGER, "utf-8")) as {
       total: number;

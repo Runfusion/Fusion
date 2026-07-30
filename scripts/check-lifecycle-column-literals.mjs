@@ -104,16 +104,31 @@ export function stripComments(src) {
 }
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-30-02:45 (greptile #2623):
-Accept BOTH quote styles and allow the comparison to span lines. The original pattern required a
-single-line double-quoted form, so `column ===\n  'triage'` and `column === 'triage'` were invisible
-and the reported count could fall without a literal being removed — a count that drops for the wrong
-reason is worse than a count that is too high. `\s` spans newlines in JS regex, and the census scans
-whole-file text (not line-by-line) so a split comparison is still found and still reported with the
-line its `column` token sits on.
+FNXC:LifecycleColumnCensus 2026-07-30-03:40 (revised bar — ANY receiver):
+The pattern was anchored on the token `column`, so it saw `task.column === "triage"` and
+`c.column === "triage"` but MISSED every comparison held in a differently-named binding — `col`,
+`resumeColumn`, a destructured local. Measured consequence in this repo: `self-healing.ts` carried
+`resumeColumn === "triage"` (a bare local holding `workflowIrPinColumnId`) that no `.column`-anchored
+count could see, and the program-wide number was understated by 22 sites.
+
+The receiver is now matched on SHAPE, not on the exact token: any identifier or member expression whose
+final segment is `col` or ends in `column` (case-insensitive). That covers `column`, `col`,
+`taskColumn`, `resumeColumn`, `fromColumn`, `t.column`, and a destructured `column`.
+
+It deliberately does NOT match every identifier. `triage` is overloaded here — it is also an AGENT
+ROLE, a SESSION PURPOSE, and a PROMPT-TEMPLATE family — so `role === "triage"` and
+`agentType === "triage"` are legitimate and must never be converted. Counting them would make the bar
+unreachable except by breaking working code, which is worse than undercounting: it points the work at
+the wrong sites.
+
+Accepted limit: a single-letter or otherwise unnamed receiver (`c === "triage"`) is not matched. Naming
+the shape is what keeps the count auditable without a parser; the alternative is matching everything
+and hand-excluding the non-columns, which is the same denylist problem with the failure mode inverted.
 */
 function patternFor(literal) {
-  return new RegExp(`column\\s*(===|!==)\\s*['"]${literal}['"]`, "g");
+  // Receiver whose final segment is `col` or ends in `column`; then the comparison, either quote style,
+  // allowed to span lines.
+  return new RegExp(`\\b[\\w$.?\\[\\]"']*(?:col|[Cc]olumn)\\s*(===|!==)\\s*['"]${literal}['"]`, "g");
 }
 
 /*
