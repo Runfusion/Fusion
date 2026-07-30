@@ -79,14 +79,30 @@ named for the guard cannot detect the guard's removal.
 
 ```ts
 // WRONG — the conditional move is now unconditional
-moveTaskIf: vi.fn(async (id, column) => ({ moved: true, task })),
+function createStore(task: Task): TaskStore {
+  return {
+    moveTaskIf: vi.fn(async (id, column) => ({ moved: true, task })),
+  } as unknown as TaskStore;
+}
 
-// RIGHT — and take a hook for the racing case
-moveTaskIf: vi.fn(async (id, column, predicate) => {
-  const live = onLockedRead ? onLockedRead(task) : task;
-  if (!(await predicate(live))) return { moved: false, task };
-  return { moved: true, task: { ...task, column } };
-}),
+// RIGHT — honors the predicate, and takes a hook for the racing case.
+// `onLockedRead` models the row AS THE TASK LOCK SEES IT, which is not
+// necessarily the snapshot the caller loaded earlier in the pass.
+function createStore(
+  task: Task,
+  onLockedRead?: (live: Task) => Task,
+): TaskStore {
+  return {
+    moveTaskIf: vi.fn(async (id, column, predicate) => {
+      const live = onLockedRead ? onLockedRead(task) : task;
+      if (!(await predicate(live))) return { moved: false, task };
+      return { moved: true, task: { ...task, column } };
+    }),
+  } as unknown as TaskStore;
+}
+
+// A test that needs the race then supplies the divergence explicitly:
+const store = createStore(card, (live) => ({ ...live, status: "awaiting-approval" }));
 ```
 
 The `onLockedRead` hook matters: an in-transaction re-check exists to catch state
