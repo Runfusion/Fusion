@@ -282,7 +282,11 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     if (typeof nearDuplicateOf !== "string" || !allTasks) {
       return undefined;
     }
-    return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
+    const canonical = allTasks.find((candidate) => candidate.id === nearDuplicateOf);
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-01:10: the canonical's own flags. Declared above
+       `getTaskColumnFlags` in source order, but this body only runs during render, so the const is
+       initialised by then — tsc and the suite both confirm it. */
+    return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
   }, [allTasks]);
 
   // Clear the inline capacity-exhausted banner once the column's task list
@@ -364,7 +368,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       // FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile): these
       // tasks are IN this column, so the column's own flags are their column traits. Without
       // them the header undercounts executing work on a merged planning lane.
-      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs), columnFlags }),
+      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, columnFlags), columnFlags }),
     ).length,
     [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
   );

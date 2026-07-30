@@ -735,8 +735,8 @@ export function WorkflowResultsTab({
   const completedStepCount = useMemo(() => results.filter((result) => ["passed", "skipped", "failed", "advisory_failure"].includes(result.status)).length, [results]);
   const graphWorkflow = graphCacheKey ? workflowGraphCache[graphCacheKey] : undefined;
   const graphFlow = useMemo(() => (graphWorkflow ? irToFlow(graphWorkflow) : null), [graphWorkflow]);
-  const effectiveExecutor = useMemo(() => (task ? resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
-  const effectiveValidator = useMemo(() => (task ? resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
+  const effectiveExecutor = useMemo(() => (task ? resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings, columnFlags) : undefined), [agentLogEntries, assignedAgent, task, settings, columnFlags]);
+  const effectiveValidator = useMemo(() => (task ? resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings, columnFlags) : undefined), [agentLogEntries, assignedAgent, task, settings, columnFlags]);
   const effectivePlanning = useMemo(() => (task ? resolveEffectivePlanning(task, agentLogEntries, settings) : undefined), [agentLogEntries, task, settings]);
 
   const renderEditor = () => {

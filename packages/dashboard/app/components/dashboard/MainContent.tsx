@@ -388,7 +388,12 @@ export function MainContent({
                 prAuthAvailable={prAuthAvailable}
                 autoMergeEnabled={autoMerge}
                 nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
-                  ? isNearDuplicateCanonicalInactive(pluginContextTasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf))
+                  ? (() => {
+                    /* FNXC:WorkflowResolvedColumns 2026-07-31-01:10: the canonical's own flags, from
+                       the per-task map this component already threads to its other children. */
+                    const canonical = pluginContextTasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf);
+                    return isNearDuplicateCanonicalInactive(canonical, canonical ? columnFlagsByTaskId?.get(canonical.id) : undefined);
+                  })()
                   : undefined}
               />
             ),

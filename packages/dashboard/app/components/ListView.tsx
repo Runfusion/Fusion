@@ -3032,7 +3032,7 @@ export function ListView({
                           const visualStatus = isDoneColumn ? "done" : task.status;
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
-                          const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+                          const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, getTaskColumnFlags(task));
                           const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
                           const isTransientPlannerActive = isIntakeColumnForTask(task)
@@ -3295,7 +3295,7 @@ export function ListView({
                             const visualStatus = isDoneColumn ? "done" : task.status;
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
-                            const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+                            const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, getTaskColumnFlags(task));
                             const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                             const isTransientPlannerActive = isIntakeColumnForTask(task)

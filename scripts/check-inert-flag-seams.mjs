@@ -18,7 +18,11 @@ WHAT IT CHECKS. Exported functions whose LAST parameter is optional and named li
 arguments. Component props are covered separately by
 `packages/dashboard/app/__tests__/resolved-flags-seams-have-suppliers.test.ts`.
 
-LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Tests are excluded, so a function called only from tests
+LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Call sites are matched by FUNCTION NAME, not by resolved
+symbol, so two different functions sharing a name are conflated — `sortTasksForDisplayColumn` exists
+in both `core/task-priority.ts` and `dashboard/components/taskSorting.ts` with different signatures,
+and a naive reading of this scan sent me to "fix" callers of the wrong one (tsc caught it). Treat a
+report as a pointer to investigate, never as a diff to apply. Tests are excluded, so a function called only from tests
 reports zero callers — those are allow-listed below, not silently skipped. It proves a caller passes
 SOMETHING in that position, not that the value is correct or non-undefined. Cheap half of the
 question; it is the half that was silently wrong.
