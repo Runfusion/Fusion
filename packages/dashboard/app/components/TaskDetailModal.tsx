@@ -958,18 +958,34 @@ export function TaskDetailContent({
     That inconsistency was created by converting half the pair. The state this reads is hoisted above
     these effects for exactly this reason — see the note at its declaration.
     */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (PR #2698 review — greptile P1, third form):
+    DO NOT REDIRECT ON AN UNRESOLVED ROLE. `workflowMoveMetadata` is null until the workflow fetch
+    lands, so on first paint `isReviewColumn` is the legacy-id fallback — false for a custom review
+    column. Without this guard the modal opens, immediately bounces the operator off the PR tab they
+    chose, and never restores it when the real answer arrives: the redirect is destructive and the
+    correction is not.
+
+    Waiting is the safe direction. Showing the PR tab a moment longer on a card that turns out not to
+    be in review is benign and self-corrects the instant metadata resolves; throwing away a
+    deliberate tab selection does not.
+    */
+    if (workflowMoveMetadata === null) return;
     if (activeTab === "pr" && !isReviewColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column, isReviewColumn]);
+  }, [activeTab, task.column, isReviewColumn, workflowMoveMetadata]);
 
   useEffect(() => {
     // Same pairing as the PR tab above: visibility resolves the complete role, so reconciliation must
     // too, or the Summary tab appears on a custom terminal column and bounces straight back.
+    // Same unresolved-role guard as the PR tab above: a redirect is destructive, so it waits for the
+    // real answer rather than acting on the legacy fallback.
+    if (workflowMoveMetadata === null) return;
     if (activeTab === "summary" && !isDoneColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column, isDoneColumn]);
+  }, [activeTab, task.column, isDoneColumn, workflowMoveMetadata]);
 
   // Reset description and planner-chat focus state when task changes
   useEffect(() => {
