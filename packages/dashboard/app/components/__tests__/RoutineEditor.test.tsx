@@ -648,4 +648,45 @@ describe("RoutineEditor", () => {
       expect(onSubmit).not.toHaveBeenCalled();
     });
   });
+
+  /*
+  FNXC:Automations 2026-07-30-15:45 (U11 merged planning column):
+  The "Target Column" default was `triage`, which U11 deletes from the default workflow. It is
+  submitted as the create step's `taskColumn`, and an EXPLICIT column bypasses the workflow
+  entry-column resolution added for column-less creates — so a routine saved with the untouched
+  default seeded tasks into a column the board does not declare.
+
+  Asserted on the RENDERED control and on the SUBMITTED step, so it covers what the operator actually
+  sends rather than the constant.
+  */
+  describe("create-task target column (U11)", () => {
+    it("sends NO column by default, so each workflow's own intake resolution decides", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      expect(select.value, "the default must not name a column at all").toBe("");
+      expect(select.value).not.toBe("triage");
+      // `todo` would be the same mistake one column over — a custom workflow declaring no `todo`
+      // would be seeded into an undeclared column just as surely.
+      expect(select.value).not.toBe("todo");
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "nightly" } });
+      fireEvent.change(screen.getByLabelText("Task Description"), { target: { value: "Review deps" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      expect(onSubmit.mock.calls[0][0].steps[0].taskColumn).toBeUndefined();
+    });
+
+    it("no longer offers the deleted column at all", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      const values = Array.from(select.options).map((o) => o.value);
+      expect(values, "an operator must not be able to pick a column the workflow does not declare").not.toContain("triage");
+      expect(values).toContain("");
+      expect(values).toContain("todo");
+    });
+  });
 });

@@ -221,7 +221,19 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const [prompt, setPrompt] = useState(isSimpleAiPrompt ? routine.steps?.[0]?.prompt ?? "" : "");
   const [taskTitle, setTaskTitle] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskTitle ?? "" : "");
   const [taskDescription, setTaskDescription] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskDescription ?? "" : "");
-  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "triage" : "triage");
+  /*
+  FNXC:Automations 2026-07-30-15:40 (U11 merged planning column):
+  Defaulted to `triage`, which U11 DELETES from the default workflow, and this value is submitted as
+  the create step's `taskColumn`. An EXPLICIT column BYPASSES the workflow entry-column resolution
+  added for column-less creates (#2589), so every routine saved with the untouched default seeded its
+  tasks into a column the board does not declare, left for reconciliation to re-home.
+
+  Defaulting to `todo` instead would be the same mistake one column over: a custom workflow declaring
+  no `todo` gets seeded into an undeclared column just as surely. So the default sends NOTHING and each
+  workflow's own intake resolution decides — the only answer correct for every board. `taskColumn` is
+  optional on the step, and an empty selection submits as `undefined`.
+  */
+  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "" : "");
   const [modelProvider, setModelProvider] = useState(
     isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.modelProvider ?? "" : ""
   );
@@ -372,7 +384,8 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               name: name.trim(),
               taskTitle: taskTitle.trim() || undefined,
               taskDescription: taskDescription.trim(),
-              taskColumn,
+              // Empty means "let the workflow decide" — an explicit column overrides entry resolution.
+              taskColumn: taskColumn || undefined,
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
               thinkingLevel: normalizeThinkingLevel(thinkingLevel),
@@ -716,8 +729,15 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               <div className="form-group">
                 <label htmlFor="routine-task-column">{t("schedule.taskColumnLabel", "Target Column")}</label>
                 <select id="routine-task-column" value={taskColumn} onChange={(e) => setTaskColumn(e.target.value)}>
-                  <option value="triage">{t("schedule.taskColumnTriage", "Planning")}</option>
-                  <option value="todo">{t("schedule.taskColumnTodo", "To Do")}</option>
+                  {/*
+                  The `triage` option is REMOVED, not merely un-defaulted: fixing only the initializer
+                  left the operator able to pick a column the default workflow no longer declares — and
+                  it was the option labelled "Planning", which is the name the merged `todo` column now
+                  displays, so it was the natural choice. Removing it also retires that label inversion.
+                  An existing routine persisted with `taskColumn: "triage"` keeps the value until edited.
+                  */}
+                  <option value="">{t("schedule.taskColumnAuto", "Automatic (workflow intake)")}</option>
+                  <option value="todo">{t("schedule.taskColumnPlanning", "Planning")}</option>
                 </select>
               </div>
               <div className="form-group">
