@@ -1183,6 +1183,14 @@ async function findDefinedFeatureBootstrapDuplicate(
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
   const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+  Resolved AHEAD of the synchronous `flatMap` below, which cannot await. NOT the query-filter class: this
+  query passes `includeArchived: true`, so the predicate inside the callback is the ONLY archived guard on
+  this path — on a renamed archive lane an archived sibling became a bootstrap canonical, and
+  `claimDefinedFeatureTask` then rejects the non-live row, so the claim fails outright.
+  */
+  const isArchivedCandidate = await resolveArchivedColumnsForTasks(store, candidates);
   const matches = findSameAgentDuplicates({
     title: input.title,
     description: input.description,
@@ -1195,7 +1203,7 @@ async function findDefinedFeatureBootstrapDuplicate(
     task boundary. An archived sibling cannot be a bootstrap canonical because
     claimDefinedFeatureTask rejects non-live task rows.
     */
-    if (Number.isNaN(createdAt) || task.deletedAt || task.column === "archived") return [];
+    if (Number.isNaN(createdAt) || task.deletedAt || isArchivedCandidate(task)) return [];
     return [{
       id: task.id,
       title: task.title ?? "",
@@ -1263,6 +1271,31 @@ async function resolveTerminalColumnsForTasks(
   return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
 }
 
+/**
+ * MEMBERSHIP over the `archived` role for a fixed task set, unioned with the legacy id.
+ *
+ * Split from `resolveTerminalColumnsForTasks` rather than parameterised: the two callers ask genuinely
+ * different questions — "is this finished?" (complete OR archived) versus "is this archived?" — and
+ * collapsing them would make an archived-only guard also reject completed rows.
+ */
+async function resolveArchivedColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const archivedByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (archivedByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    archivedByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => archivedByTaskId.get(task.id)?.has(task.column) === true;
+}
+
 export async function createAgentTask(
   store: TaskStore,
   input: TaskCreateInput,
@@ -1315,11 +1348,19 @@ export async function createAgentTask(
       try {
         const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
         const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-        const candidates = (await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
+        const searched = await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
           slim: true,
           includeArchived: false,
-        }))
-          .filter((candidate) => candidate.column !== "done" && candidate.column !== "archived")
+        });
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+        On a renamed complete lane a FINISHED diagnostic card passed this filter, so the dedup guard
+        adopted it as canonical and returned `wasDuplicate: true` — silently absorbing new diagnostic
+        work into a task nobody is working on. Same shape as the eval-followup dedup defect.
+        */
+        const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, searched);
+        const candidates = searched
+          .filter((candidate) => !isTerminalCandidate(candidate))
           .filter((candidate) => Date.parse(candidate.createdAt) >= cutoffMs)
           .filter((candidate) => !acknowledged.has(candidate.id))
           .filter((candidate) => computeCrossParentDiagnosticClaimId({
