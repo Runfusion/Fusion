@@ -103,9 +103,17 @@ export function stripComments(src) {
   return out;
 }
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-02:45 (greptile #2623):
+Accept BOTH quote styles and allow the comparison to span lines. The original pattern required a
+single-line double-quoted form, so `column ===\n  'triage'` and `column === 'triage'` were invisible
+and the reported count could fall without a literal being removed — a count that drops for the wrong
+reason is worse than a count that is too high. `\s` spans newlines in JS regex, and the census scans
+whole-file text (not line-by-line) so a split comparison is still found and still reported with the
+line its `column` token sits on.
+*/
 function patternFor(literal) {
-  // `column === "x"` / `column !== "x"`, allowing any receiver (`task.column`, `live.column`, …).
-  return new RegExp(`column\\s*(===|!==)\\s*"${literal}"`, "g");
+  return new RegExp(`column\\s*(===|!==)\\s*['"]${literal}['"]`, "g");
 }
 
 /*
@@ -157,15 +165,17 @@ export function censusFor(files, readFile = (f) => readFileSync(resolve(REPO_ROO
   const perFile = new Map();
   for (const file of files) {
     const stripped = stripComments(readFile(file));
-    const lines = stripped.split("\n");
     const hits = [];
-    lines.forEach((line, index) => {
-      for (const literal of LITERALS) {
-        const pattern = patternFor(literal);
-        let match;
-        while ((match = pattern.exec(line)) !== null) hits.push({ line: index + 1, literal });
+    for (const literal of LITERALS) {
+      const pattern = patternFor(literal);
+      let match;
+      // Whole-file scan, so a comparison split across lines is not missed.
+      while ((match = pattern.exec(stripped)) !== null) {
+        const line = stripped.slice(0, match.index).split("\n").length;
+        hits.push({ line, literal });
       }
-    });
+    }
+    hits.sort((a, b) => a.line - b.line);
     if (hits.length > 0) perFile.set(file, hits);
   }
   return perFile;
@@ -249,6 +259,26 @@ function main() {
   if (mode === "update") {
     if (explicitFiles) {
       console.error("refusing to rewrite the ledger from an explicit --files list: it would drop every ceiling not named.");
+      process.exit(2);
+    }
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-02:40 (greptile #2623):
+    `--update` may only ever LOWER a ceiling. It used to write the current counts verbatim, so a
+    developer who ADDED a literal and then ran the documented update command locked the regression in
+    as the new ceiling, and enforcement thereafter called the regressed tree clean. That is a ratchet
+    that silently releases — the exact failure mode this file exists to prevent, in the file itself.
+    */
+    const existing = readLedger();
+    const raised = [
+      ...Object.entries(counts).filter(([f, c]) => c > ((existing.ceilings ?? {})[f] ?? 0))
+        .map(([f, c]) => ({ f, c, was: (existing.ceilings ?? {})[f] ?? 0, kind: "comparison" })),
+      ...Object.entries(membershipCounts).filter(([f, c]) => c > ((existing.membershipCeilings ?? {})[f] ?? 0))
+        .map(([f, c]) => ({ f, c, was: (existing.membershipCeilings ?? {})[f] ?? 0, kind: "membership" })),
+    ];
+    if (raised.length > 0) {
+      console.error("refusing to RAISE a ceiling — --update may only lower one. These files gained literals:");
+      for (const r of raised) console.error(`  ${r.f}: ${r.c} > ${r.was} [${r.kind}]`);
+      console.error("\nRemove the literals, or if one is genuinely load-bearing edit the ledger by hand\nwith the reason in the commit message so the raise is a reviewed decision.");
       process.exit(2);
     }
     writeFileSync(LEDGER_PATH, `${JSON.stringify({

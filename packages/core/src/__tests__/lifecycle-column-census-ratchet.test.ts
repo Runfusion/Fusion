@@ -160,6 +160,56 @@ describe("lifecycle-column census ratchet", () => {
     }
   });
 
+  /*
+  GREPTILE #2623: `--update` used to write the current counts verbatim, so a developer who ADDED a
+  literal and then ran the documented update command locked the regression in as the new ceiling, and
+  enforcement thereafter called the regressed tree clean. A ratchet that releases on the happy path is
+  not a ratchet. It may only ever LOWER.
+  */
+  it("refuses to RAISE a ceiling, so --update cannot launder a regression", () => {
+    const repoRoot = resolve(__dirname, "../../../..");
+    const victim = join(repoRoot, "packages/core/src/__census_raise_probe__.ts");
+    const ledgerBefore = readFileSync(LEDGER, "utf-8");
+    try {
+      writeFileSync(victim, 'export const dead = (task: { column: string }) => task.column === "triage";\n');
+      execFileSync("git", ["add", "-N", "--", victim], { cwd: repoRoot, stdio: "ignore" });
+
+      const { status, out } = runCensus(["--update"]);
+      expect(status).toBe(2);
+      expect(out).toContain("refusing to RAISE a ceiling");
+      expect(out).toContain("__census_raise_probe__.ts");
+      // And it must not have written anything.
+      expect(readFileSync(LEDGER, "utf-8")).toBe(ledgerBefore);
+    } finally {
+      execFileSync("git", ["rm", "-q", "--cached", "--force", "--", victim], { cwd: repoRoot, stdio: "ignore" });
+      rmSync(victim, { force: true });
+      writeFileSync(LEDGER, ledgerBefore);
+    }
+  });
+
+  /*
+  GREPTILE #2623: the pattern required a single-line, double-quoted form, so `column === 'triage'` and
+  a comparison split across lines were invisible. A count that FALLS for the wrong reason is worse
+  than one that is too high, because it reads as progress.
+  */
+  it("counts single-quoted and line-split comparisons", () => {
+    const dir = mkdtempSync(join(tmpdir(), "census-syntax-"));
+    try {
+      for (const [name, body] of [
+        ["single-quoted.ts", "export const a = (t: { column: string }) => t.column === 'triage';"],
+        ["split.ts", "export const b = (t: { column: string }) => t.column\n  === \"triage\";"],
+        ["optional-chain.ts", 'export const c = (t?: { column: string }) => t?.column === "triage";'],
+      ] as Array<[string, string]>) {
+        const victim = join(dir, name);
+        writeFileSync(victim, `${body}\n`);
+        const { status, out } = runCensus(["--files", victim]);
+        expect(status, `${name} was not counted: ${out}`).toBe(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the ledger honest: every ceiling names a real file and the total agrees", () => {
     const ledger = JSON.parse(readFileSync(LEDGER, "utf-8")) as {
       total: number;

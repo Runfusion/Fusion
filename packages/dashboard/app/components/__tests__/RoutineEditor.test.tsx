@@ -668,9 +668,19 @@ describe("RoutineEditor", () => {
       const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
       expect(
         select.value,
-        "a routine saved with the untouched default must not seed tasks into a column the workflow no longer declares",
-      ).toBe("todo");
+        "the default must send NO column, so each workflow's own intake resolution decides",
+      ).toBe("");
       expect(select.value).not.toBe("triage");
+      // `todo` is the same mistake one column over: a custom workflow declaring no `todo` would be
+      // seeded into an undeclared column just as surely.
+      expect(select.value).not.toBe("todo");
+
+      // And the submitted step must omit it entirely rather than sending an empty string.
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "nightly" } });
+      fireEvent.change(screen.getByLabelText("Task Description"), { target: { value: "Review deps" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      expect(onSubmit.mock.calls[0][0].steps[0].taskColumn).toBeUndefined();
     });
   });
 });

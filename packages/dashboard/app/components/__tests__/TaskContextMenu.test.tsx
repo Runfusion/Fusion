@@ -87,6 +87,23 @@ describe("TaskContextMenu shared task action model", () => {
     }).shouldShowActionsMenu).toBe(true);
   });
 
+  it("hides it on a bare merged-column card while metadata is STILL LOADING (greptile #2623)", () => {
+    // No `currentColumnFlags` — the async metadata window. A triage-only fallback is false for a
+    // merged `todo` card and reinstates the vacuous gate for the whole window.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+    }).shouldShowActionsMenu).toBe(false);
+
+    // Still opens for anything actionable in that same window.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo", status: "awaiting-approval" as never }),
+      t,
+      columnLabel: columnLabel as never,
+    }).shouldShowActionsMenu).toBe(true);
+  });
+
   it("falls back to the legacy id while column metadata is still loading", () => {
     // `currentColumnFlags` arrives from an async metadata fetch and is undefined until it lands,
     // so the legacy comparison remains the only signal in that window.

@@ -222,23 +222,24 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const [taskTitle, setTaskTitle] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskTitle ?? "" : "");
   const [taskDescription, setTaskDescription] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskDescription ?? "" : "");
   /*
-  FNXC:Automations 2026-07-30-01:35 (U11 merged planning column):
-  Defaulted to `triage`, which U11 DELETES from the default workflow. This value is submitted as the
-  create step's `taskColumn`, and an EXPLICIT column bypasses the intake fallback that #2589 added for
-  column-less creates — so every routine saved with the untouched default seeded its tasks into a
-  column the board does not declare, to be re-homed later by reconciliation. Same defect class as
-  #2589, reached through the automation form instead of createTask.
+  FNXC:Automations 2026-07-30-02:55 (U11 merged planning column; greptile #2623):
+  This defaulted to `triage`, which U11 DELETES from the default workflow, and the value is submitted
+  as the create step's `taskColumn`. An EXPLICIT column BYPASSES the workflow entry-column resolution
+  that #2589 added for column-less creates — so every routine saved with the untouched default seeded
+  its tasks into a column the board does not declare, left for reconciliation to re-home.
 
-  `todo` is the merged pre-implementation column and is where specification now runs, so it is both
-  the surviving id and the correct destination.
+  Defaulting to `todo` instead was the same mistake one column over: a custom workflow that declares no
+  `todo` would be seeded into an undeclared column just as surely. The fix is to send NOTHING and let
+  the create path resolve each workflow's own intake column, which is the only answer that is correct
+  for every board. `taskColumn` is optional on the step, and an empty value is submitted as undefined.
 
-  NOTE, deliberately not changed here: the option LABELS are now inverted against the board. The
-  `triage` option reads "Planning" while the column actually displayed as "Planning" is `todo`. Fixing
-  that means either new i18n keys across every catalogue or resolving the workflow's real columns for
-  this dropdown (it hardcodes two, so it already ignores custom boards). Left as a follow-up rather
-  than bundled into a default-value fix.
+  The explicit column choices remain available for operators who want one; "Automatic" is simply the
+  default. NOTE the labels are inverted against the board and left alone deliberately: the `triage`
+  option reads "Planning" while the column DISPLAYED as "Planning" is `todo`. Correcting that needs
+  either new i18n keys in every catalogue or resolving the workflow's real columns for a dropdown that
+  hardcodes two and already ignores custom boards — a different change from this one.
   */
-  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "todo" : "todo");
+  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "" : "");
   const [modelProvider, setModelProvider] = useState(
     isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.modelProvider ?? "" : ""
   );
@@ -389,7 +390,8 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               name: name.trim(),
               taskTitle: taskTitle.trim() || undefined,
               taskDescription: taskDescription.trim(),
-              taskColumn,
+              // Empty means "let the workflow decide" — an explicit column would override entry resolution.
+              taskColumn: taskColumn || undefined,
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
               thinkingLevel: normalizeThinkingLevel(thinkingLevel),
@@ -733,6 +735,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               <div className="form-group">
                 <label htmlFor="routine-task-column">{t("schedule.taskColumnLabel", "Target Column")}</label>
                 <select id="routine-task-column" value={taskColumn} onChange={(e) => setTaskColumn(e.target.value)}>
+                  <option value="">{t("schedule.taskColumnAuto", "Automatic (workflow intake)")}</option>
                   <option value="triage">{t("schedule.taskColumnTriage", "Planning")}</option>
                   <option value="todo">{t("schedule.taskColumnTodo", "To Do")}</option>
                 </select>

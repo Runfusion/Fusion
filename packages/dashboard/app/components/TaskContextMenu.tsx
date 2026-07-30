@@ -457,12 +457,20 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   the menu from hold cards that have always had it — Coding (Ideas) keeps a hold-only `todo`. On the
   merged column intake and hold are the same column, so this restricts exactly what `triage` did.
 
-  The legacy id remains the fallback: `currentColumnFlags` arrives from an async metadata fetch and
-  is undefined until it lands, so the comparison is still the only signal in that window.
+  The fallback covers BOTH pre-implementation ids, not just the legacy one (greptile #2623).
+  `currentColumnFlags` arrives from an async metadata fetch and is undefined until it lands, so during
+  every loading window the comparison is the only signal — and a `triage`-only fallback is false for a
+  merged `todo` card, which reinstates exactly the vacuous behaviour this fix removes.
+
+  The trade is explicit: including `todo` also restricts a HOLD-ONLY `todo` (Coding (Ideas)) for the
+  duration of that window, where the menu is warranted. That is the better of two transient wrongs —
+  the merged lineage is the default shape, so a `triage`-only fallback is wrong on most boards on every
+  render until metadata lands, whereas this is wrong on one workflow for one window and self-corrects
+  the moment flags arrive.
   */
   const isIntakeLaneColumn = options.currentColumnFlags
     ? options.currentColumnFlags.intake === true
-    : task.column === "triage";
+    : task.column === "triage" || task.column === "todo";
 
   return {
     actions,
