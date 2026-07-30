@@ -8,7 +8,7 @@ import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, 
 import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { useColumnLabel } from "../i18n/labels";
-import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
+import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
@@ -313,24 +313,28 @@ interface ListViewProps {
 }
 
 
-/*
-FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: module scope, no flags reachable.
-`status === "executing"` is the primary signal; the column arm is the fallback for rows whose status
-has not been written yet. This function takes only a Task — there is no flags map in scope and no
-caller threading one — so converting it means changing the signature and every call site, which is a
-behaviour change and out of scope for the batch. Flagged here rather than guessed.
-*/
-function shouldShowTaskProgress(task: Task): boolean {
-  return task.status === "executing" || task.column === "in-progress";
+/**
+ * FNXC:WorkflowResolvedColumns 2026-07-31-00:10:
+ * The progress bar shows for an EXECUTING card or one resting in a wip lane.
+ *
+ * `flags` is threaded from the caller's per-column map. Keyed on the literal, a renamed wip column
+ * showed no progress bar for any card whose status had not yet flipped to `executing` — the row
+ * looked idle while an agent was working in it.
+ */
+function shouldShowTaskProgress(task: Task, flags?: Parameters<typeof isWipColumnRole>[0]): boolean {
+  return task.status === "executing" || isWipColumnRole(flags, task.column);
 }
 
-function getTaskProgress(task: Task): { label: string; percent: number; hasProgress: boolean } {
+function getTaskProgress(
+  task: Task,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
+): { label: string; percent: number; hasProgress: boolean } {
   /*
   FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
   List progress for WIP matches TaskCard: only implementation steps, not Todo Plan Review or In-review Code Review gates.
   */
   const progress = getUnifiedTaskProgress(task, { scope: "implementation" });
-  if (progress.total === 0 || !shouldShowTaskProgress(task)) {
+  if (progress.total === 0 || !shouldShowTaskProgress(task, columnFlags)) {
     return { label: "-", percent: 0, hasProgress: false };
   }
 
@@ -854,6 +858,43 @@ export function ListView({
     return map;
   }, [boardWorkflows, tasks, workflowMode]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-02:20 (PR #2738 review — greptile P1):
+  PER-TASK column flags. `columnFlagsById` is a UNION across workflows keyed by column id, which the
+  note above already calls out for `moveTargets` — two workflows reusing an id collapse to one entry.
+
+  That union was harmless while flags answered only COLUMN-level questions (`isArchivedColumn(column)`
+  for a whole list section). Converting the row context menu and the progress bar made them per-TASK
+  questions, and there the union serves one workflow's `complete`/`archived`/`countsTowardWip` to
+  another workflow's card — so Archive and Revert appear or vanish, and the progress bar shows or
+  hides, according to a neighbouring workflow's semantics. My change is what widened that exposure,
+  so it resolves per task here.
+
+  Same validated mapping as `taskContextMenuColumnsByTaskId` (unmapped task -> no metadata, stale id
+  -> default), and the same fallback: the shared union, which is the pre-existing approximation
+  rather than a confidently wrong answer.
+  */
+  const getTaskColumnFlags = useCallback((
+    task: Task,
+  ): Parameters<typeof isCompleteColumnRole>[0] | undefined => {
+    const own = taskContextMenuColumnsByTaskId.get(task.id);
+    const fromOwnWorkflow = own?.find((column) => column.id === task.column)?.flags;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (PR #2738 review — greptile P1):
+    KNOWING the task's workflow and finding no such column is an ANSWER, not a miss.
+
+    The first version fell through to the union in both cases, which put back the bug one level down:
+    a task mapped to workflow A whose column A no longer declares — the stranded card this whole
+    change is about — picked up workflow B's traits for the same id. Archive/Revert, progress, the
+    Planning badge and agent-active styling all followed a workflow the card does not belong to.
+
+    Absent flags is the RIGHT answer there: the role helpers then degrade to the legacy id, which is
+    exactly the documented no-metadata path and the same argument this PR makes for `Column.tsx`. The
+    union is an approximation reserved for the case where we have no per-task metadata AT ALL.
+    */
+    return fromOwnWorkflow ?? (own ? undefined : columnFlagsById.get(task.column));
+  }, [columnFlagsById, taskContextMenuColumnsByTaskId]);
+
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
     const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
     if (taskWorkflowId) return taskWorkflowId;
@@ -872,19 +913,48 @@ export function ListView({
   The id fallback now lives once in `isIntakeColumnRole`, together with the reason it
   cannot be deleted; see `utils/columnRoles.ts`.
   */
+  /* Found by the PR #2738 ratchet, and it PREDATES this change: the name says "ForTask" while the
+     lookup went to the cross-workflow union, so the Planning badge followed a neighbouring
+     workflow's `intake` trait. Same one-line fix as the sites below. */
   const isIntakeColumnForTask = useCallback((task: Task): boolean => {
-    return isIntakeColumnRole(columnFlagsById.get(task.column), task.column);
+    return isIntakeColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — same change as Column.tsx):
+  `workflowMode` is a BOARD-level boolean answering a PER-COLUMN question. In workflow mode with a
+  column that has no resolved traits, the old form returned false for every role rather than falling
+  back to the id — so the archive and revert affordances silently vanished for a card sitting in a
+  column its workflow no longer declares. The shared helpers ask per column and degrade to the
+  legacy id only when the flags are truly absent, which also covers the pre-load window the old form
+  handled via `workflowMode === false`.
+  */
+  const isArchivedColumn = useCallback((column: ColumnId): boolean => {
+    return isArchivedColumnRole(columnFlagsById.get(column), column);
   }, [columnFlagsById]);
 
-  const isArchivedColumn = useCallback((column: ColumnId): boolean => {
-    /* FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: the non-workflow arm — no flags map to read. */
-    return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
-  }, [columnFlagsById, workflowMode]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:00 (PR #2738 review — greptile P1):
+  PER-TASK twins of the two column-level predicates above.
 
-  const isCompleteColumn = useCallback((column: ColumnId): boolean => {
-    /* FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: the non-workflow arm — no flags map to read. */
-    return workflowMode ? Boolean(columnFlagsById.get(column)?.complete) : column === "done";
-  }, [columnFlagsById, workflowMode]);
+  The column-level pair answers "is this whole list SECTION the archive?", where the cross-workflow
+  union is harmless. Thirteen call sites were passing `task.column` into them — a per-TASK question —
+  so on a board where two workflows reuse a column id with different traits, bulk select-all, delete,
+  archive, pause, unpause and model updates classified each card by a NEIGHBOURING workflow's
+  semantics: cards silently skipped, or the wrong branch of a destructive action taken.
+
+  These evaded the ratchet I added for the same defect one round ago, because that guard forbade
+  reading `columnFlagsById.get(task.column)` DIRECTLY and these reach the union through a callback.
+  The guard is widened accordingly — the rule is the QUESTION being asked (per task), not the syntax
+  used to ask it.
+  */
+  const isTaskCompleteColumn = useCallback((task: Task): boolean => {
+    return isCompleteColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
+
+  const isTaskArchivedColumn = useCallback((task: Task): boolean => {
+    return isArchivedColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
 
   const selectedWorkflowTaskIds = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow || isAllWorkflowsSelected) return null;
@@ -1209,20 +1279,12 @@ export function ListView({
       if (!group || group.length === 0) continue;
       const windowed = listSectionWindows[column]?.tasks ?? group;
       for (const task of windowed) {
-        if (isArchivedColumn(task.column)) continue; // Can't bulk edit archived
+        if (isTaskArchivedColumn(task)) continue; // Can't bulk edit archived
         ids.push(task.id);
       }
     }
     return ids;
-  }, [
-    listColumns,
-    selectedColumn,
-    hideDoneTasks,
-    collapsedSections,
-    groupedTasks,
-    listSectionWindows,
-    isArchivedColumn,
-  ]);
+  }, [collapsedSections, groupedTasks, hideDoneTasks, isTaskArchivedColumn, listColumns, listSectionWindows, selectedColumn]);
 
   // Toggle every rendered (windowed) task
   const toggleSelectAll = useCallback(() => {
@@ -1297,16 +1359,16 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const archivedTasks = selectedTasks.filter((task) => isArchivedColumn(task.column));
-    const deletableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column));
+    const archivedTasks = selectedTasks.filter((task) => isTaskArchivedColumn(task));
+    const deletableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task));
 
     if (deletableTasks.length === 0) {
       addToast(t("listView.bulkDeleteNoTasks", "No selected tasks can be deleted (archived tasks are excluded)"), "error");
       return;
     }
 
-    const doneTasks = deletableTasks.filter((task) => isCompleteColumn(task.column));
-    const otherTasks = deletableTasks.filter((task) => !isCompleteColumn(task.column));
+    const doneTasks = deletableTasks.filter((task) => isTaskCompleteColumn(task));
+    const otherTasks = deletableTasks.filter((task) => !isTaskCompleteColumn(task));
 
     let shouldDeleteAll = false;
     let shouldArchiveDoneInstead = false;
@@ -1494,7 +1556,7 @@ export function ListView({
       : t("listView.bulkDeleteSummary", { count: deletedIds.length, skipped: skippedIds.length, failed: failedIds.length, defaultValue_one: "Deleted {{count}} task · {{skipped}} archived skipped · {{failed}} failed", defaultValue_other: "Deleted {{count}} tasks · {{skipped}} archived skipped · {{failed}} failed" });
 
     addToast(summaryMessage, failedIds.length > 0 ? "error" : "success");
-  }, [addToast, confirm, confirmWithChoice, isArchivedColumn, isCompleteColumn, onArchiveTask, onDeleteTask, selectedTaskIds, tasks]);
+  }, [addToast, confirm, confirmWithChoice, isTaskArchivedColumn, isTaskCompleteColumn, onArchiveTask, onDeleteTask, selectedTaskIds, tasks]);
 
   const handleBulkPause = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1506,7 +1568,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column) && task.paused !== true);
+    const actionableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task) && task.paused !== true);
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1545,7 +1607,7 @@ export function ListView({
       t("listView.bulkPauseSummary", "Paused {{paused}} · {{skipped}} skipped · {{failed}} failed", { paused: pausedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, isArchivedColumn, onPauseTask, selectedTaskIds, tasks]);
+  }, [addToast, isTaskArchivedColumn, onPauseTask, selectedTaskIds, tasks]);
 
   const handleBulkUnpause = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1557,7 +1619,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column) && task.paused === true);
+    const actionableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task) && task.paused === true);
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1596,7 +1658,7 @@ export function ListView({
       t("listView.bulkUnpauseSummary", "Unpaused {{unpaused}} · {{skipped}} skipped · {{failed}} failed", { unpaused: unpausedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, isArchivedColumn, onUnpauseTask, selectedTaskIds, tasks]);
+  }, [addToast, isTaskArchivedColumn, onUnpauseTask, selectedTaskIds, tasks]);
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1608,7 +1670,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => isCompleteColumn(task.column));
+    const actionableTasks = selectedTasks.filter((task) => isTaskCompleteColumn(task));
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1682,14 +1744,14 @@ export function ListView({
       t("listView.bulkArchiveSummary", "Archived {{archived}} · {{skipped}} skipped · {{failed}} failed", { archived: archivedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, confirm, isCompleteColumn, onArchiveTask, selectedTaskIds, tasks]);
+  }, [addToast, confirm, isTaskCompleteColumn, onArchiveTask, selectedTaskIds, tasks]);
 
   const handleApplyBulkUpdate = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
 
     const taskIds = Array.from(selectedTaskIds).filter((id) => {
       const task = tasks.find((t) => t.id === id);
-      return task && !isArchivedColumn(task.column);
+      return task && !isTaskArchivedColumn(task);
     });
 
     if (taskIds.length === 0) {
@@ -1786,7 +1848,7 @@ export function ListView({
     } finally {
       setIsApplying(false);
     }
-  }, [selectedTaskIds, tasks, executorModel, validatorModel, bulkThinkingLevel, nodeOverride, projectId, addToast, clearSelection, isArchivedColumn, onTasksUpdated]);
+  }, [addToast, bulkThinkingLevel, clearSelection, executorModel, isTaskArchivedColumn, nodeOverride, onTasksUpdated, projectId, selectedTaskIds, tasks, validatorModel]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenuState(null);
@@ -2006,7 +2068,7 @@ export function ListView({
       task,
       t,
       columnLabel: getListColumnLabel,
-      currentColumnFlags: columnFlagsById.get(task.column),
+      currentColumnFlags: getTaskColumnFlags(task),
       workflowMoveColumns: taskContextMenuColumnsByTaskId.get(task.id) ?? listContextMenuColumns,
       canRetryTask,
       hasDuplicateHandler: Boolean(onDuplicateTask),
@@ -2105,13 +2167,8 @@ export function ListView({
     });
 
     const actions = [...model.actions];
-    /*
-    FNXC:ListView 2026-07-30-04:45: Archive is offered for a COMPLETE column, asked by role.
-    `isCompleteColumn` is the same helper the rest of this view already uses, and it keeps the
-    legacy id as its own non-workflow fallback — so this is behaviour-identical on a legacy board
-    and correct on a renamed one, where a column named anything but `done` previously lost Archive.
-    */
-    if (isCompleteColumn(task.column) && onArchiveTask) {
+    const taskColumnFlags = getTaskColumnFlags(task);
+    if (isCompleteColumnRole(taskColumnFlags, task.column) && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
     }
     /*
@@ -2120,7 +2177,7 @@ export function ListView({
     entry above. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if ((isCompleteColumn(task.column) || isArchivedColumn(task.column)) && onRevertTask) {
+    if ((isCompleteColumnRole(taskColumnFlags, task.column) || isArchivedColumnRole(taskColumnFlags, task.column)) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
@@ -2140,7 +2197,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, getTaskColumnFlags, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2971,12 +3028,12 @@ export function ListView({
                         <div className="list-empty-cell list-card-empty">{t("listView.noTasks", "No tasks")}</div>
                       ) : (
                         windowedTasks.map((task) => {
-                          const isDoneColumn = isCompleteColumn(task.column);
+                          const isDoneColumn = isTaskCompleteColumn(task);
                           const visualStatus = isDoneColumn ? "done" : task.status;
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
                           const isTransientPlannerActive = isIntakeColumnForTask(task)
                             && !visualStatus
@@ -2999,7 +3056,7 @@ export function ListView({
                               ? t("tasks.statusPlanning", "Planning")
                               : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
-                          const taskProgress = getTaskProgress(task);
+                          const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                           const hasProgress = taskProgress.hasProgress;
                           const isSelectionMode = bulkEditEnabled;
 
@@ -3028,7 +3085,7 @@ export function ListView({
                                       toggleTaskSelection(task.id);
                                     }}
                                     onClick={(e) => e.stopPropagation()}
-                                    disabled={isArchivedColumn(task.column)}
+                                    disabled={isTaskArchivedColumn(task)}
                                     aria-label={t("listView.selectTask", "Select {{taskId}}", { taskId: task.id })}
                                   />
                                 </label>
@@ -3234,12 +3291,12 @@ export function ListView({
                           </tr>
                         ) : (
                           windowedTasks.map((task) => {
-                            const isDoneColumn = isCompleteColumn(task.column);
+                            const isDoneColumn = isTaskCompleteColumn(task);
                             const visualStatus = isDoneColumn ? "done" : task.status;
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                             const isTransientPlannerActive = isIntakeColumnForTask(task)
                               && !visualStatus
@@ -3286,7 +3343,7 @@ export function ListView({
                                         toggleTaskSelection(task.id);
                                       }}
                                       onClick={(e) => e.stopPropagation()}
-                                      disabled={isArchivedColumn(task.column)}
+                                      disabled={isTaskArchivedColumn(task)}
                                       aria-label={t("listView.selectTask", "Select {{taskId}}", { taskId: task.id })}
                                     />
                                   </td>
@@ -3388,7 +3445,7 @@ export function ListView({
                                 {visibleColumns.has("progress") && (
                                   <td className="list-cell list-cell-progress">
                                     {(() => {
-                                      const taskProgress = getTaskProgress(task);
+                                      const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                                       if (!taskProgress.hasProgress) return "-";
                                       return (
                                         <div className="list-progress">
