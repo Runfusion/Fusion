@@ -92,14 +92,42 @@ for (const file of walk(PACKAGES)) {
 }
 
 const offenders = [];
+const stale = [];
 for (const [fn, { file, arity }] of declared) {
-  if (ALLOWED.has(fn)) continue;
   const best = maxArgs.get(fn) ?? 0;
-  if (best < arity) offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+  const unsupplied = best < arity;
+  if (ALLOWED.has(fn)) {
+    /*
+    An allow-list entry whose site is now SUPPLIED is stale, and a stale exemption is how a guard
+    quietly stops guarding a file nobody is looking at any more. Fail so the entry is removed in the
+    same change that fixed the site — the same staleness rule the sync-resolver allow-list uses.
+    */
+    if (!unsupplied) stale.push(`  ${fn} — now supplied; remove its ALLOWED entry`);
+    continue;
+  }
+  if (unsupplied) offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+}
+
+/*
+TEMPORARY entries are exemptions for OTHER teams' code, granted so their CI does not break mid-batch.
+They are the ones that rot: nobody who could remove them is looking at this file. Announce them on
+every run so they stay visible rather than becoming permanent by silence.
+*/
+const temporary = [...ALLOWED].filter(([, reason]) => reason.startsWith("TEMPORARY"));
+if (temporary.length > 0) {
+  console.log(`[check-inert-flag-seams] ${temporary.length} TEMPORARY exemption(s) still active:`);
+  for (const [fn, reason] of temporary) console.log(`    ${fn} — ${reason}`);
 }
 
 if (declared.size === 0) {
   console.error("[check-inert-flag-seams] found NO trailing lane/flag params — the scan is broken, not the code.");
+  process.exit(1);
+}
+
+if (stale.length > 0) {
+  console.error("\n[check-inert-flag-seams] STALE allow-list entries — the sites are supplied now:\n");
+  for (const line of stale.sort()) console.error(line);
+  console.error("\nRemove them, or the check silently stops guarding those functions.\n");
   process.exit(1);
 }
 
