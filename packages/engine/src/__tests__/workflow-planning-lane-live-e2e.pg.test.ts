@@ -108,31 +108,6 @@ pgDescribe("live planning-lane E2E: real hold-release sweep + real PostgreSQL st
       "utf-8",
     );
     if (Object.keys(fields).length > 0) await store.updateTask(taskId, fields as never);
-    /*
-    FNXC:WorkflowPlanningLane 2026-07-30-00:30 (closing-bar verification):
-    The card needs a PLANNED PROMPT.md before the sweep will release it. Task creation leaves
-    a bootstrap seed ("# <id>\n\n<description>"), and FN-7648's `isUnplannedForExecution`
-    reads that file for any card resting in an intake- OR hold-trait column and refuses to
-    move an unplanned card into a processing column — so `sweep().released` came back EMPTY
-    even for this suite's own control card. That is the gate WORKING, not a scheduler defect.
-
-    Identical defect and identical fix to workflow-lifecycle-live-e2e's `seedTask` (#2634);
-    this suite was written after that fix and did not inherit it. The graph-entry contract doc
-    states the rule outright: "Scheduler/release test fixtures must model a card that cleared
-    the gate ... A held unreviewed card is the gate working."
-
-    Cards that are SUPPOSED to be held (approval-parked, unplanned) still are — they are held
-    by their own status/marker, which is what those cases assert.
-    */
-    const { writeFileSync, mkdirSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const dir = join(store.getTasksDir(), taskId);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "PROMPT.md"),
-      `# ${taskId}\n\n## Context\nA planned spec, so the release sweep does not classify this card as an unplanned seed.\n\n## Steps\n### Step 1\n- [ ] do the planned work\n`,
-      "utf-8",
-    );
     store.taskCache.delete(taskId);
   }
 
