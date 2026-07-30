@@ -116,8 +116,11 @@ version of the automated attempt is recorded above so it is not re-attempted fro
   documented fallback and the test is right about the wrong configuration. A reader debugging "my branch
   never ran" wants that entry; a reviewer asking "would this suite have noticed?" wants this one.
 - `scripts/lifecycle-column-census.mjs` — the authoritative count of remaining literals.
-- `packages/core/src/__tests__/archived-column-gate-parity.test.ts` — the archived gate is enforced in
-  three encodings (TypeScript, Drizzle, raw SQL); converting one alone is a split brain.
+- The archived gate is enforced in THREE encodings — TypeScript comparisons, Drizzle `eq`/`ne`
+  predicates, and raw `sql` templates — so converting one alone is a split brain. The guard that pins
+  all three inventories is `packages/core/src/__tests__/archived-column-gate-parity.test.ts`, added by
+  PR #2724; if that path does not resolve, #2724 has not landed yet and the measurement above (50 sites)
+  is the standalone record.
 - `packages/dashboard/app/components/__tests__/column-role-id-invariance.test.tsx` — the renaming
   property, and a note on why it is only half the invariant.
 - `packages/dashboard/app/utils/columnRoles.ts` — why the id fallback exists and must not be deleted.
