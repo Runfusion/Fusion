@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, resolveTaskLifecycleColumns, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -58,7 +58,11 @@ async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["ge
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      return linked.column === "archived" ? `${id} (archived)` : id;
+      /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:10 (fleet: CLI surface): the board's archived column.
+         With the literal, a renamed board's archived duplicates printed with no `(archived)` marker, so the
+         operator could not tell a live duplicate from a filed one in the lineage line. */
+      const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
+      return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
     } catch {
       return id;
     }
@@ -335,8 +339,22 @@ async function runCliNearDuplicateCheck(args: {
     }
     if (!args.bypass) {
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const taskCandidates = (await args.store.listTasks({ slim: false, includeArchived: false }))
-        .filter((task) => task.column !== "done")
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-08:15 (fleet: CLI surface):
+      Duplicate detection compares against UNFINISHED work, and "finished" is the board's complete column.
+      With the literal, a renamed board kept every completed card in the candidate set: the guard then
+      reported a new task as a duplicate of work that had already landed, which is the opposite of useful.
+      Resolved per candidate through one shared cache, because candidates can span workflows.
+      */
+      const candidateIrCache = new Map<string, never>();
+      const allCandidates = await args.store.listTasks({ slim: false, includeArchived: false });
+      const completeByTaskId = new Map<string, string>();
+      for (const task of allCandidates) {
+        const lifecycle = await resolveTaskLifecycleColumns(args.store, task.id, candidateIrCache as never);
+        completeByTaskId.set(task.id, lifecycle?.complete ?? "done");
+      }
+      const taskCandidates = allCandidates
+        .filter((task) => task.column !== completeByTaskId.get(task.id))
         .filter((task) => {
           const createdAtMs = Date.parse(task.createdAt);
           return Number.isFinite(createdAtMs) && createdAtMs >= cutoff;
@@ -612,6 +630,10 @@ export async function runTaskList(projectName?: string) {
     ALL. That is the R8/U10 surface change (no surface derives its column set from the
     legacy enum) and a far bigger fix than this glyph.
     */
+    /* DELIBERATE-LITERAL: `col` comes from the legacy `COLUMNS` enum this loop iterates, so the literal
+       matches its own receiver by construction. The real defect is named in the comment above — a card in a
+       workflow-renamed column is not rendered at all — and converting this glyph would hide that behind a
+       trait lookup while the loop still cannot see the card. Retires with the loop. */
     const dot = col === "done" || col === "archived" ? "○" : "●";
 
     console.log(`  ${dot} ${label} (${colTasks.length})`);
@@ -918,7 +940,11 @@ export async function runTaskSetNode(id: string, nodeNameOrId: string, projectNa
   await withBoardWrite(projectName, { id, action: "set node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+       literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
+       node override of a card that was actively executing — the guard exists because that races the run. */
+    const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
+    if (task.column === (nodeGuardLifecycle?.wip ?? "in-progress")) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -944,7 +970,11 @@ export async function runTaskClearNode(id: string, projectName?: string) {
   await withBoardWrite(projectName, { id, action: "clear node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+       literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
+       node override of a card that was actively executing — the guard exists because that races the run. */
+    const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
+    if (task.column === (nodeGuardLifecycle?.wip ?? "in-progress")) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -1305,8 +1335,20 @@ export async function runTaskRetry(id: string, projectName?: string) {
       throw new Error(`Task ${id} not found`);
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-08:30 (fleet: CLI surface — the retry gate exists TWICE):
+    This is the CLI's copy of the dashboard route's retry classifier, and #2713 converted only the route. So
+    after that PR `POST /tasks/:id/retry` accepted a renamed board's stalled review card while
+    `fn task retry` still refused it with "not in a retryable state" — the same operator action answering
+    differently depending on which surface they used.
+    Worth stating as a rule: when a gate is duplicated across surfaces, converting one of them creates a
+    DISAGREEMENT that is harder to diagnose than the original inert guard. Grep for the classifier by name
+    before claiming a lane is converted.
+    */
+    const retryLifecycle = await resolveTaskLifecycleColumns(context.store, id);
+    const retryReviewColumn = retryLifecycle?.review ?? "in-review";
     const isInReviewStatusNone =
-      task.column === "in-review" && (task.status === null || task.status === undefined);
+      task.column === retryReviewColumn && (task.status === null || task.status === undefined);
     const hasIncompleteSteps = task.steps.some(
       (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
     );
@@ -1317,7 +1359,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
     const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
     const isInReviewRetry =
-      task.column === "in-review" &&
+      task.column === retryReviewColumn &&
       (task.status === "failed" ||
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
