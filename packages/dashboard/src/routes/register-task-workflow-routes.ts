@@ -245,12 +245,29 @@ this file already answers a simpler way. One idiom per layer.
 lane can block merges without a human in it and vice versa, and every caller here asks "is this card
 in review".
 */
-async function resolveReviewColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2713 review — greptile P1, same class as the
+terminal finding one round earlier):
+MEMBERSHIP, because `mergeBlocker` and `humanReview` can sit on DIFFERENT columns.
+
+The previous shape took `columnsWithFlag(ir, "mergeBlocker")[0] ?? columnsWithFlag(ir,
+"humanReview")[0]` — one id. A workflow that splits the two (a merge lane and a separate sign-off
+lane) then classified a task in the second as outside review entirely, so comment re-engagement was
+suppressed on a card sitting in human review.
+
+I fixed exactly this arity bug for the terminal columns one review round earlier and did not
+generalise it. The rule, stated so the next resolver added here does not repeat it a third time:
+single id answers "where should this card GO" — a move target must be one column. A SET answers "is
+this card ALREADY there" — membership. Every resolver used in a comparison against `task.column` is
+the second kind.
+*/
+async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
-    return columnsWithFlag(ir, "mergeBlocker")[0] ?? columnsWithFlag(ir, "humanReview")[0] ?? "in-review";
+    const lanes = [...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")];
+    return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
   } catch {
-    return "in-review";
+    return new Set(["in-review"]);
   }
 }
 
@@ -849,8 +866,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     task: Task,
     wake: InReviewUserCommentReengagementInput,
   ): Promise<InReviewUserCommentReengagementResult> {
-    const reviewGateColumn = await resolveReviewColumnForTask(scopedStore, task.id);
-    if (task.column !== reviewGateColumn) {
+    const reviewGateColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
+    if (!reviewGateColumns.has(task.column)) {
       return { task, reengaged: false, suppressedReason: "not-in-review" };
     }
     if (task.sessionFile) {
@@ -2772,9 +2789,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       Resolved ONCE for the whole retry handler and reused by all three review checks below, so they
       cannot disagree about which column is the review lane.
       */
-      const retryReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const retryReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
       const isInReviewStatusNone =
-        task.column === retryReviewColumn && (task.status === null || task.status === undefined);
+        retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -2807,13 +2824,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
       const isStaleMergeActiveRetry =
-        task.column === retryReviewColumn &&
+        retryReviewColumns.has(task.column) &&
         isStaleMergeActiveStatus(task, {
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
         });
       const isInReviewRetry =
-        task.column === retryReviewColumn &&
+        retryReviewColumns.has(task.column) &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
@@ -3854,8 +3871,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      const prStatusReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
-      if (task.column !== prStatusReviewColumn) {
+      const prStatusReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
+      if (!prStatusReviewColumns.has(task.column)) {
         throw badRequest("Task must be in 'in-review' column to recover branch binding");
       }
 
@@ -4173,8 +4190,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggerDetail: "task-comment",
       };
       if (normalizedAuthor === "user") {
-        const diffReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
-        if (task.column === diffReviewColumn && !task.sessionFile) {
+        const diffReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
+        if (diffReviewColumns.has(task.column) && !task.sessionFile) {
           const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
           res.json(reengagedTask);
           return;
@@ -4741,8 +4758,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
       };
-      const artifactReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
-      if (task.column === artifactReviewColumn && !task.sessionFile) {
+      const artifactReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
+      if (artifactReviewColumns.has(task.column) && !task.sessionFile) {
         const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
         res.json(reengagedTask);
         return;
@@ -5860,10 +5877,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       Resolved once for this handler and reused by both arms below, so the review/WIP decision cannot
       be made from two different answers.
       */
-      const steeringReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const steeringReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
       const steeringWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
 
-      if (task.column === steeringReviewColumn) {
+      if (steeringReviewColumns.has(task.column)) {
         updatedTask = (await reengageInReviewTaskForUserComment(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: steeringCommentId ? [steeringCommentId] : undefined,
@@ -5898,9 +5915,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!prInfo) {
         throw badRequest("Task must have a linked pull request before PR feedback can be addressed");
       }
-      const prFeedbackReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const prFeedbackReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
       const prFeedbackWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
-      if (task.column !== prFeedbackReviewColumn && task.column !== prFeedbackWipColumn) {
+      if (!prFeedbackReviewColumns.has(task.column) && task.column !== prFeedbackWipColumn) {
         throw badRequest("PR feedback can only be addressed for in-review or in-progress tasks");
       }
 
@@ -5923,8 +5940,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      const reengageReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
-      if (task.column === reengageReviewColumn) {
+      const reengageReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
+      if (reengageReviewColumns.has(task.column)) {
         await scopedStore.updateTask(task.id, {
           status: null,
           error: null,
