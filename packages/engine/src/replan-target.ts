@@ -164,11 +164,15 @@ export function hasAdvancedPastPlanning(
   while a replan is a legitimate BACKWARD move. `firstExecutionAt`/`executionStartedAt` are never
   cleared once implementation starts, so a card that executed, failed Plan Review, and was rebounded
   to a planner lane (`needs-replan`) read as "advanced past planning" forever: triage's discovery
-  filter (`column === "triage" && isTaskStillInPlanningStage`) never re-admitted it and the card sat
-  in triage/needs-replan permanently — "stuck in planning" on the board (FN-8594). It hit every
-  triage-column workflow (builtin:coding, the default); plan-in-place Ideas cards escaped only
-  because todo discovery admits `needs-replan` without consulting this guard.
-  This check covers BOTH planner lanes — the "triage" column and the plan-in-place "todo" lane.
+  filter (intake column AND `isTaskStillInPlanningStage`) never re-admitted it and the card sat
+  parked in the intake lane with `needs-replan` permanently — "stuck in planning" on the board
+  (FN-8594). It hit every workflow with a SEPARATE intake column (builtin:coding, the default at
+  the time); plan-in-place cards escaped only because hold-lane discovery admits `needs-replan`
+  without consulting this guard.
+  This check covers BOTH planner lanes — the intake column and the plan-in-place hold lane.
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:40: the column names in this note were the census
+  pattern's only hits in this file; they were always prose about a filter that lives in triage.ts,
+  never a guard here. Restated by ROLE so the history stays readable after a rename.
   */
   if (task.status != null && REPLAN_PARK_STATUSES.has(task.status)) {
     return false;
@@ -220,12 +224,12 @@ export function hasAdvancedPastPlanning(
     status left a hole that stranded the same card a second time: after the stale-status sweep
     cleared `planning` to null, the card had stale stamps and NO status, so planning excluded it
     (stamps read as advanced) AND `recoverAdvancedTriageTasks` — the designated owner of that
-    "stranded-advanced" class — also excluded it, because it bails on
-    `workflowIrPinColumnId === "triage"` (it cannot resume a card into the column it already sits
-    in). Nobody owned the card and it sat indefinitely.
+    "stranded-advanced" class — also excluded it, because it bails when the pinned column IS the
+    card's own intake column (it cannot resume a card into the column it already sits in). Nobody
+    owned the card and it sat indefinitely.
     Arrival order alone is the honest signal: a stamp written BEFORE the card reached the planner
     column belongs to a previous pass, whatever the status is now. A card that genuinely advanced
-    out of triage is caught by the column check at the top, and one that was claimed by execution
+    out of the planner lane is caught by the column check at the top, and one that was claimed by execution
     AFTER landing here has a stamp NEWER than its arrival, so it still reads advanced and stays with
     the advanced-recovery sweep.
     */
