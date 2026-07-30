@@ -2309,35 +2309,46 @@ export class Scheduler {
             first-per-role ids: a workflow may declare more than one implementation lane, and load
             held in the second must still count.
             */
-            const loadLaneIr = await resolveWorkflowIrForTask(this.store, freshTask.id).catch(() => undefined);
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-10:40 (#2787 review — greptile P1, second round):
-            THE HOLD AND INTAKE LANES COUNT AS LOAD TOO.
+            FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+            RESOLVE PER TASK, because a project runs several workflows at once.
 
-            The legacy set is `{todo, in-progress, in-review}` — and `todo` is the HOLD/INTAKE lane.
-            My first union covered only wip and review, so passing it OVERRODE the fallback and
-            dropped assigned backlog work from the tally: a regression against the legacy behaviour
-            for that lane, introduced by the very argument meant to fix the renamed case.
+            My first wiring resolved the lanes from the CANDIDATE task's workflow and handed that flat
+            set to a tally that runs over EVERY assigned row. Assignments living in another workflow's
+            load-bearing lanes were therefore omitted — the same already-loaded-agent-wins bug the
+            parameter exists to fix, reached through a different door. A column id means something
+            only relative to its OWN workflow; `blocker-fanout.ts` documents exactly this and offers a
+            per-task `classify`, so this passes a per-task predicate rather than a board-wide set.
 
-            That is the trap in overriding a default rather than extending it — the resolved answer
-            must cover EVERY role the literal covered, or wiring the parameter is a downgrade for the
-            roles it forgot.
+            One IR cache for the whole selection, per the caller-owned-cache contract, so a board
+            spanning three workflows reads three IRs and not one per assigned card.
             */
-            const activeLoadColumns = loadLaneIr === undefined
-              ? undefined
-              : new Set<string>([
-                ...columnsWithFlag(loadLaneIr, "intake"),
-                ...columnsWithFlag(loadLaneIr, "hold"),
-                ...columnsWithFlag(loadLaneIr, "countsTowardWip"),
-                ...columnsWithFlag(loadLaneIr, "mergeOrchestration"),
-                ...columnsWithFlag(loadLaneIr, "mergeBlocker"),
-                ...columnsWithFlag(loadLaneIr, "humanReview"),
-              ]);
+            const loadLaneIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+            const countsAsAssignmentLoad = async (candidate: Task): Promise<boolean> => {
+              const ir = await resolveWorkflowIrForTask(this.store, candidate.id, loadLaneIrCache).catch(() => undefined);
+              /* DELIBERATE-LITERAL — the unresolvable-workflow default, matching the predicate's own. */
+              if (!ir) return candidate.column === "todo" || candidate.column === "in-progress" || candidate.column === "in-review";
+              return [
+                ...columnsWithFlag(ir, "intake"),
+                ...columnsWithFlag(ir, "hold"),
+                ...columnsWithFlag(ir, "countsTowardWip"),
+                ...columnsWithFlag(ir, "mergeOrchestration"),
+                ...columnsWithFlag(ir, "mergeBlocker"),
+                ...columnsWithFlag(ir, "humanReview"),
+              ].includes(candidate.column);
+            };
+            const loadBearingTaskIds = new Set<string>();
+            for (const candidate of await this.store.listTasks({ slim: true })) {
+              if (candidate.assignedAgentId && await countsAsAssignmentLoad(candidate)) {
+                loadBearingTaskIds.add(candidate.id);
+              }
+            }
+
             const selectedAgent = await selectPermanentAgentForTask({
               task: freshTask,
               agentStore: this.options.agentStore,
               taskStore: this.store,
-              ...(activeLoadColumns && activeLoadColumns.size > 0 ? { activeColumns: activeLoadColumns } : {}),
+              countsAsAssignmentLoad: (candidate: Task) => loadBearingTaskIds.has(candidate.id),
             });
             if (!selectedAgent) {
               await this.store.updateTask(task.id, { status: "queued" });

@@ -232,7 +232,12 @@ describe("assignment load resolves the board's own active lanes", () => {
       task: makeTask({ id: "FN-NEW" }),
       agentStore: { listAgents: async () => agents, getChainOfCommand: async () => [] } as never,
       taskStore: store(columnOfBusyWork),
-      ...(activeColumns ? { activeColumns } : {}),
+      /*
+      #2787 review, third round: the option is now a PER-TASK predicate rather than a board-wide set,
+      because a project runs several workflows and a column id means something only relative to its
+      own. The tests keep expressing intent as a set and adapt it here.
+      */
+      ...(activeColumns ? { countsAsAssignmentLoad: (t: { column: string }) => activeColumns.has(t.column) } : {}),
     });
 
   it("prefers the idle agent when the busy one's work sits in a RENAMED wip lane", async () => {
@@ -265,5 +270,48 @@ describe("assignment load resolves the board's own active lanes", () => {
     const selected = await select("shipped", new Set(["backlog", "building", "signoff"]));
 
     expect(selected?.id).toBe("AG-BUSY");
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+
+THE INVARIANT: load is counted per task, against the task's OWN workflow.
+
+My first wiring resolved lanes from the CANDIDATE task's workflow and applied that flat set to every
+assigned row. On a project running several workflows — the normal case, not an exotic one —
+assignments in another workflow's load-bearing lanes vanished from the tally, and the
+already-loaded-agent-wins bug returned through a different door.
+
+A column id means something only RELATIVE TO ITS OWN WORKFLOW. `blocker-fanout.ts` states this and
+offers a per-task `classify`; the option is now the same shape rather than a third invention.
+
+REVERT PROOF, measured: answer the predicate from one workflow's lanes for every row (the flat-set
+shape) and the cross-workflow case below picks the loaded agent.
+*/
+describe("assignment load is counted per task, across workflows", () => {
+  it("counts an assignment held in ANOTHER workflow's wip lane", async () => {
+    const agents = [
+      makeAgent({ id: "AG-BUSY", createdAt: "2026-01-01T00:00:00.000Z" }),
+      makeAgent({ id: "AG-IDLE", createdAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+    // The new card's board calls its wip lane `building`; the busy agent's existing work sits in a
+    // DIFFERENT workflow whose wip lane is `implementing`.
+    const taskStore = {
+      listTasks: async () => [
+        makeTask({ id: "FN-OTHER-WF", assignedAgentId: "AG-BUSY", column: "implementing" } as never),
+      ],
+    } as never;
+
+    const selected = await selectPermanentAgentForTask({
+      task: makeTask({ id: "FN-NEW" }),
+      agentStore: { listAgents: async () => agents, getChainOfCommand: async () => [] } as never,
+      taskStore,
+      // Per-task: each row answered against its own workflow's lanes.
+      countsAsAssignmentLoad: (t: { column: string }) =>
+        ["backlog", "building", "signoff"].includes(t.column) || ["queued", "implementing"].includes(t.column),
+    });
+
+    expect(selected?.id).toBe("AG-IDLE");
   });
 });
