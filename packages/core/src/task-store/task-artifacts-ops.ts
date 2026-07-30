@@ -10,7 +10,7 @@
  */
 
 import { TaskStore } from "../store.js";
-import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
 import { toJsonNullable } from "../db.js";
@@ -84,7 +84,17 @@ export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, op
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
     Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite enqueueMergeQueueSyncInternal arm is deleted.
     */
-    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-02:10:
+    Resolve the task's OWN review columns before enqueueing. Without them the in-transaction guard
+    falls back to `new Set(["in-review"])` and throws `MergeQueueInvalidColumnError` for a task
+    resting in a renamed review lane, which breaks the merger and self-healing re-enqueue paths on
+    every custom board. `undefined` on failure is deliberate and matches `moves.ts`: it makes the
+    guard fall back to the legacy id rather than to an empty set that matches nothing.
+    */
+    const reviewIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+    const reviewColumns = reviewIr ? new Set(resolveReviewColumns(reviewIr)) : undefined;
+    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts, undefined, reviewColumns);
 }
 
 export function cleanupStaleMergeQueueRowsImpl(store: TaskStore, now: string): void {

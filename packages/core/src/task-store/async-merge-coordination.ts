@@ -241,9 +241,19 @@ export async function enqueueMergeQueue(
   taskId: string,
   opts: MergeQueueEnqueueOptions = {},
   audit?: { agentId?: string; runId?: string },
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10:
+  The board's review columns, forwarded to the in-transaction helper. Omitted, that helper falls back
+  to `new Set(["in-review"])` and REJECTS a task resting in a renamed review column — it is not a
+  quiet legacy-id degradation like most of these seams, it records `mergeQueue:enqueue-rejected` and
+  throws `MergeQueueInvalidColumnError`. Both `moves.ts` callers already resolve and pass this; this
+  wrapper did not, so the automatic handoff-to-review path worked on a renamed board while the manual
+  and recovery re-enqueue paths through `store.enqueueMergeQueue` (merger.ts, self-healing.ts) threw.
+  */
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<MergeQueueEntry> {
   return layer.transactionImmediate((tx) =>
-    enqueueMergeQueueInTransaction(tx, taskId, opts, audit),
+    enqueueMergeQueueInTransaction(tx, taskId, opts, audit, reviewColumns),
   );
 }
 
