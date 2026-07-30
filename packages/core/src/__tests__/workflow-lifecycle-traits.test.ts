@@ -8,7 +8,7 @@ byte-identical on the default workflow. The custom cases prove KTD-10 fallback.
 import { describe, expect, it } from "vitest";
 import "../builtin-traits.js"; // register built-in traits
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveReviewColumns, resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
 import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../builtin-coding-ideas-workflow-ir.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import { getTraitRegistry } from "../trait-registry.js";
@@ -348,5 +348,60 @@ describe("LifecycleColumns arity — one id per role, even when several qualify"
     expect(missed === lifecycle.complete).toBe(false);
     // The membership form gets it right.
     expect(bothTerminals.includes(missed)).toBe(true);
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:20:
+The set-shaped answer to "is this card ALREADY in a review lane", which four consumers each invented
+separately before this existed (#2713, #2722, #2723, #2728). Both directions are asserted, because the
+whole reason it exists is that the single-id `.review` silently answers a different question.
+*/
+describe("resolveReviewColumns", () => {
+  const ir = (columns: Array<{ id: string; traits: Array<{ trait: string }> }>) =>
+    ({ version: "v2", id: "wf", name: "wf", columns: columns.map((c) => ({ ...c, name: c.id })), nodes: [], edges: [] }) as never;
+
+  it("includes a lane carrying human-review WITHOUT the merge trait", () => {
+    /* The #2722 defect: `.review` reads mergeOrchestration only, so this lane resolved to nothing and
+       the review notification never fired on a renamed board. */
+    const columns = ir([
+      { id: "building", traits: [{ trait: "wip" }] },
+      { id: "signoff", traits: [{ trait: "human-review" }] },
+    ]);
+
+    expect(resolveReviewColumns(columns)).toEqual(["signoff"]);
+    expect(resolveLifecycleColumns(columns)?.review).toBeUndefined();
+  });
+
+  it("includes EVERY review lane, not just the first", () => {
+    const columns = ir([
+      { id: "merge-gate", traits: [{ trait: "merge" }] },
+      { id: "signoff", traits: [{ trait: "human-review" }] },
+    ]);
+
+    expect(new Set(resolveReviewColumns(columns))).toEqual(new Set(["merge-gate", "signoff"]));
+  });
+
+  it("is MONOTONIC: a lane with both traits stays in the set", () => {
+    /* The #2723 review round argued for excluding this. Adding a trait must never REMOVE a lane —
+       otherwise a card stops counting as in review because its column gained an unrelated capability. */
+    const columns = ir([
+      { id: "merge-gate", traits: [{ trait: "merge" }] },
+      { id: "signoff", traits: [{ trait: "merge" }, { trait: "human-review" }] },
+    ]);
+
+    expect(resolveReviewColumns(columns)).toContain("signoff");
+  });
+
+  it("does not duplicate a lane that carries several review traits", () => {
+    const columns = ir([{ id: "signoff", traits: [{ trait: "merge" }, { trait: "human-review" }] }]);
+
+    expect(resolveReviewColumns(columns)).toEqual(["signoff"]);
+  });
+
+  it("returns EMPTY when no lane reviews, so callers keep their own fallback", () => {
+    /* Deliberately not defaulting to `in-review` here: the fallback belongs to the caller, which knows
+       whether refusing or admitting is the safe direction for its own guard. */
+    expect(resolveReviewColumns(ir([{ id: "building", traits: [{ trait: "wip" }] }]))).toEqual([]);
+  });
+
+  it("agrees with the shipped coding workflow", () => {
+    expect(resolveReviewColumns(BUILTIN_CODING_WORKFLOW_IR)).toContain("in-review");
   });
 });

@@ -58,6 +58,40 @@ export function resolveCompleteColumn(ir: WorkflowIr): string | undefined {
   return columnsWithFlag(ir, "complete")[0];
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:20 (the divergence four consumers each solved differently):
+REVIEW IS A SET, AND `humanReview` COUNTS.
+
+`resolveLifecycleColumns().review` is a SINGLE id derived from ONE flag (`mergeOrchestration`). The
+domain is not that shape: a lane can host human review without orchestrating a merge, and a board may
+declare more than one review lane. So every consumer asking "is this card in review" re-derived its own
+answer, and they drifted:
+
+  #2713  routes    terminal columns needed membership; fixed there only
+  #2722  notifier  a `humanReview`-only lane resolved to nothing — review notifications never fired
+  #2723  routes    the union was broader than core's single id
+  #2728  CLI       `fn task retry` refused a card `POST /tasks/:id/retry` accepted
+
+Four files, four patches, and a fifth site inside #2722 itself that the first pass missed. The shared
+answer belongs here.
+
+ADDITIVE ON PURPOSE. `resolveLifecycleColumns().review` is untouched, so nothing that reads it changes
+behaviour — this is the missing helper, not a reshaping of the existing one. `.review` remains correct
+for its own question ("which single lane does the merge gate live in"); this answers the other one
+("is this card ALREADY in a review lane"), which is the question every drifting consumer was asking.
+
+MONOTONIC, which the #2723 review round argued about: a column carrying BOTH `humanReview` and
+`mergeOrchestration` is included. Adding a trait must never remove a lane from this set, or a card
+stops counting as in review because its column gained an unrelated capability.
+*/
+export function resolveReviewColumns(ir: WorkflowIr): string[] {
+  return [...new Set([
+    ...columnsWithFlag(ir, "mergeOrchestration"),
+    ...columnsWithFlag(ir, "mergeBlocker"),
+    ...columnsWithFlag(ir, "humanReview"),
+  ])];
+}
+
 /**
  * U7 — the workflow's MERGE-ORCHESTRATION column: the first column carrying the
  * `mergeOrchestration` trait (where the merge-gate node lives). Merge-failure
