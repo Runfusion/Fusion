@@ -10801,6 +10801,20 @@ export class TaskExecutor {
       }
       const live = loadedLive;
       /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-09:10 (fleet: executor.ts graph-failure recovery family):
+      ONE LANE SNAPSHOT AND ONE MEMO FOR THE WHOLE METHOD. `handleGraphFailure` asked "is the card still
+      in the wip lane?" and "did the abort bounce it back to the hold lane?" as the default lineage's
+      literals in five places, and separately created a lane memo further down for the re-entry
+      classifiers — so the classifiers read the board while the surrounding branches read the default
+      names. Declared here, where `live` first exists, and threaded into the classifiers via the memo
+      that was already there, so every half of this decision reads the same board.
+
+      The `todo` branches below are the HOLD lane, not intake: FN-6782's benign re-queue is about a card
+      the abort bounced back to wait for a fresh dispatch.
+      */
+      const resumeLanesMemo: { lanes?: { hold: string; wip: string; review: string } } = {};
+      const failureLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
+      /*
       FNXC:Lifecycle 2026-07-16-21:22:
       FN-8141 follow-up 1 — an honest `fn_task_done(outcome="blocked")` park (status="failed",
       error "BLOCKED: <reason>", executor ~14657) must SURVIVE the same graph-teardown machinery
@@ -10944,7 +10958,21 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (live.mergeDetails?.mergeConfirmed === true && live.column !== "done") {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-09:30 (fleet: executor.ts):
+      "MERGE CONFIRMED BUT NOT YET IN THE FINISHED COLUMN" — the board's COMPLETE column, resolved
+      from its own IR. `resolveTerminalColumnsFor` is deliberately NOT used here: it is a UNION with the
+      legacy ids (so a silently-substituted default IR still recognises them), which is the right
+      answer for "is this card finished?" and the wrong one for "is this card in the ONE column
+      finalize would move it to" — the union would treat a card in a column merely NAMED `done` as
+      already finalized and skip the finalize.
+
+      A board that declares no complete column keeps the legacy literal: this guard's false branch
+      skips finalize entirely, so refusing here would strand a merge-confirmed card, and
+      `finalizeMergeConfirmedWorkflowGraphTask` resolves its own move target anyway.
+      */
+      const completeColumn = resolvePlannerLanes(this.store, live.id).complete;
+      if (live.mergeDetails?.mergeConfirmed === true && live.column !== (completeColumn ?? "done")) {
         if (await this.finalizeMergeConfirmedWorkflowGraphTask(live.id, "graph-failure")) {
           await this.persistTokenUsage(task.id);
           return;
@@ -10969,7 +10997,7 @@ export class TaskExecutor {
       FN-6647 closes the remaining durability gap by deriving already-finalized completion from the persisted task row: non-in-progress column, completed steps, no live pause/status/error, and the finalize-to-review log entry. The volatile `completionFinalizedTaskIds` marker still helps within one executor lifecycle, but teardown/restart loss must not reclassify a completed in-review row as a hard-cancel pause abort.
       */
       const alreadyFinalizedToReview = Boolean(
-        live.column !== "in-progress"
+        live.column !== failureLanes.wip
           && persistedCompletedProgress
           && live.status == null
           && live.error == null
@@ -10993,7 +11021,7 @@ export class TaskExecutor {
       const completionFinalized = completionFinalizeAborted || this.completionFinalizedTaskIds.has(task.id) || alreadyFinalizedToReview;
       const suppressFinalizedCompletionAbort = Boolean(
         completionFinalized
-          && live.column !== "in-progress"
+          && live.column !== failureLanes.wip
           && !live.userPaused
           // FN-6648: `paused !== true` intentionally dropped here too — the
           // suppression is already gated on `completionFinalized` (completed
@@ -11024,8 +11052,10 @@ export class TaskExecutor {
       FNXC:WorkflowLifecycleColumns 2026-07-31-01:05 (PR #2640 review, greptile P2): one lane
       snapshot for one recovery decision — see `resolveResumeLanes`. Eligibility and re-entry are two
       halves of the SAME decision and must not read different boards.
+
+      FNXC:WorkflowLifecycleColumns 2026-08-01-09:12 (fleet): the memo is now declared at the top of
+      the method beside `failureLanes`, so the branches AROUND these classifiers share the snapshot too.
       */
-      const resumeLanesMemo: { lanes?: { hold: string; wip: string; review: string } } = {};
       if (genuinePauseAbort && await this.isReentrantPausedAbortedInFlightNode(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
         if (await this.reenterPausedAbortedWorkflowNode(live, result, abortProvenance, resumeLanesMemo)) {
           return;
@@ -11119,7 +11149,7 @@ export class TaskExecutor {
         // the human-readable provenance label is ever revised.
         const isEngineInternalAbort =
           pausedAborted && !live.paused && !live.userPaused && abortProvenance !== "global-pause";
-        if (live.column !== "in-progress") {
+        if (live.column !== failureLanes.wip) {
           // FN-6782: a pause/resume abort that has left the task back in `todo`
           // is benign — the work is simply re-queued for a fresh dispatch, not
           // stranded. Parking it `status: "failed"` (operator action required)
@@ -11130,7 +11160,7 @@ export class TaskExecutor {
           // dispatch starts clean, log, and return WITHOUT parking failed. The
           // operator-action failure is preserved only for genuinely stranded
           // non-todo columns (e.g. in-review), per FN-6478.
-          if (live.column === "todo") {
+          if (live.column === failureLanes.hold) {
             this.clearPausedAborted(task.id);
             // FNXC:WorkflowLifecycle 2026-06-20-00:00: FN-6782 leak fix — a task
             // parked back to `todo` must not keep pinning its in-memory worktree
@@ -11197,7 +11227,7 @@ export class TaskExecutor {
                         resumeTask.deletedAt
                         || resumeTask.paused
                         || resumeTask.userPaused
-                        || resumeTask.column !== "todo"
+                        || resumeTask.column !== failureLanes.hold
                       ) {
                         executorLog.log(
                           `${task.id}: skipping pause-abort auto-continue — task is now ${resumeTask.deletedAt ? "deleted" : resumeTask.paused || resumeTask.userPaused ? "paused" : `in '${resumeTask.column}'`} at retry fire time`,
