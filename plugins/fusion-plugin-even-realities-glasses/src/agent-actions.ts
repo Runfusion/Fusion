@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveLifecycleColumns, resolveWorkflowIrById, resolveWorkflowIrForTask } from "@fusion/core";
+import { isBuiltinWorkflowId, resolveLifecycleColumns, resolveWorkflowIrById, resolveWorkflowIrForTask } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import { GlassesInputError } from "./quick-capture.js";
 
@@ -131,44 +131,62 @@ async function laneContext(
   }
 
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-06:40 (PR #2644 review, greptile P1 x2 — the snapshot still split):
-  ONE RESOLUTION, AND IT MUST PROVE ITSELF. The previous revision read the definition itself only for a
-  CUSTOM selection; a builtin or absent selection went through `resolveWorkflowIrForTask`, which does its
-  OWN selection read and silently returns the DEFAULT coding IR on any failure. So the non-custom branch
-  could hand back default lanes marked `degraded: false` — the exact laundering the degraded state exists
-  to prevent, one branch over.
+  FNXC:PluginLifecycleColumns 2026-07-31-08:10 (PR #2644 review — my identity check rejected every
+  persisted custom workflow):
 
-  Both branches now resolve through `resolveWorkflowIrById` for the id THIS function read, and the result
-  must IDENTIFY as that workflow. A returned IR whose id/name matches neither the requested id nor the
-  builtin default means the resolver fell back, which is degraded — refuse rather than act on a board the
-  card is not on.
+  PROVE THE READ, DO NOT CHECK THE IR'S IDENTITY. My previous revision required the resolved IR to
+  identify as the selected workflow id. A persisted custom workflow's stored IR usually carries NO `id`
+  and its `name` is a DISPLAY name ("Six Column Shape"), not the selection id ("wf_7") — so the check
+  marked every valid custom board degraded and refused every action on it. Strictly worse than the
+  laundering it was meant to stop: that was a wrong answer in a rare case, this was a refusal in the
+  common one.
 
-  An ABSENT selection is not degraded: there is nothing to mismatch, and the default IS the answer.
+  My own test passed because the fixture's IR happened to carry `id: "wf-custom"`, matching its
+  selection id. A fixture coincidence standing in for the property under test — the same failure this
+  PR has already documented twice.
+
+  What I actually need is proof the DEFINITION READ SUCCEEDED, not proof of identity:
+    - CUSTOM selection: `getWorkflowDefinition(id)` must return a row with an `ir`. A missing row or a
+      throw is the state `resolveWorkflowIrForTask` papers over with the default IR, and it is the only
+      thing that can silently substitute another board's vocabulary.
+    - BUILTIN selection: resolves through the in-process catalog, so there is no read to fail — but an
+      UNKNOWN builtin id would fall back to the default, so the id must actually be a builtin.
+    - NO selection: nothing to mismatch. The default IS the answer, and refusing here would break every
+      board that has never had a workflow explicitly selected.
   */
-  const resolveIr = async (): Promise<unknown> => {
-    if (!selectionWorkflowId) return resolveWorkflowIrForTask(taskStore as never, taskId);
-    return resolveWorkflowIrById(taskStore as never, selectionWorkflowId);
-  };
-
   let snapshotIr: unknown;
-  try {
-    snapshotIr = await resolveIr();
-  } catch {
-    return { lanes: undefined, declared: new Set(), degraded: true };
-  }
-
-  const irIdentity = snapshotIr as { id?: unknown; name?: unknown } | undefined;
-  const identifiesAsSelection = selectionWorkflowId === undefined
-    || irIdentity?.id === selectionWorkflowId
-    || irIdentity?.name === selectionWorkflowId
-    /*
-    A builtin id resolves through the catalog, whose IR carries its own name rather than the
-    `builtin:` id, so an exact match cannot be required for those. Accepting them here is safe
-    because the catalog is in-process: there is no read to fail silently.
-    */
-    || selectionWorkflowId.startsWith("builtin:");
-  if (!identifiesAsSelection) {
-    return { lanes: undefined, declared: new Set(), degraded: true };
+  if (selectionWorkflowId === undefined) {
+    try {
+      snapshotIr = await resolveWorkflowIrForTask(taskStore as never, taskId);
+    } catch {
+      return { lanes: undefined, declared: new Set(), degraded: true };
+    }
+  } else if (isBuiltinWorkflowId(selectionWorkflowId)) {
+    try {
+      snapshotIr = await resolveWorkflowIrById(taskStore as never, selectionWorkflowId);
+    } catch {
+      return { lanes: undefined, declared: new Set(), degraded: true };
+    }
+  } else {
+    if (!store.getWorkflowDefinition) {
+      /* No definitions surface at all is the legacy shape, not a degraded custom board. */
+      try {
+        snapshotIr = await resolveWorkflowIrForTask(taskStore as never, taskId);
+      } catch {
+        return { lanes: undefined, declared: new Set(), degraded: true };
+      }
+    } else {
+      let definition: { ir?: unknown } | undefined;
+      try {
+        definition = await store.getWorkflowDefinition(selectionWorkflowId);
+      } catch {
+        return { lanes: undefined, declared: new Set(), degraded: true };
+      }
+      if (definition?.ir == null) return { lanes: undefined, declared: new Set(), degraded: true };
+      snapshotIr = typeof definition.ir === "string"
+        ? await resolveWorkflowIrById(taskStore as never, selectionWorkflowId)
+        : definition.ir;
+    }
   }
 
   const roles = snapshotIr ? resolveLifecycleColumns(snapshotIr as never) : undefined;

@@ -728,62 +728,82 @@ describe("an action reads the workflow once, not three times", () => {
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-06:50 (PR #2644 review, greptile P1 x2 — the snapshot still split):
+FNXC:PluginLifecycleColumns 2026-07-31-08:20 (PR #2644 review — the identity check was worse than the
+bug it replaced, and my own fixture hid that):
 
-The previous revision read the definition itself only for a CUSTOM selection. A builtin or absent
-selection went through `resolveWorkflowIrForTask`, which does its OWN selection read and silently
-returns the DEFAULT coding IR on any failure — so the non-custom branch could hand back default lanes
-marked `degraded: false`. That is precisely the laundering the degraded state exists to prevent, one
-branch over, and it is why "I fixed the custom path" was not enough.
+WHAT THE DEGRADED STATE MUST PROVE: that the definition READ succeeded — not that the resolved IR
+identifies as the selected workflow. A persisted custom workflow's stored IR usually carries NO `id`,
+and its `name` is a DISPLAY name ("Six Column Shape"), not the selection id ("wf_7"). My identity check
+therefore marked every valid custom board degraded and refused every action on it: a wrong answer in the
+COMMON case, replacing a wrong answer in a rare one.
 
-Both branches now resolve for the id THIS function read, and the result must IDENTIFY as that
-workflow. An IR that identifies as neither the requested id nor the builtin default means the resolver
-fell back, which is degraded.
+MY TEST PASSED BY COINCIDENCE. `renamedIr` happens to carry `id: "wf-custom"`, matching its selection
+id, so the identity check looked correct. Third time in this PR that a fixture stood in for the property
+under test — so the custom-workflow fixtures below now deliberately carry NO id and a display name
+unlike the selection id, which is the shape a real persisted workflow has.
+
+The three branches, and what each one can actually fail on:
+  - CUSTOM selection: `getWorkflowDefinition(id)` must return a row with an `ir`. A missing row or a
+    throw is exactly the state `resolveWorkflowIrForTask` papers over with the default IR.
+  - BUILTIN selection: resolves through the in-process catalog, so there is no read to fail — but an
+    UNKNOWN builtin id would fall back to the default, so the id must be a real builtin.
+  - NO selection: nothing to mismatch; the default IS the answer.
 */
-describe("a resolved snapshot must identify as the workflow the card selected", () => {
-  const otherIr = {
-    version: "v2", id: "wf-someone-else", name: "someone-else", nodes: [], edges: [],
+describe("degraded means the definition read failed, not that the IR looks different", () => {
+  /** The shape a PERSISTED custom workflow actually has: no `id`, display name unlike the id. */
+  const persistedCustomIr = {
+    version: "v2", name: "Six Column Shape", nodes: [], edges: [],
     columns: [
       { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
-      { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
     ],
   };
 
-  function mismatchedDeps(task: FakeTask) {
+  function customDeps(task: FakeTask, definition: unknown, workflowId = "wf_7") {
     const base = createDeps(task);
-    const selection = { workflowId: "wf-requested", stepIds: [] };
+    const selection = { workflowId, stepIds: [] };
     return {
       ...base,
       taskStore: {
         ...base.taskStore,
         getTaskWorkflowSelection: () => selection,
         getTaskWorkflowSelectionAsync: async () => selection,
-        // Returns a DIFFERENT workflow's IR — the shape a silent resolver fallback produces.
-        getWorkflowDefinition: async () => ({ id: "wf-someone-else", ir: otherIr }),
+        getWorkflowDefinition: async () => definition,
       },
     };
   }
 
-  it("refuses when the resolved IR identifies as a different workflow", async () => {
-    // Pre-fix: these lanes were used as if they were the card's own, and start-work moved it into
-    // another board's wip column.
-    const deps = mismatchedDeps(makeTask({ column: "backlog", status: null }));
-
-    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
-    expect(deps.moveTask).not.toHaveBeenCalled();
-  });
-
-  it("does NOT refuse a matching custom workflow (the paired positive)", async () => {
-    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+  it("acts on a persisted custom workflow whose IR has no id and a display name", async () => {
+    // Pre-fix: refused. Every custom board was unusable through the glasses actions.
+    const deps = customDeps(makeTask({ column: "backlog", status: null }), { id: "wf_7", ir: persistedCustomIr });
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
   });
 
+  it("refuses when the custom definition row is missing", async () => {
+    // The state the resolver papers over with the DEFAULT coding IR — the one thing that can silently
+    // substitute another board's vocabulary.
+    const deps = customDeps(makeTask({ column: "backlog", status: null }), undefined);
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the definition read throws", async () => {
+    const deps = customDeps(makeTask({ column: "backlog", status: null }), undefined);
+    (deps.taskStore as unknown as Record<string, unknown>).getWorkflowDefinition = async () => {
+      throw new Error("workflow store unavailable");
+    };
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+  });
+
   it("does NOT refuse when there is no selection at all", async () => {
-    // Nothing to mismatch: the default IS the answer, and refusing here would break every board that
-    // has never had a workflow explicitly selected.
     const deps = createDeps(makeTask({ column: "todo", status: null }));
 
     await startWork({ taskId: "FN-1" }, deps as never);
