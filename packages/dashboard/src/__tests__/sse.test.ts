@@ -432,6 +432,16 @@ describe("createSSE connection log severity", () => {
   afterEach(() => {
     if (originalDebug === undefined) delete process.env.FUSION_DEBUG;
     else process.env.FUSION_DEBUG = originalDebug;
+    /*
+    FNXC:EngineDiagnostics 2026-07-30-17:40 (PR review — greptile P2):
+    Restore console spies HERE, not at the end of each test. A failing assertion skips the trailing
+    `mockRestore()`, leaving the console mocked for every later test in the file — and since these
+    spy `console.error`, which is where the shared logger writes ALL diagnostics, the leak silences
+    the output you would need to debug the very failure that caused it.
+
+    Both cases in this describe had that shape; the hook covers them and any case added later.
+    */
+    vi.restoreAllMocks();
   });
 
   it("does not console.log +/- connection when FUSION_DEBUG is unset", () => {
@@ -453,7 +463,6 @@ describe("createSSE connection log severity", () => {
       .map((call) => String(call[0] ?? ""))
       .filter((line) => line.includes("[sse] + connection") || line.includes("[sse] - connection"));
     expect(spam).toEqual([]);
-    errorSpy.mockRestore();
     connection.req.emit("close");
   });
 
@@ -472,7 +481,6 @@ describe("createSSE connection log severity", () => {
     const lines = errorSpy.mock.calls.map((call) => String(call[0] ?? ""));
     expect(lines.some((line) => line.includes("[sse] + connection"))).toBe(true);
     expect(lines.some((line) => line.includes("[sse] - connection"))).toBe(true);
-    errorSpy.mockRestore();
   });
 });
 
