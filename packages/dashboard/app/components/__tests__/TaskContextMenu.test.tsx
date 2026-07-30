@@ -74,6 +74,42 @@ describe("TaskContextMenu shared task action model", () => {
       canRetryTask: true,
       hasRetryHandler: true,
     }).shouldShowActionsMenu).toBe(true);
+
+    /*
+    FNXC:TaskContextMenu 2026-07-31-02:10 (PR #2623 review — coderabbit):
+    THE REMAINING FOUR DISJUNCTS. This test claimed "each disjunct that makes an intake
+    card actionable must still open the menu" while exercising only two of six, so a
+    conversion that dropped pause, assigned-agent, GitHub-tracking or the wired Plan
+    action from the condition would have passed it. The claim was broader than the
+    coverage, which is the failure this whole exercise keeps finding.
+
+    Each is asserted on the MERGED intake column specifically, because that is where
+    the suppression newly applies post-#2515 — on the old `triage`-keyed condition
+    these cards were never suppressed in the first place, so the assertions would have
+    been vacuous there.
+    */
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo", paused: true } as never),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+    }).shouldShowActionsMenu, "paused").toBe(true);
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+      hasAssignedAgent: true,
+    }).shouldShowActionsMenu, "assigned agent").toBe(true);
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+      onEnableGithubTracking: () => {},
+    }).shouldShowActionsMenu, "github tracking offered").toBe(true);
   });
 
   it("keeps the menu on a HOLD-only column, which was never restricted", () => {
