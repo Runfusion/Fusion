@@ -310,9 +310,18 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   // Archived column is collapsed by default - don't show drag state when collapsed.
   // Workflow mode keys off the resolved `archived` trait flag instead of the
   // literal column id (R9). A hold-flagged column shows the promote affordance.
+  /*
+  FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: the LEGACY-BOARD arm only.
+  Every literal here sits in the `workflowMode === false` branch of `workflowMode ? <trait> : <id>`.
+  That branch runs only for a caller that passes no workflow column metadata at all, where there
+  are no traits to read — so this is not an unconverted guard, it is the answer for a board that
+  predates workflow lanes. The trait read beside it is the live path for every workflow-aware
+  caller.
+  */
   const isArchived = workflowMode ? Boolean(columnFlags?.archived) : column === "archived";
   const isHoldColumn = workflowMode && Boolean(columnFlags?.hold);
   const isCollapsed = isArchived && collapsed;
+  /* FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: legacy-board arm only — full reasoning above. */
   const isWipProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
   const getTaskContextMenuColumns = useCallback((task: Task) => (
     taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
@@ -675,8 +684,18 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   // Bulk-action eligibility (R9): workflow mode keys off trait flags instead of
   // the literal column ids. Todo-equivalent = hold/intake (replan affordance);
   // processing = wip/countsTowardWip; review = mergeBlocker/humanReview.
+  /*
+  FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: the LEGACY-BOARD arm only.
+  Every literal here sits in the `workflowMode === false` branch of `workflowMode ? <trait> : <id>`.
+  That branch runs only for a caller that passes no workflow column metadata at all, where there
+  are no traits to read — so this is not an unconverted guard, it is the answer for a board that
+  predates workflow lanes. The trait read beside it is the live path for every workflow-aware
+  caller.
+  */
   const isTodoLikeColumn = workflowMode ? Boolean(columnFlags?.hold || columnFlags?.intake) : column === "todo";
+  /* FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: legacy-board arm only — full reasoning above. */
   const isProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
+  /* FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: legacy-board arm only — full reasoning above. */
   const isReviewColumn = workflowMode ? Boolean(columnFlags?.mergeBlocker || columnFlags?.humanReview) : column === "in-review";
   const hasColumnBulkActions = isTodoLikeColumn || isProcessingColumn || isReviewColumn;
   const isMenuBusy = isReplanning || isPausingAll || isMovingAllToTodo;
@@ -769,6 +788,14 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   FNXC:DoneColumnSorting 2026-06-29-20:23:
   In workflow mode, the Done-sort control belongs to non-archived complete lanes even when the workflow uses a custom column id such as `shipped`; legacy mode remains limited to the literal Done column.
   */
+  /*
+  FNXC:BoardColumn 2026-07-30-04:25 DELIBERATE-LITERAL: the LEGACY-BOARD arm only.
+  Every literal here sits in the `workflowMode === false` branch of `workflowMode ? <trait> : <id>`.
+  That branch runs only for a caller that passes no workflow column metadata at all, where there
+  are no traits to read — so this is not an unconverted guard, it is the answer for a board that
+  predates workflow lanes. The trait read beside it is the live path for every workflow-aware
+  caller.
+  */
   const isDoneSortColumn = workflowMode ? columnFlags?.complete === true && columnFlags?.archived !== true : column === "done";
   const showDoneSortControl = isDoneSortColumn && doneSortMode !== undefined && !!onDoneSortModeChange;
   const showDoneArchiveAction = isDoneSortColumn && !!onArchiveAllDone;
@@ -835,7 +862,13 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         >
           <span>{activeTaskCount}</span>/<span>{tasks.length}</span>
         </span>
-        {(workflowMode ? isReviewColumn : column === "in-review") && onToggleAutoMerge && (
+        {/*
+        FNXC:BoardColumn 2026-07-30-04:25: was `workflowMode ? isReviewColumn : column === "in-review"`,
+        which recomputed the SAME ternary `isReviewColumn` already is (`workflowMode ? traits : id`).
+        Both arms matched term for term, so collapsing to the memo is a pure dedup — identical in the
+        workflow path AND in the legacy path — and it removes the duplicated literal.
+        */}
+        {isReviewColumn && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
             {/*
             FNXC:AutoMergeA11y 2026-07-14-19:20:
