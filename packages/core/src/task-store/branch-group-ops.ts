@@ -115,7 +115,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     const assignedTasks = tasks.filter((task) => task.assignedAgentId === agentId);
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet phase; #2739 review — greptile P2):
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:50 (fleet phase; #2739 review — greptile P2):
     The dispatcher's OWN lane filters, resolved for this agent's tasks only. On a renamed board both
     matched nothing, so an agent asking for work was told there was none with its own assigned tasks
     sitting in the list it just fetched — no error, no log, the agent simply idles.
@@ -124,14 +124,16 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     a 400-card board paid 400 resolutions to dispatch one agent that owns three. `assignedAgentId` is a
     plain property read and was already the next filter, so hoisting it costs nothing.
 
-    Shares `satisfiedIrCache` with the dependency resolution below — one IR read per distinct workflow
-    across both passes rather than one per pass.
+    ONE cache across BOTH lifecycle loops. An earlier version of this comment claimed the dependency pass
+    below shared it while the code allocated a second map, so a task and its dependency in the same workflow
+    resolved that workflow's IR twice — the comment asserted an optimisation the code did not perform.
+    `lifecycleIrCache` is now the only cache and the dependency loop takes it.
     */
-    const dispatchIrCache = new Map<string, WorkflowIr>();
+    const lifecycleIrCache = new Map<string, WorkflowIr>();
     const lifecycleByTaskId = new Map<string, Awaited<ReturnType<typeof resolveTaskLifecycleColumns>>>();
     for (const task of assignedTasks) {
       if (lifecycleByTaskId.has(task.id)) continue;
-      lifecycleByTaskId.set(task.id, await resolveTaskLifecycleColumns(store, task.id, dispatchIrCache));
+      lifecycleByTaskId.set(task.id, await resolveTaskLifecycleColumns(store, task.id, lifecycleIrCache));
     }
     const isWipTask = (task: Task) => task.column === (lifecycleByTaskId.get(task.id)?.wip ?? "in-progress");
     const isHoldTask = (task: Task) => task.column === (lifecycleByTaskId.get(task.id)?.hold ?? "todo");
@@ -161,11 +163,12 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     legacy ids, matching the answer settled in #2720 and used by the merge blocker.
     */
     const satisfiedColumns = new Set<string>(["done", "archived"]);
-    const satisfiedIrCache = new Map<string, WorkflowIr>();
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-14:50 (#2739 review): reuses the dispatch cache above, so a
+       task and its dependency in one workflow read that IR once between them. */
     for (const dependencyId of new Set(
       roleCompatibleAssignedTasks.flatMap((task) => task.dependencies ?? []),
     )) {
-      const lifecycle = await resolveTaskLifecycleColumns(store, dependencyId, satisfiedIrCache);
+      const lifecycle = await resolveTaskLifecycleColumns(store, dependencyId, lifecycleIrCache);
       if (lifecycle?.complete) satisfiedColumns.add(lifecycle.complete);
       if (lifecycle?.archived) satisfiedColumns.add(lifecycle.archived);
     }
@@ -259,7 +262,7 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
       // When pausing an in-progress/in-review task, set status so the UI can show the state.
       // When unpausing, clear the "paused" status.
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet phase):
+      FNXC:WorkflowResolvedColumns 2026-07-30-14:50 (fleet phase):
       One task in hand, so one resolution — the "is this card mid-flight or in review" test that decides
       whether pausing shows a `paused` status. On a renamed board neither literal matched, so pausing a
       running card left its status untouched and the UI kept showing it as working.
