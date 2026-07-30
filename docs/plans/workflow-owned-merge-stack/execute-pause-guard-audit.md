@@ -131,6 +131,22 @@ That is not cosmetic. An operator who pauses the engine and then rearranges the 
 agent burning tokens and mutating a worktree; the only thing the pause still buys them is that the
 card does not move on. It makes choosing a layer urgent rather than optional.
 
-**Still not** verified: nothing beyond the executor. If a runtime, heartbeat, or plugin lane
-independently refuses to start work under `globalPause`, the practical blast radius is smaller than
-the table above. Every pause read *inside* `executor.ts` is accounted for.
+### No lane outside the executor refuses either
+
+The last open possibility was that some other layer independently declines to start work under a
+global pause, shrinking the blast radius. Checked, and it does not:
+
+| Lane | Pause reads | Where they are |
+|---|---:|---|
+| `runtimes/in-process-runtime.ts` | 4 | `start()` (engine startup) and `resumeAfterUnpause()` — neither is on the `task:moved` dispatch path |
+| the agent-session seam (`pi.ts`, `index.ts` — `createFnAgent`) | **0** | nothing to gate on |
+| `scheduler.ts` | 15 | the scheduler lane only, which this path bypasses by construction |
+
+`agent-heartbeat.ts` reads pause in 10 places, but that governs the durable-agent heartbeat lane, not
+executor dispatch — it cannot un-create a session the executor already started.
+
+So the table above stands as written: the blast radius is a real agent session doing real work. Every
+pause read reachable on this path — inside the executor and outside it — is accounted for.
+
+**Genuinely open, and the only thing left:** which layer should hold the guard. That is a
+pause-contract decision, not a measurement.
