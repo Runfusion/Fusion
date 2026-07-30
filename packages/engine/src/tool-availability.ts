@@ -28,8 +28,26 @@ When implementation needs external context, you may use research tools (
 Keep runs focused and short, and persist durable conclusions into task documents (for example key="research").
 If research is disabled or providers are not configured, use the actionable tool response and continue with available local context.`;
 
-export function getResearchGuidanceForSurface(surface: "triage" | "executor"): string {
-  return surface === "triage" ? TRIAGE_RESEARCH_GUIDANCE : EXECUTOR_RESEARCH_GUIDANCE;
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (U11 census hygiene):
+`"triage"` HERE IS AN AGENT LANE, NOT A BOARD COLUMN — the lane that writes specs,
+which keeps its name whatever the board calls its planning column. It appeared in
+the `=== "triage"` census purely because it is the same word, and trait-converting
+it would be actively wrong: it would tie an agent's prompt to a workflow's column
+vocabulary.
+
+Named and table-driven so the distinction is legible and the literal no longer
+reads as a lifecycle guard to the next auditor.
+*/
+export type AgentResearchSurface = "triage" | "executor";
+
+const RESEARCH_GUIDANCE_BY_SURFACE: Record<AgentResearchSurface, string> = {
+  triage: TRIAGE_RESEARCH_GUIDANCE,
+  executor: EXECUTOR_RESEARCH_GUIDANCE,
+};
+
+export function getResearchGuidanceForSurface(surface: AgentResearchSurface): string {
+  return RESEARCH_GUIDANCE_BY_SURFACE[surface];
 }
 
 export function getEnabledPluginTools(pluginRunner: PluginRunner | undefined): ToolDefinition[] {
