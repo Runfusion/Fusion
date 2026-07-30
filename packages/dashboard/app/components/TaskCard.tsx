@@ -396,7 +396,7 @@ function getTaskEndToEndDurationMs(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
+FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
 Module-scope, takes only a `Task`, and has no flags to consult. Converting it means either threading
 resolved flags through a pure duration helper or resolving a workflow inside it — the same shape flagged
 at `project-engine.ts:2555` and `github-tracking-comments.ts:165`. Left counted so the census keeps
@@ -1039,12 +1039,14 @@ function TaskCardComponent({
   const isIntakeColumn = taskColumnFlags
     ? taskColumnFlags.intake === true
     : task.column === "triage";
+  /* DELIBERATE-LITERAL — the no-metadata fallback for the pre-load window, matching `isIntakeColumn`
+     directly above. Deleting it makes the card answer "no role" during first paint. */
   const isHoldColumn = taskColumnFlags
     ? taskColumnFlags.hold === true
     : task.column === "todo";
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase):
   THE OTHER FOUR ROLES, resolved once here rather than re-asked 39 times below.
 
   `taskColumnFlags` was already threaded into this component and already consumed by `canEdit` and
@@ -1440,10 +1442,10 @@ function TaskCardComponent({
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
   const PriorityBadgeIcon = getPriorityIcon(normalizedPriority);
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
   const stalledReview = getStalledReviewSignal(task);
   const showStalledReview = Boolean(stalledReview && isReviewColumn && !isPaused);
-  const hasInReviewStall = shouldShowInReviewStallBadge(task);
+  const hasInReviewStall = shouldShowInReviewStallBadge(task, taskColumnFlags);
   /*
   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:05:
   FN-7831 requires the card header to show a distinct "Reviewing" badge while the optional `plan-review` workflow step is actively running, even while the card remains in Planning/`triage`. Use the shared predicate so TaskCard stays in sync with ListView.
@@ -1455,9 +1457,21 @@ function TaskCardComponent({
     () => isPlanReviewRunning(task),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (partial-supply seam, caught by the gate):
+  `getRunningOptionalGateBadge` takes resolved flags and BOTH ListView call sites supply them; this
+  one did not, so on a renamed board the badge answered from legacy ids here and from the real column
+  two components over. The seam check only began reporting this once it looked per-call-site instead
+  of accepting one supplier for the whole seam.
+
+  `taskColumnFlags` belongs in the deps: this repo has no `react-hooks/exhaustive-deps` rule, so a
+  memo that reads flags but does not list them is invisible to lint and would keep the first-paint
+  (undefined) answer after the flags resolve — re-creating the same legacy-fallback bug through
+  staleness instead of omission.
+  */
   const optionalGateBadge = useMemo(
-    () => getRunningOptionalGateBadge(task),
-    [task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+    () => getRunningOptionalGateBadge(task, taskColumnFlags),
+    [task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults, taskColumnFlags],
   );
   // CLI agent session badges (U11) — distinct from staleness/stall badges.
   const cliWaitingOnInput = cliSessionState?.agentState === "waitingOnInput";
@@ -1468,7 +1482,7 @@ function TaskCardComponent({
       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
     })
     : undefined;
-  const hasStalePausedReview = shouldShowStalePausedReviewBadge(task);
+  const hasStalePausedReview = shouldShowStalePausedReviewBadge(task, taskColumnFlags);
   const stalePausedReviewCopy = task.stalePausedReview ? getStalePausedReviewCopy(task.stalePausedReview) : undefined;
   const hasTaskAgeStaleness = shouldShowTaskAgeStalenessBadge(task);
   const taskAgeStalenessCopy = getTaskAgeStalenessCopy(task.ageStaleness);
@@ -2728,7 +2742,7 @@ function TaskCardComponent({
       The retired in-review Move dropdown offered Done (no merge) and Triage in addition to the shared menu model's Todo/In Progress defaults. Fold those targets into this TaskCard-only menu so card consolidation retains every move capability without changing ListView or TaskDetail menus.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (CORRECTION of the note this replaced):
+      FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (CORRECTION of the note this replaced):
       The previous version of this comment claimed `triage` was a column U11/#2515 had DELETED, making
       this a live stale-target bug. THAT WAS WRONG, and it shipped. `triage` is a real, present column:
 
@@ -2756,6 +2770,8 @@ function TaskCardComponent({
           if (moveTransitions.some((transition) => transition.column === column)) continue;
           moveTransitions.push({
             column,
+            /* DELIBERATE-LITERAL — `column` is the loop variable over the literal
+               `["done", "triage"] as const` two lines up, not a board column being classified. */
             label: column === "done"
               ? t("tasks.doneNoMerge", "Done (no merge)")
               : t("taskDetail.move.moveTo", "Move to {{column}}", { column: taskActionColumnLabel(column) }),

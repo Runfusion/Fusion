@@ -100,7 +100,11 @@ export function getTaskColumnStatusDotClass(taskColumn: string, flags?: Document
     if (flags.intake || flags.hold) return "status-dot status-dot--pending";
     return "status-dot status-dot--connecting";
   }
+  /* DELIBERATE-LITERAL — the no-metadata fallback. The resolved-trait branch is immediately above
+     (`if (flags) { ... }`); these lines answer only when a task has no flags at all, and deleting
+     them makes every such row render the neutral "connecting" dot. */
   if (taskColumn === "done") return "status-dot status-dot--online";
+  /* DELIBERATE-LITERAL — same no-metadata fallback as the line above. */
   if (taskColumn === "archived") return "status-dot status-dot--offline";
   if (LEGACY_PRE_IMPLEMENTATION_COLUMNS.has(taskColumn)) return "status-dot status-dot--pending";
   return "status-dot status-dot--connecting";

@@ -1,4 +1,5 @@
 import type { Agent, AgentLogEntry, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
+import { isWipColumnRole } from "../utils/columnRoles";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
@@ -100,11 +101,22 @@ export function resolveEffectiveExecutor(
   logEntries: AgentLogEntry[],
   assignedAgent: Agent | null,
   settings?: Settings,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): ModelSelection {
   const fromLog = extractExecutorModelFromLog(logEntries);
   if (fromLog) return fromLog;
 
-  if (ACTIVE_STATUSES.has(task.status ?? "") || task.column === "in-progress") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (batch-dashboard-app):
+  WIP role, resolved; `columnFlags` omitted -> the legacy id.
+
+  This decides whether the ASSIGNED AGENT's runtime model is the effective one — true only while the
+  card is actually being worked. Keyed on the literal, a card executing in a renamed wip lane fell
+  through to the configured default, so the dashboard displayed a different model than the one the
+  running agent was using. Wrong in the quietest possible way: a plausible model name, for the whole
+  duration of the run.
+  */
+  if (ACTIVE_STATUSES.has(task.status ?? "") || isWipColumnRole(columnFlags, task.column)) {
     const assignedModel = extractAssignedRuntimeModel(assignedAgent);
     if (assignedModel.provider && assignedModel.modelId) {
       return assignedModel;
@@ -123,11 +135,22 @@ export function resolveEffectiveValidator(
   logEntries: AgentLogEntry[],
   assignedAgent: Agent | null,
   settings?: Settings,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): ModelSelection {
   const fromLog = extractReviewerModelFromLog(logEntries);
   if (fromLog) return fromLog;
 
-  if (ACTIVE_STATUSES.has(task.status ?? "") || task.column === "in-progress") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (batch-dashboard-app):
+  WIP role, resolved; `columnFlags` omitted -> the legacy id.
+
+  This decides whether the ASSIGNED AGENT's runtime model is the effective one — true only while the
+  card is actually being worked. Keyed on the literal, a card executing in a renamed wip lane fell
+  through to the configured default, so the dashboard displayed a different model than the one the
+  running agent was using. Wrong in the quietest possible way: a plausible model name, for the whole
+  duration of the run.
+  */
+  if (ACTIVE_STATUSES.has(task.status ?? "") || isWipColumnRole(columnFlags, task.column)) {
     const assignedModel = extractAssignedRuntimeModel(assignedAgent);
     if (assignedModel.provider && assignedModel.modelId) {
       return assignedModel;

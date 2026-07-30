@@ -1,6 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getUnifiedTaskProgress } from "./taskProgress";
-import { isIntakeColumnRole, isPreImplementationColumnRole } from "./columnRoles";
+import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isWipColumnRole } from "./columnRoles";
 
 /** The shared status vocabulary for active task phases and lock/model policy. */
 export const ACTIVE_STATUSES = new Set([
@@ -34,7 +34,13 @@ export interface TaskAgentActivityOptions {
   (pre-load, or a card stranded in a vanished lane) must keep their current behaviour
   rather than lose activity detection entirely.
   */
-  columnFlags?: { intake?: boolean; hold?: boolean };
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
+  Widened from `{intake, hold}` to carry the terminal and wip roles too, because this predicate asks
+  three separate lifecycle questions and only the planner one was resolved. Callers already pass this
+  from their per-task flags; the extra fields cost them nothing.
+  */
+  columnFlags?: { intake?: boolean; hold?: boolean; complete?: boolean; archived?: boolean; countsTowardWip?: boolean };
 }
 
 /*
@@ -69,8 +75,8 @@ export function isTaskAgentActive(
     status === "failed" ||
     status === "awaiting-approval" ||
     status === "awaiting-user-input" ||
-    task.column === "done" ||
-    task.column === "archived" ||
+    isCompleteColumnRole(options.columnFlags, task.column) ||
+    isArchivedColumnRole(options.columnFlags, task.column) ||
     status === "done"
   ) {
     return false;
@@ -109,7 +115,14 @@ export function isTaskAgentActive(
     && nowMs - recentPlannerActivityAtMs >= 0
     && nowMs - recentPlannerActivityAtMs <= RECENT_PLANNER_ACTIVITY_WINDOW_MS;
 
-  return task.column === "in-progress" ||
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
+  "Is an agent working on this card?" — the WIP question, and the last of the three in this function
+  that was still keyed on a legacy id. On a renamed board a card in the wip lane read as INACTIVE
+  unless its status happened to be one of ACTIVE_STATUSES, so the activity dot and everything keyed
+  off it went dark while an agent was running.
+  */
+  return isWipColumnRole(options.columnFlags, task.column) ||
     ACTIVE_STATUSES.has(status ?? "") ||
     isReplanning ||
     hasFreshPlannerActivity ||

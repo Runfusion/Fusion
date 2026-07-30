@@ -16,7 +16,7 @@ import type {Task, Column, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateCustomFieldPatch, CustomFieldRejectionError} from "../task-fields.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
-import {validateNodeOverrideChange} from "../node-override-guard.js";
+import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../node-override-guard.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -50,7 +50,36 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const preUpdateDescription = task.description;
 
       if (updates.nodeId !== undefined) {
-        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (#2821 review — greptile, second call site):
+        THE COLUMN IS RE-READ AFTER THE AWAIT.
+
+        `task` was loaded above, and awaiting lane resolution here opened a window: another process
+        moving the card into a resolved WIP lane during that await left the guard judging a STALE
+        non-WIP column, so the mid-flight refusal passed for a task that had started running.
+
+        I fixed exactly this at the sibling call site in `branch-and-pr-entities.ts` by resolving lanes
+        BEFORE the task read, and missed it here — the same half-conversion this program keeps
+        finding, in my own fix. Hoisting is not available at this site because `task` is the working
+        copy the whole function mutates, so the column is re-read instead and only for the guard.
+
+        The re-read is best-effort: if it fails, the already-loaded copy is used, which is strictly no
+        worse than before this change.
+        */
+        const overrideLanes = await resolveNodeOverrideLanes(store, id);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-01:50 (#2821 review — greptile, and it caught a DEADLOCK I shipped):
+        RE-READ WITHOUT THE LOCK. My previous version used `store.getTask(id)`, which acquires the
+        per-task lock. This function is `updateTaskUnlockedImpl` — the caller ALREADY HOLDS that lock,
+        and it is non-reentrant, so the inner read waited on the outer update forever. A stale-column
+        race is a narrow window; a deadlock is every `nodeId` update.
+
+        `readTaskJson` is the lock-free read this function already uses for its own working copy, so
+        the column is refreshed after the await without touching the lock. Falls back to the copy
+        loaded above if the re-read fails, which is no worse than before.
+        */
+        const freshForGuard = await store.readTaskJson(dir).catch(() => null);
+        const validation = validateNodeOverrideChange(freshForGuard ?? task, updates.nodeId ?? null, overrideLanes);
         if (!validation.allowed) {
           throw new Error(validation.message);
         }

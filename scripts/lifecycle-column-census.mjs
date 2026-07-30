@@ -349,7 +349,36 @@ for (const [file, count] of deliberateTracked ? currentDeliberateByFile : []) {
   // Keys are `file\u0000columnId`; render them readably in the report.
   const [f, columnId] = file.split("\u0000");
   const label = `${f} (DELIBERATE-LITERAL: ${columnId})`;
-  if (count > allowed) regressions.push({ file: label, count, allowed });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-21:40:
+  A deliberate rise is tagged as a RECLASSIFICATION when the same file+column's guard count fell by
+  at least as much. Adding a `DELIBERATE-LITERAL` marker moves a site from `byFile` to
+  `deliberateByFile`, so the totals shift even though unconverted debt went DOWN.
+
+  It still fails — the baseline has to be re-recorded either way — but the message must not call it
+  "column-guard count ROSE", which is the opposite of what happened and sends the reader looking for
+  a regression they will not find. Main went red on exactly this twice in one day, from two different
+  PRs, and both times the failure text pointed away from the fix.
+  */
+  if (count > allowed) {
+    /*
+    Two bugs my own test caught before this shipped, both worth recording because each made the guard
+    silently never fire — the failure mode this whole program is about:
+
+    1. `deliberateByFile` is keyed `file\u0000columnId` while `byFile` is keyed by PLAIN PATH, so my
+       first lookup used the suffixed key against the plain map and always read 0.
+    2. Then I compared "did the guard count FALL by at least the marker rise". It usually cannot: a
+       file taken to zero guards loses its `byFile` entry entirely, so both sides read 0 and no fall
+       is observable at strict-check time — the fall happened in an earlier re-record.
+
+    The honest condition is the weaker one: markers rose and guards did NOT. That is exactly the
+    shape of a marker-only change, and it cannot mask real regrowth because a file whose guard count
+    also rose is reported as a rise.
+    */
+    const guardsNow = currentByFile.get(f) ?? 0;
+    const guardsBefore = baselineByFile.get(f) ?? 0;
+    regressions.push({ file: label, count, allowed, reclassified: guardsNow <= guardsBefore });
+  }
   else if (count < allowed) stale.push({ file: label, count, allowed });
 }
 for (const [file, allowed] of deliberateTracked ? baselineDeliberateByFile : []) {
@@ -474,14 +503,35 @@ if (updateBaseline) {
 }
 
 if (regressions.length > 0) {
-  console.error("\nlifecycle-column-census --strict: column-guard count ROSE\n");
+  const reclassifiedOnly = regressions.every((r) => r.reclassified === true);
+  console.error(
+    reclassifiedOnly
+      ? "\nlifecycle-column-census --strict: sites were RECLASSIFIED as DELIBERATE-LITERAL\n"
+      : "\nlifecycle-column-census --strict: column-guard count ROSE\n",
+  );
   for (const r of regressions) {
-    console.error(`  ${r.file}${r.kind === "query" ? " (query filter)" : ""}: ${r.allowed} -> ${r.count}`);
+    const tag = r.kind === "query" ? " (query filter)" : r.reclassified ? " (reclassified, not new debt)" : "";
+    console.error(`  ${r.file}${tag}: ${r.allowed} -> ${r.count}`);
   }
   console.error(
-    "\nResolve a lifecycle column from the task's own workflow (resolveLifecycleColumns /\n" +
-    "resolveTaskLifecycleColumns) instead of comparing its name. If the literal is genuinely\n" +
-    `correct, record why at the site with a ${"DELIBERATE-LITERAL"} marker.\n`,
+    reclassifiedOnly
+      /*
+      The whole failure here is a bookkeeping step, and the original message actively misdirected: it
+      announced a RISE for a change that does not raise unconverted debt, so the reader went hunting
+      for a regression that does not exist.
+
+      FNXC:LifecycleColumnCensus 2026-07-30-20:30 (#2811 review — coderabbit):
+      "did NOT increase", not "went DOWN". `reclassified` is `guardsNow <= guardsBefore`, so it is TRUE
+      when the guard count is UNCHANGED — which is exactly what adding a DELIBERATE-LITERAL marker to a
+      site the parser already excluded produces. Claiming a decrease there is a second wrong number in
+      a message whose whole purpose is to stop the reader chasing one.
+      */
+      ? "\nUnconverted debt did NOT increase — a marker moved these sites out of the guard count.\n" +
+        "The baseline records both totals, so it must be re-recorded in the same change:\n\n" +
+        "  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n"
+      : "\nResolve a lifecycle column from the task's own workflow (resolveLifecycleColumns /\n" +
+        "resolveTaskLifecycleColumns) instead of comparing its name. If the literal is genuinely\n" +
+        `correct, record why at the site with a ${"DELIBERATE-LITERAL"} marker.\n`,
   );
   process.exit(1);
 }

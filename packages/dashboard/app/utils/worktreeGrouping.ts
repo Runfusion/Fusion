@@ -1,6 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getPathBasename } from "./pathDisplay";
-import { isHoldColumnRole } from "./columnRoles";
+import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole } from "./columnRoles";
 
 export interface WorktreeGroupData {
   label: string;
@@ -74,6 +74,16 @@ export function groupByWorktree(
   Board resolves this; Lane does not pass it and keeps the legacy-id fallback.
   */
   holdTaskIds?: ReadonlySet<string>,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
+  Per-dependency column flags, mirroring the `holdTaskIds` seam directly above: the caller resolves,
+  this stays pure. Omitted -> the legacy ids, i.e. today's behaviour for every unconverted caller.
+
+  Without it, "are this card's dependencies satisfied?" was three legacy ids. On a renamed board a
+  FINISHED dependency matched none of them, so the dependent never appeared in the worktree view's
+  upcoming-work list — it looked like there was nothing ready to run while there was.
+  */
+  dependencyColumnFlags?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>,
 ): WorktreeGroupData[] {
   // Separate assigned vs unassigned in-progress tasks
   const assigned = inProgressTasks.filter((t) => t.worktree);
@@ -111,7 +121,13 @@ export function groupByWorktree(
     !t.paused &&
     (t.dependencies || []).every((depId) => {
       const dep = taskById.get(depId);
-      return dep && (dep.column === "done" || dep.column === "in-review" || dep.column === "archived");
+      if (!dep) return false;
+      const depFlags = dependencyColumnFlags?.get(dep.id);
+      /* Satisfied = the dependency rests in its OWN board's terminal pair, or its review lane —
+         the same union the scheduler's legacy rule uses, preserved exactly. */
+      return isCompleteColumnRole(depFlags, dep.column)
+        || isArchivedColumnRole(depFlags, dep.column)
+        || isReviewColumnRole(depFlags, dep.column);
     }),
   );
 

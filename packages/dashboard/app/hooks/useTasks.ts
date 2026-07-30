@@ -123,7 +123,33 @@ function hasFreshAgentLog(task: Task, entry: AgentLogActivityEvent): boolean {
 }
 
 function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
-  if (task.column !== "in-review" || !hasFreshAgentLog(task, entry)) return task;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:20 (batch-dashboard-app — the column check is REDUNDANT,
+  and removing it fixes a live bug):
+
+  THE COLUMN CHECK IS DELETED, not converted, because the line below already implies it. All three
+  stall fields are produced ONLY for review-lane cards — every assignment in `task-store/reads.ts`
+  routes through a producer that gates on review itself:
+
+    inReviewStall    getInReviewStallReason      (gates on the review lane)
+    inReviewStalled  getInReviewStalledSignal    (gates on the review ROLE — already trait-converted)
+    stalledReview    detectStalledReview         (gates on the review lane)
+
+  So `!task.inReviewStall && !task.inReviewStalled && !task.stalledReview` already means "not a
+  review card with a stall badge", and re-asserting the column added nothing a correct board could
+  observe.
+
+  WHAT IT DID ADD WAS A BUG, and it is live today rather than pending anything. `inReviewStalled` is
+  ALREADY resolved by role, so a renamed board DOES produce that badge — and this literal then
+  refused to clear it while a review agent was actively writing logs. The card read "stalled" for
+  the whole time work was visibly happening, which is exactly what this function exists to prevent.
+
+  I previously recorded this as a cross-batch coupling that cancelled out and had to be ordered
+  against core. That was wrong on one of the three signals: the trait-converted one never cancelled.
+  Deleting the check is correct before OR after any core change, and removes the ordering hazard
+  instead of scheduling around it.
+  */
+  if (!hasFreshAgentLog(task, entry)) return task;
   if (!task.inReviewStall && !task.inReviewStalled && !task.stalledReview) return task;
 
   /*
