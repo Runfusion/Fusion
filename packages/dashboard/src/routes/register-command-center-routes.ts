@@ -511,7 +511,9 @@ async function resolveColumnFlagsByName(
         pricingOverrides: settings.modelPricingOverrides,
         defaultWorkflowId,
         columnFlagsByName: await resolveColumnFlagsByName(store),
-      });
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-18:35: store supplied so the per-workflow completed
+         and in-flight queries resolve the board's real lanes instead of 'done'/'in-progress'. */
+      }, store);
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-workflows.csv", workflowAnalyticsToTable(result));
         return;

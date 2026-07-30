@@ -1,4 +1,5 @@
 import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -350,10 +351,27 @@ function buildWorkflowAnalytics(
 export async function aggregateWorkflowAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: WorkflowAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:30:
+  The store, used ONLY to resolve which columns carry the complete / wip / human-review traits.
+
+  These queries filtered on `t."column" = 'done'` and `IN ('in-progress','in-review')`. Those ids sit
+  inside SQL strings, which the lifecycle census cannot see because it parses TypeScript comparisons —
+  so the sweep that converted this file's TS guards left the queries alone and the file scored as
+  converted. On a renamed board every per-workflow completed count and throughput figure reads ZERO
+  while the board is busy, with no error.
+
+  Resolved per PROJECT: this aggregates a whole project, so the union of a role's columns across its
+  workflows is the right set and a bound IN list is enough. (Per-task lanes need the
+  superset-then-decide-in-JS shape instead — see cleanupStaleMergeQueueRowsInTransaction.)
+
+  Omitted, the legacy ids answer, so an unconverted caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<WorkflowAnalytics> {
   const defaultWorkflowId = query.defaultWorkflowId ?? "builtin:coding";
   if ("ping" in dbOrLayer) {
-    return aggregateWorkflowAnalyticsAsync(dbOrLayer, query, defaultWorkflowId);
+    return aggregateWorkflowAnalyticsAsync(dbOrLayer, query, defaultWorkflowId, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -444,7 +462,17 @@ async function aggregateWorkflowAnalyticsAsync(
   layer: AsyncDataLayer,
   query: WorkflowAnalyticsQuery,
   defaultWorkflowId: string,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<WorkflowAnalytics> {
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  const activeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["countsTowardWip", "humanReview"])]
+    : ["in-progress", "in-review"];
+  /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
+     into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
+  const inList = (lanes: readonly string[]) => sql.join(lanes.map((lane) => sql`${lane}`), sql`, `);
   const wfExpr = sql`COALESCE(NULLIF(s.workflow_id, ''), ${defaultWorkflowId})`;
 
   const tokFrom = query.from !== undefined ? sql`AND t.token_usage_last_used_at >= ${query.from}` : sql``;
@@ -484,7 +512,7 @@ async function aggregateWorkflowAnalyticsAsync(
     sql`SELECT ${wfExpr} AS "workflowId", count(*)::int AS count
         FROM project.tasks t
         LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
-        WHERE t."column" = 'done' AND t.column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        WHERE t."column" IN (${inList(completeLanes)}) AND t.column_moved_at IS NOT NULL ${compFrom} ${compTo}
         GROUP BY 1`,
   )) as Array<{ workflowId: string; count: number }>;
   const completedRows: CountByWorkflowRow[] = completedRowsRaw.map((r) => ({
@@ -498,7 +526,7 @@ async function aggregateWorkflowAnalyticsAsync(
     sql`SELECT ${wfExpr} AS "workflowId", t."column" AS "columnName", count(*)::int AS count
         FROM project.tasks t
         LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
-        WHERE t."column" IN ('in-progress', 'in-review') ${curFrom} ${curTo}
+        WHERE t."column" IN (${inList(activeLanes)}) ${curFrom} ${curTo}
         GROUP BY 1, t."column"`,
   )) as Array<{ workflowId: string; columnName: string; count: number }>;
   const currentRows: Array<CountByWorkflowRow & { columnName: string }> = currentRowsRaw.map((r) => ({
