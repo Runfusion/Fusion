@@ -194,4 +194,84 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
     expect(durationEvents.map((event) => event.id)).toEqual(["reliability-entered", "reliability-done"]);
     expect(await store.getTaskMergedTaskIds(window)).toEqual(new Set(["FN-REL-1"]));
   });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:15:
+  THE INVARIANT: the duration query reads the board's OWN review and complete lanes.
+
+  The predicate had `in-review` and `done` baked into a `sql` template — the one place neither the
+  lifecycle census (which scans comparisons) nor the unwired-lane-parameter guard (which scans
+  declarations) can see them. So this was the Reliability panel's LAST blind input after #2861 fixed
+  the two counts beside it, and the panel read as partially healthy: entries and bounces populated,
+  duration reporting `no-in-review-entries` forever. Partial blindness is harder to spot than total.
+
+  A REAL PostgreSQL row set on purpose. This is a SQL predicate change; a mocked store would assert
+  the arguments and prove nothing about the query that actually runs, which is the whole risk when
+  the literal lives inside `sql`.
+
+  The legacy-lane case above stays green in the same file, which is the compatibility half: the union
+  covers move records written under the OLD id as well as the new one, and a past move recorded the
+  name as it was at the time.
+
+  REVERT PROOF, measured: restore the hardcoded `= 'in-review'` / `= 'done'` fragments and this fails
+  with `expected [] to deeply equal [ 'renamed-entered', 'renamed-done' ]`.
+  */
+  it("finds duration events on a board whose review and complete lanes are renamed", async () => {
+    const store = h.store();
+    const projectId = store.getAsyncLayer()!.projectId!;
+    await store.createWorkflowDefinition({
+      name: "Renamed review and complete",
+      ir: {
+        version: "v2",
+        name: "Renamed review and complete",
+        columns: [
+          { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "building" },
+          { id: "end", kind: "end", column: "shipped" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      } as never,
+    });
+
+    await h.adminDb().insert(schema.project.activityLog).values([
+      {
+        projectId,
+        id: "renamed-entered",
+        timestamp: "2026-07-15T20:01:00.000Z",
+        type: "task:moved",
+        taskId: "FN-REN-1",
+        details: "Entered sign-off",
+        metadata: { from: "building", to: "signoff" },
+      },
+      {
+        projectId,
+        id: "renamed-done",
+        timestamp: "2026-07-15T20:02:00.000Z",
+        type: "task:moved",
+        taskId: "FN-REN-1",
+        details: "Shipped",
+        metadata: { from: "signoff", to: "shipped" },
+      },
+      {
+        projectId,
+        id: "renamed-unrelated",
+        timestamp: "2026-07-15T20:03:00.000Z",
+        type: "task:moved",
+        taskId: "FN-REN-1",
+        details: "Not a review transition",
+        metadata: { from: "building", to: "building" },
+      },
+    ]);
+
+    const events = await store.getInReviewDurationEvents({
+      since: "2026-07-15T20:00:00.000Z",
+      until: "2026-07-15T20:05:00.000Z",
+    });
+
+    expect(events.map((event) => event.id)).toEqual(["renamed-entered", "renamed-done"]);
+  });
 });

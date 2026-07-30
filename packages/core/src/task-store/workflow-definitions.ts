@@ -43,6 +43,7 @@ import { resolveDefaultOnOptionalGroupIds } from "../workflow-optional-steps.js"
 import { resolveSwitchReconciliation } from "../workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
 import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "../project-lane-vocabulary.js";
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -993,9 +994,31 @@ export function getSettingsSyncImpl(store: TaskStore): Settings {
         return store.settingsSyncCache ?? DEFAULT_SETTINGS;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:15:
+Resolve the two roles the duration query reads, ONCE per call, and hand them to the SQL.
+
+The predicate had `in-review` and `done` baked into a `sql` template — the one place neither the
+lifecycle census nor the unwired-lane-parameter guard can see them — so the Reliability panel's
+duration metric stayed blind on a renamed board after #2861 fixed the two counts beside it.
+
+This impl is where the store is available, which is why the resolution lives here rather than in
+`async-audit.ts`: that function takes a `db` handle and cannot resolve anything. Best-effort — a
+failed resolve leaves the query on its documented legacy lanes rather than failing the panel.
+*/
 export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
         const layer = store.asyncLayer!;
-    return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options);
+    let lanes: { reviewColumns?: string[]; completeColumns?: string[] } | undefined;
+    try {
+      const [review, complete] = await Promise.all([
+        resolveProjectColumnsForRoles(store, REVIEW_ROLES),
+        resolveProjectColumnsForRoles(store, ["complete"]),
+      ]);
+      lanes = { reviewColumns: [...review], completeColumns: [...complete] };
+    } catch {
+      lanes = undefined;
+    }
+    return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options, lanes);
 }
 
 export async function getTaskMergedTaskIdsImpl(store: TaskStore, options: { since: string; until: string }): Promise<Set<string>> {
