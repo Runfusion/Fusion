@@ -1,5 +1,7 @@
 import type { TaskStore } from "./store.js";
 import type { ColumnId, Task } from "./types.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 
 export type TaskMoveSource = "user" | "engine" | "scheduler";
 export type TaskMoveDisposer = (task: Task) => Promise<void>;
@@ -52,7 +54,55 @@ export function getTaskMoveDisposer(store: TaskStore): TaskMoveDisposer | undefi
  * board state can never claim the task is idle while its agent still runs.
  */
 export async function disposeTaskBeforeMove(store: TaskStore, input: TaskMoveDisposalInput): Promise<void> {
-  if (input.source !== "user" || input.from !== "in-progress" || input.to !== "todo") return;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-core):
+  THE HARD CANCEL MUST FIRE ON A RENAMED BOARD.
+
+  Keyed on the literals, this returned early for every board that renamed either lane — so the
+  disposer never ran, and a user pulling a card out of active execution got a task that LOOKS parked
+  while its agent is still running. A cancellation contract failing OPEN, which is the worst
+  direction: the operator believes the work stopped.
+
+  Same defect and same direction as the `moveTaskInternal` hard-cancel guards, which resolved their
+  target as `hold ?? intake` for exactly this reason. Both halves are membership questions here — the
+  card LEFT a wip lane and ENTERED a pre-wip one — so both take the full sets rather than one id.
+
+  A workflow expressing no trait at all is a v1 upgrade, not a board without these roles, so it keeps
+  the legacy pair; likewise an unresolvable workflow. Failing to dispose is the harm, so the fallback
+  stays exactly as permissive as before.
+  */
+  if (input.source !== "user") return;
+  /*
+  RESOLVED ONLY WHEN THE LITERALS DO NOT ALREADY MATCH.
+
+  Two reasons, and the second was found by this module's own test rather than reasoned out. First,
+  the legacy pair is what a default board uses, so short-circuiting keeps that path free of a
+  workflow read on every user move. Second, and load-bearing: `disposeTaskBeforeMove` is awaited by
+  the caller BEFORE the new column is published, and the existing test pins that the disposer starts
+  within one microtask. Adding an unconditional `await` ahead of it pushed the disposer past that
+  point — a real change to when cancellation begins on the ordinary path, for no benefit there.
+
+  So the default board behaves exactly as before, and only a board whose lanes do NOT match the
+  legacy pair pays a resolution — which is precisely the case the literals got wrong.
+  */
+  if (input.from !== "in-progress" || input.to !== "todo") {
+    let wipLanes: ReadonlySet<string> = new Set<string>();
+    let preWipLanes: ReadonlySet<string> = new Set<string>();
+    try {
+      const ir = await resolveWorkflowIrForTask(store, input.task.id);
+      if (ir && declaresAnyLifecycleTrait(ir)) {
+        wipLanes = new Set(columnsWithFlag(ir, "countsTowardWip"));
+        preWipLanes = new Set([...columnsWithFlag(ir, "intake"), ...columnsWithFlag(ir, "hold")]);
+      }
+    } catch { /* degraded: no resolved lanes, so the legacy pair above is the only match */ }
+    /*
+    A user move out of a WIP lane into a pre-WIP one is the hard cancel. Keyed on the literals this
+    returned early for every renamed board, so the disposer never ran and the operator got a card that
+    LOOKS parked while its agent is still running — a cancellation contract failing OPEN, the same
+    direction and the same defect as the `moveTaskInternal` hard-cancel guards.
+    */
+    if (!wipLanes.has(input.from) || !preWipLanes.has(input.to)) return;
+  }
   const disposer = getTaskMoveDisposer(store);
   if (!disposer) return;
 
