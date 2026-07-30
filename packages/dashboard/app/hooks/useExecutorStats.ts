@@ -86,7 +86,17 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     const enriched = enrichRunningAgentTaskShapeFromFlags(task, columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column));
     if (isRunningAgentTask(enriched)) {
       runningTaskCount++;
-      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs)) stuckTaskCount++;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (PR #2772 review):
+      Per-task WIP flags, same precedence as line ~86. `isTaskStuck` gained this parameter and
+      TaskCard supplies it, so the repo-wide seam gate was satisfied by that ONE caller — this path
+      was still passing three arguments and counting zero stuck tasks on a renamed board.
+
+      That is the gate's documented limit made concrete: it proves SOME caller supplies the
+      parameter, never that ALL do. Worth knowing before trusting it as coverage.
+      */
+      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs,
+        columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column))) stuckTaskCount++;
     }
     if (isWaitingAgentTask(enriched)) queuedTaskCount++;
     // Kept in the API shape for compatibility; the footer no longer renders it.

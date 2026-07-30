@@ -87,7 +87,8 @@ export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: 
     FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (REVERTED — the seam had no supplier):
     STILL A LITERAL, deliberately, and left counted.
 
-    I converted this and added a `columnFlags` parameter. Its only caller is TaskDetailModal ~line
+    I converted this and added a `columnFlags` parameter — SINCE REMOVED, so this function takes only
+    `(tasks, sourceTaskId)` today. Its only caller is TaskDetailModal ~line
     926, which sits ~60 lines ABOVE where `detailColumnFlags` is derived, so it could not supply one.
     The parameter was therefore never passed: the guard was gone, the census counted a conversion,
     and the behaviour was the legacy fallback forever.

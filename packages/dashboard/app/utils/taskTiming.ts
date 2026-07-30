@@ -101,7 +101,8 @@ These two functions decide whether a card's runtime is still ACCRUING. Keyed on 
 in a renamed wip lane reports only its persisted `cumulativeActiveMs` and never the in-flight
 segment, so every duration display freezes at the last checkpoint while the agent keeps working.
 
-STILL LITERALS, REVERTED 2026-07-30-22:40 — the bug is real, my fix was inert. I added a
+STILL LITERALS, REVERTED 2026-07-30-22:40 — the bug is real, my fix was inert. NEITHER FUNCTION
+TAKES A `columnFlags` PARAMETER ANY MORE; the wording below describes the removed attempt. I added a
 `columnFlags` parameter to both and no caller could supply one: `getTotalAgentActiveMs` is reached
 from module-level helpers with no flags in scope (TaskCard's `getTaskEndToEndDurationMs`,
 TaskTokenStatsPanel), and `getActiveRuntimeMs`'s only caller is that wrapper. An optional parameter
