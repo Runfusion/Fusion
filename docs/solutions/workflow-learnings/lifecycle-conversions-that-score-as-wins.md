@@ -121,10 +121,18 @@ behaviour that nobody chose.
 Found in MY OWN shipped fix, by the operator reviewing it — the sharpest instance in this document
 because every instrument here reported it as done.
 
-`clearNearDuplicateReferencesTo` was converted to resolve the canonical's column flags, and its test
-proved that by supplying `column: "shipped"`. Both production call sites in `moves.ts` gated on the
-RESOLVED complete lane and then passed the literal `column: "done"`. The consumer was correct, the
-producer was never converted, and the hand-supplied fixture value is exactly what hid it.
+The PURE predicate `isNearDuplicateCanonicalInactive` was converted to take the canonical's resolved
+column flags, and its test proved that by supplying `column: "shipped"`. Meanwhile both production
+call sites in `moves.ts` gated on the RESOLVED complete lane and then passed the literal
+`column: "done"` — and the store wrapper `clearNearDuplicateReferencesToImpl` called the predicate
+with no flags at all, so even a correct producer would not have reached the converted branch.
+
+Be precise about which layer was converted, because the imprecision is the same defect one level up:
+the *predicate* was converted; the *call site* and the *producer* were not. PR #2823 converts both —
+until it lands, `branch-group-ops.ts` still invokes the predicate flagless on `main`.
+
+The consumer contract was correct, the producer was never converted, and the hand-supplied fixture
+value is exactly what hid it.
 
 Why nothing caught it:
 
