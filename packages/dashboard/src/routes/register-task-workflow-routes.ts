@@ -254,23 +254,32 @@ async function resolveReviewColumnForTask(store: TaskStore, taskId: string): Pro
   }
 }
 
-async function resolveCompleteColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-05:00 (PR #2713 review — greptile P1):
+MEMBERSHIP, not "the first one". A workflow may declare MORE THAN ONE column carrying `complete` or
+`archived`, and `columnsWithFlag(...)[0]` picks one of them — so a task sitting in the second valid
+terminal column failed the revert guard with a 409.
+
+The single-id shape is right for the file's older resolvers, which answer "where should this card
+GO" (a move target must be one column). It is wrong here, because these answer "is this card ALREADY
+terminal" — a membership question. Same helper name, opposite arity requirement; that is what made
+the flaw easy to inherit.
+
+Returns the full set and lets callers test membership. The legacy id is the fallback set when the IR
+cannot be read, matching the other resolvers' degraded behaviour.
+*/
+async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
-    return columnsWithFlag(ir, "complete")[0] ?? "done";
+    const complete = columnsWithFlag(ir, "complete");
+    const archived = columnsWithFlag(ir, "archived");
+    const all = [...complete, ...archived];
+    return all.length > 0 ? new Set(all) : new Set(["done", "archived"]);
   } catch {
-    return "done";
+    return new Set(["done", "archived"]);
   }
 }
 
-async function resolveArchivedColumnForTask(store: TaskStore, taskId: string): Promise<string> {
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    return columnsWithFlag(ir, "archived")[0] ?? "archived";
-  } catch {
-    return "archived";
-  }
-}
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
@@ -865,7 +874,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     */
     if (
       isBackwardMoveBlockedByOpenPr({
-        fromIndex: COLUMNS.indexOf(task.column as Column),
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-05:20 (PR #2713 review — greptile P1):
+        The REVIEW LANE'S legacy index, not `COLUMNS.indexOf(task.column)`.
+
+        `isBackwardMoveBlockedByOpenPr` bails with `if (fromIndex < 0) return false`, and
+        `COLUMNS.indexOf` returns -1 for any custom column id. Before this PR the gate above only
+        admitted a task literally in `in-review`, so the index was always valid; converting the gate
+        to resolve the review ROLE started admitting custom columns, and the guard then silently
+        stopped protecting them — the task moved out of review with an open PR.
+
+        A conversion that widens what reaches a downstream legacy-index check has to carry that
+        check with it. We have already established `task.column` IS this workflow's review lane, so
+        it occupies the review POSITION for an ordering question, whatever it is named.
+        */
+        fromIndex: COLUMNS.indexOf("in-review"),
         toIndex: COLUMNS.indexOf("in-progress"),
         activePrEntity,
       })
@@ -2107,9 +2130,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      const terminalCompleteColumn = await resolveCompleteColumnForTask(scopedStore, task.id);
-      const terminalArchivedColumn = await resolveArchivedColumnForTask(scopedStore, task.id);
-      if (task.column !== terminalCompleteColumn && task.column !== terminalArchivedColumn) {
+      const terminalColumns = await resolveTerminalColumnsForTask(scopedStore, task.id);
+      if (!terminalColumns.has(task.column)) {
         throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
       }
 
