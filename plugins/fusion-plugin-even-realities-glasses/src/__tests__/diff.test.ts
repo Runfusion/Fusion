@@ -77,7 +77,7 @@ describe("diffSnapshots", () => {
     const events = diffSnapshots(prev, [task("FN-1", "shipped" as never, "2026-01-01T00:00:02.000Z")], {
       notifyOnColumns: new Set(["in-review"]),
       alsoNotifyOnDone: true,
-      completeColumns: new Set(["shipped"]),
+      completeColumnsByTaskId: new Map([["FN-1", new Set(["shipped"])]]),
     });
 
     expect(events.map((e) => e.reason)).toEqual(["completed"]);
@@ -91,7 +91,7 @@ describe("diffSnapshots", () => {
     const events = diffSnapshots(prev, [task("FN-1", "done", "2026-01-01T00:00:02.000Z")], {
       notifyOnColumns: new Set(["in-review"]),
       alsoNotifyOnDone: true,
-      completeColumns: new Set(["shipped"]),
+      completeColumnsByTaskId: new Map([["FN-1", new Set(["shipped"])]]),
     });
 
     expect(events).toEqual([]);

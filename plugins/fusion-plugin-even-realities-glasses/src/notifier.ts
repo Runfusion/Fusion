@@ -1,5 +1,5 @@
-import { resolveProjectColumnsForRoles } from "@fusion/core";
-import type { AsyncDataLayer, Task } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
+import type { AsyncDataLayer, Task, WorkflowIr } from "@fusion/core";
 import type { PluginContext } from "@fusion/plugin-sdk";
 import { notificationCard } from "./cards.js";
 import { diffSnapshots } from "./notifications/diff.js";
@@ -79,31 +79,53 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       const snapshot = await snapshotStore.read(deps.layer);
       const notifyOnColumns = new Set(getNotifyColumns(deps.settings));
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
-      Resolve the project's complete lanes ONCE per poll and hand them to the diff.
+      FNXC:WorkflowLifecycleColumns 2026-07-31-03:05 (#2852 review — greptile P2, and it is right):
+      Each card's OWN complete lane, resolved per task and ONLY when the flag that consumes it is on.
 
-      `diffSnapshots` previously declared a per-task `completeColumnsByTaskId` that this — its only
-      caller — never built, so its completion test fell through to the literal `"done"` on every
-      real poll. Supplying the answer is what makes that conversion real rather than decorative.
+      `diffSnapshots` declared a per-task `completeColumnsByTaskId` that this — its only caller —
+      never built, so its completion test fell through to the literal `"done"` on every real poll.
+      That is the unwired-lane-parameter class, and it is what this change set exists to fix.
 
-      Project-scoped, not per task, and the cost is why: this runs on a polling timer over the whole
-      board, so a per-card workflow read would scale with the board on every tick. One
-      `listWorkflowDefinitions()` read per poll is flat, and it matches the granularity the sibling
-      `notifyOnColumns` setting already uses.
+      MY FIRST FIX USED THE WRONG SHAPE, which is worth recording because I wrote the warning against
+      it myself. I replaced the per-task map with a flat set from `resolveProjectColumnsForRoles`
+      because it was one read instead of N. But that helper is the READ-shaped answer: it ALWAYS
+      unions the legacy `done` in, which is inert for a query and a false positive for a per-card
+      decision. A workflow that declares `shipped` as its complete lane and reuses `done` as an
+      ordinary lane would have fired a "completed" notification for live work. The header of
+      `project-lane-vocabulary.ts` names this exact mistake — "answering a per-card question from
+      this union" — and I made it anyway, one module over.
 
-      Best-effort: a failed resolve leaves the diff on its documented legacy default rather than
-      dropping a poll — a missed notification is recoverable, a dead notifier is not.
+      The original author's shape was correct and their comment said why: the poll spans the whole
+      board, so one workflow's complete column can be another workflow's WIP column. Restored.
+
+      THE COST OBJECTION IS ANSWERED BY THE GATE, not by the shape. `alsoNotifyOnDone` decides
+      whether the map is consumed at all, and it is `false` here today — so the per-task reads cost
+      exactly nothing now, and the day someone enables the flag they get the correct answer rather
+      than a cheap wrong one. An IR cache is shared across the tasks so distinct workflows, not
+      distinct cards, drive the resolution count.
+
+      Best-effort per card: a card whose workflow cannot be resolved is simply absent from the map
+      and falls back to the documented legacy default, rather than dropping the whole poll.
       */
-      let completeColumns: ReadonlySet<string> | undefined;
-      try {
-        completeColumns = await resolveProjectColumnsForRoles(
-          deps.taskStore as Parameters<typeof resolveProjectColumnsForRoles>[0],
-          ["complete"],
-        );
-      } catch (err) {
-        deps.logger?.debug?.("could not resolve complete lanes; using legacy default", { err, pluginId: deps.pluginId });
+      const alsoNotifyOnDone = false;
+      let completeColumnsByTaskId: Map<string, ReadonlySet<string>> | undefined;
+      if (alsoNotifyOnDone) {
+        const irCache = new Map<string, WorkflowIr>();
+        completeColumnsByTaskId = new Map();
+        for (const task of tasks) {
+          try {
+            const complete = (await resolveTaskLifecycleColumns(
+              deps.taskStore as Parameters<typeof resolveTaskLifecycleColumns>[0],
+              task.id,
+              irCache,
+            ))?.complete;
+            if (complete) completeColumnsByTaskId.set(task.id, new Set([complete]));
+          } catch (err) {
+            deps.logger?.debug?.("could not resolve complete lane for task", { err, pluginId: deps.pluginId, taskId: task.id });
+          }
+        }
       }
-      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone: false, completeColumns });
+      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone, completeColumnsByTaskId });
       const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
 
       for (const event of events) {
