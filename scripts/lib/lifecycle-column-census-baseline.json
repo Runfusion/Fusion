@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 110,
+    "packages/engine/src/self-healing.ts": 24,
     "packages/engine/src/executor.ts": 15,
     "packages/engine/src/scheduler.ts": 12,
     "packages/core/src/store.ts": 11,
@@ -162,7 +162,7 @@
     "packages/engine/src/triage.ts\u0000triage": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 48,
+    "packages/engine/src/self-healing.ts": 84,
     "packages/engine/src/project-engine.ts": 7,
     "packages/engine/src/backlog-pressure-reporter.ts": 3,
     "packages/core/src/task-store/async-persistence.ts": 2,

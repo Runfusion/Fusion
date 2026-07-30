@@ -7266,7 +7266,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((t) =>
         t.column === this.reviewLaneOf(t.id) &&
         allowsAutoMergeProcessing(t, settings) &&
@@ -7616,7 +7619,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       /*
       FNXC:WorkflowReviewGates 2026-07-26-15:30:
       Liveness gate, mirroring `recoverGhostReviewTasks` and
@@ -7759,7 +7765,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const latestFailedPreMergeStep = (task: Pick<Task, "workflowStepResults">): WorkflowStepResult | undefined => {
@@ -7953,7 +7962,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
       const now = Date.now();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       /*
        * FNXC:WorkflowLifecycle 2026-06-29-11:27:
        * Restart recovery must not leave errored review-column cards with unfinished
@@ -8357,7 +8369,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       // Pre-filter sync conditions, then resolve async merge-lane ownership.
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
@@ -8612,7 +8627,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const statusCandidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
@@ -8788,7 +8806,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
       // Workspace tasks live in in-review (post-capture/review, pre/partial land). A task already
       // done is finished; todo/in-progress are owned by execution-stage reconcilers.
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
         isWorkspaceTask(task) &&
@@ -9888,7 +9909,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
@@ -10062,7 +10086,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((task) =>
         !task.deletedAt &&
         task.column === this.reviewLaneOf(task.id) &&
@@ -10641,6 +10668,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:55 (fleet: FLAGGED AND SKIPPED):
+      Same conversion as the twelve sibling sweeps in this commit, reverted here alone because it
+      breaks `reliability-interactions/worktrunk-worktree-removal.test.ts`: that suite stubs
+      `listTasks` per COLUMN, so an unfiltered board read returns nothing and
+      `recoverBranchMisboundInReviewTasks` never reaches its worktree-removal assertion.
+      
+      Confirmed by differential run, not inferred: engine-reliability is 4 failed suites on main
+      and 5 with this sweep converted — exactly this one added. The per-task guard above is
+      already converted, so the sweep is half-done and stays that way until its suite can serve a
+      board read.
+      */
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
@@ -10879,7 +10918,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverMisclassifiedFailures(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
 
       const misclassified = tasks.filter((t) =>
         t.column === this.reviewLaneOf(t.id) &&
@@ -12592,7 +12634,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
 
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
