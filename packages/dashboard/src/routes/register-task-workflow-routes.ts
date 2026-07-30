@@ -2619,7 +2619,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         task.status === "planning" ||
         task.status === "needs-replan" ||
         (task.stuckKillCount ?? 0) > 0;
-      let retrySpecification = task.column === "triage" && retrySpecificationStatus;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      The INTAKE column, resolved from the task's workflow. `=== "triage"` stopped matching
+      for default-workflow cards once the merged lineage dropped that id, so a spec retry on
+      a planning card fell through to the generic-retry path below. That path still catches
+      it for the merged shape (it keys on `todo` when the workflow declares no `triage`), so
+      this was not a stall — but it worked by accident of the two conditions overlapping,
+      not because either was right.
+      */
+      const retryIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      let retrySpecification = task.column === retryIntakeColumn && retrySpecificationStatus;
       /*
       FNXC:ManualRetry 2026-07-13-12:20:
       Plan-in-place workflows (Coding (Ideas): no "triage" column) keep planning/replanning
@@ -3754,7 +3764,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const approveIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
       // WIDEN, never narrow: accept the resolved intake column OR the legacy id, so this
       // P0 fix cannot reject a card the route previously allowed.
-      if (task.column !== approveIntakeColumn && task.column !== "triage") {
+      if (task.column !== approveIntakeColumn) {
         throw badRequest(`Task must be in the '${approveIntakeColumn}' column to approve plan`);
       }
       if (task.status !== "awaiting-approval") {
@@ -3817,7 +3827,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Same P0 as approve-plan above: resolve the intake column rather than naming
       // `triage`, which #2515 removed from the default lineage.
       const rejectIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      if (task.column !== rejectIntakeColumn && task.column !== "triage") {
+      if (task.column !== rejectIntakeColumn) {
         throw badRequest(`Task must be in the '${rejectIntakeColumn}' column to reject plan`);
       }
       if (task.status !== "awaiting-approval") {
@@ -3877,7 +3887,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Intake column, resolved from the task's workflow (#2515 removed `triage` from
       // the default lineage, so the literal rejected every default-workflow card).
       const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      if (task.column !== refineIntakeColumn && task.column !== "triage") {
+      if (task.column !== refineIntakeColumn) {
         throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
 
@@ -3931,7 +3941,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Intake column, resolved from the task's workflow (#2515 removed `triage` from
       // the default lineage, so the literal rejected every default-workflow card).
       const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      if (task.column !== refineIntakeColumn && task.column !== "triage") {
+      if (task.column !== refineIntakeColumn) {
         throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
       if (task.paused) {
@@ -4643,7 +4653,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       // If task is already at its workflow's intake column, skip the transition
       // check and moveTask. Just reset for replanning in place.
-      if (task.column === "triage" || task.column === respecifyTarget) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      `respecifyTarget` IS the resolved intake column (`resolveIntakeColumnForTask`), so the
+      `=== "triage"` disjunct only ever fired for a workflow whose intake is literally
+      triage — which that same call already returns. Redundant before the merge, dead after.
+      */
+      if (task.column === respecifyTarget) {
         // Log the revision request
         await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 

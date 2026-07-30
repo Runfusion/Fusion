@@ -239,3 +239,63 @@ describe("reset verification uses the resolved rebound column", () => {
     expect((correctionCall![1] as { column: string }).column).toBe("backlog");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+A SPEC RETRY must be recognised in the workflow's intake column, whatever its id.
+
+`retrySpecification` decided "this is a re-plan, not a generic retry" with
+`task.column === "triage"`, plus a `todo` fallback that only applied when the workflow
+had no `triage` column at all. Both are id checks, so on a lineage whose intake column is
+named anything else the flag stayed false — and because `status: "planning"` is retryable
+ONLY through that flag, the route answered 400 "not in a retryable state" for a card that
+was plainly sitting in planning. The operator's Retry button did nothing.
+
+This is the one conversion in this PR with an observable behaviour change, so it is the
+one that gets a test. Narrowing the four `&& task.column !== "triage"` disjuncts I had
+added while widening the P0 guard cannot be tested by construction: removing an extra
+acceptance only shrinks what is accepted, and no case feeds these routes a `triage` card
+now that no shipped lineage declares one.
+
+REVERT CHECK: restore `task.column === "triage"` and this fails with 400, because the
+card is in `backlog` — measured, not assumed.
+*/
+describe("spec retry resolves the workflow's intake column", () => {
+  const CUSTOM_IR = {
+    version: "v2",
+    name: "custom",
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+    edges: [{ from: "start", to: "end" }],
+  };
+
+  it("accepts a retry for a planning card in a custom intake column", async () => {
+    /*
+    `status: "planning"` is deliberate: it is NOT in the generic retryable set
+    (`failed` / `stuck-killed`), so the request survives the retryable-state check only if
+    `retrySpecification` resolved true. A `failed` fixture would pass either way and prove
+    nothing.
+    */
+    const planningTask = {
+      ...PLANNING_TASK,
+      id: "FN-400",
+      column: "backlog",
+      status: "planning",
+    } as unknown as TaskDetail;
+
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(planningTask),
+      updateTask: vi.fn().mockResolvedValue(planningTask),
+      moveTask: vi.fn().mockResolvedValue(planningTask),
+      getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "wf-custom" }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({ id: "wf-custom", name: "Custom", ir: CUSTOM_IR }),
+    });
+
+    const res = await performRequest(createApp(store), "POST", "/api/tasks/FN-400/retry");
+    expect(res.status).toBe(200);
+  });
+});
