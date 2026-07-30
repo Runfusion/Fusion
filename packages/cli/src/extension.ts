@@ -35,7 +35,10 @@ import {
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
   type SecretScope,
+  declaresAnyLifecycleTrait,
   resolveTaskLifecycleColumns,
+  resolveLifecycleColumns,
+  resolveWorkflowIrForTaskWithProvenance,
   resolveWorkflowIrForTask,
   resolveReviewColumns,
 } from "@fusion/core";
@@ -5185,15 +5188,16 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_delegate_task",
     label: "fn: Delegate Task",
     description:
-      "Create a new task and assign it to a specific agent for execution. The task goes to " +
-      "'todo' and will be picked up by the target agent on their next heartbeat cycle. " +
+      "Create a new task and assign it to a specific agent for execution. The task lands in the " +
+      "selected workflow's ready lane (`todo` on the built-in board, whatever that workflow calls " +
+      "it otherwise) and will be picked up by the target agent on their next heartbeat cycle. " +
       "Use fn_list_agents first to find available agents and their capabilities. " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
       "fn_workflow_list to discover valid IDs.",
     promptSnippet: "Delegate a task to a specific Fusion agent",
     promptGuidelines: [
       "Use fn_list_agents first to find available agents and their capabilities",
-      "The task is created in 'todo' and assigned to the target agent",
+      "The task is created in the workflow's ready (hold) lane and assigned to the target agent",
       "Cannot delegate to ephemeral/runtime agents",
       "Implementation tasks use executor by default; durable engineer supports explicit routing without override, other non-executor roles require override=true",
       "Optionally specify dependencies on other tasks",
@@ -5237,10 +5241,35 @@ export default function kbExtension(pi: ExtensionAPI) {
         // Create task assigned to the target agent
         const store = await getStore(ctx.cwd);
         const workflowId = params.workflow_id?.trim() || undefined;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:30:
+        Delegation lands in the HOLD lane of the workflow the card ACTUALLY got, not in the literal
+        `todo` and not in a lane resolved from a second, independent read.
+
+        The tool's contract (see the description above) is "the task goes to the ready-to-work lane
+        and the target agent picks it up on its next heartbeat" — deliberately NOT intake, so this
+        cannot simply omit `column` and inherit `createTask`'s intake resolution: on a manual-intake
+        workflow the card would sit waiting for a human and never reach the agent it was delegated
+        to. Keyed on the literal, a workflow that calls that lane anything else received a card in an
+        undeclared column: written, reported as delegated, invisible to the agent.
+
+        RESOLVED FROM THE CREATED TASK, and that ordering is the fix rather than a detail (#2843
+        review, greptile P1 — it is right). My first version resolved the hold column BEFORE the
+        create, from `getDefaultWorkflowId()`. `createTask` then resolves the project default AGAIN
+        to select the workflow, so two reads answered the same question and a default changed between
+        them yields a column from workflow A written onto a card selected into workflow B — the exact
+        undeclared-lane write this conversion exists to remove, reintroduced by the fix for it.
+
+        Resolving afterwards leaves ONE authority: the task's own selection. The move is skipped
+        entirely when the entry lane already carries `hold` — true on the built-in board, where entry
+        and hold are both `todo` — so the common path is byte-identical and costs no extra write.
+
+        A failed move is reported, not swallowed: the card exists either way, and telling the caller
+        it is ready when it is sitting in intake is the failure mode this whole change is about.
+        */
         const task = await store.createTask({
           description: params.description,
           dependencies: params.dependencies,
-          column: "todo",
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           source: {
@@ -5249,15 +5278,173 @@ export default function kbExtension(pi: ExtensionAPI) {
           },
         });
 
+        let landedColumn = task.column;
+        let landingError: string | undefined;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (#2843 review — coderabbit major / greptile P1):
+        AN UNRESOLVABLE WORKFLOW, AN UNTRAITED BOARD, AND A BOARD WITH NO HOLD LANE ARE THREE ANSWERS.
+
+        Reading `?.hold` off the result collapsed the first two into one: both produced `undefined`,
+        the move was skipped, and the tool reported success — so a split-lane workflow whose IR could
+        not be read left the card on intake while telling the caller it was on its way. That is the
+        same success-with-nothing-behind-it this branch was rewritten to remove, arriving a line early.
+
+          - `undefined` OBJECT — the workflow could not be resolved at all. Nothing can be verified, so
+            the landing is reported as failed rather than assumed.
+          - resolved, NO column declares any lifecycle trait — a v1 graph upgraded by
+            `synthesizeDefaultColumns`, or a fixture like `linearWorkflowIr`. Its `todo` column plainly
+            exists and is where agents pick work up, so the legacy vocabulary still applies and success
+            is honest. Failing these would break every untraited board to fix a case none of them have,
+            and the existing suite caught exactly that when this gate was first written without it.
+          - resolved, traits EXPRESSED, still no hold lane — the board has answered, and the answer is
+            that nothing will dispatch this card: assigned-agent selection picks OUT OF the hold lane.
+            Staying on intake is correct and "will be picked up" is false, so it is reported like any
+            other failed landing.
+
+        A FOURTH STATE, and it is the one that made the first arm look unreachable (#2843 review,
+        greptile P1 — the third round, and right again). `resolveWorkflowIrForTask` never throws: an
+        unreadable selection, a missing definition, a malformed one and a throwing lookup ALL
+        SUBSTITUTE the default coding IR. So the substitution never surfaced as a failure, it surfaced
+        as the BUILT-IN lanes — `hold: "todo"`.
+
+        I argued that was harmless because `todo` would be undeclared on such a board and the move
+        would be rejected. That is true only of a board that does not declare `todo` AT ALL. A
+        workflow that holds work in `queued` and ALSO declares a `todo` column for something else
+        gets a move that SUCCEEDS into a lane nothing dispatches from, and a success message. The
+        argument was right about the mechanism and wrong about the population it covers.
+
+        `resolveWorkflowIrForTaskWithProvenance` is the seam built for exactly this: it reports
+        `source: "selection"` ONLY when it genuinely resolved the workflow the task selected, and
+        `"default"` whenever it substituted. Pairing that with the task's own selection separates the
+        two reasons for `"default"` — no workflow selected (legitimate; the built-in board IS the
+        answer) from selected-but-unresolvable (a substitution wearing the board's authority).
+
+        This also makes the first arm REACHABLE, so it is now covered rather than defended.
+        */
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:10 (#2843 review — greptile P1, fourth round):
+        ONE READ. Provenance and lanes come from the same snapshot, and a substitution is judged by
+        whether it would MOVE the card rather than by a second lookup.
+
+        My previous fix paired the provenance read with an independent `getTaskWorkflowSelectionAsync`
+        to tell "no workflow selected" (legitimate — the built-in board IS the answer) apart from
+        "selected but unresolvable". Two reads answering one question is the same defect the FIRST
+        review round on this PR caught, reintroduced three rounds later in a different place: a
+        selection written or cleared between them makes `resolved.ir` describe one workflow and
+        `selectedWorkflowId` another, and the tool then moves the card with the wrong board's hold
+        lane or reports a resolution error that never happened.
+
+        The second read is not needed. `source === "selection"` means the resolver genuinely resolved
+        what the task selected, so the lanes are authoritative. `"default"` means it SUBSTITUTED —
+        and the honest question is not why, it is whether the substitution is about to be acted on:
+
+          - the substituted hold lane equals the card's current column: no move, nothing is being
+            decided on unverified information, and this is exactly the no-selection/untraited case
+            where the built-in vocabulary is correct. Success.
+          - it DIFFERS: acting would move a real card into a lane inferred from a workflow that is
+            not the card's. That is the misroute round three found, and it is refused.
+
+        Judging by the action rather than by the reason needs no second lookup, so there is no window
+        for the two to disagree.
+        */
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
+        /* `resolveLifecycleColumns` returns undefined for an IR that declares no columns at all;
+           `holdColumn` is then undefined and the untraited branch below is the honest answer. */
+        const holdColumn = resolveLifecycleColumns(resolved.ir)?.hold;
+        const substituted = resolved.source !== "selection";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-20:30 (#2843 review — greptile P1, "fallback equality
+        masks wrong hold"):
+        A SUBSTITUTION IS FATAL WHEN THE CALLER NAMED THE WORKFLOW. Equality proves nothing on its own.
+
+        The equality rule below accepts a substitution whose hold lane already matches the card's
+        column, on the grounds that no move means nothing was decided on bad information. The review
+        names the board where that is false: a workflow using `todo` as INTAKE and `queued` as hold
+        puts the card on `todo`, the degraded lookup fabricates `hold: "todo"`, the two match, and the
+        delegation is reported for a card assigned-agent dispatch will never select.
+
+        `params.workflow_id` settles the decidable half WITHOUT a second read — it is caller input, so
+        there is no snapshot to race. When the caller NAMED a workflow and the resolver substituted,
+        a real workflow provably exists and we provably failed to read it, so its hold lane cannot be
+        inferred from the built-in vocabulary and the landing is refused.
+
+        WHAT THIS DOES NOT COVER, stated because the gap is real: the same board reached through the
+        project DEFAULT with no `workflow_id` argument. There, "substituted" and "this project has no
+        resolvable workflow" are the same observation, and the second is a legitimate configuration
+        whose cards belong exactly where they are. Failing it would trade a false success for a false
+        alarm on a valid setup. Distinguishing them needs the read that just failed; it is not
+        available here, and guessing is what produced the last four rounds of this review.
+        */
+        if (substituted && workflowId) {
+          landingError = `the requested workflow (${workflowId}) could not be resolved, so its ready lane is unknown`;
+        } else if (substituted && holdColumn && holdColumn !== task.column) {
+          landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:35 (#2843 review — greptile P1, "lifecycle snapshot
+        race persists"):
+        THE SAME SNAPSHOT, NOT A SECOND RESOLVE.
+
+        This read the traits through a helper that resolved the workflow AGAIN, so a selection changing
+        in between combined the hold column from one board with the trait state of another — the exact
+        two-reads-of-one-fact defect the round above removed, surviving in the branch I added to fix a
+        different one. `resolved.ir` is already in hand and is the only snapshot anything here should
+        consult.
+        */
+        } else if (!holdColumn && declaresAnyLifecycleTrait(resolved.ir)) {
+          landingError = "this workflow declares no hold (ready-to-pick-up) lane";
+        } else if (holdColumn && holdColumn !== task.column) {
+          try {
+            await store.moveTask(task.id, holdColumn);
+            landedColumn = holdColumn;
+          } catch (moveError) {
+            landingError = moveError instanceof Error ? moveError.message : String(moveError);
+          }
+        }
+
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
         const workflow = workflowId ? ` (workflow: ${workflowId})` : "";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:50 (#2843 review — greptile P1, and it is right):
+        A FAILED landing is an ERROR result, not a success sentence with a warning appended.
+
+        My first version kept the "will be picked up by X on their next heartbeat cycle" text and
+        added a ` WARNING: ...` suffix. That still LEADS with a claim that is false: assigned-agent
+        selection skips cards outside the workflow's hold lane, so a card stranded on intake is never
+        dispatched, and a caller — usually another agent — reads the first sentence and moves on.
+        "Reported success with a caveat" is how the delegation silently goes nowhere.
+
+        The task id stays in `details` because the card DOES exist and the caller needs it to finish
+        the job by hand; what changes is that nothing in this branch claims the delegation completed.
+
+        The MOVE-REJECTED half of this is defensive rather than a live path: `holdColumn` comes from
+        the task's own resolved IR, so `moveTask`'s declared-column check passes by construction. I
+        tried to reach it with a workflow declaring a `hold` column with no node on it, expecting a
+        rejection — the move SUCCEEDED and the card landed there, because `moveTask` accepts any
+        column the workflow DECLARES and node reachability does not gate it. The unresolvable-workflow
+        half above is reachable. Both are covered by the message-shape test, which is explicit that it
+        pins the handling and not the reachability.
+        */
+        if (landingError) {
+          const target = holdColumn ? `the ready lane "${holdColumn}"` : "its ready lane";
+          const remedy = holdColumn
+            ? `move it to "${holdColumn}" to dispatch it`
+            : "resolve its workflow and move it to that workflow's ready lane to dispatch it";
+          const text = `ERROR: Created ${task.id}${deps}${workflow} and assigned it to ${agent!.name} (${agent!.id}), `
+            + `but it could NOT be moved out of "${task.column}" into ${target}: ${landingError}. `
+            + `It is stranded on intake and will NOT be picked up — ${remedy}.`;
+          return {
+            content: [{ type: "text" as const, text }],
+            isError: true,
+            details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn, error: landingError },
+          };
+        }
         return {
           content: [{
             type: "text" as const,
             text: `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. ` +
               `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
           }],
-          details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name },
+          details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn },
         };
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("Task ID already exists:")) {
