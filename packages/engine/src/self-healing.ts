@@ -1095,7 +1095,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   */
   private isWorkspaceOwnerLive(owner: Task | null | undefined): boolean {
     if (!owner) return false; // not found / deleted → terminal.
-    if (owner.column === "done") return false;
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): the COMPLETE lane, via the store's
+       sync reader — this predicate is sync and its callers treat it as cheap. A literal made a
+       finished owner look LIVE on a renamed board, which keeps a workspace lease held. */
+    const ownerCompleteLane = (() => {
+      try {
+        return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(owner.id))?.complete ?? "done";
+      } catch {
+        return "done";
+      }
+    })();
+    if (owner.column === ownerCompleteLane) return false;
     if (owner.status === "failed") return false;
     return true;
   }
@@ -1361,8 +1371,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       worktreeExists,
     };
 
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): a phantom binding is a WIP-lane card
+       with a stale executor binding; by role so a renamed board can still detect one. */
+    const phantomWipLane = (() => {
+      try {
+        return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id))?.wip ?? "in-progress";
+      } catch {
+        return "in-progress";
+      }
+    })();
     return {
-      phantom: task.column === "in-progress"
+      phantom: task.column === phantomWipLane
         && worktreeExists
         && options.executionAgeMs !== null
         && options.executionAgeMs > safeAgeMs
@@ -4445,7 +4464,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!derivedTaskId) continue;
 
         const task = taskById.get(derivedTaskId.toUpperCase());
-        if (!task || task.column === "archived" || task.checkedOutBy || task.userPaused) continue;
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): archived lane by role. */
+        const staleArchivedLane = task
+          ? (() => {
+            try {
+              return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id))?.archived ?? "archived";
+            } catch {
+              return "archived";
+            }
+          })()
+          : "archived";
+        if (!task || task.column === staleArchivedLane || task.checkedOutBy || task.userPaused) continue;
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.debug(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;
@@ -4894,7 +4923,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): the board read here was ALREADY
+         unfiltered, so only the predicate needed converting — `filterByReviewRole` is the sibling
+         used by the paired conversions in this PR. */
+      const tasks = await this.filterByReviewRole(
+        allTasks,
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,
