@@ -70,7 +70,6 @@
     "packages/engine/src/cli-agent/state-machine.ts": 2,
     "packages/engine/src/merger-scope-auto-widen.ts": 2,
     "packages/engine/src/mission-execution-loop.ts": 2,
-    "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts": 2,
     "packages/core/src/eval-automation.ts": 1,
     "packages/core/src/eval-signal-collector.ts": 1,
     "packages/core/src/in-review-stall.ts": 1,
@@ -158,6 +157,8 @@
     "packages/engine/src/scheduler.ts\u0000archived": 1,
     "packages/engine/src/scheduler.ts\u0000done": 1,
     "packages/engine/src/triage.ts\u0000triage": 1,
+    "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts\u0000archived": 1,
+    "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts\u0000done": 1,
     "plugins/fusion-plugin-even-realities-glasses/src/notifications/diff.ts\u0000done": 1,
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
