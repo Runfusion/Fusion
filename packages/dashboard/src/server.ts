@@ -2,6 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-server");
 import express, { type Router } from "express";
+import { archivedColumnsForTask } from "./task-lifecycle-lanes.js";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -1111,12 +1112,28 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const chatLayer = requireAsyncLayer(store, "Dashboard ChatStore");
   const chatStore = options?.chatStore ?? new ChatStore(chatLayer);
   store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
-    if (data.to !== "archived") return;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (batch-core):
+    Planner-chat retention is cut off by ARCHIVAL, resolved from the task's own workflow. Keyed on the
+    literal, a board that renamed its archived lane never reached the delete, so task-planner chat
+    sessions were retained forever — the retention cutoff this listener exists to enforce simply never
+    fired, and nothing surfaced that.
+
+    The handler stays synchronous and the resolution is awaited inside the existing fire-and-forget
+    chain rather than by making the listener `async`. `task:moved` has synchronous subscribers whose
+    ordering relative to the emitter is load-bearing elsewhere in this codebase, and this listener
+    only deletes chat rows — there is no reason to make it the one that introduces a microtask
+    boundary into that emit.
+    */
+    void (async () => {
+      const archivedLanes = await archivedColumnsForTask(store, data.task.id).catch(() => undefined);
+      if (!(archivedLanes ?? new Set(["archived"])).has(data.to)) return;
     /*
     FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
     Task-detail planner chats are retained after done when a user interacted, but task archival is the retention cutoff. Delete exact task-planner sessions on archive so normal chats and other tasks' planner chats remain intact while chat:session:deleted events clear dashboard caches.
     */
-    void chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
+      await chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
+    })();
   });
   options?.engine?.attachChatStore?.(chatStore);
   if (typeof options?.engineManager?.getAllEngines === "function") {
@@ -2914,6 +2931,30 @@ memory leak on long-running servers with task churn. Badge snapshots are only ne
 tasks visible on the live board; archived tasks leave it. This predicate is the single
 eligibility rule used by both the create and update listeners (and mirrored by the
 startup prime's `includeArchived:false`). Exported for unit coverage of the invariant.
+*/
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:20 DELIBERATE-LITERAL: sync predicate behind a sync listener.
+
+NOT OVERLOOKED. On a renamed board this is genuinely wrong — an archived card stays badge-eligible, so
+its snapshot is never evicted and the cache grows for the daemon's lifetime. That is the exact memory
+leak this predicate was added to fix (FNXC:BadgeSnapshotEviction above), reappearing under a different
+column name. It is real backlog, deliberately left counted rather than marked away.
+
+WHAT BLOCKS IT, measured rather than assumed. Resolving the archived role is async, and both callers
+are SYNCHRONOUS `task:updated` / `task:created` listeners whose next statement is documented as
+"Update local cache immediately" — the snapshot is written, compared, and published in the same tick.
+Awaiting here introduces a microtask boundary into that path, so a second event for the same task can
+interleave between the eligibility check and the cache write and publish a stale snapshot.
+
+WHY NOT AN OPTIONAL `archivedColumns` PARAMETER. Because nothing could fill it: the callers are the
+sync listeners. An optional parameter that only tests supply is the inert-injection shape — the
+predicate would read as converted, its test would pass by injecting the value, and production would
+keep the literal. #2780 caught exactly that twice in this program.
+
+WHAT WOULD ACTUALLY UNBLOCK IT: give the badge-snapshot scope a resolved-archived-lane cache populated
+when a project's workflow is loaded, so the predicate stays sync and reads a map instead of a literal.
+That is a lifecycle change to the snapshot scope, not a rename, so it is stated here rather than
+quietly skipped.
 */
 export function isBadgeEligibleTask(task: Pick<Task, "column">): boolean {
   return task.column !== "archived";

@@ -46,19 +46,6 @@ export async function landedColumnsForTask(
   }
 }
 
-/**
- * Convenience for the common single-task question. Prefer passing an `irCache` and calling
- * `landedColumnsForTask` directly when iterating a board, so resolution costs one read per distinct
- * workflow rather than one per task.
- */
-export async function hasTaskLanded(
-  store: Pick<TaskStore, "getTask">,
-  taskId: string,
-  column: string,
-  irCache?: Map<string, WorkflowIr>,
-): Promise<boolean> {
-  return (await landedColumnsForTask(store, taskId, irCache)).has(column);
-}
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-03:25 (batch-core):
@@ -86,5 +73,32 @@ export async function completeColumnsForTask(
     return new Set(complete.length > 0 ? complete : ["done"]);
   } catch {
     return new Set(["done"]);
+  }
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (batch-core):
+ARCHIVED ONLY. Separate from `completeColumnsForTask` because archival is a distinct lifecycle event
+with its own consumers: retention cutoffs and live-board eligibility ask "is this card OFF the board",
+which a complete-but-not-archived card is not.
+
+The two roles resolve independently and have failed independently before, so they get independent
+helpers rather than one flag argument — a caller that wants both asks `landedColumnsForTask`.
+*/
+export async function archivedColumnsForTask(
+  store: Pick<TaskStore, "getTask">,
+  taskId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<Set<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(
+      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
+      taskId,
+      irCache,
+    );
+    const archived = columnsWithFlag(ir, "archived");
+    return new Set(archived.length > 0 ? archived : ["archived"]);
+  } catch {
+    return new Set(["archived"]);
   }
 }

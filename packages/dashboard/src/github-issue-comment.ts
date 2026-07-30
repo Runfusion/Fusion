@@ -1,6 +1,6 @@
 import type { TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
-import { hasTaskLanded } from "./task-lifecycle-lanes.js";
+import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import {
   FUSION_SELF_REPO,
@@ -117,14 +117,19 @@ export class GitHubIssueCommentService {
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-03:15 (batch-core):
-    "Did this task land?" — resolved from the task's own workflow. Keyed on `done`, a board that
+    FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (batch-core, corrected after #2783 review):
+    "Did this task COMPLETE?" — resolved from the task's own workflow. Keyed on `done`, a board that
     renamed its complete lane never commented on or closed its GitHub source issues at all: the
     listener returned before reading a single setting, so the feature looked disabled rather than
-    broken. Shared with the GitLab commenter and the backfill reconciler, which asked the same
-    question with the same literal.
+    broken.
+
+    COMPLETE ONLY, not the landed set. My first pass used `hasTaskLanded` (complete u archived), which
+    WIDENED the trigger: on a default board archiving a task would have posted a source-issue comment
+    that the literal `to === "done"` never posted. A vocabulary conversion must answer the same
+    question under a new name, not a bigger one — and archival is a separate lifecycle event whose
+    source-issue behaviour is owned by the tracking commenter, not this one.
     */
-    if (!(await hasTaskLanded(this.store, event.task.id, event.to))) {
+    if (!(await completeColumnsForTask(this.store, event.task.id)).has(event.to)) {
       return;
     }
 
