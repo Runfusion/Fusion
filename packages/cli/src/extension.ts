@@ -1919,7 +1919,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:MissingWorktreeRetry 2026-07-10-18:30:
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
       */
-      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns);
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
 
       // Validate task is in a retryable state
       if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {

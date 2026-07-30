@@ -2879,7 +2879,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:15 (PR #2728 review): the classifier now takes the set
          this route already resolved, instead of falling back to its own literal — the gate above and this
          delegate must agree about which columns are review. */
-      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns);
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
       if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }

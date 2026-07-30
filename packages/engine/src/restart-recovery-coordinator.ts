@@ -93,24 +93,25 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(task: Task): boo
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 
-/*
-FNXC:MissingWorktreeRetry 2026-07-31-06:10 (PR #2728 review — greptile):
-THE REVIEW LANE COMES FROM THE CALLER, because this predicate has no store to resolve one.
-
-It hardcoded `in-review`, so on a renamed board a card stranded by an unusable-worktree session start
-was not recognised as retryable — and its three callers had already converted the guards AROUND it,
-which made the disagreement worse than the original literal: every neighbouring check said the card
-was in review, and this one said it was not.
-
-`reviewColumns` is OPTIONAL and defaults to the legacy id, so existing callers are unchanged; the same
-shape as `tierForTask`'s `roles` parameter. A caller that can resolve passes its own set — membership,
-not equality, because a board may declare several review lanes.
-*/
+/**
+ * FNXC:WorkflowLifecycleColumns 2026-07-31-01:15 (PR #2736 review — greptile P1):
+ * `isReviewColumn` is an optional RESOLVED answer; omitted, it is exactly today's behaviour.
+ *
+ * This predicate selects the SPECIALIZED retry that clears `worktree`/`branch`/`sessionFile`. Its
+ * caller in `commands/task.ts` resolves the review lane from the task's workflow, so on a renamed
+ * board the two classifiers disagreed: the generic in-review retry fired while this one did not, and
+ * the generic branch leaves the stale session metadata in place — so the next execution hit the very
+ * same missing-worktree failure. A retry that reports success and changes nothing.
+ *
+ * Optional rather than required because the other caller (`extension.ts`) still asks BOTH questions
+ * with the literal. It is internally consistent that way, so a default preserves its meaning exactly
+ * while the converted caller passes the resolved answer.
+ */
 export function isInReviewMissingWorktreeSessionStartFailure(
   task: Task,
-  reviewColumns: Iterable<string> = ["in-review"],
+  isReviewColumn?: boolean,
 ): boolean {
-  return new Set(reviewColumns).has(task.column)
+  return (isReviewColumn ?? task.column === "in-review")
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 

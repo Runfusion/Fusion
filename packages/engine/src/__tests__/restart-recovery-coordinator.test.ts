@@ -38,20 +38,32 @@ literal, because each one individually looks right.
 unchanged until each passes its own resolved set.
 */
 describe("isInReviewMissingWorktreeSessionStartFailure", () => {
+  /*
+  FNXC:MissingWorktreeRetry 2026-07-30-10:05 (PR #2728, aligned to #2736's signature):
+  The second parameter is the caller's already-RESOLVED answer, not a lane set. Both PRs widened this
+  function and each typechecked on its own branch; whichever merged second would have overwritten the
+  other's signature and broken its call site without git flagging a conflict. This file now matches
+  #2736 exactly, so the second merge is a no-op here.
+
+  Recording why these cases were rewritten rather than left: they were written against the SET form,
+  so after the switch `["signoff"]` was simply a truthy value and two of them passed for the wrong
+  reason. Engine tsconfig excludes `src/__tests__`, so tsc could not see the mismatch — only reading
+  them could.
+  */
   const stranded = (column: string): Task => ({
     id: "FN-1",
     column,
     error: "Refusing to start coding agent in missing worktree: /repo/.worktrees/FN-1",
   } as unknown as Task);
 
-  it("recognises a stranded card in a RENAMED review lane when the caller supplies one", () => {
-    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"), ["signoff"])).toBe(true);
+  it("recognises a stranded card when the caller resolved the lane as review", () => {
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"), true)).toBe(true);
   });
 
-  it("accepts ANY of several review lanes — membership, not equality", () => {
-    expect(
-      isInReviewMissingWorktreeSessionStartFailure(stranded("second-signoff"), ["signoff", "second-signoff"]),
-    ).toBe(true);
+  it("refuses when the caller resolved the lane as NOT review, even on the legacy id", () => {
+    /* The resolved answer wins over the literal — otherwise a board that renamed `in-review` to
+       something else, and kept `in-review` as an ordinary column, would retry cards sitting there. */
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("in-review"), false)).toBe(false);
   });
 
   it("keeps the legacy id when the caller supplies nothing", () => {
@@ -59,10 +71,10 @@ describe("isInReviewMissingWorktreeSessionStartFailure", () => {
     expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"))).toBe(false);
   });
 
-  it("still requires the worktree failure, so widening the lane did not widen the classifier", () => {
+  it("still requires the worktree failure, so resolving the lane did not widen the classifier", () => {
     const healthy = { id: "FN-2", column: "signoff", error: "something else entirely" } as unknown as Task;
 
-    expect(isInReviewMissingWorktreeSessionStartFailure(healthy, ["signoff"])).toBe(false);
+    expect(isInReviewMissingWorktreeSessionStartFailure(healthy, true)).toBe(false);
   });
 });
 
