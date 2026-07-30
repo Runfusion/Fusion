@@ -43,7 +43,7 @@ parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or Ma
 
 BATCH CLOSE-OUT — 75 -> 6, and every remaining one is deliberate (u12, 2026-08-02-02:10)
 
-`packages/dashboard/app` is down to SIX guards across four files. None is an oversight; each is
+`packages/dashboard/app` is down to TWO guards across two files. None is an oversight; each is
 recorded at its site with the reason and what would actually unblock it:
 
   3  DockTaskList.tsx        mounts ONLY through overflowViewRegistry, which carries no per-task
@@ -59,22 +59,23 @@ DONE 2026-08-02-04:00: the dock-wide fix landed. `OverflowViewRenderProps` now c
 `useRightDockController` into the registry. That closed DockTaskList (3) and DevServerView's second
 surface together, as predicted — remaining batch total is 3.
 
-CROSS-BATCH COUPLING — for whoever owns batch-core (u12, 2026-08-01-22:40)
+RESOLVED 2026-08-02-06:20 — the cross-batch coupling is GONE, and my flag of it was wrong
 
-  packages/dashboard/app/hooks/useTasks.ts  <->  packages/core/src/in-review-stall.ts:179
+  I previously recorded `useTasks.ts` <-> `core/src/in-review-stall.ts` as a coupling that had to be
+  ordered: both keyed on the literal, so no badge was produced and none needed clearing, and
+  converting the core gate alone would regress.
 
-  `clearInReviewStallForFreshAgentLog` clears the in-review stall badge while a review agent is
-  actively logging. It is keyed on the literal, and so is `getInReviewStallReason`, which PRODUCES
-  the badge. On a renamed board neither fires: no badge is produced, so none needs clearing. Two
-  bugs that currently cancel.
+  THAT WAS WRONG ON ONE OF THE THREE SIGNALS. `getInReviewStalledSignal` is ALREADY trait-converted
+  (U4), so `inReviewStalled` is produced on a renamed board today — and the dashboard literal was
+  already refusing to clear it while a review agent wrote logs. A live bug, not a scheduled one.
 
-  CONVERTING THE CORE GATE ALONE ENDS THE CANCELLATION IN THE WRONG DIRECTION: the badge starts
-  appearing and the dashboard clearer never fires, so a card reads "stalled" for the whole time an
-  agent is working on it. That is a regression created by fixing the other half.
+  Fixed by DELETING the dashboard column check, which the line below it already implies: all three
+  stall fields are only ever produced for review-lane cards, because each producer gates on review
+  itself. Converting was not an option anyway — it would need a flags map threaded into `useTasks`,
+  and that map is built in App FROM the list this hook produces.
 
-  Convert them together, or convert the dashboard side first. Flagged rather than silently
-  converted, because the dashboard half needs a per-task flags map threaded into `useTasks` (a data
-  hook with no flags in scope) and that work is only worth doing alongside the core change.
+  NOTHING IS BLOCKED ON ORDERING ANY MORE. batch-core can convert `getInReviewStallReason` and
+  `detectStalledReview` whenever it likes; the dashboard side no longer cares.
 
 ORIGINAL SIZING (kept for the reasoning):
 
