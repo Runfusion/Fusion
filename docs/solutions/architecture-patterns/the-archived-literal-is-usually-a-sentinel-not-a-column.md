@@ -72,3 +72,32 @@ The same rule catches `resolveTaskLifecycleColumns`'s `undefined` and `getLiveTa
   — the mirror-image error: sites the census *cannot* see.
 - `docs/solutions/architecture-patterns/self-healing-sweeps-are-blind-on-a-renamed-board.md`
   — why a file at census-zero is not a converted file.
+
+## Addendum 2026-07-30: lane literals inside raw `sql` are invisible to every check we have
+
+Found while fixing the Reliability health panel (#2861). Two of its three inputs were call arguments
+and converting them was routine. The third, `getInReviewDurationEvents`
+(`packages/core/src/task-store/async-audit.ts`), encodes the lane in a raw SQL fragment:
+
+```sql
+metadata->>'to' = 'in-review'
+  OR (metadata->>'from' = 'in-review' AND metadata->>'to' = 'done')
+```
+
+On a renamed board this matches nothing, so the duration metric reports `no-in-review-entries` while
+the counts beside it are correct — the panel goes from uniformly blind to partially blind, which is
+harder to notice than either.
+
+**Nothing detects this shape.** The lifecycle census scans `===`/`!==` comparisons.
+`scripts/lib/unwired-lane-parameter.mjs` scans declarations. Neither sees a string inside a `sql`
+template. This is the second known instance — the archived gate in PR #2724 was the first — which is
+enough to call it a pattern rather than an accident, and enough to say plainly that **the census
+total does not include this class at all**, so it is a floor in a second, independent way.
+
+Fixing this one is not a rename: it means threading a resolved lane set into a raw `sql` fragment
+inside a `projectId`-scoped query. Recorded here rather than attempted from `batch-cli-plugins`.
+
+Sibling importers are the other half of the same lesson: the GitLab importer's `column: "triage"` was
+fixed in #2843 and the Linear importer — written from the same template — still had it, found only by
+re-grepping an area already declared clean (#2860). When a defect is found in a file that has a
+sibling, the sibling is the next place to look, and no tool will tell you that.
