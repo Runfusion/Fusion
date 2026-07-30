@@ -6426,7 +6426,12 @@ export class TaskExecutor {
           });
         }
         const live = await this.store.getTask(task.id).catch(() => task);
-        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
+        /* FNXC:WorkflowLifecycleColumns 2026-08-01-12:35 (fleet): the board's COMPLETE column, not the
+           terminal union — the union carries the legacy ids, which would read a card in a column merely
+           NAMED `done` as already finalized and skip the finalize. Same distinction as the finalize guard
+           in handleGraphFailure. */
+        const completedLane = resolvePlannerLanes(this.store, task.id).complete ?? "done";
+        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== completedLane) {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
         }
         await this.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
@@ -7906,7 +7911,10 @@ export class TaskExecutor {
     A prior review handoff can move a graph-native workflow into its merge column before this boundary projects successful node results onto the legacy checklist. Preserve the no-move behavior, but do not return until the projection has run.
     */
     const alreadyAtMergeColumn = live.column === targetColumn;
-    if (live.column === "done") return live;
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-12:42 (fleet): "already finished, do not move it" — the
+       TERMINAL union (not the complete column) because over-inclusion is the safe direction for a refusal
+       to move, while under-inclusion moves a finished card out of its terminal column. */
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return live;
     if (live.paused || live.userPaused) return live;
 
     /*
@@ -9054,7 +9062,11 @@ export class TaskExecutor {
 
   private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
     const live = await this.store.getTask(taskId).catch(() => null);
-    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === "done") return false;
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-12:38 (fleet): merge confirmation is durable proof of
+       landing, and this finalizes the row from any NON-COMPLETE column — so the comparison is the board's
+       complete column. With the literal, a renamed board re-finalized a row that was already complete. */
+    const finalizeCompleteLane = resolvePlannerLanes(this.store, taskId).complete ?? "done";
+    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === finalizeCompleteLane) return false;
     /*
     FNXC:WorkflowMerge 2026-06-29-08:32:
     A workflow graph merge node can await a successful ProjectEngine merge request and return before the row reaches `done`. Merge confirmation is durable proof of landing; the executor must finalize that row from any non-terminal column instead of re-running parse or clearing mergeDetails.
@@ -12381,7 +12393,17 @@ export class TaskExecutor {
     // executor can still recover by falling through to the fresh-worktree
     // path below, but we emit a loud audit record so these states stop being
     // silent.
-    if (task.column === "in-progress" && task.mergeDetails?.mergeConfirmed === true) {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-12:30 (fleet: executor.ts execute() preflight):
+    THREE DRIFT CHECKS, ONE SNAPSHOT. All three ask "is this card in the wip lane, in a state it should
+    not be in?" — merge-confirmed while still executing, stale mergeDetails, and in-wip with no worktree.
+    On a renamed board none of them fired, so every recovery they perform (finalize the half-landed row,
+    reset stale merge state, rebuild a missing worktree) silently stopped happening. The third is the one
+    whose own message says it "usually indicates a partial updateTask/moveTask sequence failed" — a
+    diagnostic that could never print on a renamed board.
+    */
+    const preflightWipLane = (await this.resolveResumeLanes(task.id)).wip;
+    if (task.column === preflightWipLane && task.mergeDetails?.mergeConfirmed === true) {
       if (await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "execute-preflight")) {
         this.executing.delete(task.id);
         executingTaskLock.release(task.id);
@@ -12390,7 +12412,7 @@ export class TaskExecutor {
       }
     }
 
-    if (task.column === "in-progress" && task.mergeDetails) {
+    if (task.column === preflightWipLane && task.mergeDetails) {
       executorLog.warn(`${task.id}: stale mergeDetails found while executing in-progress task — resetting merge state before continuing`);
       task = await this.cleanupMergeStateForReverification(
         task,
@@ -12398,7 +12420,7 @@ export class TaskExecutor {
       );
     }
 
-    if (task.column === "in-progress" && !task.worktree) {
+    if (task.column === preflightWipLane && !task.worktree) {
       executorLog.error(
         `${task.id}: drift detected — task is in-progress with no worktree. ` +
           `Recovering by creating a fresh worktree. This usually indicates a partial ` +
