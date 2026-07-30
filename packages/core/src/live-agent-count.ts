@@ -183,3 +183,5 @@ export function deriveRunningAgentCounts(perProject: Record<string, number>): Ru
   }
   return { currentlyActive, projectsActive };
 }
+
+
