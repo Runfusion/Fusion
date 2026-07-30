@@ -5379,7 +5379,7 @@ export function TaskDetailContent({
             </div>
           ) : activeTab === "summary" && isDoneColumn ? (
             <div className="detail-section detail-section--summary">
-              <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
+              <TaskSummaryTab task={workingTask} columnFlags={detailColumnFlags} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
           ) : activeTab === "cost" ? (
             <div className="detail-section detail-section--cost">
@@ -5389,6 +5389,7 @@ export function TaskDetailContent({
             <div className="detail-section detail-section--planner-chat">
               <TaskPlannerChatTab
                 task={workingTask}
+                columnFlags={detailColumnFlags}
                 projectId={projectId}
                 active={activeTab === "planner-chat"}
                 expanded={isPlannerChatExpanded}
@@ -5710,6 +5711,7 @@ export function TaskDetailContent({
             <div className="detail-section">
               <RoutingTab
                 task={task}
+                columnFlags={detailColumnFlags}
                 settings={settings}
                 addToast={addToast}
                 onTaskUpdated={onTaskUpdated}

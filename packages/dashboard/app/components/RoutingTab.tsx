@@ -1,4 +1,5 @@
 import "./RoutingTab.css";
+import { isWipColumnRole } from "../utils/columnRoles";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Settings, Task, TaskDetail } from "@fusion/core";
@@ -10,6 +11,8 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 interface RoutingTabProps {
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  columnFlags?: Parameters<typeof isWipColumnRole>[0];
   task: Task | TaskDetail;
   settings?: Settings;
   addToast: (message: string, type?: ToastType) => void;
@@ -31,7 +34,7 @@ function isUnhealthy(status: NodeInfo["status"] | undefined): boolean {
   return status !== undefined && status !== "online";
 }
 
-export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingTabProps) {
+export function RoutingTab({ task, settings, addToast, onTaskUpdated, columnFlags }: RoutingTabProps) {
   const { t } = useTranslation("app");
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loadingNodes, setLoadingNodes] = useState(false);
@@ -84,7 +87,17 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
       ? `${effectiveNodeId} (${t("routing.nodeUnavailable", "node unavailable or unknown")})`
       : t("routing.localNoConfiguration", "Local (no routing configured)");
 
-  const isTaskActive = task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-15:20 (batch-dashboard-app):
+  WIP role, resolved. This gates whether routing/node overrides may be edited: an ACTIVE task must
+  not have its routing rewritten mid-run. Keyed on the literal, a card executing in a renamed wip
+  lane read as INACTIVE unless its status happened to be in ACTIVE_STATUSES, so the tab let an
+  operator change the node of a task an agent was already running on.
+
+  `columnFlags` is threaded from TaskDetailModal, which resolves it for the open task; omitted -> the
+  legacy id, i.e. today's behaviour for any other caller.
+  */
+  const isTaskActive = isWipColumnRole(columnFlags, task.column) || ACTIVE_STATUSES.has(task.status as string);
   const selectorDisabled = isTaskActive || savingNode || loadingNodes;
 
   const handleNodeSelect = useCallback(

@@ -31,6 +31,8 @@ const markdownLinkifyComponents: Components = {
 };
 
 interface TaskSummaryTabProps {
+  /** Resolved column flags for this task, forwarded to MergeDetails. */
+  columnFlags?: React.ComponentProps<typeof MergeDetails>["columnFlags"];
   task: TaskDetail;
   pricingOverrides?: ModelPricingOverrides;
 }
@@ -47,7 +49,7 @@ function getRenderableWorkflowResults(results: WorkflowStepResult[] | undefined)
  * FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
  * TaskSummaryTab aggregates read-only completion data already loaded on TaskDetail: agent-written summary, changed-file metadata, implementation steps, workflow-step outcomes, and retry counts. It does not fetch, persist, or generate AI content so done-task details remain a front-end composition only.
  */
-export function TaskSummaryTab({ task, pricingOverrides }: TaskSummaryTabProps) {
+export function TaskSummaryTab({ task, columnFlags, pricingOverrides }: TaskSummaryTabProps) {
   const { t } = useTranslation("app");
   const summary = task.summary?.trim();
   const changedFiles = task.mergeDetails?.landedFiles?.length
@@ -177,7 +179,7 @@ export function TaskSummaryTab({ task, pricingOverrides }: TaskSummaryTabProps) 
       surfaces apply only to completed tasks, and merge status, PR, and commit-message metadata belong
       with completion data rather than the task plan.
       */}
-      <MergeDetails task={task} />
+      <MergeDetails task={task} columnFlags={columnFlags} />
 
       {hasAgentWork ? (
         <section className="task-summary-section task-summary-section--agent-work">
