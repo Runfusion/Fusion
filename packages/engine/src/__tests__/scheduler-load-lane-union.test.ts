@@ -62,12 +62,51 @@ describe("the scheduler's load-lane union covers every legacy role", () => {
     expect(loadLanes(RENAMED_IR).has("shipped")).toBe(false);
   });
 
-  it("the scheduler builds this same union", () => {
-    // Guards the mirror above against drift: if scheduler.ts stops unioning a role, this fails.
+  it("the scheduler builds this same union", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20:
+    AST, NOT A SOURCE-TEXT MATCH — the previous form hardcoded a local VARIABLE NAME.
+
+    It asserted `source.toContain('...columnsWithFlag(loadLaneIr, "<flag>")')`. #2796 resolves
+    assignment load per task and renamed that local from `loadLaneIr` to `ir`; the union it builds is
+    unchanged (scheduler.ts, the `columnsWithFlag(ir, ...)` spread), but the literal stopped matching
+    and this failed. Neither PR's CI could see it — the test landed on main via #2787 after #2796 was
+    cut, and #2796 does not touch this file, so it only breaks in the merged state.
+
+    A guard that fails on a rename, a reformat, or a line wrap while the behaviour is untouched costs
+    more than it protects: it reports drift that did not happen, and the reflex fix is to edit the
+    string, which teaches nobody anything.
+
+    So: parse `scheduler.ts` and collect the string literal passed as the SECOND argument to every
+    `columnsWithFlag(...)` call, whatever the first argument is called. The invariant — every legacy
+    role is unioned somewhere in the scheduler — is preserved and is what actually gets checked.
+
+    Still a structural assertion rather than a behavioural one, for the reason the file header gives:
+    the call site sits inside a dispatch path a unit test has no business standing up. The three
+    cases above cover the resolver's behaviour; this one covers the wiring.
+    */
+    const ts = await import("typescript");
     const source = readFileSync(new URL("../scheduler.ts", import.meta.url), "utf8");
+    const sf = ts.createSourceFile("scheduler.ts", source, ts.ScriptTarget.Latest, true);
+
+    const flagsPassed = new Set<string>();
+    const visit = (node: import("typescript").Node): void => {
+      if (ts.isCallExpression(node)
+        && ts.isIdentifier(node.expression)
+        && node.expression.text === "columnsWithFlag"
+        && node.arguments.length >= 2
+        && ts.isStringLiteral(node.arguments[1])) {
+        flagsPassed.add(node.arguments[1].text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+
+    // Sanity: a parse that found nothing would make every assertion below vacuous.
+    expect(flagsPassed.size).toBeGreaterThan(0);
 
     for (const flag of ["intake", "hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview"]) {
-      expect(source).toContain(`...columnsWithFlag(loadLaneIr, "${flag}")`);
+      expect(flagsPassed, `scheduler.ts no longer passes "${flag}" to columnsWithFlag`).toContain(flag);
     }
   });
 });
