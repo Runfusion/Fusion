@@ -1488,3 +1488,26 @@ export {
   isCompletionSummaryNode,
   COMPLETION_SUMMARY_NODE_ID,
 } from "./builtin-completion-summary-node.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8, PR #2625 build fix):
+Column ROLE resolution is re-exported from this leaf, not only from `index.ts`, because the
+dashboard's browser bundle ALIASES `@fusion/core` to this file to keep Node-only deps out of
+the client (see `packages/dashboard/vite.config.ts`). An export that lives only in `index.ts`
+is invisible to the app and fails the build with `"<name>" is not exported by
+../core/src/types.ts` — the identical failure the `FUSION_CLIENT_HEADER` subpath alias was
+added to fix.
+
+Re-exporting here rather than adding another vite subpath alias keeps ONE definition that
+every consumer resolves the same way: engine and core reach it through `index.ts`, the app
+reaches it through this alias, and there is no second local copy of what "planner lane"
+means. `column-roles.ts` imports nothing, so it is a safe browser leaf.
+*/
+export type { ColumnRoleFlags } from "./column-roles.js";
+export {
+  isHoldColumnRole,
+  isIntakeColumnRole,
+  isPlannerLaneColumnRole,
+  isPreExecutionHoldColumnRole,
+  isPreImplementationColumnRole,
+} from "./column-roles.js";
