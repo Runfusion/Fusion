@@ -1,4 +1,5 @@
 import { createLogger } from "../logger.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
 
 const severityAuditLog = createLogger("core-comments-ops");
 /**
@@ -152,7 +153,28 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
     // This remains best-effort: failures are logged for observability but never
     // fail the comment add operation itself.
     // Steering comments skip refinement — they are injected into the agent stream instead.
-    if (task.column === "done" && author === "user" && !options?.skipRefinement) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:40 (batch-core):
+    Auto-refinement fires for a user comment on a FINISHED task. Keyed on the literal, a renamed board
+    never created one — an operator commenting on completed work got silence where the feature promises
+    a follow-up task, with nothing logged because the branch was simply never entered.
+
+    Complete only, not the landed set: the original fired on `done` alone, and widening it to archival
+    would create refinements from comments on archived work that the literal never touched.
+
+    A workflow expressing no trait at all is a v1 upgrade rather than a board without a complete lane,
+    so it keeps the legacy id.
+    */
+    const refinementLanes = new Set<string>(["done"]);
+    if (author === "user" && !options?.skipRefinement) {
+      try {
+        const ir = await resolveWorkflowIrForTask(store, id);
+        if (ir && declaresAnyLifecycleTrait(ir)) {
+          for (const columnId of columnsWithFlag(ir, "complete")) refinementLanes.add(columnId);
+        }
+      } catch { /* degraded: the legacy id */ }
+    }
+    if (refinementLanes.has(task.column) && author === "user" && !options?.skipRefinement) {
       try {
         await store.refineTask(id, text);
       } catch (err) {

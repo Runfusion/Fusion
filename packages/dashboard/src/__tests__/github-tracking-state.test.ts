@@ -170,6 +170,47 @@ describe("GitHubTrackingStateService", () => {
       expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-10:50 (batch-core — the THIRD state):
+
+    A V1-UPGRADED BOARD STILL COMPLETES THINGS.
+
+    This classifier deliberately treats a RESOLVED but EMPTY complete set as a real answer: a board
+    that declares no completion lane does not "complete" cards. That is right for a v2 board and wrong
+    for a v1 upgrade — `synthesizeDefaultColumns` emits every default column with `traits: []`, so the
+    IR resolves cleanly and every flag set is empty while `done` plainly exists and holds finished
+    cards.
+
+    The consequence was invisible: `decideIssueAction` returned null for every transition, so tracking
+    NEVER closed a source issue on a v1 board — and because the source-issue commenter defers to this
+    service whenever tracking targets the same issue, neither posted. The completion comment vanished
+    with nothing logged.
+
+    Not caught by the renamed-lane fixtures above, because they all express traits. The distinguishing
+    property is a workflow that expresses NONE.
+    */
+    it("still closes the issue on a V1-UPGRADED board whose columns carry no traits", async () => {
+      const v1UpgradedIr = {
+        version: "v2",
+        id: "custom:v1",
+        name: "Legacy",
+        nodes: [],
+        edges: [],
+        columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+      };
+      const s = new MockStore();
+      Object.assign(s, {
+        getTaskWorkflowSelection: () => ({ workflowId: "custom:v1", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: v1UpgradedIr }),
+      });
+      new GitHubTrackingStateService(s as unknown as TaskStore).start();
+
+      s.emit("task:moved", { task: createTask(), from: "in-progress", to: "done" });
+      await flushAsync();
+
+      expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
+    });
+
     it("maps a RENAMED archive lane to not_planned", async () => {
       const s = renamedStore();
       new GitHubTrackingStateService(s as unknown as TaskStore).start();

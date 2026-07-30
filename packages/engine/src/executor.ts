@@ -4127,7 +4127,26 @@ export class TaskExecutor {
   }
 
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): Promise<Task> {
-    if (from !== "in-review" && from !== "done") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (executor):
+    Merge state is reset when a card leaves a lane where a merge could have been recorded — the REVIEW
+    and COMPLETE roles, not the two ids. On a renamed board neither comparison matched, so a card
+    re-entering execution carried STALE mergeDetails from its previous pass.
+
+    `review` is not a trait: the role is carried by mergeOrchestration/mergeBlocker/humanReview, the same
+    five-flag set the dependency gates in this file use. Unioned with the legacy pair because
+    `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+    */
+    const mergeBearingColumns = new Set<string>(["in-review", "done"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, task.id);
+      if (ir) {
+        for (const flag of ["complete", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) mergeBearingColumns.add(id);
+        }
+      }
+    } catch { /* degraded: legacy pair only */ }
+    if (!mergeBearingColumns.has(from)) {
       return task;
     }
 
@@ -12479,7 +12498,32 @@ export class TaskExecutor {
     // so existing filesystem validation paths remain authoritative.
     // Skip for tasks that are already in-progress, in-review, merging, or done —
     // these should not be interrupted and sent back to triage for re-planning.
-    const activeColumns = new Set(["in-progress", "in-review", "done"]);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+    THIS GUARD DID THE EXACT THING ITS OWN COMMENT SAYS IT MUST NOT.
+
+    The comment directly above is explicit: skip for tasks already in-progress, in-review, merging or
+    done, because "these should not be interrupted and sent back to triage for re-planning". Keyed on
+    a hard-coded `Set`, a renamed board matched NOTHING, so `isActiveTask` was false for a card in a
+    renamed wip/review/complete lane — the stale-spec guard then ran on a LIVE task and
+    `moveTaskToReplanColumn` + `status: "needs-replan"` yanked it out of execution mid-flight.
+
+    `activeMergeStatuses` still covers the merging states, so a merging card was protected by
+    accident; a plain in-progress card was not.
+
+    CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
+    backlog pointed here. Found by grepping for lane-shaped list literals.
+
+    Resolved from the task's OWN workflow, unioned with the legacy trio for the reason documented on
+    `resolveTerminalColumnsFor`: `resolveWorkflowIrForTask` returns the BUILT-IN IR rather than
+    throwing when a definition is missing or corrupt, so a degraded resolution must not NARROW this
+    set — narrowing it re-opens the interruption this fixes.
+    */
+    const activeLifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id));
+    const activeColumns = new Set<string>(["in-progress", "in-review", "done"]);
+    for (const lane of [activeLifecycle?.wip, activeLifecycle?.review, activeLifecycle?.complete]) {
+      if (lane !== undefined) activeColumns.add(lane);
+    }
     const activeMergeStatuses = new Set(["merging", "merging-pr", "merging-fix"]);
     const isActiveTask = activeColumns.has(task.column) || activeMergeStatuses.has(task.status ?? "");
     if (!isActiveTask) {
@@ -16088,6 +16132,13 @@ export class TaskExecutor {
         return record;
       }
       changed = true;
+      /*
+      FNXC:ReviewAddressing 2026-07-30-16:40 DELIBERATE-LITERAL:
+      `to` here is a review-addressing RECORD STATUS (`"queued" | "in-progress" | "addressed" | "failed"`,
+      see this method's signature), NOT a board column — the very next lines test it against `"addressed"`
+      and `"failed"`, which are not columns at all. The lifecycle-column census matches the bare string
+      and counted it; resolving it to a workflow role would be nonsense.
+      */
       return {
         ...record,
         status: to,
@@ -20338,9 +20389,26 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
     try {
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (executor):
+      "Who else is actively working in this worktree?" is the WIP role, not the id. NOT the query-filter
+      class — this listTasks call passes no `column`. On a renamed board the check matched nobody, so the
+      worktree read as unowned and a second task could be handed a checkout already in use.
+
+      Resolved per CANDIDATE task, one IR cache for the scan, and only for rows that could still match.
+      */
+      const ownerIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       for (const t of tasks) {
         if (t.id === requestingTaskId) continue;
-        if (t.column !== "in-progress") continue;
+        const wipColumns = new Set<string>(["in-progress"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, t.id, ownerIrCache);
+          if (ir) {
+            const resolved = columnsWithFlag(ir, "countsTowardWip");
+            if (resolved.length > 0) { wipColumns.clear(); for (const id of resolved) wipColumns.add(id); }
+          }
+        } catch { /* degraded: legacy id only */ }
+        if (!wipColumns.has(t.column)) continue;
         if (t.paused === true) continue;
         if (t.worktree === worktreePath) return t.id;
         // FNXC:Workspace 2026-06-22-09:00: workspace tasks hold their worktrees in

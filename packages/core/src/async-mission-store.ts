@@ -1,4 +1,6 @@
 import { createLogger } from "./logger.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 
 const severityAuditLog = createLogger("core-async-mission-store");
 /**
@@ -1073,12 +1075,35 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return updated;
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:50 (batch-core):
+  "Is this linked task ARCHIVED?" for the two mission guards below, resolved from the task's own
+  workflow. Keyed on the literal, a renamed board answered NO for every archived card: `deleteFeature`
+  treated an archived task as still live and refused the delete without `force`, and feature bootstrap
+  accepted an archived task as an active target.
+
+  `taskStore` is optional on this class, and a workflow that expresses no trait at all is a v1 upgrade
+  rather than a board without an archive lane — both keep the legacy id, which is the behaviour these
+  guards already had.
+  */
+  private async archivedLanesFor(taskId: string): Promise<ReadonlySet<string>> {
+    if (!this.taskStore) return new Set(["archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.taskStore, taskId);
+      if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
+      const archived = columnsWithFlag(ir, "archived");
+      return archived.length > 0 ? new Set(archived) : new Set(["archived"]);
+    } catch {
+      return new Set(["archived"]);
+    }
+  }
+
   async deleteFeature(id: string, force = false): Promise<void> {
     const feature = await getFeature(this.db, id);
     if (!feature) throw new Error(`Feature ${id} not found`);
     if (feature.taskId) {
       const linkedTask = await getLiveTaskById(this.db, feature.taskId);
-      const linkedToLiveTask = linkedTask && linkedTask.column !== "archived";
+      const linkedToLiveTask = linkedTask && !(await this.archivedLanesFor(feature.taskId)).has(linkedTask.column);
       if (linkedToLiveTask && !force) {
         throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
       }
@@ -1262,7 +1287,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         sql`${schema.project.tasks.deletedAt} is null`,
       ));
     const task = taskRows[0];
-    if (!task || task.column === "archived") {
+    if (!task || (await this.archivedLanesFor(input.taskId)).has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {

@@ -1,3 +1,4 @@
+import { isWipColumnRole, type ColumnRoleFlags } from "./columnRoles";
 import type { Task, TaskLogEntry, WorkflowStepResult } from "@fusion/core";
 
 export interface TimingEvent {
@@ -93,32 +94,30 @@ export function getEndToEndDurationMs(
   return Math.max(0, endMs - startedMs);
 }
 
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
-`columnFlags` resolves the WIP role; omitted -> the legacy id, i.e. today's behaviour.
-
-These two functions decide whether a card's runtime is still ACCRUING. Keyed on the literal, a card
-in a renamed wip lane reports only its persisted `cumulativeActiveMs` and never the in-flight
-segment, so every duration display freezes at the last checkpoint while the agent keeps working.
-
-STILL LITERALS, REVERTED 2026-07-30-22:40 — the bug is real, my fix was inert. NEITHER FUNCTION
-TAKES A `columnFlags` PARAMETER ANY MORE; the wording below describes the removed attempt. I added a
-`columnFlags` parameter to both and no caller could supply one: `getTotalAgentActiveMs` is reached
-from module-level helpers with no flags in scope (TaskCard's `getTaskEndToEndDurationMs`,
-TaskTokenStatsPanel), and `getActiveRuntimeMs`'s only caller is that wrapper. An optional parameter
-every caller omits is strictly worse than the literal — the literal is honest and stays counted.
-
-Unblocking needs a flags-bearing caller, which means the components that compute these durations
-resolving traits first. Left counted so the census keeps pointing here.
-*/
 export function getActiveRuntimeMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
   nowMs: number,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+  THE DASHBOARD HAS ITS OWN COPY OF THIS FUNCTION, and converting core's did not touch it.
+
+  `@fusion/core`'s `task-timing.ts` exports a `getTotalAgentActiveMs` that was converted onto
+  `isWipColumnRole` — but the card chip imports THIS module instead, so that conversion never
+  reached the surface an operator actually looks at. Two implementations of one calculation, one
+  converted and one not, is the same drift `column-roles.ts` was created to end.
+
+  Keyed on the literal, the LIVE execution segment was dropped on a renamed board, so the card
+  under-reported the run in flight by exactly its elapsed time — and healed itself the moment the
+  card moved on and the segment was persisted.
+
+  Omitted flags keep the legacy id via `isWipColumnRole`'s own degraded mode.
+  */
+  columnFlags?: ColumnRoleFlags,
 ): number | null {
   const persisted = task.cumulativeActiveMs;
   const base = persisted ?? 0;
 
-  if (task.column === "in-progress") {
+  if (isWipColumnRole(columnFlags, task.column)) {
     const startedMs = parseTimestampToMs(task.executionStartedAt);
     if (startedMs != null) {
       return base + Math.max(0, nowMs - startedMs);
@@ -137,19 +136,13 @@ export function getActiveRuntimeMs(
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
   nowMs: number,
+  /** Resolved trait flags for the card's column; omitted keeps the legacy id. */
+  columnFlags?: ColumnRoleFlags,
 ): number | null {
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (REVERTED — the seam had no supplier):
-  No `columnFlags` parameter here, deliberately. Both callers reach this from module-level helpers
-  with no flags in scope (`getTaskEndToEndDurationMs` in TaskCard, and TaskTokenStatsPanel), so the
-  parameter I added was never supplied and the conversion was inert. `getActiveRuntimeMs` keeps its
-  parameter because it HAS a supplier; this wrapper does not, so it passes nothing and the literal
-  inside stays counted.
-  */
-  const execution = getActiveRuntimeMs(task, nowMs) ?? 0;
+  const execution = getActiveRuntimeMs(task as never, nowMs, columnFlags) ?? 0;
   const planningStart = parseTimestampToMs(task.planningStartedAt);
   const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (task.column === "in-progress" && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
+  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
     ? execution + planning
     : null;
 }

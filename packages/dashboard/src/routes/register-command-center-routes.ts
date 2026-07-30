@@ -13,6 +13,9 @@ import {
   composeLiveSnapshot,
   LITELLM_PRICING_SOURCE_URL,
   parseLiteLLMPricing,
+  resolveColumnFlags,
+  parseWorkflowIr,
+  type TaskStore,
   type TokenGroupBy,
   type TokenTimeGranularity,
 } from "@fusion/core";
@@ -388,6 +391,85 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
    * FNXC:CommandCenter 2026-06-18-16:57:
    * The Team endpoint must inherit Command Center auth and resolve getScopedStore(req) before aggregation so project-A callers cannot read project-B agent rows or task metrics. It intentionally omits GitHub issue stats; FN-6653 owns that overlay.
    */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-12:20:
+Board-wide column trait flags for the analytics tallies, keyed by column ID.
+
+WIRING AN OPTION NOTHING FILLED. `columnFlagsByName` was added to both aggregators so
+`tasksInProgress`/`tasksInReview` come from column ROLES; neither route passed it, so both surfaces
+kept reporting **0 in-progress and 0 in-review** on a renamed board beside token and cost totals that
+were entirely correct. A zero next to a populated neighbour reads as "nobody is working".
+
+THE LIMIT, STATED RATHER THAN GLOSSED. This map is FLAT — one entry per column id, unioned across
+every workflow the project declares. On a board where two workflows use the SAME id for different
+roles, the merged flags make that column count for both roles. That is a real ambiguity and it cannot
+be resolved here for `team` analytics: its rows are already aggregated to `{agentId, columnName}` by
+SQL, so the workflow identity is gone before this code sees the data. Fixing that properly means
+grouping by workflow in the query, which is a change to the aggregation, not to this wiring.
+
+`workflow` analytics is different — its rows DO carry `workflowId`, so a per-workflow map is possible
+there and would be exact. I have not taken it in this change because it needs a second option shape
+on the aggregator; it is the obvious follow-up and is called out on the PR rather than left implied.
+*/
+/** Do two workflows disagree about what this column id MEANS? Only the roles the analytics tallies
+ *  read are compared — a difference in an unrelated trait is not a conflict for this purpose. */
+function isConflictingColumnFlags(
+  a: ReturnType<typeof resolveColumnFlags>,
+  b: ReturnType<typeof resolveColumnFlags>,
+): boolean {
+  return (a.countsTowardWip === true) !== (b.countsTowardWip === true)
+    || (a.mergeBlocker === true) !== (b.mergeBlocker === true)
+    || (a.humanReview === true) !== (b.humanReview === true);
+}
+
+async function resolveColumnFlagsByName(
+  store: Pick<TaskStore, "listWorkflowDefinitions" | "getWorkflowDefinition">,
+): Promise<Map<string, ReturnType<typeof resolveColumnFlags>>> {
+  const byColumn = new Map<string, ReturnType<typeof resolveColumnFlags>>();
+  const conflicting = new Set<string>();
+  try {
+    const definitions = await store.listWorkflowDefinitions();
+    for (const definition of definitions) {
+      const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+      const columns = ir && "columns" in ir ? ir.columns : undefined;
+      for (const column of columns ?? []) {
+        const flags = resolveColumnFlags(column);
+        const existing = byColumn.get(column.id);
+        if (existing === undefined) {
+          byColumn.set(column.id, flags);
+          continue;
+        }
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-17:20 (#2803 review — greptile P1):
+        A CONFLICTING id is DROPPED, not merged.
+
+        My first version merged flags across workflows with `{ ...existing, ...flags }`. Where two
+        workflows reuse one column id for DIFFERENT roles, that produced an entry carrying both, and
+        the aggregators then counted the same rows as in-progress AND in-review — a double count,
+        which is worse than the silent zero this wiring set out to fix. I had documented the flat-map
+        ambiguity in the PR body and shipped it anyway; documenting a defect is not resolving it.
+
+        Dropping the id leaves those rows on the aggregators' documented legacy behaviour: still
+        wrong for a renamed board, but wrong in ONE direction and never double counted. Unambiguous
+        ids — the overwhelming majority, and the whole board on a single-workflow project — keep the
+        resolved answer.
+
+        Exact per-workflow classification is possible for `workflow` analytics (its rows carry
+        `workflowId`) and impossible for `team` analytics at this seam (its rows are aggregated to
+        `{agentId, columnName}` by SQL before this code sees them). That asymmetry needs a second
+        option shape on the aggregator and a change to the team query — a separate change, named here
+        rather than approximated.
+        */
+        if (isConflictingColumnFlags(existing, flags)) conflicting.add(column.id);
+      }
+    }
+  } catch {
+    /* Unreadable definitions leave the map empty, so both aggregators keep their legacy ids. */
+  }
+  for (const id of conflicting) byColumn.delete(id);
+  return byColumn;
+}
+
   router.get("/command-center/team", async (req, res) => {
     try {
       const store = await getScopedStore(req);
@@ -400,6 +482,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         to: range.to,
         now: Date.now(),
         pricingOverrides: settings.modelPricingOverrides,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
       });
       res.json(result);
     } catch (err: unknown) {
@@ -427,6 +510,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         now: Date.now(),
         pricingOverrides: settings.modelPricingOverrides,
         defaultWorkflowId,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
       });
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-workflows.csv", workflowAnalyticsToTable(result));

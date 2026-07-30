@@ -2,7 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
 import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
-import { columnsWithFlag, resolveWorkflowIrForTask } from "@fusion/core";
+import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
@@ -218,9 +218,29 @@ export class GitHubTrackingStateService {
     somewhere is not "completing" it on a board with no completion lane — so the empty set is used as-is
     rather than falling back to `done`.
     */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-10:45 (batch-core — the THIRD state):
+    The note above draws the right line between "could not read" and "read, and there is no complete
+    lane". There is a third case that looks exactly like the second and means the opposite, and this
+    classifier was silently on the wrong side of it.
+
+    `synthesizeDefaultColumns` upgrades a v1 graph by emitting every default column with `traits: []`.
+    Such a board resolves cleanly, so `ir !== undefined`, and every flag set comes back EMPTY — while
+    its `done` column plainly exists and holds finished cards. Treating that as "this board does not
+    complete anything" made `decideIssueAction` return null for every transition, so on a v1-upgraded
+    board GitHub tracking NEVER closed a source issue. And because the source-issue commenter defers to
+    this service whenever tracking targets the same issue, neither of them posted: the completion
+    comment disappeared entirely, with nothing logged as an error.
+
+    `declaresAnyLifecycleTrait` separates the two. A workflow that expresses no trait on ANY column has
+    not made a statement about its lifecycle and keeps the legacy vocabulary; a v2 board that declares
+    traits elsewhere but no complete lane still gets the empty set used as-is, which is the behaviour
+    the note above argues for and which remains correct.
+    */
     const ir = await resolveWorkflowIrForTask(store, event.task.id).catch(() => undefined);
-    const completeLanes = ir === undefined ? undefined : columnsWithFlag(ir, "complete");
-    const archivedLanes = ir === undefined ? undefined : columnsWithFlag(ir, "archived");
+    const traitsExpressed = ir !== undefined && declaresAnyLifecycleTrait(ir);
+    const completeLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "complete");
+    const archivedLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "archived");
     const decision = decideIssueAction(event.from, event.to, (columnId) => ({
       complete: completeLanes === undefined ? columnId === "done" : completeLanes.includes(columnId),
       archived: archivedLanes === undefined ? columnId === "archived" : archivedLanes.includes(columnId),

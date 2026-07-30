@@ -143,11 +143,24 @@ function taskStillInReview(projectId?: string) {
  * @param audit Optional audit context (agentId/runId) for the enqueue event.
  * @returns The enqueued (or pre-existing) queue entry.
  */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
+`reviewColumns` is the caller's RESOLVED review set. It has to come in rather than be resolved here:
+this runs inside an open transaction with only a `tx` handle — there is no store to resolve from, and
+adding a workflow read inside the merge-queue transaction would extend its lock window for a question
+the caller has already answered.
+
+SYMMETRY IS THE POINT. Enqueue admits a card from its review lane; `dequeueMergeQueueOnColumnExitInTransaction`
+removes it when the card leaves. If only one of the two resolved, a renamed board would either enqueue
+cards nothing ever dequeues (a queue that fills and never drains) or dequeue against a queue nothing
+ever filled. Both take the same set, from the same caller, in the same transaction.
+*/
 export async function enqueueMergeQueueInTransaction(
   tx: DbTransaction,
   taskId: string,
   opts: MergeQueueEnqueueOptions = {},
   audit?: { agentId?: string; runId?: string },
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<MergeQueueEntry> {
   // Read the task row for the column check + priority.
   const taskRows = await tx
@@ -159,7 +172,7 @@ export async function enqueueMergeQueueInTransaction(
   if (!taskRow) {
     throw new MergeQueueTaskNotFoundError(taskId);
   }
-  if (taskRow.column !== "in-review") {
+  if (!(reviewColumns ?? new Set(["in-review"])).has(taskRow.column)) {
     // Record the rejection inside the transaction so it rolls back with the
     // caller's write if the caller aborts.
     await recordRunAuditEventWithinTransaction(tx, {
@@ -738,8 +751,16 @@ export async function dequeueMergeQueueOnColumnExitInTransaction(
   previousColumn: string,
   nextColumn: string,
   now: string,
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<void> {
-  if (previousColumn !== "in-review" || nextColumn === "in-review") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
+  The dequeue half of the pair — see `enqueueMergeQueueInTransaction` for why the set is passed in and
+  why the two must share it. "Left the review lane" is a MEMBERSHIP question on both sides: a board
+  may declare a merge lane and a separate sign-off lane, and moving between them is not an exit.
+  */
+  const review = reviewColumns ?? new Set(["in-review"]);
+  if (!review.has(previousColumn) || review.has(nextColumn)) {
     return;
   }
 

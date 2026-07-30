@@ -373,11 +373,25 @@ function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
 // timer reflects how long the task actually took, not just the time spent
 // inside instrumented code paths. Returns null on legacy tasks that completed
 // before `executionStartedAt` was tracked, so callers can fall back.
-function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
+function getTaskEndToEndDurationMs(
+  task: Task,
+  nowMs: number,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+  THREADED SO THE CONVERSION IS NOT INERT. `getTotalAgentActiveMs` gained an optional `columnFlags`
+  so the LIVE execution segment is counted from the card's own wip lane. This is one of its two
+  production callers, and it passed nothing — so the resolved path existed and never ran, and the
+  card chip under-reported the in-flight run on a renamed board by exactly its elapsed time.
+
+  An optional parameter no production caller supplies is a conversion that reads as done and behaves
+  as the literal: the census drops and nothing changes. Threading it here is what makes it real.
+  */
+  columnFlags?: TaskContextMenuColumnFlags,
+): number | null {
   // FNXC:TaskTiming 2026-07-20-12:00: planning-only tasks have no execution
   // accumulator, but their active AI duration still belongs on the card chip.
   // Use the legacy execution window only when neither active-time source exists.
-  const totalActiveMs = getTotalAgentActiveMs(task, nowMs);
+  const totalActiveMs = getTotalAgentActiveMs(task, nowMs, columnFlags);
   return totalActiveMs ?? getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
 }
 
@@ -401,8 +415,8 @@ function getMergeElapsedMs(task: Task, nowMs: number): number | null {
   return Math.max(0, nowMs - mergeStartedMs);
 }
 
-function getActiveMergeTotalMs(task: Task, nowMs: number): number | null {
-  const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
+function getActiveMergeTotalMs(task: Task, nowMs: number, columnFlags?: TaskContextMenuColumnFlags): number | null {
+  const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, columnFlags);
   if (endToEndMs != null) {
     return endToEndMs;
   }
@@ -1689,7 +1703,7 @@ function TaskCardComponent({
     const nowMs = Date.now();
 
     if (isWipColumn) {
-      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
+      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, taskColumnFlags);
       const elapsedMs = getInProgressElapsedMs(task, nowMs);
       const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
       if (endToEndMs == null && elapsedMs == null && instrumentedMs == null) {

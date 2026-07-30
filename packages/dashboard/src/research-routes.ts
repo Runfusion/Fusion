@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { archivedColumnsForTask } from "./task-lifecycle-lanes.js";
 import type { NextFunction, Request, Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { TaskStore, ResearchRun, TaskCreateInput } from "@fusion/core";
@@ -419,7 +420,12 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
 
       const task = await scopedStore.getTask(req.params.taskId);
       if (!task) throw notFound(`Task not found: ${req.params.taskId}`);
-      if (task.column === "archived") throw new ApiError(409, "Cannot enrich archived task");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
+      Archived tasks are read-only for research enrichment. Keyed on the literal, a renamed board let
+      an ARCHIVED card be enriched — writes landing on a row the archive treats as immutable.
+      */
+      if ((await archivedColumnsForTask(scopedStore, task.id)).has(task.column)) throw new ApiError(409, "Cannot enrich archived task");
 
       let documentKey: string;
       try {

@@ -109,6 +109,48 @@ pgTest("TaskStore addComment steering + refinement (PostgreSQL)", () => {
   afterEach(h.afterEach);
   afterAll(h.afterAll);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:55 (batch-core):
+
+  AUTO-REFINEMENT MUST FIRE FOR A TASK FINISHED IN A RENAMED COMPLETE LANE.
+
+  A user comment on finished work creates a refinement task. Keyed on `task.column === "done"`, a
+  renamed board never entered that branch — the operator got silence where the feature promises a
+  follow-up, and nothing was logged because the branch was not reached rather than failing inside it.
+
+  Driven through the real store and a real workflow definition so the assertion is on an OBSERVED
+  refinement row, not on my own belief about what the resolver returns for a renamed lineage.
+  */
+  it("creates a refinement for a user comment on a task in a RENAMED complete lane", async () => {
+    const store = h.store();
+    const definition = await store.createWorkflowDefinition({
+      name: "renamed-complete",
+      ir: {
+        version: "v2",
+        name: "renamed-complete",
+        columns: [
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "building" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+    const task = await store.createTask({ description: "finished on a renamed board", workflowId: definition.id } as never);
+    await store.moveTask(task.id, "shipped" as never, { bypassGuards: true } as never);
+
+    const before = (await store.listTasks({ slim: true } as never)).length;
+    await store.addComment(task.id, "please also handle the empty case", "user" as never);
+
+    /*
+    The witness is a NEW task existing, not a mock call: `refineTask` creates the follow-up, and
+    asserting on the row proves the branch ran end to end rather than that a spy was invoked.
+    */
+    const after = await store.listTasks({ slim: true } as never);
+    expect(after.length).toBe(before + 1);
+    expect(after.some((t: { description?: string }) => (t.description ?? "").includes("empty case"))).toBe(true);
+  });
+
   it("adds a steering comment and persists it", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "steering target" });
