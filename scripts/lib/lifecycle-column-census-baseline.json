@@ -1,18 +1,5 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
-  "totals": {
-    "column": 685,
-    "role": 5,
-    "status": 186,
-    "deliberate": 20
-  },
-  "byColumnId": {
-    "done": 182,
-    "in-progress": 134,
-    "in-review": 193,
-    "archived": 138,
-    "todo": 38
-  },
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
@@ -172,18 +159,6 @@
     "packages/engine/src/hold-release.ts\u0000done": 1,
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
     "packages/engine/src/triage.ts\u0000triage": 1
-  },
-  "properties": {
-    "query": 83,
-    "definition": 43
-  },
-  "queryByColumnId": {
-    "todo": 10,
-    "archived": 7,
-    "done": 10,
-    "in-progress": 19,
-    "in-review": 35,
-    "triage": 2
   },
   "queryByFile": {
     "packages/engine/src/self-healing.ts": 48,
