@@ -129,7 +129,24 @@ pgDescribe("the sync-selection defect class, bounded on a live store", () => {
     const asyncIr = await resolveWorkflowIrForTask(store, taskId);
     const syncIr = store.resolveTaskWorkflowIrSync(taskId);
 
-    expect((asyncIr as { columns?: { id: string }[] }).columns?.map((c) => c.id)).toContain(RENAMED_VOCAB.hold);
-    expect((syncIr as { columns?: { id: string }[] }).columns?.map((c) => c.id)).not.toContain(RENAMED_VOCAB.hold);
+    const asyncColumns = (asyncIr as { columns?: { id: string }[] }).columns?.map((c) => c.id) ?? [];
+    const syncColumns = (syncIr as { columns?: { id: string }[] }).columns?.map((c) => c.id) ?? [];
+
+    expect(asyncColumns).toContain(RENAMED_VOCAB.hold);
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (PR #2794 review — greptile):
+    POSITIVE first. `not.toContain(RENAMED_VOCAB.hold)` alone is satisfied by an empty, malformed, or
+    entirely unrelated IR — anything that merely lacks `backlog` — so it could stay green while
+    establishing nothing about the stated default-board behaviour. Naming the columns the sync helper
+    IS expected to return makes the claim "it answered with the DEFAULT board" rather than the much
+    weaker "it did not answer with this one".
+
+    `todo` and `in-progress` are the post-U11 default lineage's own ids, asserted here rather than
+    imported so this case fails loudly if that lineage changes instead of silently widening.
+    */
+    expect(syncColumns).toContain("todo");
+    expect(syncColumns).toContain("in-progress");
+    expect(syncColumns).not.toContain(RENAMED_VOCAB.hold);
   });
 });
