@@ -23,6 +23,24 @@ const SCRIPT = resolve(__dirname, "../../../../scripts/check-lifecycle-column-li
 const LEDGER = resolve(__dirname, "../../../../scripts/lib/lifecycle-column-literals.json");
 
 /** Run the census script; never throws, so the exit code itself can be asserted. */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-06:00 (FN-5048 — do not add slow tests):
+The full-tree census PARSES 1812 files, so each invocation is seconds rather than milliseconds. Five
+tests needed the whole-tree result and were each paying for their own subprocess: 25s for the file.
+Memoised to ONE run, shared. The `--files` fixture cases stay per-test — they parse one file and are
+the cases that must stay independent, since each asserts a different rejection.
+*/
+let fullRunCache;
+function fullRun() {
+  if (!fullRunCache) fullRunCache = runCensus([]);
+  return fullRunCache;
+}
+let reportRunCache;
+function reportRun() {
+  if (!reportRunCache) reportRunCache = runCensus(["--report"]);
+  return reportRunCache;
+}
+
 function runCensus(args: string[], rootOverride?: string): { status: number; out: string } {
   try {
     const out = execFileSync("node", [SCRIPT, ...args], {
@@ -41,7 +59,7 @@ function runCensus(args: string[], rootOverride?: string): { status: number; out
 
 describe("lifecycle-column census ratchet", () => {
   it("passes on the repository as it stands, and proves it actually scanned files", () => {
-    const { status, out } = runCensus([]);
+    const { status, out } = fullRun();
     expect(status).toBe(0);
     // A pass must be accompanied by evidence of scanning. "0 files, all clean" is the failure
     // mode this line exists to make impossible to mistake for success.
@@ -56,7 +74,7 @@ describe("lifecycle-column census ratchet", () => {
   me once, so the roots are asserted rather than assumed.
   */
   it("scans dashboard app/ as well as src/, so board components cannot hide", () => {
-    const { out } = runCensus(["--report"]);
+    const { out } = reportRun();
     const scanned = Number(/scanned (\d+) non-test source files/.exec(out)?.[1]);
     // src-only was ~1137 files; including app/ is ~1812. A regression to src-only halves this.
     expect(scanned).toBeGreaterThan(1500);
@@ -253,6 +271,68 @@ describe("lifecycle-column census ratchet", () => {
     }
   });
 
+  /*
+  THE CLASSIFICATION PROPERTY, and the reason the census is now PARSED rather than matched.
+
+  Three independent greps of this codebase produced three different answers for the agent-role bucket
+  (6, 8, 12), because a regex cannot tell a lifecycle-column comparison from an agent role, a session
+  purpose, or a surface name — `triage` is all of those here. Reporting those as violations would demand
+  converting correct code and could never reach zero.
+
+  So both directions are pinned, and the syntactic forms a reintroduced guard could hide in are pinned
+  with them: double quotes, single quotes, split across lines, and a deeper-qualified receiver.
+  */
+  it("flags a reintroduced column guard in EVERY syntactic form", () => {
+    const dir = mkdtempSync(join(tmpdir(), "census-forms-"));
+    try {
+      const forms: Array<[string, string]> = [
+        ["double.ts", 'export const a = (task: { column: string }) => task.column === "triage";'],
+        ["single.ts", "export const b = (task: { column: string }) => task.column === 'triage';"],
+        ["split.ts", 'export const c = (task: { column: string }) => task.column\n  === "triage";'],
+        ["deep.ts", 'export const d = (x: { i: { deep: { column: string } } }) => x.i.deep.column !== "triage";'],
+        ["reversed.ts", 'export const e = (task: { column: string }) => "triage" === task.column;'],
+      ];
+      for (const [name, body] of forms) {
+        const victim = join(dir, name);
+        writeFileSync(victim, `${body}\n`);
+        const { status, out } = runCensus(["--files", victim]);
+        expect(status, `${name} must be flagged: ${out}`).toBe(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("NEVER flags a non-column comparison, whatever the literal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "census-noncolumn-"));
+    try {
+      const victim = join(dir, "roles.ts");
+      writeFileSync(victim, [
+        "// Correct code. Converting any of these to a column trait would ask which column has the",
+        "// intake trait about a thing that is not a column at all.",
+        'export const e = (role: string) => role === "triage";',
+        'export const f = (agentType: string) => agentType === "triage";',
+        'export const g = (sessionPurpose: string) => sessionPurpose === "triage";',
+        'export const h = (surface: string) => surface === "triage";',
+        'export const i = (entry: { agent: string }) => entry.agent === "triage";',
+        "",
+      ].join("\n"));
+
+      const { status, out } = runCensus(["--files", victim]);
+      expect(status, `role comparisons must not be violations: ${out}`).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unrecognised receiver as UNKNOWN rather than bucketing it", () => {
+    // A classifier that silently guesses is how a real guard hides. Anything it cannot place must
+    // surface for a human — measured today: 2 such sites in tree.
+    const { out } = reportRun();
+    expect(out).toContain("NOT lifecycle-column comparisons (never enforced)");
+    expect(out).toMatch(/"unknown":\s*\d+/);
+  });
+
   it("keeps the ledger honest: every ceiling names a real file and the total agrees", () => {
     const ledger = JSON.parse(readFileSync(LEDGER, "utf-8")) as {
       total: number;
@@ -266,7 +346,7 @@ describe("lifecycle-column census ratchet", () => {
     // A ceiling for a file that no longer exists is a ceiling nothing can ever violate — it would
     // let a converted file silently regain guards under a new path. Checked on BOTH ceiling surfaces
     // (coderabbit #2623): membershipCeilings is exactly as susceptible, and was unguarded.
-    const { out } = runCensus(["--report"]);
+    const { out } = reportRun();
     const allCeilingFiles = [
       ...Object.keys(ledger.ceilings),
       ...Object.keys((ledger as { membershipCeilings?: Record<string, number> }).membershipCeilings ?? {}),

@@ -42,6 +42,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { findColumnComparisons } from "./lib/lifecycle-column-ast.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LEDGER_PATH = join(HERE, "lib", "lifecycle-column-literals.json");
@@ -188,24 +189,47 @@ Paths from `git ls-files` are REPO-RELATIVE, so they must be resolved against th
 process cwd — a vitest worker (or any invocation from a subdirectory) has a different cwd and every
 read would ENOENT. Reporting and ledger keys stay repo-relative so the ledger is stable.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-05:50 (AST, not regex):
+The comparison census is now PARSED. Three independent greps of this codebase produced three different
+answers for the agent-role bucket (6, 8, 12) because a regex cannot tell a lifecycle-column comparison
+from an agent role, a session purpose, or a surface name — `triage` is all of those here. Counting them
+as violations would demand converting correct code and could never reach zero.
+
+`censusFor` therefore returns only COLUMN-classified guards, and `nonColumnCensusFor` returns the rest
+so they are visible rather than silently dropped. Anything the classifier cannot place is reported as
+`unknown` for a human read — it is never bucketed either way.
+
+Comment handling comes free from the parser, which removes the whole class of "the pattern matched text
+inside a comment" defect. `stripComments` is still exported for the membership scan below, which is
+still textual.
+*/
 export function censusFor(files, readFile = (f) => readFileSync(resolve(REPO_ROOT, f), "utf-8")) {
   const perFile = new Map();
   for (const file of files) {
-    const stripped = stripComments(readFile(file));
     const hits = [];
     for (const literal of LITERALS) {
-      const pattern = patternFor(literal);
-      let match;
-      // Whole-file scan, so a comparison split across lines is not missed.
-      while ((match = pattern.exec(stripped)) !== null) {
-        const line = stripped.slice(0, match.index).split("\n").length;
-        hits.push({ line, literal });
+      for (const hit of findColumnComparisons(file, readFile(file), literal)) {
+        if (hit.kind === "COLUMN") hits.push({ line: hit.line, literal, lhs: hit.lhs });
       }
     }
     hits.sort((a, b) => a.line - b.line);
     if (hits.length > 0) perFile.set(file, hits);
   }
   return perFile;
+}
+
+/** Comparisons that are NOT lifecycle-column guards, by class. Reported, never enforced. */
+export function nonColumnCensusFor(files, readFile = (f) => readFileSync(resolve(REPO_ROOT, f), "utf-8")) {
+  const out = [];
+  for (const file of files) {
+    for (const literal of LITERALS) {
+      for (const hit of findColumnComparisons(file, readFile(file), literal)) {
+        if (hit.kind !== "COLUMN") out.push({ file, ...hit });
+      }
+    }
+  }
+  return out;
 }
 
 function listSourceFiles() {
@@ -286,6 +310,14 @@ function main() {
   }
   console.log(`\nscanned ${files.length} non-test source files`);
   console.log(`CODE-ONLY TOTAL: ${total}`);
+
+  const nonColumn = nonColumnCensusFor(files);
+  const byClass = {};
+  for (const h of nonColumn) byClass[h.kind] = (byClass[h.kind] ?? 0) + 1;
+  console.log(`NOT lifecycle-column comparisons (never enforced): ${JSON.stringify(byClass)}`);
+  for (const h of nonColumn.filter((x) => x.kind === "unknown")) {
+    console.log(`  UNKNOWN receiver — needs a human read: ${h.file}:${h.line}  ${h.lhs}`);
+  }
 
   const membership = membershipCensusFor(files);
   const membershipCounts = Object.fromEntries([...membership].map(([f, hits]) => [f, hits.length]));
