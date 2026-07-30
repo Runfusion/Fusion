@@ -1,13 +1,13 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
+    "packages/engine/src/self-healing.ts": 23,
     "packages/engine/src/executor.ts": 15,
     "packages/engine/src/scheduler.ts": 12,
     "packages/core/src/store.ts": 11,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
     "packages/engine/src/notification/notification-service.ts": 9,
-    "packages/engine/src/self-healing.ts": 8,
     "packages/dashboard/app/components/Column.tsx": 7,
     "packages/core/src/live-agent-count.ts": 6,
     "packages/core/src/task-merge.ts": 6,

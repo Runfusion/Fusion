@@ -3125,41 +3125,83 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   a sync callback cannot, and restructuring a dozen sweeps into async loops would be a much larger
   change than the conversion itself.
   */
-  private reviewLaneOf(taskId: string): string {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-03-09:40 (PR #2684 review — the sync-resolver defect):
+  PRIME ONCE, READ SYNCHRONOUSLY. About half this file's predicates are sync `.filter` callbacks,
+  which cannot await — and the sync reader they used (`resolveTaskWorkflowIrSync`) cannot see a
+  task's selection at all under PostgreSQL, so those guards silently resolved to the DEFAULT
+  workflow and behaved exactly like the literals they replaced.
+
+  This resolves every candidate's lanes ASYNCHRONOUSLY up front into a local map, which the sync
+  callback then reads. One IR resolution per workflow via the shared cache, and the lanes are the
+  task's own rather than the default's.
+  */
+  private async primeLanes(
+    tasks: readonly Task[],
+  ): Promise<Map<string, ReturnType<typeof resolveLifecycleColumns>>> {
+    const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    const lanes = new Map<string, ReturnType<typeof resolveLifecycleColumns>>();
+    for (const task of tasks) {
+      if (lanes.has(task.id)) continue;
+      try {
+        lanes.set(task.id, resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id, irCache)));
+      } catch {
+        lanes.set(task.id, undefined);
+      }
+    }
+    return lanes;
+  }
+
+  private async reviewLaneOf(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
     try {
-      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.review ?? "in-review";
+      return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache))?.review ?? "in-review";
     } catch {
       return "in-review";
     }
   }
 
-  private wipLaneOf(taskId: string): string {
+  private async wipLaneOf(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
     try {
-      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.wip ?? "in-progress";
+      return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache))?.wip ?? "in-progress";
     } catch {
       return "in-progress";
     }
   }
 
-  private holdLaneOf(taskId: string): string {
+  private async holdLaneOf(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
     try {
-      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.hold ?? "todo";
+      return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache))?.hold ?? "todo";
     } catch {
       return "todo";
     }
   }
 
-  private archivedLaneOf(taskId: string): string {
+  private async archivedLaneOf(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
     try {
-      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.archived ?? "archived";
+      return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache))?.archived ?? "archived";
     } catch {
       return "archived";
     }
   }
 
-  private completeLaneOf(taskId: string): string {
+  private async completeLaneOf(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
     try {
-      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.complete ?? "done";
+      return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache))?.complete ?? "done";
     } catch {
       return "done";
     }
@@ -3179,13 +3221,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   /** Sibling of `filterByReviewRole` for the COMPLETE lane. */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-03-09:10 (PR #2684 review — greptile, and it is right twice):
+  1. `cache` was declared and never used, which ESLint no-unused-vars fails the gate on.
+  2. It resolved through `completeLaneOf` -> `resolveTaskWorkflowIrSync`, and that reader CANNOT see
+     a task's selection: `getTaskWorkflowSelectionImpl` returns `undefined` unconditionally because
+     PostgreSQL cannot be read synchronously, so every task fell back to the DEFAULT workflow and the
+     complete lane resolved to `done` on every board. A renamed board got the legacy literal back —
+     the conversion was inert.
+
+  Now matches its async siblings: `resolveWorkflowIrForTask` with the caller's cache, which is the
+  only resolver that actually reads the task's workflow selection.
+  */
   private async filterByCompleteRole(
     tasks: Task[],
     cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
   ): Promise<Task[]> {
     const kept: Task[] = [];
     for (const task of tasks) {
-      if (task.column === this.completeLaneOf(task.id)) kept.push(task);
+      const lifecycle = await (async () => {
+        try {
+          return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id, cache));
+        } catch {
+          return undefined;
+        }
+      })();
+      if (task.column === (lifecycle?.complete ?? "done")) kept.push(task);
     }
     return kept;
   }
@@ -3681,7 +3742,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
-      if (task.column === this.reviewLaneOf(task.id)) {
+      if (task.column === await this.reviewLaneOf(task.id)) {
         const proof = await this.evaluateBackwardMoveTripleProof(task, {
           stage: "reclaim-pr-conflict",
           graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
@@ -4780,7 +4841,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         try {
           const unresolvedDeps = dependent.dependencies.filter((depId) => {
             const dep = taskById.get(depId);
-            return dep && dep.column !== this.completeLaneOf(dep.id) && dep.column !== this.reviewLaneOf(dep.id) && dep.column !== this.archivedLaneOf(dep.id);
+            return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
           });
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
@@ -6160,7 +6221,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== this.holdLaneOf(snapshot.id)) continue;
+      if (snapshot.column !== await this.holdLaneOf(snapshot.id)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -6585,7 +6646,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileStaleMergerStatus(): Promise<number> {
     try {
       const done = await this.filterByCompleteRole(await this.store.listTasks({ slim: true, includeArchived: false }), new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>());
-      const archived = (await this.store.listTasks({ slim: true, includeArchived: true })).filter((t) => t.column === this.archivedLaneOf(t.id));
+      const archived = (await this.store.listTasks({ slim: true, includeArchived: true })).filter((t) => t.column === "archived");
       const candidates = [...done, ...archived].filter((task) => {
         const s = task.status;
         return s === "merging" || s === "merging-pr";
@@ -7289,7 +7350,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const candidates = tasks.filter((t) =>
-        t.column === this.reviewLaneOf(t.id) &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
         // FNXC:AutoMergeHold 2026-07-09-17:10: FN-7750 intentionally keeps the pure branchContext-shape predicate here. Stale shared-group members must stay OUT of solo no-op finalize even when their group is not live; only the positive auto-merge-off exemption gates use the live-group predicate.
@@ -7495,7 +7555,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const candidates = tasks.filter((task) =>
-        task.column === this.completeLaneOf(task.id) &&
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
         (task.modifiedFiles?.length ?? 0) > 0,
       ).slice(0, DONE_TASK_INTEGRITY_SWEEP_LIMIT);
@@ -7663,7 +7722,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const mergeable = tasks.filter((t) =>
-        t.column === this.reviewLaneOf(t.id) &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
         !executingIds.has(t.id) &&
@@ -7999,7 +8057,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * progress preserved instead of waiting for the stale timeout.
        */
       const staleIncomplete = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         (!task.status || task.status === "failed") &&
@@ -8403,7 +8460,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       );
       // Pre-filter sync conditions, then resolve async merge-lane ownership.
       const candidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         !executingIds.has(task.id) &&
@@ -8510,8 +8566,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const slim = await this.filterByReviewRole(await this.store.listTasks({ slim: true, includeArchived: false }), new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>());
       const candidates = slim.filter((t) =>
-        t.column === this.reviewLaneOf(t.id)
-        && allowsAutoMergeProcessing(t, settings)
+        allowsAutoMergeProcessing(t, settings)
         && t.status === "failed"
         && (t.mergeRetries ?? 0) >= maxAutoMergeRetries
         && typeof t.error === "string"
@@ -8531,7 +8586,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Re-check selector on the full row — the slim snapshot is best-effort
         // and may be stale once we await.
         if (
-          task.column !== this.reviewLaneOf(task.id)
+          task.column !== await this.reviewLaneOf(task.id)
           || task.status !== "failed"
           || (task.mergeRetries ?? 0) < maxAutoMergeRetries
         ) {
@@ -8660,7 +8715,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const statusCandidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         Boolean(task.status && ACTIVE_MERGE_STATUSES.has(task.status)),
@@ -8839,7 +8893,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const candidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
         isWorkspaceTask(task) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         // Active transient merge statuses are owned by the live merger; recover-interrupted /
@@ -9352,7 +9405,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const candidates = tasks.filter((task) => {
-        if (task.column !== this.completeLaneOf(task.id) || task.paused) return false;
+        if (task.column !== "done" || task.paused) return false;
         if (task.mergeDetails?.commitSha) return true;
         return Boolean(task.baseCommitSha);
       });
@@ -9577,8 +9630,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       ]);
 
       const mergedButNotDone = [
-        ...reviewTasks.filter((t) => t.column === this.reviewLaneOf(t.id)),
-        ...todoTasks.filter((t) => t.column === this.holdLaneOf(t.id)),
+        ...reviewTasks.filter((t) => t.column === "in-review"),
+        ...todoTasks.filter((t) => t.column === "todo"),
       ].filter((t) =>
         !t.deletedAt &&
         allowsAutoMergeProcessing(t, settings) &&
@@ -9766,8 +9819,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const hasBlockedDependents = (dependentsByBlocker.get(task.id) ?? []).some(
           (dep) => preWipDependentIds.has(dep.id),
         );
-        return task.column === this.reviewLaneOf(task.id) &&
-          allowsAutoMergeProcessing(task, settings) &&
+        return allowsAutoMergeProcessing(task, settings) &&
           !task.paused &&
           task.status === "failed" &&
           (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
@@ -9967,7 +10019,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
       const candidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         task.scopeOverride !== true &&
@@ -10145,7 +10196,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       );
       const candidates = tasks.filter((task) =>
         !task.deletedAt &&
-        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
@@ -10459,7 +10509,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== this.reviewLaneOf(task.id)) return false;
+    if (task.column !== await this.reviewLaneOf(task.id)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -10625,7 +10675,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
 
     for (const task of tasks) {
-      if (task.column !== this.reviewLaneOf(task.id) || task.paused) continue;
+      if (task.column !== await this.reviewLaneOf(task.id) || task.paused) continue;
       if (!allowsAutoMergeProcessing(task, settings)) continue;
       if (await this.isFalseCompletionHandoffExhaustionWhileMergeOwned(task)) {
         await this.store.updateTask(task.id, {
@@ -10741,7 +10791,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
+        task.column === "in-review" &&
         Boolean(task.branch) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         !executingIds.has(task.id),
@@ -10890,7 +10940,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
       const candidates = [
         ...inReview.filter((task) =>
-          task.column === this.reviewLaneOf(task.id) &&
+          task.column === "in-review" &&
           allowsAutoMergeProcessing(task, settings) &&
           Boolean(task.branch) &&
           Boolean(task.worktree) &&
@@ -10903,7 +10953,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // projects (mirroring the FN-5704 reclaim contract), so override-less
         // tasks stay untouched while explicit autoMerge:true tasks recover.
         ...inProgress.filter((task) =>
-          task.column === this.wipLaneOf(task.id) &&
+          task.column === "in-progress" &&
           allowsAutoMergeProcessing(task, settings) &&
           task.paused === true &&
           (task.pausedReason === "branch-cross-contamination" || task.pausedReason === "branch-conflict-unrecoverable") &&
@@ -10990,7 +11040,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       );
 
       const misclassified = tasks.filter((t) =>
-        t.column === this.reviewLaneOf(t.id) &&
         !t.paused &&
         t.status === "failed" &&
         isNoTaskDoneFailure(t) &&
@@ -11234,7 +11283,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.noCommitsExpected === true) return false;
         if (task.steps.length === 0 || !task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
         const noCommitsError = typeof task.error === "string" && /no_commits/i.test(task.error);
-        return task.column === this.reviewLaneOf(task.id) || noCommitsError;
+        return task.column === "in-review" || noCommitsError;
       });
 
       if (candidates.length === 0) return 0;
@@ -11380,7 +11429,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       const stranded = tasks.filter((task) => {
-        if (task.column !== this.wipLaneOf(task.id) || task.paused) {
+        if (task.column !== "in-progress" || task.paused) {
           return false;
         }
         const hasMissingWorktreePath = typeof task.worktree === "string" && task.worktree.length > 0 && !existsSync(task.worktree);
@@ -11548,7 +11597,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       const orphaned = tasks.filter((t) => {
-        if (t.column !== this.wipLaneOf(t.id) || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
+        if (t.column !== "in-progress" || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
           return false;
         }
         const staleness = now - new Date(t.updatedAt).getTime();
@@ -11632,7 +11681,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const candidates: Task[] = [];
 
       for (const task of tasks) {
-        if (task.column !== this.wipLaneOf(task.id)) continue;
+        if (task.column !== await this.wipLaneOf(task.id)) continue;
         if (task.paused || task.deletedAt) continue;
         if (!task.assignedAgentId) continue;
         if (executingIds.has(task.id)) continue;
@@ -12497,7 +12546,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const candidates = tasks.filter((task) =>
-        task.column === this.wipLaneOf(task.id) &&
+        task.column === "in-progress" &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
         !task.paused &&
@@ -12737,7 +12786,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const candidates = tasks.filter((task) =>
-        task.column === this.reviewLaneOf(task.id) &&
+        task.column === "in-review" &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
