@@ -315,7 +315,7 @@ export function isTaskStillInPlanningStage(
   return !hasAdvancedPastPlanning(task, plannerColumn, roles);
 }
 
-export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string> {
+export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string | undefined> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
     /*
@@ -403,8 +403,20 @@ export async function moveTaskToReplanColumn(
   store: TaskStore,
   task: Pick<Task, "id" | "column">,
   target?: string,
-): Promise<string> {
+): Promise<string | undefined> {
   const replanColumn = target ?? await resolveReplanTargetColumn(store, task.id);
+  /*
+  FNXC:ReplanTargetR7 2026-07-29-23:50:
+  No declared replan column: do NOT move. Every caller treats the return value as
+  "where the card now is", so a silent no-op would be a lie — returning `undefined`
+  forces the caller to state the outcome instead of assuming one.
+  */
+  if (!replanColumn) {
+    schedulerLog.warn(
+      `${task.id}: replan rebound skipped — the task's workflow declares no intake or hold column to replan in; card left in ${task.column}`,
+    );
+    return undefined;
+  }
   if (task.column !== replanColumn) {
     await store.moveTask(task.id, replanColumn, { preserveWorktree: true });
   }

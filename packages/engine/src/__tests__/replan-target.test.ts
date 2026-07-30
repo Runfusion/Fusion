@@ -297,7 +297,26 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
     expect(workflowHasColumn(ir, target)).toBe(true);
   });
 
-  /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
+  it("returns UNDEFINED for a workflow that declares no planning lane at all", async () => {
+    // Plan U5: "skipped with a log rather than moved arbitrarily". Inventing a column
+    // is what this change removes.
+    const store = {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:wip-only", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({
+        ir: {
+          version: "v2", id: "custom:wip-only", name: "wip-only", nodes: [], edges: [],
+          columns: [
+            { id: "building", name: "Wip", traits: [{ trait: "wip" }] },
+            { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+          ],
+        },
+      })),
+    } as unknown as TaskStore;
+
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBeUndefined();
+  });
+
+    /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
      the error and hands back the default IR, whose planner lane is now `todo`. The
      two literal `return "triage"` fallbacks survive only for workflows that declare
      neither column (see the marketing case above) — a pre-existing wart, since that

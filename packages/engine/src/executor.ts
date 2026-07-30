@@ -5258,6 +5258,18 @@ export class TaskExecutor {
       in an undeclared "triage" column, which the board rendered back in the intake lane.
       */
       const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
+      /*
+      FNXC:ReplanTargetR7 2026-07-29-23:50:
+      No declared replan column: park VISIBLY rather than log a move to `undefined`
+      and then not make it. Same shape as the zero-budget and no-verdict branches
+      nearby — a card left in place with an operator-readable reason.
+      */
+      if (!replanColumn) {
+        executorLog.warn(
+          `${taskId}: replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left in place.`,
+        );
+              return false;
+      }
       await this.store.logEntry(
         taskId,
         `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
@@ -5387,6 +5399,18 @@ export class TaskExecutor {
     }
 
     const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
+    /*
+    FNXC:ReplanTargetR7 2026-07-29-23:50:
+    No declared replan column: park VISIBLY rather than log a move to `undefined`
+    and then not make it. Same shape as the zero-budget and no-verdict branches
+    nearby — a card left in place with an operator-readable reason.
+    */
+    if (!replanColumn) {
+      executorLog.warn(
+        `${task.id}: replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left in place.`,
+      );
+          return;
+    }
     await this.store.logEntry(
       task.id,
       `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
