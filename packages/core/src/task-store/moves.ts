@@ -25,7 +25,8 @@ import {
   evaluateCapacityRejection,
   evaluateTransitionInvariants,
 } from "../workflow-transition-policy.js";
-import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects} from "../default-workflow-hooks.js";
+import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../default-workflow-hooks.js";
+import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
@@ -787,6 +788,14 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     task.updatedAt = movedAt;
 
     if (useWorkflow) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-08:10 (Phase C convergence):
+      Resolved ONCE for both the hook context and the store's own reopen check, so the two
+      cannot be handed different answers. `undefined` here means either no IR on this path
+      or a v1 column-less IR; the hooks treat that as "no basis" and keep the legacy names,
+      which is the only case where a legacy literal is legitimate.
+      */
+      const moveLifecycleColumns = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
       // ── Flag-ON: route the legacy per-column side effects through the
       //    default-workflow trait hooks (timing, reset-on-entry, abort-on-exit,
       //    merge.onEnter). "Moved, not duplicated" applies to this path; the
@@ -810,10 +819,22 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           preservePause: options?.preservePause,
         },
         resetSteps: () => store.resetAllStepsToPending(task),
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-08:10 (Phase C convergence):
+        The hooks are sync and in-lock, so they cannot resolve a workflow themselves — but
+        this path already holds `workflowIr`, so the roles cost one trait resolution and no
+        extra read. Without them the hooks compared against the DEFAULT lineage's column
+        names on every workflow, so a renamed board got no reopen effects at all.
+        */
+        lifecycleColumns: moveLifecycleColumns,
       };
-      const isReopenToTodoOrTriage =
-        (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review") &&
-        (toColumn === "todo" || toColumn === "triage");
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-08:10: the store's own copy of the reopen
+      predicate now CALLS the hooks' version instead of restating its column list. The
+      comment below used to say "parity mirror" — two hand-written copies of one predicate,
+      which is a divergence waiting for whichever copy the next edit misses.
+      */
+      const isReopenToTodoOrTriage = isReopenIntoPlanning(moveLifecycleColumns, fromColumn, toColumn);
       const hasNonPendingStepProgress = task.steps.some((step) => step.status !== "pending");
       const preserveStepProgress =
         options?.preserveResumeState ||

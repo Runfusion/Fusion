@@ -32,6 +32,7 @@
  */
 
 import { getTraitRegistry } from "./trait-registry.js";
+import type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import type { TraitAuditWarning } from "./trait-registry.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
 import type { Settings, Task } from "./types.js";
@@ -98,6 +99,23 @@ export interface DefaultWorkflowMoveContext {
     preserveWorktree?: boolean;
     preservePause?: boolean;
   };
+  /**
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-08:05 (Phase C convergence):
+   * The moving task's OWN lifecycle columns, resolved by trait from its workflow IR by
+   * the store (which already holds the IR on this path) and passed in because these
+   * hooks are sync and in-lock — they cannot resolve anything themselves.
+   *
+   * WHY THIS FILE NEEDED IT AT ALL. Its name says "default workflow", but the store
+   * runs these hooks on the flag-ON path for EVERY workflow — the trait registry
+   * resolves the hook by trait id, not by workflow. So the column names hard-coded
+   * here were the DEFAULT lineage's names being applied to a renamed board, where the
+   * reopen effects simply never fired. See `applyResetOnEntryEffects`.
+   *
+   * `undefined` means the workflow has no column vocabulary at all (v1 IR), which is
+   * NOT the same as "declares no hold column" — the hooks keep the legacy literals
+   * only in that no-basis case, never as a substitute for an absent role.
+   */
+  lifecycleColumns?: LifecycleColumns | undefined;
   /** Reset all steps to pending + currentStep 0 (store owns the impl). */
   resetSteps: () => void;
 }
@@ -152,14 +170,51 @@ export function applyCompletionTimingEffects(ctx: DefaultWorkflowMoveContext): v
   }
 }
 
-/** `reset-on-entry` trait (todo/triage reopen) + `abort-on-exit` userPaused
- *  semantics. Reproduces the legacy reopen block. */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:05 (Phase C convergence — reopen semantics):
+
+WHAT A "REOPEN" IS, stated once. A card leaving live work (wip / review / complete) for a
+PLANNING lane (intake or hold). The three predicates below were each written as a list of
+the default lineage's column names, which meant every reopen effect — status/error clear,
+step reset, `workflowStepResults` clear, branch clear — was a no-op on any workflow that
+renamed its columns.
+
+THE CONSEQUENCE WAS NOT COSMETIC. `getTaskMergeBlocker` reads `workflowStepResults`; the
+executor's documented bounce invariant is "moveTask(in-review -> planning) clears ALL
+results". On a renamed board that clear never happened, so a card bounced out of review
+and back in carried its OLD review results — and a `passed` result satisfies the merge
+gate. A renamed workflow could merge with its re-review never run. That is the same
+safety regression the graph-owned-crossing carve-out above was written to prevent,
+arriving through the other door.
+
+LEGACY IDS ARE A NO-BASIS FALLBACK, NOT A ROLE. When the struct is undefined (a v1 IR
+with no column vocabulary) there is nothing to reason from and the legacy names are all
+we have. When the struct EXISTS but a role is absent, the workflow genuinely has no such
+lane and no substitution is made — that is the distinction `resolveLifecycleColumns`
+returns `undefined`-for-the-whole-struct to preserve.
+*/
+const LEGACY_PLANNING_COLUMNS = ["todo", "triage"] as const;
+const LEGACY_LIVE_WORK_COLUMNS = ["in-progress", "done", "in-review"] as const;
+
+/** The planning lanes of THIS workflow: intake and hold. */
+function planningColumnsOf(lifecycle: LifecycleColumns | undefined): readonly string[] {
+  if (!lifecycle) return LEGACY_PLANNING_COLUMNS;
+  return [lifecycle.intake, lifecycle.hold].filter((c): c is string => typeof c === "string");
+}
+
+/** The lanes a card is reopened OUT of: wip, review, complete. */
+function liveWorkColumnsOf(lifecycle: LifecycleColumns | undefined): readonly string[] {
+  if (!lifecycle) return LEGACY_LIVE_WORK_COLUMNS;
+  return [lifecycle.wip, lifecycle.review, lifecycle.complete].filter(
+    (c): c is string => typeof c === "string",
+  );
+}
+
+/** `reset-on-entry` trait (reopen into a planning lane) + `abort-on-exit` userPaused
+ *  semantics. Reproduces the legacy reopen block, by role rather than by name. */
 export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, fromColumn, toColumn, moveSource, options } = ctx;
-  const isReopenToTodoOrTriage =
-    (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review") &&
-    (toColumn === "todo" || toColumn === "triage");
-  if (!isReopenToTodoOrTriage) return;
+  if (!isReopenIntoPlanning(ctx.lifecycleColumns, fromColumn, toColumn)) return;
 
   /*
   FNXC:WorkflowLifecycle 2026-07-12-09:05:
@@ -179,8 +234,19 @@ export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void 
     task.paused = undefined;
     task.pausedByAgentId = undefined;
   }
-  // abort-on-exit userPaused: only for user-source moves to todo (KTD-9).
-  if (moveSource === "user" && toColumn === "todo") {
+  /*
+  abort-on-exit userPaused: only for user-source moves to the HOLD lane (KTD-9).
+  FNXC:WorkflowLifecycleColumns 2026-07-30-08:05: `todo` was the hold lane's name on the
+  pre-U11 default lineage and is still its id post-U11 (#2515 merged Todo into Planning
+  keeping `todo`), so this reads as hold-then-intake. The role matters, not the name: an
+  operator dragging a card back to the queue is parking it, and on a renamed board that
+  park silently stopped happening — the scheduler then re-dispatched the card the
+  operator had just pulled back.
+  */
+  const holdLane = ctx.lifecycleColumns
+    ? ctx.lifecycleColumns.hold ?? ctx.lifecycleColumns.intake
+    : "todo";
+  if (moveSource === "user" && toColumn === holdLane) {
     task.userPaused = true;
   } else if (!options.preservePause) {
     task.userPaused = undefined;
@@ -204,6 +270,25 @@ export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void 
     // Prompt-checkbox reset is a filesystem effect; the store performs it
     // post-hook (it owns the task dir). Not modeled here.
   }
+}
+
+/**
+ * Is this move a reopen — live work (wip/review/complete) back into a planning lane
+ * (intake/hold)?
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-08:05: EXPORTED so the store's flag-ON
+ * `preserveStepProgress` mirror asks the same question. Those two predicates were
+ * separately hand-written copies of the same column list ("Parity mirror of the gate in
+ * applyReopenFieldClears"), and a hand-copied predicate is a divergence waiting for
+ * whichever copy the next edit misses. One function cannot disagree with itself.
+ */
+export function isReopenIntoPlanning(
+  lifecycle: LifecycleColumns | undefined,
+  fromColumn: string,
+  toColumn: string,
+): boolean {
+  return liveWorkColumnsOf(lifecycle).includes(fromColumn)
+    && planningColumnsOf(lifecycle).includes(toColumn);
 }
 
 /** `merge` trait onEnter (in-review): scheduler-state clearing while
@@ -246,17 +331,30 @@ export function applyReopenFieldClears(ctx: DefaultWorkflowMoveContext): void {
   executor's documented bounce invariant ("moveTask(in-review->todo) already clears ALL results")
   survives unchanged.
   */
+  const lifecycle = ctx.lifecycleColumns;
+  const planning = planningColumnsOf(lifecycle);
+  const reviewLane = lifecycle ? lifecycle.review : "in-review";
+  const wipLane = lifecycle ? lifecycle.wip : "in-progress";
+  const completeLane = lifecycle ? lifecycle.complete : "done";
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-08:30 (Phase C convergence):
+  THE CARVE-OUT MUST BE RESOLVED TOO, and forgetting it was worse than leaving the whole
+  function alone. A role-resolved clear plus a NAME-matched exemption means the renamed
+  board takes the clear and never the exemption — so the graph's own remediation crossing
+  destroyed the `failed` result it had just written, which is precisely the three breakages
+  the note above enumerates. My own paired negative test caught this; a conversion that
+  moves the rule and leaves its exception behind inverts the exception.
+  */
   const graphOwnedReviewToWip = ctx.workflowMoveSource === "workflow-graph"
-    && fromColumn === "in-review"
-    && toColumn === "in-progress";
-  if (
-    !graphOwnedReviewToWip
-    && ((fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage"))
-      || (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage")))
-  ) {
+    && fromColumn === reviewLane
+    && toColumn === wipLane;
+  const leftReviewForPlanningOrWip =
+    fromColumn === reviewLane && (planning.includes(toColumn) || toColumn === wipLane);
+  const leftCompleteForPlanning = fromColumn === completeLane && planning.includes(toColumn);
+  if (!graphOwnedReviewToWip && (leftReviewForPlanningOrWip || leftCompleteForPlanning)) {
     task.workflowStepResults = undefined;
   }
-  if (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "triage")) {
+  if (fromColumn === reviewLane && planning.includes(toColumn)) {
     task.branch = undefined;
     task.executionStartBranch = undefined;
     task.baseCommitSha = undefined;
