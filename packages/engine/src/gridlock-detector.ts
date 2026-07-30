@@ -21,7 +21,7 @@ future cleanup revisits this, the question to ask is whether dependency and over
 deadlock are still possible — not whether capacity is simpler.
 */
 import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "./logger.js";
 import { filterPathsByIgnoreList, pathsOverlap } from "./scheduler.js";
 
@@ -153,10 +153,44 @@ export class GridlockDetector {
     const reasons: Record<string, "dependency" | "overlap"> = {};
     const blockingTaskIds = new Set<string>();
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-10:55 (batch-engine tail):
+    "Is this dependency satisfied?" resolved per DEPENDENCY, not per dependent: a blocker's OWN workflow
+    decides when it stops blocking, and the two tasks need not share one.
+
+    On a renamed board every one of these three comparisons was true for a finished blocker, so NO
+    dependency ever counted as met — the detector then reports dependency gridlock for tasks that are
+    not actually blocked, and `notifyGridlock` pages the operator about it.
+
+    REVIEW COUNTS AS SATISFIED, deliberately, and via the SAME five flags the executor dependency gate
+    uses — `review` is not a trait: the role is carried by mergeOrchestration/mergeBlocker/humanReview.
+    Two gates answering "is this dependency satisfied?" differently is a split brain. A dependent may
+    start once its blocker reaches review. Collapsing this to complete-only is the flattening that
+    deadlocks a board, so the three roles stay a union rather than becoming `resolveLifecycleColumns`'s
+    first-per-role.
+
+    Unioned with the legacy trio because `resolveWorkflowIrForTask` returns the BUILT-IN IR for a missing
+    or corrupt workflow rather than throwing; without the union a degraded board resolves a satisfied set
+    that excludes its own terminal lanes and every dependency reads as unmet.
+    */
+    const satisfiedColumnsByTaskId = new Map<string, ReadonlySet<string>>();
+    for (const task of tasks) {
+      const columns = new Set<string>(["done", "in-review", "archived"]);
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache);
+        if (ir) {
+          for (const flag of ["complete", "archived", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+            for (const id of columnsWithFlag(ir, flag)) columns.add(id);
+          }
+        }
+      } catch { /* degraded: legacy trio only */ }
+      satisfiedColumnsByTaskId.set(task.id, columns);
+    }
+
     for (const task of schedulable) {
       const unmetDeps = task.dependencies.filter((depId) => {
         const dep = tasks.find((candidate) => candidate.id === depId);
-        return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+        return dep !== undefined && satisfiedColumnsByTaskId.get(dep.id)?.has(dep.column) !== true;
       });
 
       if (unmetDeps.length > 0) {
