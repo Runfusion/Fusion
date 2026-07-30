@@ -1,22 +1,22 @@
 {
-  "note": "Per-file CEILINGS for hard-coded lifecycle-column comparisons. A file may only go DOWN. Regenerate with `node scripts/check-lifecycle-column-literals.mjs --update` in the same commit as the conversions that lower it.",
+  "note": "Per-file CEILINGS for lifecycle-column comparison guards, AST-classified. A file may only go DOWN. --update REFUSES to raise; a raise is a hand edit with the reason in the commit message. Raised by hand twice: 2026-07-30 when the receiver pattern widened, and again when the AST classifier resolved two previously-unknown receivers (executor.ts 2->3, the planning-evacuation guard on ). No code regressed either time — sites became visible that were always there.",
   "literals": [
     "triage"
   ],
-  "total": 35,
+  "total": 36,
   "ceilings": {
-    "packages/core/src/default-workflow-hooks.ts": 4,
-    "packages/core/src/live-agent-count.ts": 2,
-    "packages/core/src/task-store/comments-ops.ts": 1,
+    "packages/engine/src/self-healing.ts": 11,
     "packages/core/src/task-store/moves.ts": 5,
+    "packages/core/src/default-workflow-hooks.ts": 4,
+    "packages/engine/src/executor.ts": 3,
+    "packages/core/src/live-agent-count.ts": 2,
     "packages/dashboard/app/components/Column.tsx": 2,
-    "packages/dashboard/app/components/DocumentsView.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 2,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 2,
-    "packages/dashboard/app/utils/taskActivity.ts": 1,
-    "packages/engine/src/executor.ts": 2,
-    "packages/engine/src/self-healing.ts": 11
+    "packages/core/src/task-store/comments-ops.ts": 1,
+    "packages/dashboard/app/components/DocumentsView.tsx": 1,
+    "packages/dashboard/app/utils/taskActivity.ts": 1
   },
   "membershipTotal": 25,
   "membershipCeilings": {

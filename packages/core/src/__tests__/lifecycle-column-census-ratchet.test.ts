@@ -325,12 +325,20 @@ describe("lifecycle-column census ratchet", () => {
     }
   });
 
-  it("reports an unrecognised receiver as UNKNOWN rather than bucketing it", () => {
-    // A classifier that silently guesses is how a real guard hides. Anything it cannot place must
-    // surface for a human — measured today: 2 such sites in tree.
+  /*
+  NO SITE MAY BE LEFT UNCLASSIFIED. A classifier that silently guesses is how a real guard hides, so an
+  unplaceable receiver is reported as `unknown` and surfaced for a human. Two existed; both were read
+  and went OPPOSITE ways (executor.ts's `from` is a move's origin column and COUNTS; MissionControlPanel's
+  `c` is an SDLC-funnel alias table and does not), which is why they are resolved by hand rather than
+  defaulted. This asserts the end state: every comparison in tree is classified.
+  */
+  it("leaves no comparison unclassified", () => {
     const { out } = reportRun();
     expect(out).toContain("NOT lifecycle-column comparisons (never enforced)");
-    expect(out).toMatch(/"unknown":\s*\d+/);
+    const classes = JSON.parse(/never enforced\): (\{[^}]*\})/.exec(out)![1]) as Record<string, number>;
+    expect(classes.unknown ?? 0, `unclassified sites remain — read them and record the verdict:\n${out}`).toBe(0);
+    // And the non-column bucket must not be empty: those sites exist and must never be enforced.
+    expect(classes["not-a-column"]).toBeGreaterThan(0);
   });
 
   it("keeps the ledger honest: every ceiling names a real file and the total agrees", () => {
