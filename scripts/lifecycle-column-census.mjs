@@ -370,6 +370,55 @@ if (stale.length > 0) {
   around. `--exact` keeps hard failure for the end state, when the count is meant to be pinned and any
   divergence is a real event.
   */
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-12:10 (PR #2679 review — greptile P1):
+  A TOUCHED FILE MUST BE RE-RECORDED; AN UNTOUCHED ONE IS AUTO-TIGHTENED.
+
+  The residual named below is real: in CI the tightening write is discarded with the runner, so the
+  committed allowance stays stale and a later change can regrow guards up to it while the gate is
+  green. Naming that is not closing it.
+
+  This closes it where the regrowth would have to happen. Regrowing a guard means EDITING the file,
+  so requiring an exact baseline only for files the change TOUCHES makes the hole unreachable — while
+  the case this PR exists for stays green, because those authors did not touch the files that dropped
+  (eleven files dropped in one merge wave; none of those authors did anything wrong).
+
+  Falls back to the lenient path when no base ref resolves, so a detached or shallow checkout
+  degrades to the previous behaviour rather than failing closed on a git detail.
+  */
+  let touched = new Set();
+  /*
+  The touched set is overridable for the same reason BASELINE_PATH is: otherwise this branch can only
+  be tested against whatever the CURRENT branch happens to have changed, so the test's outcome would
+  depend on the diff of the PR running it. Production never sets it.
+  */
+  if (process.env.FUSION_CENSUS_TOUCHED_PATHS !== undefined) {
+    touched = new Set(process.env.FUSION_CENSUS_TOUCHED_PATHS.split(",").map((f) => f.trim()).filter(Boolean));
+  } else {
+    try {
+      const base = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "origin/main";
+      touched = new Set(
+        execSync(`git diff --name-only ${base}...HEAD`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+          .split("\n").map((f) => f.trim()).filter(Boolean),
+      );
+    } catch {
+      /* No usable base ref — leave `touched` empty so every entry takes the lenient path. */
+    }
+  }
+
+  const staleTouched = stale.filter((entry) => touched.has(entry.file));
+  if (staleTouched.length > 0) {
+    console.error(
+      "\nlifecycle-column-census --strict: this change TOUCHES files whose guard count dropped, so the\n"
+      + "baseline must be re-recorded in this change — otherwise the allowance stays open for regrowth.\n",
+    );
+    for (const entry of staleTouched) {
+      console.error(`  ${entry.file}: allows ${entry.allowed}, tree has ${entry.count}`);
+    }
+    console.error("\nRe-record it:\n\n  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n");
+    process.exit(1);
+  }
+
   const lines = stale.map((entry) => `  ${entry.file}: allows ${entry.allowed}, tree has ${entry.count}`);
   if (exact) {
     console.error("\nlifecycle-column-census --strict --exact: baseline is STALE — it allows more than the tree has\n");

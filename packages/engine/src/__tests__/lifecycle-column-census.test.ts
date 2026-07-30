@@ -501,7 +501,7 @@ describe("the ratchet follows the count down", () => {
   const cliPath = `${repoRoot}scripts/lifecycle-column-census.mjs`;
   const realBaseline = `${repoRoot}scripts/lib/lifecycle-column-census-baseline.json`;
 
-  async function run(mutate: (baseline: any) => string, args: string[]) {
+  async function run(mutate: (baseline: any) => string, args: string[], touchedPaths?: () => string) {
     const { mkdtemp, writeFile, readFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -516,7 +516,16 @@ describe("the ratchet follows the count down", () => {
     const result = await new Promise<{ code: number; out: string }>((resolve) => {
       execFile(
         process.execPath, [cliPath, ...args],
-        { cwd: repoRoot, env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: path }, maxBuffer: 32 * 1024 * 1024 },
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            FUSION_CENSUS_BASELINE_PATH: path,
+            /* Empty string = "this change touched nothing", which is the lenient path the other cases need. */
+            FUSION_CENSUS_TOUCHED_PATHS: touchedPaths ? touchedPaths() : "",
+          },
+          maxBuffer: 32 * 1024 * 1024,
+        },
         (error, stdout, stderr) => resolve({ code: (error as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` }),
       );
     });
@@ -549,6 +558,23 @@ describe("the ratchet follows the count down", () => {
     */
     expect(run1.allowedAfter).toBe(run1.inflatedFrom - 3);
     expect(run1.out).toContain("COMMIT IT");
+  }, 30_000);
+
+  it("FAILS when the change TOUCHES the file that dropped, so the allowance cannot stay open", async () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-12:10 (PR #2679 review — greptile P1):
+    The auto-tighten write is discarded with the CI runner, so the committed allowance stays stale and a
+    later change could regrow guards up to it while the gate is green. Regrowing means EDITING the file,
+    so a touched file must be re-recorded in the change that touched it. That is what makes the hole
+    unreachable rather than merely documented.
+    */
+    let touchedFile = "";
+    const run1 = await run((baseline) => { touchedFile = inflate(baseline); return touchedFile; }, ["--strict"], () => touchedFile);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("TOUCHES files whose guard count dropped");
+    // The baseline must be left ALONE on the failure path — a rewrite here would defeat the demand.
+    expect(run1.allowedAfter).toBe(run1.inflatedFrom);
   }, 30_000);
 
   it("still FAILS on a drop under --exact, and leaves the baseline alone", async () => {
