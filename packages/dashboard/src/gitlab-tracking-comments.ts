@@ -31,14 +31,14 @@ export function formatGitLabTrackingComment(
   options?: { repository?: string; currentVersion?: string | (() => string) },
 ): string {
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-09:10 (fleet phase — FLAGGED AND LEFT COUNTED, same as its GitHub twin):
+  FNXC:WorkflowResolvedColumns 2026-07-30-09:10 (fleet phase — FLAGGED AND LEFT COUNTED, same as its GitHub twin):
   A pure formatter. `transition` is this function's OWN `"in-progress" | "done"` parameter — a discriminant
   the caller chose, not a column id read off a task — and there is no store or task id in scope to resolve
   from. `github-tracking-comments.ts:165` is the same site with the same decision, so both halves of the
   pair now leave exactly one literal, in the same place, for the same reason.
   */
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
 
   `transition` is the closed union `"in-progress" | "done"` declared in this function's own signature.
   It names WHICH COMMENT TEMPLATE to render; the caller decides that from the task's resolved lanes and
@@ -95,7 +95,7 @@ export class GitLabTrackingCommentService {
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-09:10 (fleet phase — the GitLab half of the pair):
+    FNXC:WorkflowResolvedColumns 2026-07-30-09:10 (fleet phase — the GitLab half of the pair):
     IDENTICAL shape and ordering to `github-tracking-comments.ts`'s `handleTaskMoved`, on purpose. That
     file's note explains the reordering: the lane test needs a resolved workflow, and resolving on EVERY
     move to discover that most moves are not notable is the cost worth avoiding — so the cheap tracked-item
@@ -121,7 +121,7 @@ export class GitLabTrackingCommentService {
       return;
     }
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-09:20 (fleet phase — a narrowing the old literal was doing for free):
+    FNXC:WorkflowResolvedColumns 2026-07-30-09:20 (fleet phase — a narrowing the old literal was doing for free):
     `transition` is derived EXPLICITLY rather than passed as `event.to`. The removed early return
     (`event.to !== "in-progress" && event.to !== "done"`) was not only a guard — it also NARROWED
     `event.to` to the formatter's `"in-progress" | "done"` parameter type. Comparing against resolved

@@ -73,7 +73,7 @@ export class GitLabIssueCommentService {
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (batch-core, corrected after #2783 review):
+    FNXC:WorkflowResolvedColumns 2026-07-30-04:40 (batch-core, corrected after #2783 review):
     The GitLab twin of the GitHub commenter's completion check — same question, same literal, same
     silent no-op on a renamed board. Provider is tested first because it is free; the lane resolution
     is not.

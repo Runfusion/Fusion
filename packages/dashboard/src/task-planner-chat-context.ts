@@ -117,7 +117,7 @@ function formatProgress(task: UnknownRecord): string | undefined {
   }
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:00 DELIBERATE-LITERAL: a STEP status, not a board column.
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:00 DELIBERATE-LITERAL: a STEP status, not a board column.
 
   `"done"` here is a `StepStatus` read off a workflow STEP (`readString(step, "status")`), counting
   completed steps for the "N/M steps done" label. Steps and columns share the spelling and nothing

@@ -163,7 +163,7 @@ export function formatTrackingComment(
   options?: { currentVersion?: string | (() => string) },
 ): string {
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
 
   `transition` is the closed union `"in-progress" | "done"` declared in this function's own signature.
   It names WHICH COMMENT TEMPLATE to render; the caller decides that from the task's resolved lanes and
@@ -246,7 +246,7 @@ export class GitHubTrackingCommentService {
     FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (fleet: github-tracking-comments.ts):
     Resolved ONCE here — after the tracking-enabled gate — so a move on an UNTRACKED task pays nothing.
 
-    FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (PR #2715 review — greptile):
     THE TRACKING GATE NOW RUNS FIRST, AND THE COLUMN TEST IS RESOLVED.
 
     An earlier version kept a literal `to !== "in-progress" && to !== "done"` early return ABOVE the
@@ -316,7 +316,7 @@ export class GitHubTrackingCommentService {
       return;
     }
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (PR #2715 review — greptile):
     `formatTrackingComment`'s second parameter is a TRANSITION KIND, not a column id — it chooses
     which comment to build. Passing `event.to` only type-checked because the literal early return had
     narrowed it to the two legacy ids, so the id and the kind coincided on the default board. They do

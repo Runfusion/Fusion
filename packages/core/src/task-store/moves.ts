@@ -433,7 +433,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     */
     const moveLifecycle = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-07:45 (batch-core):
+    FNXC:WorkflowResolvedColumns 2026-07-30-07:45 (batch-core):
     The BROAD review set for the merge-queue pair below. Resolved once here, beside `moveLifecycle`,
     and handed to both `enqueueMergeQueueInTransaction` and
     `dequeueMergeQueueOnColumnExitInTransaction` — those run inside the move transaction with only a
@@ -809,7 +809,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
 
       if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.complete ?? "done") && !options?.skipMergeBlocker) {
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (batch-core feed):
         Hand the merge blocker the lane this guard JUST resolved.
 
         The condition above resolves both columns from the workflow; the call below re-asked with the

@@ -398,7 +398,7 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
       const successRate = total > 0 ? completedRuns / total : 0;
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
       "How many cards are queued" for the agent stats panel — the pre-WIP roles (intake and hold),
       resolved per task. Keyed on the literal, a renamed board reported 0 queued forever, so the panel
       showed an idle backlog while cards were waiting.

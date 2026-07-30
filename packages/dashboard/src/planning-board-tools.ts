@@ -56,7 +56,7 @@ export function createPlanningBoardTools(store: TaskStore): ToolDefinition[] {
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:05 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:05 (batch-core):
       "Not finished yet" for the planner's duplicate check. Keyed on the literal, a renamed board
       listed every FINISHED task as active, so the planner was told to check for duplicates against
       work that was already done — the opposite of the tool's purpose, and it degrades quietly

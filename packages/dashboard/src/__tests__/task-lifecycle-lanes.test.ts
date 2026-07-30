@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:55 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:55 (batch-core):
 
 "HAS THIS TASK LANDED?" — THE QUESTION THAT PICKS THE DIFF BOUNDARY.
 
@@ -77,7 +77,7 @@ describe("landedColumnsForTask", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-03:35 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-03:35 (batch-core):
 The narrower variant exists so a caller whose contract EXCLUDES archived work does not silently widen
 to it. The GitLab backfill reconciler is that caller — its own note records that archived tasks live
 in archiveDb and are intentionally excluded. Pinning the difference here is what stops the two being
@@ -89,6 +89,18 @@ describe("completeColumnsForTask is narrower than the landed set", () => {
 
     expect([...complete]).toEqual(["shipped"]);
     expect(complete.has("attic")).toBe(false);
+  });
+
+  it("falls back to `done` for a V1-UPGRADED workflow whose complete trait resolves to EMPTY", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-08:50 (#2783 review — coderabbit):
+    The RESOLVED-BUT-UNEXPRESSED branch, which is a different code path from the `catch` below and was
+    the only one of the two left uncovered. `synthesizeDefaultColumns` emits every default column with
+    `traits: []`, so the IR resolves fine and `columnsWithFlag(ir, "complete")` returns []. Without
+    this case the `length > 0 ? ... : legacy` compatibility branch could regress to returning an empty
+    set — refusing every v1 board — while the suite stayed green on the catch path alone.
+    */
+    expect([...(await completeColumnsForTask(storeWith(V1_UPGRADED_IR), "FN-1"))]).toEqual(["done"]);
   });
 
   it("falls back to `done` alone, not the legacy pair, when the workflow cannot be resolved", async () => {

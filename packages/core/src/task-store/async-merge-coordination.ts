@@ -144,7 +144,7 @@ function taskStillInReview(projectId?: string) {
  * @returns The enqueued (or pre-existing) queue entry.
  */
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-07:40 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
 `reviewColumns` is the caller's RESOLVED review set. It has to come in rather than be resolved here:
 this runs inside an open transaction with only a `tx` handle — there is no store to resolve from, and
 adding a workflow read inside the merge-queue transaction would extend its lock window for a question
@@ -754,7 +754,7 @@ export async function dequeueMergeQueueOnColumnExitInTransaction(
   reviewColumns?: ReadonlySet<string>,
 ): Promise<void> {
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:40 (batch-core):
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
   The dequeue half of the pair — see `enqueueMergeQueueInTransaction` for why the set is passed in and
   why the two must share it. "Left the review lane" is a MEMBERSHIP question on both sides: a board
   may declare a merge lane and a separate sign-off lane, and moving between them is not an exit.

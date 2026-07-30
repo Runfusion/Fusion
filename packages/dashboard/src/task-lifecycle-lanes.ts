@@ -1,15 +1,33 @@
-import { columnsWithFlag, resolveWorkflowIrForTask, type TaskStore, type WorkflowIr } from "@fusion/core";
+import { columnsWithFlag, resolveWorkflowIrForTask, type WorkflowIr } from "@fusion/core";
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-08:45 (#2783 review — coderabbit):
+The store parameter is the shape `resolveWorkflowIrForTask` ACTUALLY needs, not `Pick<TaskStore, "getTask">`.
+
+The first version took `getTask` — which none of these helpers call — and cast it through `unknown` to
+reach the resolver. That cast was a type lie in the load-bearing direction: it let a caller pass a
+partial store with no workflow readers, where every call would throw into the catch and silently
+return the legacy answer forever. Typed properly, a store that cannot resolve workflows is a compile
+error at the call site instead of a silent permanent fallback at runtime.
+*/
+type LaneResolverStore = Parameters<typeof resolveWorkflowIrForTask>[0];
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-03:10 (batch-core):
 
 ONE ANSWER TO "HAS THIS TASK LANDED?", SHARED BY EVERY DASHBOARD SURFACE THAT ASKS IT.
 
-Five places asked it independently and all five compared against the literal `done`: the GitHub
-source-issue commenter, the GitLab one, the GitLab backfill reconciler, the tracking-comment
-transition, and the session-diff boundary. On a renamed board every one of them silently stopped
-firing — source issues were never commented on or closed, and finished tasks diffed against a branch
-that had already been merged.
+Several places asked it independently and all compared against the literal `done`, so on a renamed
+board they silently stopped firing — source issues were never commented on or closed, and finished
+tasks diffed against a branch that had already been merged.
+
+WHICH HELPER EACH CALLER TAKES IS NOT UNIFORM, and the split is deliberate:
+  - `landedColumnsForTask` (complete u archived) — the session-diff boundary, where an archived task
+    has equally landed and its diff must come from the merge commit.
+  - `completeColumnsForTask` (complete only) — the GitHub and GitLab source-issue commenters, the
+    GitLab backfill reconciler, and the knowledge refresh. Their originals fired on `done` alone;
+    widening them to archival would post comments and close issues the literal never touched. #2783's
+    review caught exactly that regression in my first pass.
 
 Five copies of one question is how the halves drift apart (FN-6115 -> FN-6118 -> FN-6123 is the
 motivating incident: the same affordance fixed three times because it lived in two components). So
@@ -29,16 +47,12 @@ legacy fallback as a workflow that cannot be read at all.
 const LEGACY_LANDED_COLUMNS: readonly string[] = ["done", "archived"];
 
 export async function landedColumnsForTask(
-  store: Pick<TaskStore, "getTask">,
+  store: LaneResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(
-      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
-      taskId,
-      irCache,
-    );
+    const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
     const landed = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
     return new Set(landed.length > 0 ? landed : LEGACY_LANDED_COLUMNS);
   } catch {
@@ -48,7 +62,7 @@ export async function landedColumnsForTask(
 
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-03:25 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-03:25 (batch-core):
 COMPLETE ONLY — deliberately narrower than `landedColumnsForTask`, for callers whose contract
 excludes archived work rather than merely never encountering it.
 
@@ -59,16 +73,12 @@ the archived role just because the shared helper offers it. Today it lists with
 property of the query, not the contract, and folding the two together would quietly couple them.
 */
 export async function completeColumnsForTask(
-  store: Pick<TaskStore, "getTask">,
+  store: LaneResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(
-      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
-      taskId,
-      irCache,
-    );
+    const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
     const complete = columnsWithFlag(ir, "complete");
     return new Set(complete.length > 0 ? complete : ["done"]);
   } catch {
@@ -77,7 +87,7 @@ export async function completeColumnsForTask(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-04:05 (batch-core):
 ARCHIVED ONLY. Separate from `completeColumnsForTask` because archival is a distinct lifecycle event
 with its own consumers: retention cutoffs and live-board eligibility ask "is this card OFF the board",
 which a complete-but-not-archived card is not.
@@ -86,16 +96,12 @@ The two roles resolve independently and have failed independently before, so the
 helpers rather than one flag argument — a caller that wants both asks `landedColumnsForTask`.
 */
 export async function archivedColumnsForTask(
-  store: Pick<TaskStore, "getTask">,
+  store: LaneResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(
-      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
-      taskId,
-      irCache,
-    );
+    const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
     const archived = columnsWithFlag(ir, "archived");
     return new Set(archived.length > 0 ? archived : ["archived"]);
   } catch {
@@ -104,22 +110,18 @@ export async function archivedColumnsForTask(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
 WIP lanes — "is this card actively being worked?". Uses `countsTowardWip`, which is the trait the
 concurrency limit is keyed on, so this answers the same question the scheduler does rather than a
 parallel one.
 */
 export async function wipColumnsForTask(
-  store: Pick<TaskStore, "getTask">,
+  store: LaneResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(
-      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
-      taskId,
-      irCache,
-    );
+    const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
     const wip = columnsWithFlag(ir, "countsTowardWip");
     return new Set(wip.length > 0 ? wip : ["in-progress"]);
   } catch {
@@ -128,22 +130,18 @@ export async function wipColumnsForTask(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
 PRE-WIP lanes — intake and hold together, the columns a card sits in before work starts. Kept as one
 helper because every caller so far asks "is this queued", not "is it specifically intake": splitting
 them would push that distinction onto callers that do not have it.
 */
 export async function preWipColumnsForTask(
-  store: Pick<TaskStore, "getTask">,
+  store: LaneResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(
-      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
-      taskId,
-      irCache,
-    );
+    const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
     const preWip = [...columnsWithFlag(ir, "intake"), ...columnsWithFlag(ir, "hold")];
     return new Set(preWip.length > 0 ? preWip : ["todo"]);
   } catch {

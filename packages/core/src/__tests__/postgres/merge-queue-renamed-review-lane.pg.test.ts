@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-07:55 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-07:55 (batch-core):
 
 THE MERGE QUEUE MUST FILL AND DRAIN ON A BOARD THAT RENAMED ITS REVIEW LANE.
 

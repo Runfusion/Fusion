@@ -74,7 +74,7 @@ describe("createPlanningBoardTools", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:25 (batch-core):
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:25 (batch-core):
   THE DUPLICATE CHECK MUST NOT LIST FINISHED WORK AS ACTIVE.
 
   `fn_task_list` exists so the planner can check for duplicates against work still in flight. Keyed on

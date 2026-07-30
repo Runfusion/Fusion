@@ -63,7 +63,7 @@ export class KnowledgeIndexRefreshService {
 
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-06:05 (batch-core):
+    FNXC:WorkflowResolvedColumns 2026-07-30-06:05 (batch-core):
     Knowledge is re-indexed when a task COMPLETES. Keyed on the literal, a board that renamed its
     complete lane never refreshed the index for any task, so the knowledge index silently drifted
     further from reality with every finished card and nothing reported it.

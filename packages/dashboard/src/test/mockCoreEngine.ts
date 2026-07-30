@@ -71,7 +71,7 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
     Dashboard route tests mock @fusion/engine wholesale; the retry route must still exercise the upstream #1992 classifier so merge-active unusable-worktree failures are admitted while unrelated merging rows remain rejected.
     */
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-07:00 DELIBERATE-LITERAL: a test double mirroring production's own fallback.
+    FNXC:WorkflowResolvedColumns 2026-07-30-07:00 DELIBERATE-LITERAL: a test double mirroring production's own fallback.
 
     Production's `isInReviewMissingWorktreeSessionStartFailure` is `(isReviewColumn ?? task.column ===
     "in-review") && ...` — the literal IS its documented degraded path for a caller that has not

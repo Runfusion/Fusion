@@ -2149,7 +2149,7 @@ describe("ChatManager.sendMessage", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-05:25 (batch-core):
+  FNXC:WorkflowResolvedColumns 2026-07-30-05:25 (batch-core):
 
   THE REFINEMENT PAIR MUST RESOLVE THE SAME WAY ON BOTH HALVES.
 

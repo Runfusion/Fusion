@@ -117,7 +117,7 @@ export class GitHubIssueCommentService {
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (batch-core, corrected after #2783 review):
+    FNXC:WorkflowResolvedColumns 2026-07-30-04:40 (batch-core, corrected after #2783 review):
     "Did this task COMPLETE?" — resolved from the task's own workflow. Keyed on `done`, a board that
     renamed its complete lane never commented on or closed its GitHub source issues at all: the
     listener returned before reading a single setting, so the feature looked disabled rather than

@@ -7,7 +7,7 @@ export const GITLAB_RECONCILE_SCAN_LIMIT = 200;
 type BackfillResult = { scanned: number; filled: number; skipped: number; errors: number; hasMore: boolean };
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-03:25 (batch-core):
+FNXC:WorkflowResolvedColumns 2026-07-30-03:25 (batch-core):
 Candidacy is now resolved from each task's OWN workflow. Keyed on `done`, this backfill found nothing
 on a renamed board and reported a clean scan — `scanned: N, filled: 0` reads as "nothing to do", so
 the failure was indistinguishable from success.

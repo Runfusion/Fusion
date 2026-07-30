@@ -421,7 +421,7 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
       const task = await scopedStore.getTask(req.params.taskId);
       if (!task) throw notFound(`Task not found: ${req.params.taskId}`);
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
       Archived tasks are read-only for research enrichment. Keyed on the literal, a renamed board let
       an ARCHIVED card be enriched — writes landing on a row the archive treats as immutable.
       */

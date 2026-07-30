@@ -1113,7 +1113,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const chatStore = options?.chatStore ?? new ChatStore(chatLayer);
   store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (batch-core):
+    FNXC:WorkflowResolvedColumns 2026-07-30-04:05 (batch-core):
     Planner-chat retention is cut off by ARCHIVAL, resolved from the task's own workflow. Keyed on the
     literal, a board that renamed its archived lane never reached the delete, so task-planner chat
     sessions were retained forever — the retention cutoff this listener exists to enforce simply never
@@ -2933,7 +2933,7 @@ eligibility rule used by both the create and update listeners (and mirrored by t
 startup prime's `includeArchived:false`). Exported for unit coverage of the invariant.
 */
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-04:20 DELIBERATE-LITERAL: sync predicate behind a sync listener.
+FNXC:WorkflowResolvedColumns 2026-07-30-04:20 DELIBERATE-LITERAL: sync predicate behind a sync listener.
 
 NOT OVERLOOKED. On a renamed board this is genuinely wrong — an archived card stays badge-eligible, so
 its snapshot is never evicted and the cache grows for the daemon's lifetime. That is the exact memory

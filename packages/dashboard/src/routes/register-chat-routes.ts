@@ -223,7 +223,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
       Planner chat is refused for archived tasks. Keyed on the literal, a renamed board started
       planner sessions against archived cards, whose rows the archive treats as immutable.
       */

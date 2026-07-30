@@ -179,7 +179,7 @@ describe("GitHubIssueCommentService", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:50 (#2783 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:50 (#2783 review — greptile):
   ARCHIVAL IS NOT COMPLETION, AND THE CONVERSION MUST NOT WIDEN THE TRIGGER.
 
   Resolving this gate by role invited using the LANDED set (complete u archived), which I did in the

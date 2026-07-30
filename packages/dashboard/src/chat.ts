@@ -517,7 +517,7 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
       if (!taskId || !profiles.has(profile)) return { content: [{ type: "text" as const, text: "ERROR: task_id and an allowlisted profile are required; raw commands are not accepted." }], isError: true, details: {} };
       const task = await taskStore.getTask(taskId);
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
       Verification requires a card that is actively being worked, resolved from its own workflow.
       Keyed on the literal, chat-driven verification refused every task on a renamed board with
       "requires an in-progress task" — naming a column that board does not have.
@@ -655,7 +655,7 @@ function createTaskPlannerRefinementTool(taskStore: TaskStore, taskId: string) {
       try {
         const sourceTask = await taskStore.getTask(taskId);
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+        FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
         Refinement is for FINISHED work — complete only, not the landed set: an archived task is off
         the board and is not a refinement source. Paired with the tool-registration guard in
         `createSession`; if only one of the two resolved, the tool would either be offered and then
@@ -2638,7 +2638,7 @@ export class ChatManager {
       Done-task planner Chat uses a separate task-scoped refinement tool rather than Activity steering. The tool is registered only for synthetic task-planner sessions whose server-loaded current task is done, accepts only feedback text, and calls TaskStore.refineTask with the bound source id so models cannot route refinements to arbitrary tasks/projects/workflows.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+      FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
       The registration half of the refinement pair — see the guard inside the tool itself. Resolved
       the same way so a renamed board offers the tool exactly where the tool would accept it.
       */
