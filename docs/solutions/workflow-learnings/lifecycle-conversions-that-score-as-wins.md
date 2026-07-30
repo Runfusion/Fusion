@@ -88,6 +88,47 @@ wrong in a way that costs more than reading it carefully" — was already false 
 report had by then been wrong twice, both times expensively. Re-read that kind of deferral whenever
 the thing it defers has since happened; nothing prompts you to.
 
+## A fourth shape: supplying the WRONG flags
+
+The three shapes above are all omissions — no supplier, one supplier, a supplier only in tests. The
+fourth is worse, because it looks finished: flags are supplied, they are the wrong ones, and it
+type-checks.
+
+Two real instances, both from live work:
+
+**The union read.** `ListView` passed `columnFlagsById.get(task.column)` into a per-task guard, with
+the comment "this list already owns `columnFlagsById`". That map is a UNION across every workflow,
+keyed by column id. For a task whose own workflow does not declare that column, it returns a
+NEIGHBOUR workflow's traits — so the guard does not degrade to the legacy answer, it asserts a role
+the card's board never granted. Use the per-task accessor; it falls back to absent flags on purpose.
+
+**The other task's flags.** In `TaskDetailModal`, `detailColumnFlags` describes the open task. A call
+asking about the near-duplicate CANONICAL — a different task, on a column the component never
+resolves — would have compiled fine with those flags passed in, counted as a conversion, and answered
+about the wrong row. A note at that site had recommended exactly that, on the reasoning that the
+flags were "already in this component."
+
+Both justifications sound like the conversion is *more* correct than the literal. The test:
+
+> Do these flags describe the column of the row this guard is about?
+
+If the guard asks about task B while the flags describe task A, supplying them is worse than omitting
+them. An omission degrades to the legacy id, which is at least the OLD behaviour. Wrong flags are new
+behaviour that nobody chose.
+
+## Guards start catching other people's work, not just yours
+
+Every guard in this lane was written after a defect I had shipped, so for a long time they only
+re-caught my own mistakes — which is weak evidence, since I was also the one deciding what to test.
+
+The first real signal came from a routine merge with `main`: the per-task-flags ratchet failed on two
+call sites another worker had landed, the seam check flagged two more partially-supplied conversions,
+and an exemption I was carrying self-retired because its staleness check noticed the seam had been
+wired upstream.
+
+That is the point at which a ratchet has earned its keep. Until a guard has failed on code you did
+not write, you know it encodes your habits; you do not yet know it encodes the invariant.
+
 ## The rule that produced every fix above
 
 **A green guard is evidence only once you have watched it go red.**
