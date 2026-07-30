@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -122,15 +123,122 @@ export class BranchWorktreeAutoRecoveryHandler {
 
   private async requeueAfterRecovery(task: Task, failure: AutoRecoveryFailure, rationale: string, evidence: RecoveryEvidence): Promise<void> {
     if (task.userPaused) return;
-    if (task.column === "in-progress") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:40 (batch-engine tail):
+    TWO defects here, and fixing only the counted one would have been half a fix.
+
+    1. The WIP test was the id `in-progress`, so on a renamed board the stale branch/baseCommitSha were
+       never cleared and the requeued card carried a dead branch back into execution.
+    2. The requeue DESTINATION was the hardcoded `todo` — census-invisible, because the census scores
+       comparisons and this is a call argument. A board without a `todo` column was requeued into a lane
+       that does not exist. `resolveReboundTarget` is the shared helper for exactly this (KTD-10 ordering:
+       hold -> intake -> first column), and it is why the destination is resolved rather than guessed.
+
+    Both fall back to the legacy ids: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+    throwing, so a degraded board behaves exactly as before.
+    */
+    let wipColumns = new Set<string>(["in-progress"]);
+    let reboundTarget = "todo";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:40 (#2797 review — coderabbit):
+    The catch no longer swallows. Falling back to the legacy ids stays — this is a RECOVERY path, and
+    refusing to act because a workflow could not be read would strand the very task the handler exists
+    to unstick — but the fallback is now RECORDED rather than silent, so "why did this land in `todo`"
+    is answerable after the fact.
+
+    Note the fallback is rarely what routes a custom board here: `resolveWorkflowIrForTask` degrades to
+    the BUILT-IN IR instead of throwing, so an unreadable custom workflow resolves `todo` through the
+    resolver and never reaches this catch. That is why the real protection is the move-rejection guard
+    below, not this branch — this one only makes the rare hard failure visible.
+    */
+    let laneResolutionError: string | undefined;
+    try {
+      const ir = await resolveWorkflowIrForTask(this.deps.taskStore, task.id);
+      if (ir) {
+        const resolvedWip = columnsWithFlag(ir, "countsTowardWip");
+        if (resolvedWip.length > 0) wipColumns = new Set<string>(resolvedWip);
+        reboundTarget = resolveReboundTarget(ir) ?? "todo";
+      }
+    } catch (err) {
+      laneResolutionError = err instanceof Error ? err.message : String(err);
+    }
+
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:45 (#2797 review — greptile):
+    THE REQUEUE MUST NOT DIE ON A DESTINATION THE BOARD DOES NOT DECLARE.
+
+    The review flagged the `catch` above retaining `reboundTarget = "todo"`. Tracing it, the exposure
+    is wider than that branch: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+    throwing, so a task whose custom workflow cannot be read resolves a target from the DEFAULT board
+    — also `todo` — without the catch ever running. Guarding only the throw path would have looked
+    like a fix and changed almost nothing.
+
+    What actually bites is the move: `moveTaskInternal` REJECTS a destination the workflow does not
+    declare (`TransitionRejectionError: unknown-column`). Unhandled, that throws out of the recovery
+    handler whose whole job is to unstick the task — so the recovery became a second way for it to stay
+    stuck, with no audit row to explain it.
+
+    Catching at the move covers every route to a wrong destination, resolved or guessed. A task left
+    parked WITH a record beats one parked by an exception nobody sees.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1 x2):
+
+    ORDER: MOVE FIRST, THEN CLEAR THE BRANCH LINKAGE. The clear used to run BEFORE the move, so a
+    rejected move left the card in its wip lane with `branch`/`baseCommitSha` already erased — the
+    recovery destroyed the only pointers back to the work and then declined to requeue. Half-applied is
+    worse than not applied: nothing else can reconstruct the branch from the row afterwards. The clear
+    now happens only once the requeue has actually landed.
+
+    REASON MUST NAME THE ACTUAL FAILURE. The catch labelled EVERY moveTask failure
+    `rebound-target-rejected` — capacity exhaustion, a guard rejection, a deleted task, a persistence
+    error — so the audit asserted a lane problem for causes that have nothing to do with lanes, and a
+    reader debugging a stuck card would chase the wrong thing. `TransitionRejectionError` carries a typed
+    `rejection.code`, so the unknown-column case is distinguishable exactly rather than by message match.
+
+    Everything is still CAUGHT (an exception thrown out of the recovery handler is invisible), but the
+    row now says which failure it was.
+    */
+    let moveFailure: { reason: string; code?: string } | undefined;
+    try {
+      await this.deps.taskStore.moveTask(task.id, reboundTarget, {
+        moveSource: "engine",
+        preserveResumeState: true,
+        preserveProgress: true,
+        preserveWorktree: false,
+      });
+    } catch (err) {
+      const code = err instanceof TransitionRejectionError ? err.rejection.code : undefined;
+      moveFailure = {
+        reason: code === "unknown-column" ? "rebound-target-rejected" : "requeue-move-failed",
+        ...(code ? { code } : {}),
+      };
+    }
+
+    if (moveFailure) {
+      await this.deps.runAudit.database({
+        type: "branch-worktree:auto-requeue-skipped",
+        target: task.id,
+        metadata: {
+          class: failure.class,
+          reason: moveFailure.reason,
+          ...(moveFailure.code ? { rejectionCode: moveFailure.code } : {}),
+          rationale,
+          ...(laneResolutionError ? { laneResolutionError } : {}),
+          reboundTarget,
+          column: task.column,
+          /* Branch linkage deliberately NOT cleared on this path — see the note above. */
+          branchPreserved: true,
+          evidence,
+        },
+      });
+      return;
+    }
+
+    if (wipColumns.has(task.column)) {
       await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null });
     }
-    await this.deps.taskStore.moveTask(task.id, "todo", {
-      moveSource: "engine",
-      preserveResumeState: true,
-      preserveProgress: true,
-      preserveWorktree: false,
-    });
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",
       target: task.id,
@@ -138,6 +246,7 @@ export class BranchWorktreeAutoRecoveryHandler {
         class: failure.class,
         rationale,
         prevPausedReason: task.pausedReason ?? null,
+        ...(laneResolutionError ? { laneResolutionError } : {}),
         evidence,
       },
     });

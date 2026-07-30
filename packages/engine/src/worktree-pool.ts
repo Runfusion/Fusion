@@ -913,10 +913,36 @@ export async function scanIdleWorktrees(
   // Find worktree paths assigned to non-done tasks (active worktrees)
   const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
   const activeWorktrees = new Set<string>();
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (batch-engine tail):
+  "Still holding its worktree" excludes tasks that have FINISHED. Keyed on the id, a renamed complete
+  lane kept every shipped task's worktree in the ACTIVE set, so this reclaim pass never returned it and
+  the board walked into worktree exhaustion — a stall whose cause is invisible from the symptom.
+
+  NOT the query-filter class: this listTasks call passes no `column`.
+
+  Resolved per TASK (each may run its own workflow) and ONLY for tasks that actually record a worktree,
+  with one IR cache for the pass. Unioned with the legacy id because `resolveWorkflowIrForTask` degrades
+  to the BUILT-IN IR rather than throwing — without the union a degraded board would hold every worktree
+  forever, which is this bug.
+  */
+  const reclaimIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const completeByTaskId = new Map<string, ReadonlySet<string>>();
   for (const task of tasks) {
-    if (task.worktree && task.column !== "done" && registeredWorktrees.has(resolve(task.worktree))) {
+    if (!task.worktree) continue;
+    const columns = new Set<string>(["done"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, reclaimIrCache);
+      if (ir) for (const id of columnsWithFlag(ir, "complete")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    completeByTaskId.set(task.id, columns);
+  }
+  const isUnfinished = (task: { id: string; column: string }) =>
+    completeByTaskId.get(task.id)?.has(task.column) !== true;
+  for (const task of tasks) {
+    if (task.worktree && isUnfinished(task) && registeredWorktrees.has(resolve(task.worktree))) {
       activeWorktrees.add(resolve(task.worktree));
-    } else if (task.worktree && task.column !== "done") {
+    } else if (task.worktree && isUnfinished(task)) {
       worktreePoolLog.debug(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
     }
   }
