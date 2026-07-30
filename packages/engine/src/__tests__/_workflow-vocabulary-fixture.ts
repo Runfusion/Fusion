@@ -18,6 +18,22 @@ export const HOLD_STALENESS_MS = 60 * 60_000;
 
 /** The four lifecycle roles this program's guards are supposed to resolve by TRAIT, not by id. */
 export interface Vocabulary {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-29-15:45 (fixture correction):
+  Before this field `lifecycleIr` emitted NO intake trait for a non-merged board, so the
+  SEPARATE-LANES shape this fixture is supposed to provide did not exist. Every renamed-versus-
+  merged differential built on it compared "no intake" against "intake and hold on one column",
+  not "two distinct lanes" against "one".
+
+  That let assertions pass for the wrong reason: `expect(lifecycle?.intake).not.toBe(hold)` is
+  vacuously true when `intake` is `undefined`, so it would pass against a resolver that never
+  resolved intake at all. `undefined` is no longer reachable from this fixture.
+
+  `mergedIntakeAndHold` remains the way a caller forces the merged shape; a vocabulary whose
+  `intake` equals its `hold` now implies it too, so the merged vocabularies cannot silently lose
+  their intake trait to a forgotten option.
+  */
+  readonly intake: string;
   readonly hold: string;
   readonly wip: string;
   readonly review: string;
@@ -26,6 +42,7 @@ export interface Vocabulary {
 
 /** The legacy ids. A guard keyed on a string literal passes here for the wrong reason. */
 export const DEFAULT_VOCAB: Vocabulary = {
+  intake: "triage",
   hold: "todo",
   wip: "in-progress",
   review: "in-review",
@@ -34,6 +51,7 @@ export const DEFAULT_VOCAB: Vocabulary = {
 
 /** No id overlaps the legacy enum. A guard keyed on a string literal goes silent here. */
 export const RENAMED_VOCAB: Vocabulary = {
+  intake: "inbox",
   hold: "backlog",
   wip: "building",
   review: "checking",
@@ -92,6 +110,7 @@ export const MERGED_VOCAB: Vocabulary = {
 /** A merged board that ALSO renames: both variables move at once, which is the shape a
  *  custom workflow author actually produces. */
 export const MERGED_RENAMED_VOCAB: Vocabulary = {
+  intake: "planning",
   hold: "planning",
   wip: "building",
   review: "checking",
@@ -99,16 +118,22 @@ export const MERGED_RENAMED_VOCAB: Vocabulary = {
 };
 
 export function lifecycleIr(v: Vocabulary, id: string, options: LifecycleIrOptions = {}): WorkflowIr {
+  /* Merged when the caller says so OR when the vocabulary collapses the two roles onto one id. */
+  const merged = options.mergedIntakeAndHold === true || v.intake === v.hold;
   return {
     version: "v2",
     id,
     name: `lifecycle-${id}`,
     columns: [
+      /* The SEPARATE intake lane, for a non-merged vocabulary only. On a merged one
+         `v.intake === v.hold`, so declaring it here would duplicate the id — the hold column
+         carries both traits instead. */
+      ...(merged ? [] : [{ id: v.intake, name: "Intake", traits: [{ trait: "intake" as const }] }]),
       {
         id: v.hold,
         name: "Hold",
         traits: [
-          ...(options.mergedIntakeAndHold ? [{ trait: "intake" }] : []),
+          ...(merged ? [{ trait: "intake" }] : []),
           { trait: "hold", config: { release: "capacity" } },
         ],
         /* U4 workflow-declared recovery policy (#2478). Declared on the HOLD column of both

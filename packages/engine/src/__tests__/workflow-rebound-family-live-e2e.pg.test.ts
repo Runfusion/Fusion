@@ -34,7 +34,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { SelfHealingManager, autoRecoverWorktreeSessionStartFailure } from "../self-healing.js";
-import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
+import { DEFAULT_VOCAB, MERGED_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -49,11 +49,11 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
   /** Persist the workflow and return the id the STORE assigned — it allocates its own
    *  `WF-###` and ignores the one in the input; binding to the id we passed in would
    *  silently resolve to the DEFAULT builtin IR instead. */
-  async function seedWorkflow(v: Vocabulary, key: string): Promise<string> {
+  async function seedWorkflow(v: Vocabulary, key: string, opts: { mergedIntakeAndHold?: boolean } = {}): Promise<string> {
     const created = await h.store().createWorkflowDefinition({
       name: `Rebound ${key}`,
       kind: "workflow",
-      ir: lifecycleIr(v, `custom:${key}`),
+      ir: lifecycleIr(v, `custom:${key}`, opts),
     } as never);
     return (created as { id: string }).id;
   }
@@ -310,6 +310,46 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
 
       expect(rehomed).toBe(0);
       expect(await persistedColumn("FN-RB-4")).toBe(RENAMED_VOCAB.wip);
+    });
+
+    it("re-homes a stranded card on a MERGED board, where hold and intake are one column", async () => {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:10 (merged-board evidence):
+      `resolveReboundTarget` prefers hold -> intake -> first column. On the post-U11 default
+      lineage those first two COLLAPSE onto one column, so the preference order stops being a
+      preference at all — and a repair that reasoned "not hold, so try intake" would either pick
+      the same column twice or fall through to "first column", which is not necessarily a lane a
+      card may rest in.
+
+      The renamed cases above cannot see this: they have hold and intake as distinct columns, so
+      the preference order is still meaningful there. This is why the merged shape is a separate
+      vocabulary rather than another set of ids.
+      */
+      const workflowId = await seedWorkflow(MERGED_VOCAB, "undeclared-merged", { mergedIntakeAndHold: true });
+      await strandInUndeclaredColumn("FN-RB-M1", workflowId);
+      expect(await persistedColumn("FN-RB-M1")).toBe("a-column-no-workflow-declares");
+
+      const rehomed = await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+
+      expect(rehomed).toBe(1);
+      // The merged planning lane — reached as `hold`, which is also `intake`.
+      expect(await persistedColumn("FN-RB-M1")).toBe(MERGED_VOCAB.hold);
+    });
+
+    it("does not re-home a MERGED-board card that is already in the merged lane", async () => {
+      /* The self-move check. `resolveReboundTarget` returns the card's OWN column here, and the
+         sweep skips when `target === task.column` — otherwise it would move a card onto itself
+         and re-fire on every pass. A single-pass count cannot distinguish that from a no-op, so
+         the sweep is run twice. */
+      const workflowId = await seedWorkflow(MERGED_VOCAB, "merged-inplace", { mergedIntakeAndHold: true });
+      await seedTask("FN-RB-M2", MERGED_VOCAB.hold, workflowId);
+
+      const first = await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+      const second = await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+
+      expect(first).toBe(0);
+      expect(second).toBe(0);
+      expect(await persistedColumn("FN-RB-M2")).toBe(MERGED_VOCAB.hold);
     });
 
     it("leaves an operator-paused card stranded rather than moving it", async () => {
