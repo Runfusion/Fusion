@@ -368,9 +368,32 @@ repeated marker is the magic-number problem wearing a name.
 describe("the baseline can always be re-recorded", () => {
   const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
 
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-06:30:
+  STRIP COMMENTS — the assertions below index on marker strings, and the CLI's own prose names them.
+
+  These two cases went red on main claiming the ORDER was inverted: `updateAt` 26374, `riseAt` 19345.
+  The order in CODE is unchanged and correct (`if (updateBaseline) {` at line 487, the rise message at
+  510). What moved was a COMMENT: line 359 explains the failure mode and quotes
+  "column-guard count ROSE" verbatim, so `indexOf` found the prose 7000 characters before the branch
+  it was meant to locate.
+
+  A guard that a comment can invert is not measuring control flow. Worse, the honest-looking fix is to
+  reword the comment, which silently re-arms the same trap for whoever explains this next.
+
+  The same defence is already used by `archived-column-gate-parity.test.ts` for the same reason: the
+  notes documenting WHY a literal is dangerous have to mention the literal.
+
+  Deliberately NOT deleting these in favour of the end-to-end block below, even though that block does
+  cover this contract (it drives the real CLI and asserts exit code, baseline content and output — and
+  its own comment names the ordering bug). Two guards at different levels is the point: the e2e one
+  proves the behaviour, these locate the branch that provides it. They only needed to stop being
+  defeated by prose.
+  */
   function cliSource(): string {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("node:fs").readFileSync(cliPath, "utf8") as string;
+    const raw = require("node:fs").readFileSync(cliPath, "utf8") as string;
+    return raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   }
 
   function sliceBetween(cli: string, from: string, to: string): string {

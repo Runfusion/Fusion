@@ -388,3 +388,46 @@ export async function resolveWorkflowIrForTask(
    */
   return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache)).ir;
 }
+
+/*
+FNXC:StateMachine 2026-07-31-20:10 (PR #2793's finding, fixed):
+IS `nodeId` THE TASK'S OWN TERMINAL NODE? Resolved from the task's REAL workflow.
+
+The previous answer came from `store.resolveTaskWorkflowIrSync`, which returns the DEFAULT workflow
+IR for every task under PostgreSQL, so it answered about a board the card is not on. On a workflow
+whose terminal node is not called `end` that inverted the FN-7641 guard in both directions: a
+legitimate override to a non-terminal node named `end` was rejected as a terminal finalize, and an
+override to the board's REAL terminal node was written verbatim — the silent no-op FN-7641 exists to
+prevent. Proven end to end in `workflow-terminal-node-sync-resolution-live-e2e.pg.test.ts`.
+
+FAIL-SOFT TO THE LITERAL, deliberately: an unresolvable workflow keeps exactly the pre-conversion
+answer rather than losing the guard. `end` is also every builtin's terminal node id, so the fallback
+is correct wherever it can still be reached.
+
+RESIDUAL, stated because a review raised it and the obvious remedy does not work yet (PR #2812):
+`resolveWorkflowIrForTask` DEGRADES to the default workflow instead of throwing, so the `catch` above
+does not cover a failed lookup — a task on a custom board whose definition cannot be loaded is judged
+against the default graph. The natural fix is to gate on
+`resolveWorkflowIrForTaskWithProvenance(...).source === "selection"`, and that signal is currently
+unusable: `createWorkflowDefinition` stores an authored IR VERBATIM, so its `ir.id` keeps whatever the
+author wrote while the store allocates its own `WF-NNN`. The provenance identity check then compares
+those two and reports `source: "default"` for a workflow it resolved CORRECTLY. Measured, not
+assumed — gating on it here turned the "non-terminal override is written" case red.
+
+So the residual is knowingly left: it is the pre-existing fail-soft, not a regression this change
+introduces, and narrowing it depends on fixing the provenance signal first.
+*/
+export async function isTaskTerminalNodeIdAsync(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  nodeId: string,
+): Promise<boolean> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const node = ir.nodes.find((candidate) => candidate.id === nodeId);
+    if (node) return node.kind === "end";
+  } catch {
+    // Fall through to the literal-id fallback below.
+  }
+  return nodeId === "end";
+}

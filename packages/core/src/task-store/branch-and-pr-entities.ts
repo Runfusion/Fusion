@@ -20,6 +20,7 @@ import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflo
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
 import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
+import { isTaskTerminalNodeIdAsync } from "../workflow-ir-resolver.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
@@ -607,8 +608,19 @@ export async function updateTaskImpl(store: TaskStore,
       const overrideLanes = await resolveNodeOverrideLanes(store, id);
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
+        /*
+        FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+        RESOLVED BEFORE the guard, because the guard's callback is synchronous and the real answer
+        needs an await. `validateNodeOverrideChange` asks the question at most once, for
+        `updates.nodeId`, so pre-resolving that single answer is equivalent — and this frame is
+        already async.
+        */
+        const terminal = updates.nodeId == null
+          ? false
+          : await isTaskTerminalNodeIdAsync(store, id, updates.nodeId);
         const validation = validateNodeOverrideChange(currentTask, updates.nodeId ?? null, {
-          isTerminalNodeId: (nodeId) => isTaskTerminalNodeIdImpl(store, id, nodeId),
+          /* Resolved above; `overrideLanes` stays exactly as main computes it. */
+          isTerminalNodeId: () => terminal,
           ...overrideLanes,
         });
         if (!validation.allowed) {
@@ -632,23 +644,16 @@ export async function updateTaskImpl(store: TaskStore,
     return store.withTaskLock(id, () => store.updateTaskUnlocked(id, updates, runContext));
 }
 
-/**
- * FNXC:StateMachine 2026-07-07-12:00:
- * Resolve whether `nodeId` is the task's resolved workflow terminal `end` node (kind === "end"),
- * for the nodeId='end' finalize-on-proof-or-error contract (FN-7641 Signature 2). Falls back to
- * the literal id check when the workflow IR cannot be resolved or does not contain the node, which
- * still matches every built-in workflow's terminal node id.
- */
-function isTaskTerminalNodeIdImpl(store: TaskStore, taskId: string, nodeId: string): boolean {
-  try {
-    const ir = store.resolveTaskWorkflowIrSync(taskId);
-    const node = ir.nodes.find((n) => n.id === nodeId);
-    if (node) return node.kind === "end";
-  } catch {
-    // Fall through to the literal-id fallback below.
-  }
-  return nodeId === "end";
-}
+/*
+FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+`isTaskTerminalNodeIdImpl` LIVED HERE and is deleted, not kept as a fallback. It resolved the task's
+graph through `store.resolveTaskWorkflowIrSync`, which answers with the DEFAULT workflow for every
+task under PostgreSQL — so it reported on a board the card is not on. Its replacement,
+`isTaskTerminalNodeIdAsync`, keeps the identical literal fail-soft for an unresolvable workflow.
+
+Keeping both would have re-created the half-conversion this program keeps finding: one caller
+resolved, one not, and no way to tell from a call site which it got.
+*/
 
 export function mergeCustomFieldPatchImpl(store: TaskStore,
     current: Record<string, unknown> | undefined,

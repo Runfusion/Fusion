@@ -1,5 +1,6 @@
 /*
-FNXC:StateMachine 2026-07-30-23:55 (E2E evidence — the terminal-node guard fires on the wrong node):
+FNXC:StateMachine 2026-07-30-23:55 (E2E evidence — the terminal-node guard fires on the wrong node)
+FNXC:StateMachine 2026-07-31-20:45 (FIXED in PR #2811 — the two cases below now assert the CORRECT behaviour):
 
 Fourth in the inert-sync-resolution series (#2789 scheduler, #2791 planner lanes, #2792 custom
 fields). This one does not merely answer with the wrong vocabulary: it makes a SAFETY GUARD fire on a
@@ -131,49 +132,49 @@ pgDescribe("terminal-node resolution for a live task", () => {
     expect(nodes.find((n) => n.id === "end")?.kind).not.toBe("end");
   });
 
-  it("CHARACTERIZATION — a legitimate override to the non-terminal `end` node is REJECTED", async () => {
+  it("a legitimate override to the non-terminal `end` node is WRITTEN", async () => {
     /*
-    On this board `end` is an ordinary planning node, so per the contract's own words ("non-terminal
-    nodeId overrides ... are untouched") this override should simply be written. Instead the operator
-    gets a merge-proof error about finalizing a card they were not finalizing, and the routing change
-    they asked for does not happen.
+    FIXED. On this board `end` is an ordinary planning node, so per the contract's own words
+    ("non-terminal nodeId overrides ... are untouched") the override is simply written. Before the
+    fix it was rejected with a merge-proof error about finalizing a card the operator was not
+    finalizing, because BOTH guards independently called `end` terminal — the default IR said so, and
+    `defaultIsTerminalNodeId` is the literal `"end"`.
 
-    OVER-DETERMINED, so read the mutation results carefully: the default IR calls `end` terminal AND
-    `defaultIsTerminalNodeId` is the literal `"end"`. Either guard alone rejects this write, so this
-    case survives a mutation of either one and fails only when both are corrected. It is not a weak
-    assertion — it is a faithful record of a defect with two independent causes, which is exactly why
-    fixing the sync resolver here would produce no visible change.
+    That over-determination is why this case is the one that proves the fix is COMPLETE: it could not
+    move until both the outer resolution and the inner literal were corrected. See the mutation
+    matrix in PR #2793 for the measurement, and PR #2811 for the fix.
     */
     const store = h.store();
     const taskId = await taskOnShiftedBoard(store, "wf-false-positive");
 
-    await expect(store.updateTask(taskId, { nodeId: "end" } as never))
-      .rejects.toThrow(/does not finalize a card by itself|durable merge proof/);
+    await store.updateTask(taskId, { nodeId: "end" } as never);
 
     store.taskCache.delete(taskId);
-    expect((await store.getTask(taskId))?.nodeId).not.toBe("end");
+    const row = await store.getTask(taskId);
+    expect(row?.nodeId).toBe("end");
+    expect(row?.column).toBe(RENAMED_VOCAB.review); // a routing change, not a finalize
   });
 
-  it("CHARACTERIZATION — and an override to the REAL terminal node silently no-ops", async () => {
+  it("an override to the REAL terminal node is REFUSED without merge proof", async () => {
     /*
-    The half that matters more, because it is the original FN-7641 bug restored. `finish` IS this
-    board's `end`-kind node, so this write must either finalize the card (with merge proof) or be
-    rejected (without). Instead NEITHER guard recognises the id: the field is written verbatim, no
-    error is raised, and the card stays in review with nothing advanced — "no error and no
+    FIXED, and this is the half that matters more: it was the original FN-7641 bug restored on every
+    custom board. `finish` IS this board's `end`-kind node, so the write must either finalize the card
+    (with durable merge proof) or be refused. Before the fix neither guard recognised the id, so the
+    field was written verbatim with no error and the card sat unadvanced — "no error and no
     advancement", exactly as the contract's comment describes the behaviour it replaced.
 
-    UNDER-DETERMINED, the mirror of the case above: because both guards must miss the id for the
-    write to slip through, correcting EITHER one is enough to flip this case. So this is the arm that
-    would notice a partial fix.
+    Refusal is the correct outcome here because the fixture has no `mergeDetails.mergeConfirmed`.
     */
     const store = h.store();
     const taskId = await taskOnShiftedBoard(store, "wf-false-negative");
 
-    await store.updateTask(taskId, { nodeId: "finish" } as never);
+    await expect(store.updateTask(taskId, { nodeId: "finish" } as never))
+      .rejects.toThrow(/does not finalize a card by itself|durable merge proof/);
 
+    /* And the field was not written on the way to refusing. */
     store.taskCache.delete(taskId);
     const row = await store.getTask(taskId);
-    expect(row?.nodeId).toBe("finish");
-    expect(row?.column).toBe(RENAMED_VOCAB.review); // not finalized, not rejected — just written
+    expect(row?.nodeId).not.toBe("finish");
+    expect(row?.column).toBe(RENAMED_VOCAB.review);
   });
 });
