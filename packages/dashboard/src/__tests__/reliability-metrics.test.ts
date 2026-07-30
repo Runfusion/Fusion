@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ActivityLogEntry, RunAuditEvent } from "@fusion/core";
 
 import {
   bucketByDay,
+  countBouncesOut,
+  countMovesInto,
   dayHasSamples,
   fileScopeInvariantFailuresPerDay,
   inReviewDurationMetrics,
@@ -181,5 +183,73 @@ describe("reliability-metrics", () => {
       fileScopeInvariantFailures: 0,
       recoverAlreadyMergedReviewTasksRecoveries: 0,
     })).toBe(true);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:05:
+
+THE INVARIANT: the Reliability move counts cover every lane that carries the role, old name and new.
+
+The route issued two queries naming `in-review` and `in-progress`. On a board that renamed either,
+both return `{}`, every per-day count is zero, and `inReviewFailureRate7d` divides one zero by
+another and reports a healthy rate. A metric that answers with a REASSURING NUMBER instead of an
+error is the worst shape this class takes — an operator has no reason to suspect it is blind.
+
+The union covers history as well as the present, which matters because these read MOVE RECORDS: a
+board renamed last month has old rows under the old id and new rows under the new one. Asking for
+either name alone is what is broken today, not a trade-off between them.
+
+REVERT PROOF, measured: replace the sets with the single literals and the renamed-lane cases fail
+with `expected {} to deeply equal { '2026-07-01': 2 }`.
+*/
+describe("reliability move counts span every lane carrying the role", () => {
+  const store = (rows: Record<string, Record<string, number>>) => ({
+    getTaskMovedCountsByDay: vi.fn(async (o: { fromColumn?: string; toColumn?: string }) =>
+      rows[`${o.fromColumn ?? ""}->${o.toColumn ?? ""}`] ?? {}),
+  });
+
+  const WINDOW = { since: "2026-07-01T00:00:00.000Z", until: "2026-07-08T00:00:00.000Z" };
+
+  it("sums entries across a renamed review lane and the legacy one", async () => {
+    // A board mid-rename: old move rows under `in-review`, new ones under `signoff`.
+    const counts = await countMovesInto(
+      store({ "->in-review": { "2026-07-01": 1 }, "->signoff": { "2026-07-01": 1, "2026-07-02": 3 } }) as never,
+      WINDOW,
+      new Set(["in-review", "signoff"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2, "2026-07-02": 3 });
+  });
+
+  it("sums bounces across every (review, wip) pair without double-counting", async () => {
+    // Each move event has exactly one (from, to) pair, so the queries partition rather than overlap.
+    const counts = await countBouncesOut(
+      store({
+        "in-review->in-progress": { "2026-07-01": 1 },
+        "signoff->building": { "2026-07-01": 1 },
+        "signoff->in-progress": { "2026-07-03": 5 },
+      }) as never,
+      WINDOW,
+      new Set(["in-review", "signoff"]),
+      new Set(["in-progress", "building"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2, "2026-07-03": 5 });
+  });
+
+  it("issues exactly the two legacy queries on the built-in board", async () => {
+    // The common path must not get more expensive to fix the uncommon one.
+    const entered = store({ "->in-review": { "2026-07-01": 4 } });
+    const bounced = store({ "in-review->in-progress": { "2026-07-01": 1 } });
+
+    expect(await countMovesInto(entered as never, WINDOW, new Set(["in-review"]))).toEqual({ "2026-07-01": 4 });
+    expect(await countBouncesOut(bounced as never, WINDOW, new Set(["in-review"]), new Set(["in-progress"]))).toEqual({ "2026-07-01": 1 });
+    expect(entered.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
+    expect(bounced.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an empty map rather than throwing when no lane is supplied", async () => {
+    expect(await countMovesInto(store({}) as never, WINDOW, new Set())).toEqual({});
   });
 });

@@ -237,3 +237,61 @@ export function inReviewFailureRate7d(enteredByDay: Record<string, number>, boun
 
   return { value: bounced / entered };
 }
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:05:
+Per-day move counts across a SET of lanes, because `getTaskMovedCountsByDay` takes one column a side.
+
+The Reliability headline was built from two queries naming `in-review` and `in-progress`. On a board
+that renamed either, both return `{}` — so `tasksEnteredInReview` and `tasksBouncedToInProgress` are
+zero for every day and `inReviewFailureRate7d` divides one zero by another and reports healthy. That
+is the worst shape this class takes: it produces a NUMBER, not an error, and the number is reassuring.
+
+WHY A UNION IS RIGHT HERE AND NOT A COMPROMISE. These read MOVE HISTORY, and a past move recorded the
+column name as it was at the time — the same reasoning that keeps `tasksEnteredInReviewPerDay` above
+matching recorded values verbatim. A board renamed last month therefore has old rows under the old id
+and new rows under the new one, so the correct query covers BOTH. `resolveProjectColumnsForRoles`
+always unions the legacy id in, which is exactly that set. Asking for either name alone is what is
+broken today.
+
+Summing across pairs cannot double-count: a move event has exactly one (from, to) pair, so the
+queries partition the events rather than overlapping. On the built-in board this issues the same two
+queries as before.
+*/
+export interface MovedCountsStore {
+  getTaskMovedCountsByDay(options: { since: string; until: string; fromColumn?: string; toColumn?: string }): Promise<Record<string, number>>;
+}
+
+function mergeDayCounts(into: Record<string, number>, from: Record<string, number>): Record<string, number> {
+  for (const [day, count] of Object.entries(from)) into[day] = (into[day] ?? 0) + count;
+  return into;
+}
+
+/** Moves INTO any of `toColumns`, summed per day. */
+export async function countMovesInto(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  toColumns: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const toColumn of toColumns) {
+    mergeDayCounts(counts, await store.getTaskMovedCountsByDay({ ...window, toColumn }));
+  }
+  return counts;
+}
+
+/** Moves OUT of any `fromColumns` into any `toColumns` — the review-bounce shape — summed per day. */
+export async function countBouncesOut(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  fromColumns: ReadonlySet<string>,
+  toColumns: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const fromColumn of fromColumns) {
+    for (const toColumn of toColumns) {
+      mergeDayCounts(counts, await store.getTaskMovedCountsByDay({ ...window, fromColumn, toColumn }));
+    }
+  }
+  return counts;
+}
