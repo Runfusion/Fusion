@@ -36,10 +36,6 @@ reason; a sync-resolved lifecycle guard is a guard that cannot fire.
 
 const ALLOWED_CALL_SITES: ReadonlyMap<string, string> = new Map([
   [
-    "packages/core/src/task-store/lifecycle-ops.ts",
-    "Synchronous lifecycle bookkeeping inside a transaction.",
-  ],
-  [
     "packages/core/src/task-store/task-store-helpers.ts",
     "Synchronous helper shared by txn-hot paths.",
   ],

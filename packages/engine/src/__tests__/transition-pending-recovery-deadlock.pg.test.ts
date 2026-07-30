@@ -43,6 +43,7 @@ import {
 } from "@fusion/core";
 
 import { recoverStaleTransitionPendingImpl } from "../../../core/src/task-store/lifecycle-ops.js";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import { writeTransitionPendingAsync } from "../../../core/src/task-store/async-transition-pending.js";
 import {
   pgDescribe,
@@ -56,6 +57,9 @@ import {
 const DEADLINE_MS = 8_000;
 
 const REGISTERED_TRAIT = "plugin:transition-pending-regression";
+
+/** Set by the registered hook when the runner actually invokes it. */
+const firedFor: string[] = [];
 
 async function sweepWithin(store: TaskStore): Promise<{ scanned: number; recovered: number; degradedHooks: number }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -89,10 +93,18 @@ pgDescribe("stale transition-pending recovery does not deadlock on the per-task 
       flags: {},
       hooks: { onEnter: { id: `${REGISTERED_TRAIT}:onEnter` } },
     } as never);
-    registerTraitHookImpl(`${REGISTERED_TRAIT}:onEnter`, (async () => {}) as never);
+    /* THREE arguments — `(traitId, hookKind, impl)`. Registering with a composed `"<trait>:onEnter"`
+       id and no kind silently registers nothing: the runner then resolves the hook to a no-op, so the
+       suite reads as "the hook never fired" and invites the conclusion that the recovery is broken.
+       Cost me a wrong diagnosis before the signature was checked. */
+    registerTraitHookImpl(
+      REGISTERED_TRAIT,
+      "onEnter" as never,
+      (async (ctx: { task?: { id?: string } }) => { firedFor.push(ctx?.task?.id ?? "unknown"); }) as never,
+    );
   });
   afterAll(h.afterAll);
-  beforeEach(async () => { await h.beforeEach(); });
+  beforeEach(async () => { firedFor.length = 0; await h.beforeEach(); });
   afterEach(async () => { await h.afterEach(); });
 
   /** A card carrying a stale transition-pending marker with the given hook ids. */
@@ -141,6 +153,48 @@ pgDescribe("stale transition-pending recovery does not deadlock on the per-task 
 
     expect(result.recovered).toBe(1);
     expect(result.degradedHooks).toBe(0);
+  });
+
+  it("REGRESSION — the interrupted hook is re-run for a task on a CUSTOM workflow", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-18:55 (PR #2809 review — greptile P1):
+    THE SECOND DEFECT ON THIS LINE, and it only became reachable once the deadlock above was fixed.
+    The recovery resolved the task's IR with `resolveTaskWorkflowIrSync`, which hands back the DEFAULT
+    workflow for every task under PostgreSQL. The hook runner derives its pending set from the
+    columns of the IR it is given, so a task on a RENAMED board matched no plugin trait: the
+    interrupted hook was never re-run and the sweep reported success having done nothing.
+
+    Observed state, not a spy on the resolver: the hook itself records the task id it ran for. The
+    board is renamed so the default IR cannot supply the column by accident — the `building` column
+    carrying the plugin trait exists on this workflow and on no other.
+    */
+    const store = h.store();
+    const ir = lifecycleIr(RENAMED_VOCAB, "custom:transition-pending") as unknown as {
+      columns: { id: string; traits: unknown[] }[];
+    };
+    ir.columns = ir.columns.map((column) => column.id === RENAMED_VOCAB.wip
+      ? { ...column, traits: [...column.traits, { trait: REGISTERED_TRAIT }] }
+      : column);
+    const created = await store.createWorkflowDefinition({
+      name: "Transition pending custom board",
+      kind: "workflow",
+      ir,
+    } as never);
+
+    const task = await store.createTask({ description: "custom board, interrupted hook" });
+    await store.writeTaskWorkflowSelection(task.id, (created as { id: string }).id, []);
+    store.taskCache.delete(task.id);
+    await store.moveTask(task.id, RENAMED_VOCAB.wip as never, { recoveryRehome: true } as never);
+    await writeTransitionPendingAsync(
+      store.asyncLayer!.db,
+      task.id,
+      makeTransitionPending(RENAMED_VOCAB.wip, [`${REGISTERED_TRAIT}:onEnter`, "default-workflow:postCommit"], Date.now() - 10 * 60_000),
+    );
+
+    const result = await sweepWithin(store);
+
+    expect(result.recovered).toBe(1);
+    expect(firedFor).toContain(task.id);
   });
 
   it("a store with no markers scans nothing", async () => {

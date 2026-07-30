@@ -33,6 +33,7 @@ import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
 import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError, readTaskRow} from "./async-persistence.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 
@@ -1068,7 +1069,23 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
             ? await readTaskRow(store.asyncLayer!, id).catch(() => null) as { column?: string } | null
             : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
-            const ir = store.resolveTaskWorkflowIrSync(id);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-18:40 (PR #2809 review — greptile P1):
+            ASYNC RESOLVER, because the sync one cannot answer here. `resolveTaskWorkflowIrSync`
+            returns the DEFAULT workflow IR for every task under PostgreSQL (its selection reader is
+            a cutover stub that answers `undefined` unconditionally). The hook runner below derives
+            its pending set from the columns of the IR it is handed, so with the default IR a task on
+            a CUSTOM workflow matched no plugin trait and its interrupted hook was silently skipped —
+            the recovery reported success having re-run nothing.
+
+            Nothing forced the sync call: this frame is already `async`, and awaiting here does not
+            reorder anything (the marker read above is awaited on the same path). The sync reader was
+            simply the one the SQLite-era code had.
+
+            This site is removed from the `resolveTaskWorkflowIrSync` call-site allow-list in the same
+            change, so the two cannot drift.
+            */
+            const ir = await resolveWorkflowIrForTask(store, id);
             // fromColumn is unknown post-crash; the marker only records toColumn.
             // The hook runner keys onEnter off toColumn (and onExit off fromColumn);
             // re-running onEnter for the destination is the recoverable, idempotent
