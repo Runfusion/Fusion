@@ -547,3 +547,62 @@ describe("a legacy destination may only fill a role the workflow leaves empty", 
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-21:45 (PR #2607 review — FIFTH finding, one rule):
+
+A ROLELESS COLUMN NAMED `todo` IS STILL NOT THE HOLD LANE. My previous revision scoped the legacy
+fallback to "declared and not assigned to another role", and review found the remaining hole
+immediately: a TRAITLESS parking column named `todo` is assigned to no role, so no role check can
+see it, and `approvePlan` moved an approved plan into a column that implements nothing.
+
+The qualifications were themselves the mistake. Once `resolveLanes` returns a lane set the workflow
+HAS a column vocabulary, so "no column carries the hold trait" is a complete answer — refuse. The
+legacy id survives only when the workflow cannot be resolved at all, which is the migration case.
+
+Five attempts at one rule. These cases pin all four shapes it has to get right at once.
+*/
+const ROLELESS_TODO_IR = {
+  version: "v2", id: "wf-custom", name: "roleless-todo", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }] },
+    { id: "todo", name: "Parking", traits: [] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+describe("a legacy id is not a destination once the workflow speaks columns", () => {
+  it("refuses approve-plan rather than parking the plan in a TRAITLESS column named `todo`", async () => {
+    // Pre-fix: `assignedElsewhere` was false (no role owns a traitless column), so the fallback
+    // returned `todo` and an approved plan landed in the operator's parking column.
+    const deps = createResolvingDeps(
+      makeTask({ column: "backlog", status: "awaiting-approval" }),
+      ROLELESS_TODO_IR,
+    );
+
+    await expect(approvePlan({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still starts work, because THAT role is declared on the same board", async () => {
+    // The paired positive: refusing a missing role must not become refusing everything. This board
+    // has no hold lane but does have a wip lane, so start-work is legitimate.
+    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), ROLELESS_TODO_IR);
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+
+  it("keeps the legacy destination when the workflow cannot be resolved at all", async () => {
+    // No lane set means no basis to decide, and a pre-U11 board really does use these ids —
+    // refusing here would break the migration rather than protect it. `createDeps` supplies a
+    // store with no workflow readers, which is exactly that case.
+    const deps = createDeps(makeTask({ column: "todo", status: "awaiting-approval" }));
+
+    await approvePlan({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+  });
+});
