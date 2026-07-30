@@ -3221,6 +3221,11 @@ describe("TaskDetailModal", () => {
         },
       } as Task);
 
+      let signalSparseUpdate!: () => void;
+      const sparseUpdateApplied = new Promise<void>((resolve) => {
+        signalSparseUpdate = resolve;
+      });
+
       function Harness(): JSX.Element {
         const [taskState, setTaskState] = useState(baseTask);
 
@@ -3240,6 +3245,7 @@ describe("TaskDetailModal", () => {
                   ...current,
                   githubTracking: undefined,
                 }));
+                signalSparseUpdate();
               }, 0);
             }}
             addToast={noop}
@@ -3258,6 +3264,8 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: false } }, undefined);
       });
+
+      await sparseUpdateApplied;
 
       await waitFor(() => {
         expect((screen.getByRole("checkbox", { name: "Enable GitHub tracking" }) as HTMLInputElement).checked).toBe(false);

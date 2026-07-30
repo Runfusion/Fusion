@@ -131,28 +131,28 @@ and then delegated to a predicate that did not: the card was refused for the ONE
 allow, and no message anywhere mentions columns.
 
 Testing the classifier directly rather than through three route harnesses: it is a pure function and the
-defect lives in it. The three call sites passing their sets is asserted structurally below, because a call
+defect lives in it. The three call sites passing their resolved answers are asserted structurally below, because a call
 site that accepts the parameter and does not pass it is the failure mode a unit test cannot see.
 */
-describe("the shared missing-worktree classifier takes the caller's review lane", () => {
+describe("the shared missing-worktree classifier takes the caller's resolved review answer", () => {
   const FAILURE = "Refusing to start coding agent in missing worktree: /gone";
 
-  it("recognises a renamed review lane when the caller supplies it", async () => {
+  it("recognises a renamed review lane when the caller resolves it", async () => {
     const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
     const task = { id: "FN-1", column: "signoff", error: FAILURE } as never;
 
     // Pre-fix: `signoff` !== "in-review", so the retry bypass this classifier exists for never applied.
-    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(true);
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, true)).toBe(true);
   });
 
-  it("still refuses a column outside the supplied set", async () => {
+  it("still refuses a column the caller did not resolve as review", async () => {
     const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
     const task = { id: "FN-2", column: "building", error: FAILURE } as never;
 
-    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(false);
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, false)).toBe(false);
   });
 
-  it("keeps the legacy literal when no set is supplied", async () => {
+  it("keeps the legacy literal when no resolved answer is supplied", async () => {
     // Backwards compatibility is the reason the parameter is optional: existing callers must not change.
     const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
 
@@ -160,7 +160,7 @@ describe("the shared missing-worktree classifier takes the caller's review lane"
     expect(isInReviewMissingWorktreeSessionStartFailure({ id: "FN-4", column: "signoff", error: FAILURE } as never)).toBe(false);
   });
 
-  it("is called WITH a resolved set at all three surfaces", async () => {
+  it("is called WITH a resolved review answer at all three surfaces", async () => {
     /*
     A call site that accepts the parameter and forgets to pass it is exactly the half-conversion this thread
     was about, and no unit test on the classifier can see it. Structural, and it names the file so a fourth
@@ -177,7 +177,7 @@ describe("the shared missing-worktree classifier takes the caller's review lane"
       const code = (await readFile(surface, "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
       const call = code.match(/isInReviewMissingWorktreeSessionStartFailure\(([^)]*)\)/);
       expect(call, `${surface.pathname} does not call the classifier`).toBeTruthy();
-      expect(call?.[1], `${surface.pathname} calls it without a resolved review set`).toContain(",");
+      expect(call?.[1], `${surface.pathname} calls it without a resolved review answer`).toContain(",");
     }
   });
 });

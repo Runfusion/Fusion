@@ -1446,12 +1446,17 @@ export function TaskDetailContent({
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setSourceIssueExpanded(false);
-    setGithubTrackingExpanded(false);
     setGithubRepoOverrideDraft(workingTask.githubTracking?.repoOverride ?? "");
     setGithubTrackingEnabledDraft(null);
     setGithubRepoOverrideError(null);
     setIsEditing(false);
   }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode, workingTask.githubTracking]);
+
+  // Disclosure state belongs to the selected task, not to same-task detail
+  // refreshes such as GitHub tracking updates or sparse SSE payloads.
+  useEffect(() => {
+    setGithubTrackingExpanded(false);
+  }, [task.id]);
 
   useEffect(() => {
     setWorkflowEnabledSteps(task.enabledWorkflowSteps);
