@@ -138,6 +138,36 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       { taskId, applyDefaultWorkflowSteps: false } as never,
     );
     await store.writeTaskWorkflowSelection(taskId, workflowId, []);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:10 (release-leg fixture fix):
+    The card needs a PLANNED PROMPT.md before the sweep will release it. Task creation
+    leaves a bootstrap seed ("# <id>\n\n<description>"), and FN-7648's
+    `isUnplannedForExecution` reads that file for any card resting in an intake- OR
+    hold-trait column and refuses to move an unplanned card into a processing column —
+    so the sweep reported `held: [{ reason: "move-rejected-or-no-slot" }]` and released
+    nothing, which is the gate WORKING, not a scheduler defect.
+
+    Diagnosed rather than guessed, and two hypotheses died on the way: adding
+    `maxConcurrent`/`maxWorktrees` to the E2E settings changed nothing (so the
+    in-transaction capacity gate from #2488/#2499 was NOT the cause), and a direct
+    `moveTask(id, wip)` succeeded (so the move itself was never the blocker). Probing the
+    two release gates showed `isTaskBlockedOnApproval=false`,
+    `isUnplannedForExecution=true`, and dumping the file showed the stub.
+
+    This is the fixture modelling a card that cleared specification, which
+    `docs/solutions/architecture-patterns/workflow-node-column-placement-and-graph-entry-contract.md`
+    states outright: "Scheduler/release test fixtures must model a card that cleared the
+    gate ... A held unreviewed card is the gate working."
+    */
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(store.getTasksDir(), taskId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "PROMPT.md"),
+      `# ${taskId}\n\n## Context\nA planned spec, so the release sweep does not classify this card as an unplanned seed.\n\n## Steps\n### Step 1\n- [ ] do the planned work\n`,
+      "utf-8",
+    );
     store.taskCache.delete(taskId);
     return task as Task;
   }
