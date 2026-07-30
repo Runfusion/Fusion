@@ -8,7 +8,7 @@ applies_when: converting lifecycle-column literals under packages/dashboard/app
 
 # batch-dashboard-app — the work order
 
-## CLAIMED — do not re-convert (u12 worker, 2026-08-01)
+## CLAIMED — do not re-convert (u12 worker, 2026-07-30)
 
 TWO WORKERS ARE ON THIS BRANCH. The coordinator assigned this batch to the u12 worker and another
 agent opened it; rather than contest ownership we are both feeding it, taking from opposite ends of
@@ -25,7 +25,7 @@ Those are the next two entries in the list below by size. Skip them.
 
 SIZED AND NOT CONVERTED — the ORIGINAL seven, u12: six now wired, one genuinely blocked
 
-UPDATE 2026-08-01-20:10. Six of the seven below are now converted end to end, each threaded from a
+UPDATE 2026-07-30-20:10. Six of the seven below are now converted end to end, each threaded from a
 parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or MainContent's
 `columnFlagsByTaskId`). The exception is the last one, and it is worth reading before anyone
 "finishes" it:
@@ -41,7 +41,7 @@ parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or Ma
     still falls back, because `OverflowViewRenderProps` carries no per-task flags. Guard count is 0
     for the file either way, so do not read it as done.
 
-BATCH CLOSE-OUT — 75 -> 6, and every remaining one is deliberate (u12, 2026-08-02-02:10)
+BATCH CLOSE-OUT — 75 -> 6, and every remaining one is deliberate (u12, 2026-07-30-02:10)
 
 `packages/dashboard/app` is down to TWO guards across two files. None is an oversight; each is
 recorded at its site with the reason and what would actually unblock it:
@@ -54,12 +54,12 @@ recorded at its site with the reason and what would actually unblock it:
                              pointing at the class"; not overridden from outside.
   1  useTasks.ts             CROSS-BATCH — see below. Converting core's stall gate alone regresses.
 
-DONE 2026-08-02-04:00: the dock-wide fix landed. `OverflowViewRenderProps` now carries
+DONE 2026-07-30-04:00: the dock-wide fix landed. `OverflowViewRenderProps` now carries
 `columnFlagsByTaskId`, threaded from App (reusing the map it already builds for the footer) through
 `useRightDockController` into the registry. That closed DockTaskList (3) and DevServerView's second
 surface together, as predicted — remaining batch total is 3.
 
-RESOLVED 2026-08-02-06:20 — the cross-batch coupling is GONE, and my flag of it was wrong
+RESOLVED 2026-07-30-06:20 — the cross-batch coupling is GONE, and my flag of it was wrong
 
   I previously recorded `useTasks.ts` <-> `core/src/in-review-stall.ts` as a coupling that had to be
   ordered: both keyed on the literal, so no badge was produced and none needed clearing, and
@@ -116,7 +116,7 @@ DONE ON THIS BRANCH BY u12 (working the tail upward, so the largest-first pass d
 Branch: `batch-dashboard-app`. Feed conversions here as commits; do not open per-file PRs.
 Measured at the branch point, `packages/dashboard/app` only (tests excluded).
 
-```
+```text
 9  packages/dashboard/app/components/TaskContextMenu.tsx
   7  packages/dashboard/app/components/Column.tsx
   6  packages/dashboard/app/components/ListView.tsx

@@ -16,7 +16,7 @@ function shortSha(sha?: string, t?: (key: string, defaultValue: string) => strin
 export function MergeDetails({ task, columnFlags }: MergeDetailsProps) {
   const { t } = useTranslation("app");
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-15:20 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-dashboard-app):
   COMPLETE role, resolved. This panel shows the merge commit for finished work; keyed on the literal
   it rendered NOTHING on a renamed board, so an operator could not see what had actually landed.
   */

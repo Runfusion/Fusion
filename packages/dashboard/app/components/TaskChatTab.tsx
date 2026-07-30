@@ -668,7 +668,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const isTranscriptAtBottomRef = useRef(true);
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-02:10 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (batch-dashboard-app):
   WIP and REVIEW roles, resolved. This decides whether the thinking transcript is expanded by
   default — open while work is live, collapsed once it is not. Keyed on the literals, a renamed
   board collapsed it for every card, so an operator watching an active run had to expand it by hand

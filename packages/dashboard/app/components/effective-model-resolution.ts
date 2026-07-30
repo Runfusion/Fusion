@@ -107,7 +107,7 @@ export function resolveEffectiveExecutor(
   if (fromLog) return fromLog;
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-21:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (batch-dashboard-app):
   WIP role, resolved; `columnFlags` omitted -> the legacy id.
 
   This decides whether the ASSIGNED AGENT's runtime model is the effective one — true only while the
@@ -141,7 +141,7 @@ export function resolveEffectiveValidator(
   if (fromLog) return fromLog;
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-21:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (batch-dashboard-app):
   WIP role, resolved; `columnFlags` omitted -> the legacy id.
 
   This decides whether the ASSIGNED AGENT's runtime model is the effective one — true only while the

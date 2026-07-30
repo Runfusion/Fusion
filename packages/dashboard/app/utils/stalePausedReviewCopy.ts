@@ -26,7 +26,7 @@ export function shouldShowStalePausedReviewBadge(
   columnFlags?: Parameters<typeof isReviewColumnRole>[0],
 ): boolean {
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-dashboard-app):
   Same gate as its sibling in inReviewStallCopy.ts, same failure: on a renamed board the
   stale-paused-review badge was computed and then discarded here, so a review paused for days
   looked healthy. `columnFlags` omitted -> the legacy id.

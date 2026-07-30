@@ -88,7 +88,7 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated, columnFlag
       : t("routing.localNoConfiguration", "Local (no routing configured)");
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-15:20 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-dashboard-app):
   WIP role, resolved. This gates whether routing/node overrides may be edited: an ACTIVE task must
   not have its routing rewritten mid-run. Keyed on the literal, a card executing in a renamed wip
   lane read as INACTIVE unless its status happened to be in ACTIVE_STATUSES, so the tab let an

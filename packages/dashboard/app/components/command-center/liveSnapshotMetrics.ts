@@ -10,6 +10,7 @@ Control so custom and legacy board columns cannot silently show zero work.
 export function isInProgressColumn(column: string): boolean {
   const normalized = column.trim().toLowerCase();
   /*
+  FNXC:CommandCenterLiveMetrics 2026-07-30-20:10:
   DELIBERATE-LITERAL — ALIAS MATCHING, not a lifecycle guard.
 
   This is a census false positive. The values here are DISPLAY-NAME aliases for a funnel stage

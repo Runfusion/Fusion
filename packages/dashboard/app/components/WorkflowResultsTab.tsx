@@ -205,7 +205,7 @@ function getExecutionPhase(
 
   const hasTerminalResults = results.length > 0 && results.every((result) => ["passed", "failed", "advisory_failure", "skipped"].includes(result.status));
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-02:10 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (batch-dashboard-app):
   COMPLETE and REVIEW roles, resolved. This decides whether the workflow-steps badge reads
   "Completed". Keyed on the literals, a renamed board fell through to whatever branch follows, so a
   task whose steps had all finished still advertised its steps as running — on the tab an operator

@@ -580,14 +580,39 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     }
   }, [confirm, onPromote, t]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — my own inert conversion):
+  The dependency flags `groupByWorktree` needs, derived from the per-task column metadata this
+  component already receives.
+
+  I gave `groupByWorktree` a `dependencyColumnFlags` parameter and then left this — its only board
+  caller — passing four arguments. So `depFlags` was always undefined, every dependency fell to the
+  legacy-id branch, and the conversion changed nothing while the census counted it. Exactly the
+  half-conversion I have been flagging in other people's work; caught here by review, not by me.
+
+  Keyed by the DEPENDENCY's task id, holding the flags of the column that task is currently in —
+  the same derivation ListView's `getTaskColumnFlags` uses, and per-task rather than per-column-id so
+  two workflows reusing an id cannot answer for each other.
+  */
+  const dependencyColumnFlags = useMemo(() => {
+    const index = new Map<string, TaskContextMenuColumnMetadata["flags"]>();
+    if (!taskContextMenuColumnsByTaskId) return index;
+    for (const candidate of allTasks ?? tasks) {
+      const own = taskContextMenuColumnsByTaskId.get(candidate.id);
+      if (!own) continue;
+      index.set(candidate.id, own.find((entry) => entry.id === candidate.column)?.flags);
+    }
+    return index;
+  }, [allTasks, tasks, taskContextMenuColumnsByTaskId]);
+
   const worktreeGroups = useMemo(() => {
     if (!showWorktreeGroups) return [];
-    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent, holdTaskIds);
+    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent, holdTaskIds, dependencyColumnFlags);
     // `holdTaskIds` IS a dependency: the board resolves it after the workflows fetch, so
     // omitting it would pin the first-paint value and the upcoming-work list would keep
     // using the legacy-id fallback for the rest of the session. This repo has no
     // react-hooks/exhaustive-deps rule, so nothing catches that but reading it.
-  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent, holdTaskIds]);
+  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent, holdTaskIds, dependencyColumnFlags]);
 
   const visibleTasks = useMemo(() => {
     if (!shouldPaginate) return tasks;

@@ -35,7 +35,7 @@ export interface TaskAgentActivityOptions {
   rather than lose activity detection entirely.
   */
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
   Widened from `{intake, hold}` to carry the terminal and wip roles too, because this predicate asks
   three separate lifecycle questions and only the planner one was resolved. Callers already pass this
   from their per-task flags; the extra fields cost them nothing.
@@ -116,7 +116,7 @@ export function isTaskAgentActive(
     && nowMs - recentPlannerActivityAtMs <= RECENT_PLANNER_ACTIVITY_WINDOW_MS;
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
   "Is an agent working on this card?" — the WIP question, and the last of the three in this function
   that was still keyed on a legacy id. On a renamed board a card in the wip lane read as INACTIVE
   unless its status happened to be one of ACTIVE_STATUSES, so the activity dot and everything keyed

@@ -146,7 +146,7 @@ export function shouldShowInReviewStallBadge(
   columnFlags?: Parameters<typeof isReviewColumnRole>[0],
 ): boolean {
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-dashboard-app):
   `columnFlags` resolves the REVIEW role; omitted -> the legacy id, i.e. today's behaviour.
   Keyed on the literal, the in-review stall badge never rendered on a renamed board — the signal was
   computed and then thrown away at the last gate, so a stalled review looked healthy.

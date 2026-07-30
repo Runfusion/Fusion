@@ -885,8 +885,18 @@ export function TaskDetailContent({
   and the cost of the legacy answer is bounded: a renamed terminal column shows the banner one state
   too long, versus hiding it wrongly on every open.
 
-  The real fix is to have the parent pass resolved flags in with the task rather than fetch them
-  after mount — recorded here, not attempted under batch pressure.
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — I TRIED THIS AND WAS WRONG):
+  The sizing above stands, and I am recording the failed attempt so it is not retried a third time.
+
+  I converted these two to `isArchivedColumnRole`/`isCompleteColumnRole`, reasoning that the helpers'
+  id-fallback makes a first-paint read byte-identical to the literal, so no parent change is needed.
+  tsc refused it: `detailColumnFlags` is declared ~60 lines BELOW this point (it derives from
+  `workflowMoveMetadata`, a useState at ~959), so the value simply does not exist here. "The flags are
+  already in this component" was true and irrelevant — they are not in scope AT THIS LINE.
+
+  Hoisting the state and its derivation above this block is the actual fix, and it is a hook-ordering
+  change in a 5000-line component, which is what the original note meant by not attempting it under
+  batch pressure. Left counted.
   */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true

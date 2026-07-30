@@ -483,7 +483,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   reasons or already recovered.
   */
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-23:50 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (batch-dashboard-app):
   REVIEW role, resolved from `currentColumnFlags` — which this function already receives and already
   uses for the archived check ~15 lines up. Keyed on the literal, the "Bypass failed review" action
   never appeared on a renamed board, so an operator with a genuinely failed pre-merge review step had

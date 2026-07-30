@@ -363,7 +363,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
    * is refused with the same hint rather than silently sending plain chat.
    */
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-15:20 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-dashboard-app):
   WIP role, resolved. `agentRunning` suppresses the planner composer while an implementation agent
   holds the card. Keyed on the literal, a renamed wip lane left the composer ENABLED during a run, so
   planner edits could land against a task already being implemented.

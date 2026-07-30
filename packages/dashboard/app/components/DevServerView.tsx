@@ -247,7 +247,7 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
   Only in-progress tasks with concrete worktree paths are targetable because a missing cwd cannot be safely passed to the start endpoint.
   */
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-18:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:30 (batch-dashboard-app):
   WIP role, resolved PER TASK. This list is the dev-server's set of live worktrees to attach to;
   keyed on the literal it was EMPTY on a renamed board, so the view offered nothing to attach to
   while agents were running with worktrees on disk.

@@ -75,7 +75,7 @@ export function groupByWorktree(
   */
   holdTaskIds?: ReadonlySet<string>,
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
   Per-dependency column flags, mirroring the `holdTaskIds` seam directly above: the caller resolves,
   this stays pure. Omitted -> the legacy ids, i.e. today's behaviour for every unconverted caller.
 

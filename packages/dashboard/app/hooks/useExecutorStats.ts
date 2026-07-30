@@ -91,7 +91,7 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     if (isWaitingAgentTask(enriched)) queuedTaskCount++;
     // Kept in the API shape for compatibility; the footer no longer renders it.
     /*
-    FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-dashboard-app):
     Review-lane count, resolved. Kept in the API shape for compatibility (the footer no longer
     renders it), but a counter that silently reads 0 on a renamed board is worse than one that is
     absent — a future consumer would take it at face value.

@@ -22,7 +22,7 @@ export interface RightDockControllerInput {
   goalAnchorId?: string;
   tasks: Array<Task | TaskDetail>;
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-04:00 (batch-dashboard-app — the dock-wide fix):
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (batch-dashboard-app — the dock-wide fix):
   Per-task column traits for every view the dock hosts. The registry's render props carried none, so
   DockTaskList and DevServerView's dock surface both had no parent to resolve from and stayed on
   legacy ids — sized as blocked in two separate places. This is the single change that closes both.

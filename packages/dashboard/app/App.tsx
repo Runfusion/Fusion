@@ -944,7 +944,7 @@ function AppInner() {
       handleChangeTaskView("board");
     }
     /*
-    FNXC:Navigation 2026-08-01-00:00:
+    FNXC:Navigation 2026-07-30-00:00:
     FN-8352 promotes Ideation to a default-off experimental top-level view.
     Redirect persisted and deep-linked disabled views to Board so MainContent
     never leaves users on a blank unavailable surface.

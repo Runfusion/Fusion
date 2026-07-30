@@ -159,7 +159,7 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-08-02-00:30 (batch-dashboard-app):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:30 (batch-dashboard-app):
 Does this column offer "Archive all done"? The COMPLETE trait, matching the sibling spreads that
 already resolve `intake` and `mergeBlocker`/`humanReview` from the same `columnDef.flags`. The id
 check was the odd one out, so on a renamed board the action vanished from the completed column while

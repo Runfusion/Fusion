@@ -124,7 +124,7 @@ function hasFreshAgentLog(task: Task, entry: AgentLogActivityEvent): boolean {
 
 function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-06:20 (batch-dashboard-app — the column check is REDUNDANT,
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:20 (batch-dashboard-app — the column check is REDUNDANT,
   and removing it fixes a live bug):
 
   THE COLUMN CHECK IS DELETED, not converted, because the line below already implies it. All three

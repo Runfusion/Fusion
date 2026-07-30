@@ -28,7 +28,7 @@ export function isTaskStuck(
   columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): boolean {
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-dashboard-app):
   "Stuck" only means anything for a card in the WIP lane. Keyed on the literal, NO card on a renamed
   board could ever be reported stuck — the stuck badge and `countStuckTasks` both read zero while
   work sat wedged. `columnFlags` omitted -> the legacy id.

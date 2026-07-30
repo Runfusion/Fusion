@@ -151,7 +151,7 @@ export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, colum
   const [expandedViewOpen, setExpandedViewOpen] = useState(false);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-17:00 (batch-dashboard-app):
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:00 (batch-dashboard-app):
   Two role questions, both resolved; `columnFlags` omitted -> the legacy ids.
 
   `isDone` picks the diff SOURCE: a finished card diffs against its merge commit, an in-flight one

@@ -40,7 +40,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   }, [onOpenTask]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-04:00 (batch-dashboard-app — the dock-wide fix landed):
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (batch-dashboard-app — the dock-wide fix landed):
   These three decide what the right dock lists: completed cards grouped, archived hidden, done shown
   only behind `showDone`. Keyed on the literals none matched on a renamed board, so the dock showed
   ARCHIVED cards and never grouped completed ones.

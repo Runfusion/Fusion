@@ -47,7 +47,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
       setLoadingTasks(true);
       void fetchTasks(50, 0, projectId)
         /*
-        FNXC:WorkflowResolvedColumns 2026-08-01-20:10 (batch-dashboard-app — SIZED, NOT CONVERTED):
+        FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (batch-dashboard-app — SIZED, NOT CONVERTED):
         STILL A LITERAL, and threading the board's flags map here would be the WRONG fix.
 
         The guard is real: on a renamed board `archived` matches nothing, so filed-away tasks stay in

@@ -307,7 +307,7 @@ function PrCard({
       ) : null}
 
       {/*
-        FNXC:WorkflowResolvedColumns 2026-08-01-18:30 (batch-dashboard-app):
+        FNXC:WorkflowResolvedColumns 2026-07-30-18:30 (batch-dashboard-app):
         HOLD role, resolved. This hint tells the operator WHY the card moved back after a reviewer
         asked for changes. Keyed on the literal it never appeared on a renamed board, so the card
         moved backwards with no explanation — the one moment the operator most needs one.

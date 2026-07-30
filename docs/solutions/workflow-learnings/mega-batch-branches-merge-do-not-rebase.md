@@ -8,7 +8,7 @@ applies_when: keeping a long-lived shared batch branch current with main
 
 # Mega-batch branches: MERGE main in, do not rebase onto it
 
-Recorded 2026-08-02 from `batch-dashboard-app` (~25 commits, two workers pushing). Written for the
+Recorded 2026-07-30 from `batch-dashboard-app` (~25 commits, two workers pushing). Written for the
 other three batch owners, who will hit the identical thing.
 
 ## The trap

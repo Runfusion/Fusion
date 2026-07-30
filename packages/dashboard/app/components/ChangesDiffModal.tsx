@@ -120,7 +120,7 @@ export function ChangesDiffModal({ columnFlags,
 
   const selectedFile =
     selectedIndex !== null ? files[selectedIndex] : null;
-  /* FNXC:WorkflowResolvedColumns 2026-08-01-17:00: same COMPLETE role as its parent, forwarded —
+  /* FNXC:WorkflowResolvedColumns 2026-07-30-17:00: same COMPLETE role as its parent, forwarded —
      the two must agree about which diff source they are showing. */
   const isDone = isCompleteColumnRole(columnFlags, column ?? "");
 

@@ -95,7 +95,7 @@ export function getEndToEndDurationMs(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
 `columnFlags` resolves the WIP role; omitted -> the legacy id, i.e. today's behaviour.
 
 These two functions decide whether a card's runtime is still ACCRUING. Keyed on the literal, a card

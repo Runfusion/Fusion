@@ -67,7 +67,7 @@ export function getRevertOfId(
  * defensive), the most recently created one wins.
  */
 /*
-FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
 `columnFlags` is a per-task lookup supplied by the caller; omitted -> the legacy pair, i.e. today's
 behaviour. This searches for an OPEN undo task, so a finished one must be skipped. Keyed on the
 literals, a renamed board never skipped anything: a completed undo task counted as still open, and
