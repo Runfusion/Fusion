@@ -126,6 +126,7 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
+import { resolveTaskLifecycleColumns } from "./workflow-lifecycle-traits.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
 // persistence/allocator/settings/search/lifecycle/merge/archive helpers preserve
@@ -1383,7 +1384,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      if (task.column !== "in-review") {
+      if (task.column !== ((await resolveTaskLifecycleColumns(this, task.id))?.review ?? "in-review")) {
         throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in 'in-review'`);
       }
       if (task.paused) {
