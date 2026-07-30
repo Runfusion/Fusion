@@ -9927,12 +9927,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
       }
       const reviewIrCache = new Map<string, WorkflowIr>();
+      /* Cards whose own workflow could not be resolved — reported below rather than silently dropped. */
+      const unresolvedReviewCards: string[] = [];
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:50 (#2838 review — greptile P1, same class as the
+      done-integrity sweep one commit earlier):
+      PROVENANCE, BECAUSE THIS RESOLVER DOES NOT FAIL — IT SUBSTITUTES. `resolveWorkflowIrForTask`
+      degrades to the BUILT-IN coding IR rather than throwing, so `own.length > 0` read as "this card
+      answered" when nobody had: a renamed-lane card was measured against the built-in `in-review`,
+      rejected, and — because this sweep is what would have rescued its already-merged state — rejected
+      again on every subsequent pass.
+
+      I wrote this sweep before that fix landed on the done-integrity one and reproduced its pre-fix
+      shape verbatim. Same resolution, same reporting, so the two cannot drift.
+
+      The VERDICT stays conservative: this sweep mutates a task's column and status, and guessing a lane
+      is worse than leaving one unrescued. What provenance buys is that the unrescued card is REPORTED.
+      */
       const inOwnReviewLane = async (task: Task): Promise<boolean> => {
-        const ir = await resolveWorkflowIrForTask(this.store, task.id, reviewIrCache).catch(() => undefined);
-        const own = ir
-          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(ir, role)))]
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, reviewIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
           : [];
-        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-18:20. */
+        /* A THROW is unresolvable too — the rarer path where the resolver raises rather than substitutes. */
+        if (!resolved || resolved.source === "default") unresolvedReviewCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-18:50. */
         return own.length > 0 ? own.includes(task.column) : task.column === "in-review";
       };
       const shortlist = [...byId.values()].filter((task) =>
@@ -9948,6 +9968,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const candidates: Task[] = [];
       for (const task of shortlist) {
         if (await inOwnReviewLane(task)) candidates.push(task);
+      }
+      if (unresolvedReviewCards.length > 0) {
+        log.warn(
+          `already-merged review rescue: ${unresolvedReviewCards.length} card(s) measured against the `
+          + `built-in review lane because their own workflow could not be resolved `
+          + `(${unresolvedReviewCards.slice(0, 5).join(", ")}); a renamed review lane there stays unrescued.`,
+        );
       }
 
       if (candidates.length === 0) return 0;

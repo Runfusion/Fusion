@@ -357,4 +357,56 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* The legacy id is still asked for — the project union keeps mid-rename rows reachable. */
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:50 (#2838 review — greptile P1, same class as the
+  done-integrity sweep):
+  I wrote this sweep before the provenance fix landed on its sibling and reproduced the pre-fix shape
+  verbatim: `resolveWorkflowIrForTask` SUBSTITUTES the built-in IR rather than failing, so a card whose
+  workflow could not be resolved was measured against the built-in `in-review`, rejected, and rejected
+  again on every pass — with nothing recorded.
+
+  The verdict stays conservative (this sweep mutates column AND status). What provenance buys is that the
+  unrescued card is REPORTED, which is the whole difference between a known gap and an invisible one.
+
+  REVERT CHECK, measured: resolving without provenance fails this — nothing is warned, because
+  `own.length > 0` reads the substituted built-in lane as an answer.
+  */
+  it("reports an already-merged card whose workflow could not be resolved", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-UNRESOLVED",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      mergeRetries: 99,
+    } as unknown as Task;
+    const tasksById = new Map([[parked.id, parked]]);
+    const store = Object.assign(new EventEmitter(), {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false }) as Settings),
+      listTasks: vi.fn(async (options?: { column?: string }) => {
+        const all = [...tasksById.values()];
+        return options?.column === undefined ? all : all.filter((t) => t.column === options.column);
+      }),
+      getTask: vi.fn(async (id: string) => tasksById.get(id)),
+      updateTask: vi.fn(async () => undefined),
+      /* The project DOES declare the renamed review lane, so the read finds the card... */
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      /* ...but THIS card names no workflow, so its own lane vocabulary is unknown. */
+      getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+    }) as unknown as TaskStore & EventEmitter;
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let warned = "";
+    try {
+      await new SelfHealingManager(store, { rootDir: "/repo" }).recoverAlreadyMergedReviewTasks();
+      warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(warned).toContain("already-merged review rescue");
+    expect(warned).toContain("FN-UNRESOLVED");
+  });
 });
