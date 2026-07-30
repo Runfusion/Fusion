@@ -362,14 +362,47 @@ summarizer cannot express them.
 describe("the baseline contract", () => {
   const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
 
-  it("documents the three flags it enforces", async () => {
+  it("documents the flags it enforces", async () => {
     const { readFileSync } = await import("node:fs");
     const cli = readFileSync(cliPath, "utf8");
 
-    // A rise fails, a drop fails (a stale allowance is a hole), and --update-baseline records both.
+    // A rise fails; a drop WARNS by default and fails under --exact; --update-baseline records both.
     expect(cli).toContain("column-guard count ROSE");
     expect(cli).toContain("baseline is STALE");
     expect(cli).toContain("ACCEPTED RISES");
+    expect(cli).toContain("--exact");
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-07:45 (reversing my own earlier call):
+  A DROP warns by default; only `--exact` fails on it. I originally made it a hard failure and the
+  argument was sound — an unrecorded drop lets those guards return while the check stays green. Two
+  rebases of the same PR showed the cost is larger: eleven files dropped as OTHER workers' conversions
+  merged, none re-recorded, and `--strict` went red for everyone twice for pure bookkeeping. During the
+  batch phase that happens dozens of times a day.
+
+  A permanently-red check is a worse hole than a stale allowance, because it gets ignored and then
+  nothing is guarded. The RISE check — the actual purpose — still fails hard, and a drop is named in the
+  output every run, so the residual exposure is bounded and visible rather than silent.
+
+  Exit codes are the contract, so the ORDER and the branch text are asserted; the pure summarizer
+  cannot express them.
+  */
+  it("fails a RISE by default but only WARNS on an unrecorded drop", async () => {
+    const { readFileSync } = await import("node:fs");
+    const cli = readFileSync(cliPath, "utf8");
+
+    // The rise branch exits; the default drop branch does not.
+    // Windows are generous on purpose: the assertion is "this branch exits / does not exit", and a
+    // tight slice would fail on formatting rather than on the contract.
+    const riseBranch = cli.slice(cli.indexOf("column-guard count ROSE"));
+    expect(riseBranch.slice(0, 900)).toContain("process.exit(1)");
+
+    const staleBranch = cli.slice(cli.indexOf("baseline is STALE (warning)"));
+    expect(staleBranch.slice(0, 600)).not.toContain("process.exit(1)");
+    // ...and the --exact branch above it does exit.
+    const exactBranch = cli.slice(cli.indexOf("--strict --exact: baseline is STALE"));
+    expect(exactBranch.slice(0, 500)).toContain("process.exit(1)");
   });
 
   it("re-records unconditionally under --update-baseline, before the rise check can exit", async () => {

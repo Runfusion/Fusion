@@ -126,7 +126,13 @@ netted — a wrong classification stays visible instead of silently moving the b
 
 `--json` emits the machine-readable form. `--strict` compares per-file counts against
 `scripts/lib/lifecycle-column-census-baseline.json` and fails when any file's column-guard count
-**rises** — the ratchet shape. It is deliberately **not** wired into the merge gate: a
+**rises** — the ratchet shape. An unrecorded **drop** WARNS rather than failing: a conversion landing
+without a re-record would otherwise turn the check red for everyone, and a permanently-red check is one
+nobody runs, which is a bigger hole than the stale allowance it was protecting against. The drop is
+named on every run, so the residual exposure is bounded (regrowth only up to the old count) and
+visible. `--strict --exact` restores hard failure on drops, for the end state where the count is
+pinned. Re-record with `--strict --update-baseline`, which works even when a file has risen and prints
+what it accepted. It is deliberately **not** wired into the merge gate: a
 thousand-site backlog cannot be a blocking check the day it is first measured, and a guard nobody
 can pass is a guard everyone disables. Owners tightening their own area should re-record the
 baseline in the same PR that lowers it.
