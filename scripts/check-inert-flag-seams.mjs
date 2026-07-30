@@ -95,19 +95,6 @@ const ALLOWED_OMISSIONS = new Map([
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
       + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site." },
   ],
-  [
-    "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
-    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
-      + "wrapper; the two moves.ts callers supply. So the automatic handoff-to-review path resolves "
-      + "the review column and the manual re-enqueue path does not." },
-  ],
-  [
-    "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",
-    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
-      + "wireable — `clearNearDuplicateReferencesToImpl` is async and already holds `store` and "
-      + "`canonicalId`, so the canonical's own flags are one await away. Its five sibling call sites "
-      + "already supply, so on a renamed board this is the single path that answers from legacy ids." },
-  ],
 ]);
 
 /*
@@ -197,12 +184,22 @@ for (const file of walkAll(PACKAGES)) {
   that cries wolf trains its readers to skip exactly the line that matters.
   */
   const importedFrom = new Map();
+  /** local name -> the name it was exported under, for `import { a as b }`. */
+  const localAlias = new Map();
   const collectImports = (node) => {
     if (ts.isImportDeclaration(node) && node.importClause?.namedBindings
       && ts.isNamedImports(node.importClause.namedBindings)
       && ts.isStringLiteral(node.moduleSpecifier)) {
       for (const element of node.importClause.namedBindings.elements) {
         importedFrom.set(element.name.text, node.moduleSpecifier.text);
+        /*
+        RENAMED IMPORTS: `import { enqueueMergeQueue as enqueueMergeQueueAsync }`. The call site
+        spells the LOCAL name, so recording only that attributes the call to a function which does
+        not exist and leaves the real seam looking unsupplied. That is not hypothetical — removing a
+        stale exemption surfaced `enqueueMergeQueue() — best call passes 2 of 5` while its only
+        production caller passes all five through the alias.
+        */
+        if (element.propertyName) localAlias.set(element.name.text, element.propertyName.text);
       }
     }
     ts.forEachChild(node, collectImports);
@@ -240,12 +237,15 @@ for (const file of walkAll(PACKAGES)) {
       shadow in a file that merely discussed flags still counted, and the probe test caught that.
       */
       if (callee) {
-        if (!callSites.has(callee)) callSites.set(callee, []);
-        callSites.get(callee).push({
+        /* Attribute the call to the EXPORTED name when it came in under an alias. */
+        const target = localAlias.get(callee) ?? callee;
+        if (!callSites.has(target)) callSites.set(target, []);
+        callSites.get(target).push({
           file: relative(REPO, file),
           args: node.arguments.length,
           shadowed: locallyDeclared.has(callee),
           from: importedFrom.get(callee),
+          viaProperty: ts.isPropertyAccessExpression(node.expression),
           isTest: fileIsTest,
         });
       }
@@ -266,6 +266,18 @@ const callSitesFor = (fn, declaringFile) => {
      `task-priority` from the dashboard's `taskSorting` without resolving the module graph. */
   const declaringModule = declaringFile.replace(/\.tsx?$/, "").split("/").pop();
   const relevant = sites.filter((site) => {
+    /*
+    A METHOD CALL IS NOT THIS FUNCTION. Seams are module-level `function` declarations, but matching
+    by name also swept up `obj.sameName(...)`. `store.enqueueMergeQueue(taskId, opts)` is a 2-arg
+    TaskStore METHOD that internally resolves the review columns; the module function it shadows
+    takes 5. Counting the method's calls reported the module seam as under-supplied and turned the
+    gate red on main over two call sites that are correct.
+
+    Tradeoff, stated: a genuine `namespace.fn(...)` call would now be skipped. This codebase calls
+    module functions as bare identifiers (aliased ones are resolved above), so that trade buys a
+    real false-positive fix at the cost of a shape that does not currently occur.
+    */
+    if (site.viaProperty) return false;
     if (site.file === declaringFile) return true;                       // the seam's own file
     if (site.shadowed) return false;                                    // a local same-named function
     if (site.from === undefined) return true;                           // not imported: ambiguous, count it
