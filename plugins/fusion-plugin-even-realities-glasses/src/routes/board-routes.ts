@@ -1,3 +1,4 @@
+import { resolveProjectColumnsForRoles, TERMINAL_ROLES } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/plugin-sdk";
 import {
@@ -39,6 +40,34 @@ function requestData(req: unknown): {
   return { headers: candidate.headers ?? {}, query: candidate.query ?? {}, params: candidate.params ?? {} };
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:40:
+The project's terminal lanes, resolved once per request and handed to the deck builder.
+
+`boardToDeck` filters out finished cards, and it named `archived`/`done`. On a board that calls its
+finished lane anything else the deck is not merely mislabelled: it is CAPPED at `maxCards`, so every
+completed card counts as active and pushes real work off the glasses display — the wearer sees fewer
+live tasks the more the team finishes.
+
+`boardToDeck` takes plain `Task` rows and cannot resolve anything itself, but this package lists
+`@fusion/core` as a runtime dependency (`quick-capture.ts` and `agent-actions.ts` already resolve
+workflow IRs), so the route can. Project-scoped rather than per card: one `listWorkflowDefinitions()`
+read regardless of board size, matching how `?columns=` already treats the board as one pool.
+
+Best-effort — a failed resolve leaves the deck on its documented legacy default rather than failing
+the request, because a slightly-wrong deck beats no deck on a pair of glasses.
+*/
+async function resolveTerminalLanes(ctx: PluginContext): Promise<ReadonlySet<string> | undefined> {
+  try {
+    return await resolveProjectColumnsForRoles(
+      ctx.taskStore as Parameters<typeof resolveProjectColumnsForRoles>[0],
+      TERMINAL_ROLES,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 async function getBoardCards(req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> {
   const request = requestData(req);
   const auth = requireApiKey(ctx, { headers: request.headers });
@@ -52,6 +81,7 @@ async function getBoardCards(req: unknown, ctx: PluginContext): Promise<PluginRo
     maxCharsPerLine: DEFAULT_MAX_CHARS_PER_LINE,
     maxLines: DEFAULT_MAX_LINES_PER_CARD,
     maxCards,
+    terminalColumns: await resolveTerminalLanes(ctx),
   });
   return { status: 200, body: { deck, generatedAt: new Date().toISOString() } };
 }
@@ -68,6 +98,7 @@ async function getBoardSummary(req: unknown, ctx: PluginContext): Promise<Plugin
     maxCharsPerLine: DEFAULT_MAX_CHARS_PER_LINE,
     maxLines: DEFAULT_MAX_LINES_PER_CARD,
     maxCards: 1,
+    terminalColumns: await resolveTerminalLanes(ctx),
   });
 
   return { status: 200, body: { summary: deck.summary, updatedAt: deck.summary.updatedAt } };
