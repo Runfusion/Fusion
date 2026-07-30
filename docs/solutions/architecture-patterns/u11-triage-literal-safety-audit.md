@@ -251,3 +251,40 @@ Four passing cases pin what a fix must NOT break: every declared lifecycle move
 undeclared column on purpose (the path that rescues already-stranded cards). Plus a premise test
 asserting the compatibility flag really is unset, so the suite fails loudly if that ever changes
 rather than silently testing a different code path.
+
+### CORRECTION (same day): the collapse is NOT mechanical — it is contradictory
+
+I implemented the checklist above, ran the suites, and it does not work. Recording the disproof
+because the checklist made it look like a fixture update.
+
+The two-column shape works because the triage service SCANS one lane and skips the other.
+`replan-target.ts` names the discriminator exactly:
+
+> The real discriminator is which lane the triage service SCANS, which depends on the intake
+> column's `autoTriage` config, not on the intake/hold roles alone.
+
+So in Coding (Ideas): `ideas` (intake, `autoTriage: false`) is NOT scanned, `todo` IS, and "promote"
+means moving the card from the unscanned lane into the scanned one. That move is the gate release.
+
+Merge them and one column must be both the unscanned manual intake AND the scanned planning lane.
+There is no consistent answer:
+
+  - `autoTriage: false` wins -> the column is never scanned, so nothing is ever planned. Cards sit
+    with a bootstrap-stub PROMPT.md until the capacity hold releases them, which sends an UNPLANNED
+    card into `in-progress` — the FN-7648 invariant ("no unplanned card enters a processing column").
+  - scanning wins -> `autoTriage: false` means nothing, the manual gate is gone, and the preset is a
+    duplicate of the default Coding workflow.
+
+Evidence: 8 tests fail, and they are not fixtures — they encode the promotion flow itself, e.g.
+`store-create-intake-column.test.ts` › "promotes an Ideas-parked task to todo without planning it
+(still bootstrap-stub PROMPT.md)". Rewriting them would have required inventing what "promote" means
+with no destination column.
+
+**What the collapse actually requires:** a release mechanism for a manual gate that is not a column
+move — a per-task promoted flag the triage scan reads, so one column can hold both "not yet
+promoted" and "promoted, being planned". That is a new lifecycle signal, not a column merge, and it
+is the same shape as the deferred `needs-replan`-to-purpose-built-signal follow-up.
+
+Also correcting step 4 of the checklist above: do NOT delete the `isUnplannedStartCreate` arm.
+`autoTriage` is a general trait field (`builtin-traits.ts`), so any custom workflow can declare a
+manual intake with `intake !== hold`. The arm is dead only for THIS preset, not in general.
