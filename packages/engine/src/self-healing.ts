@@ -8927,12 +8927,36 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const parked = await this.store.listTasks({ slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:45 (batch-engine — prefetch, because the filter below is SYNC):
+      Resolved once per candidate through one IR cache, so the `.filter(...)` stays synchronous.
+
+      The set is "active or queued to become active" — hold, wip, review, complete — and DELIBERATELY
+      EXCLUDES archived: a card in the archive lane IS eligible to have its pre-execution worktree
+      reclaimed, which is the whole point of this sweep. Adding `archived` here would look like
+      completeness and would stop the sweep reclaiming anything from archived cards.
+      */
+      const preExecIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const activeLanesById = new Map<string, ReadonlySet<string>>();
+      for (const task of parked) {
+        if (activeLanesById.has(task.id)) continue;
+        const lanes = new Set<string>(["todo", "in-progress", "in-review", "done"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, task.id, preExecIrCache);
+          if (ir) {
+            for (const flag of ["hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
+              for (const id of columnsWithFlag(ir, flag)) lanes.add(id);
+            }
+          }
+        } catch { /* degraded: legacy ids */ }
+        activeLanesById.set(task.id, lanes);
+      }
       const candidates = parked.filter((task) => {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
         if (task.firstExecutionAt || task.executionStartedAt) return false;
         // Columns where a card is active or queued to become active.
-        if (task.column === "todo" || task.column === "in-progress" || task.column === "in-review" || task.column === "done") return false;
+        if (activeLanesById.get(task.id)?.has(task.column) === true) return false;
         /*
         WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
         needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
@@ -11462,7 +11486,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       const linkedTask = await this.store.getTask(agent.taskId);
-      if (linkedTask && (linkedTask.column === "in-progress" || linkedTask.column === "in-review" || linkedTask.column === "done" || linkedTask.column === "archived")) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (batch-engine):
+      "The linked task is still live or finished, so this agent is not orphaned." Resolved from the LINKED
+      task's own workflow — the agent may be bound to a card in another workflow entirely. On a renamed
+      board none of the four literals matched, so a healthy agent working a live card looked orphaned and
+      this sweep would act on it.
+      */
+      const linkedLanes = linkedTask
+        ? await (async () => {
+          const lanes = new Set<string>(["in-progress", "in-review", "done", "archived"]);
+          try {
+            const ir = await resolveWorkflowIrForTask(this.store, linkedTask.id);
+            if (ir) {
+              for (const flag of ["countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview", "complete", "archived"] as const) {
+                for (const id of columnsWithFlag(ir, flag)) lanes.add(id);
+              }
+            }
+          } catch { /* degraded: legacy ids */ }
+          return lanes;
+        })()
+        : undefined;
+      if (linkedTask && linkedLanes!.has(linkedTask.column)) {
         continue;
       }
 
