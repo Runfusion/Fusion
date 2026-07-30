@@ -350,6 +350,20 @@ export type {
   TraitViolationSeverity,
   TraitAuditWarning,
 } from "./trait-registry.js";
+/* FNXC:WorkflowResolvedColumns 2026-07-30-15:05: column-ROLE predicates must be in the GATE barrel
+   too — the engine-core gate project resolves @fusion/core to the bundle built from THIS file, so an
+   export present only in index.ts is undefined at runtime under the gate. */
+export {
+  isIntakeColumnRole,
+  isPreImplementationColumnRole,
+  isHoldColumnRole,
+  isWipColumnRole,
+  isReviewColumnRole,
+  isCompleteColumnRole,
+  isArchivedColumnRole,
+  isTerminalColumnRole,
+} from "./column-roles.js";
+export type { ColumnRoleTraitFlags } from "./column-roles.js";
 export {
   BUILTIN_TRAIT_IDS,
   BUILTIN_TRAIT_DEFINITIONS,

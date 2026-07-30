@@ -381,6 +381,19 @@ export type {
   TraitViolationSeverity,
   TraitAuditWarning,
 } from "./trait-registry.js";
+/* FNXC:WorkflowResolvedColumns 2026-07-30-15:05: column-ROLE predicates, reachable from every
+   package (the dashboard-app helper set is not importable from engine/core/cli). */
+export {
+  isIntakeColumnRole,
+  isPreImplementationColumnRole,
+  isHoldColumnRole,
+  isWipColumnRole,
+  isReviewColumnRole,
+  isCompleteColumnRole,
+  isArchivedColumnRole,
+  isTerminalColumnRole,
+} from "./column-roles.js";
+export type { ColumnRoleTraitFlags } from "./column-roles.js";
 export {
   BUILTIN_TRAIT_IDS,
   BUILTIN_TRAIT_DEFINITIONS,
