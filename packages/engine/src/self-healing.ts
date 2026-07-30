@@ -4762,6 +4762,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
         return pathsOverlap(dependentScope, blockerScope);
       };
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (fleet: FLAGGED AND SKIPPED, pre-checked):
+      Not attempted. `reliability-interactions/pr-merged-auto-transition.test.ts` stubs `listTasks`
+      with a required `column` argument, so an unfiltered board read starves this sweep. Screened
+      BEFORE converting this time, rather than discovered from a red suite.
+      */
       const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
       const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
       const inReviewTasks = (await this.store.listTasks({ column: "in-review", slim: true })).filter((t) => !t.paused);
@@ -9560,6 +9566,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const [reviewTasks, todoTasks] = await Promise.all([
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (fleet: FLAGGED AND SKIPPED, pre-checked):
+        Not attempted. `self-healing.test.ts` carries 106 `mockResolvedValueOnce` stubs and 6
+        assertions on the exact `listTasks` argument, so this sweep's suite is coupled to call
+        ORDER and SHAPE. That is the coupling that produced the regression reverted two commits ago.
+        */
         this.store.listTasks({ column: "in-review", slim: true }),
         this.store.listTasks({ column: "todo", slim: true }),
       ]);
