@@ -256,6 +256,14 @@ export class UsageLimitPauser {
     serialising to fix it would trade a bounded duplicate read for latency on the pause — which is the
     operation an operator is waiting on. Named rather than silently accepted.
     */
+    /*
+    DELIBERATE-LITERAL — a cheap SUPERSET prefilter, kept literal on purpose (#2672 review).
+
+    Its only job is to avoid resolving the whole board. Keeping literals is safe in the direction
+    that matters: a renamed board declares no `done`/`archived` id, so nothing is wrongly EXCLUDED
+    and every plausible card is still resolved. Converting it would reintroduce exactly the
+    whole-board resolution that review removed.
+    */
     const laneCandidates = tasks.filter((task) =>
       task.paused !== true && task.column !== "done" && task.column !== "archived");
     await Promise.all(laneCandidates.map(async (task) => {
@@ -283,6 +291,20 @@ export class UsageLimitPauser {
         preImplementationByTask.set(task.id, lanes);
       }));
     }
+    /*
+    DELIBERATE-LITERAL — REVIEWED AND PROVEN REDUNDANT, not overlooked.
+
+    This is a documented FALSE POSITIVE for the lifecycle-column census, and it has now drawn in two
+    separate workers, which is why the marker is going on rather than only the prose above. A card in
+    a renamed terminal lane is ALREADY excluded downstream: `taskUsesProvider` resolves the task's
+    active lane, and a finished card matches no active lane, so it resolves no providers and cannot
+    be affected. The test suite states the same thing and pins it
+    (`pauses a PEER executing in the renamed WIP column` asserts `FN-SHIPPED` is not paused).
+
+    So converting this changes NOTHING at runtime — it would be pure churn that lowers the census
+    count while the behaviour is identical, which is the shape this program keeps warning about. The
+    marker removes it from the work order so the next reader does not re-derive all of the above.
+    */
     const affectedTasks = tasks.filter((task) =>
       task.column !== "done"
       && task.column !== "archived"
