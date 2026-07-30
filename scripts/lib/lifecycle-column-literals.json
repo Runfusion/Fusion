@@ -1,0 +1,19 @@
+{
+  "note": "Per-file CEILINGS for hard-coded lifecycle-column comparisons. A file may only go DOWN. Regenerate with `node scripts/check-lifecycle-column-literals.mjs --update` in the same commit as the conversions that lower it.",
+  "literals": [
+    "triage"
+  ],
+  "total": 30,
+  "ceilings": {
+    "packages/core/src/live-agent-count.ts": 2,
+    "packages/core/src/task-store/comments-ops.ts": 1,
+    "packages/core/src/task-store/task-creation.ts": 2,
+    "packages/dashboard/app/components/Column.tsx": 2,
+    "packages/dashboard/app/components/TaskCard.tsx": 2,
+    "packages/dashboard/app/components/TaskContextMenu.tsx": 2,
+    "packages/dashboard/app/components/TaskDetailModal.tsx": 2,
+    "packages/dashboard/app/utils/taskActivity.ts": 1,
+    "packages/dashboard/src/routes/register-task-workflow-routes.ts": 6,
+    "packages/engine/src/self-healing.ts": 10
+  }
+}
