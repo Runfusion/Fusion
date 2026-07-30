@@ -1384,8 +1384,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      if (task.column !== ((await resolveTaskLifecycleColumns(this, task.id))?.review ?? "in-review")) {
-        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in 'in-review'`);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (PR #2709 review — greptile):
+      THE MESSAGE MUST NAME THE COLUMN THE CHECK ACTUALLY USED. The guard was converted to the
+      resolved review lane while the rejection still said `in-review`, so on a custom board an
+      operator was told to move the card to a column their board does not have — through both the
+      CLI and the dashboard, with no way to discover the real answer from the error.
+
+      Wrong guidance is worse than an unconverted guard: an inert guard fails visibly, while this
+      one refuses correctly and then sends the operator somewhere that does not exist. Resolved once
+      into a local so the check and the message cannot drift apart again.
+      */
+      const reviewColumn = (await resolveTaskLifecycleColumns(this, task.id))?.review ?? "in-review";
+      if (task.column !== reviewColumn) {
+        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in '${reviewColumn}'`);
       }
       if (task.paused) {
         throw new Error(`Cannot bypass review lane for ${id}: task is paused`);

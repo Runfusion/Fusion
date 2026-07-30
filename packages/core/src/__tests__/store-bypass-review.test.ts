@@ -182,4 +182,41 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
 
     expect(latestFailedPreMergeStep(updated)).toBeUndefined();
   });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (PR #2709 review — greptile):
+  THE REJECTION MUST NAME THE COLUMN THE CHECK USED. The guard was converted to the resolved review
+  lane while the message still said `in-review`, so on a custom board an operator was refused and
+  then told to move the card to a column their board does not have — through both the CLI and the
+  dashboard, with nothing in the error to reveal the real target.
+
+  That is worse than an unconverted guard. An inert guard fails visibly; this one refuses CORRECTLY
+  and then misdirects, so the operator's next three attempts are all wrong for a reason the product
+  told them.
+  */
+  it("names the board's OWN review column when refusing a card that is elsewhere", async () => {
+    const definition = await store().createWorkflowDefinition({
+      name: "renamed-review",
+      ir: {
+        version: "v2",
+        name: "renamed-review",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "validating", name: "Validating", traits: [{ trait: "merge" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    await store().createTaskWithReservedId(
+      { description: "renamed board card", column: "building", workflowId: definition.id } as never,
+      { taskId: "FN-RENAMED", applyDefaultWorkflowSteps: false },
+    );
+
+    await expect(
+      store().bypassFailedPreMergeReviewStep("FN-RENAMED", { reason: "operator override" } as never),
+    ).rejects.toThrow(/must be in 'validating'/);
+  });
 });
