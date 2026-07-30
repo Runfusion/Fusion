@@ -3133,6 +3133,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  private wipLaneOf(taskId: string): string {
+    try {
+      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.wip ?? "in-progress";
+    } catch {
+      return "in-progress";
+    }
+  }
+
+  private holdLaneOf(taskId: string): string {
+    try {
+      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.hold ?? "todo";
+    } catch {
+      return "todo";
+    }
+  }
+
+  private archivedLaneOf(taskId: string): string {
+    try {
+      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.archived ?? "archived";
+    } catch {
+      return "archived";
+    }
+  }
+
   private completeLaneOf(taskId: string): string {
     try {
       return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.complete ?? "done";
@@ -4738,7 +4762,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         try {
           const unresolvedDeps = dependent.dependencies.filter((depId) => {
             const dep = taskById.get(depId);
-            return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+            return dep && dep.column !== this.completeLaneOf(dep.id) && dep.column !== this.reviewLaneOf(dep.id) && dep.column !== this.archivedLaneOf(dep.id);
           });
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
@@ -6118,7 +6142,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== "todo") continue;
+      if (snapshot.column !== this.holdLaneOf(snapshot.id)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -9492,8 +9516,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       ]);
 
       const mergedButNotDone = [
-        ...reviewTasks.filter((t) => t.column === "in-review"),
-        ...todoTasks.filter((t) => t.column === "todo"),
+        ...reviewTasks.filter((t) => t.column === this.reviewLaneOf(t.id)),
+        ...todoTasks.filter((t) => t.column === this.holdLaneOf(t.id)),
       ].filter((t) =>
         !t.deletedAt &&
         allowsAutoMergeProcessing(t, settings) &&
@@ -10765,7 +10789,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // projects (mirroring the FN-5704 reclaim contract), so override-less
         // tasks stay untouched while explicit autoMerge:true tasks recover.
         ...inProgress.filter((task) =>
-          task.column === "in-progress" &&
+          task.column === this.wipLaneOf(task.id) &&
           allowsAutoMergeProcessing(task, settings) &&
           task.paused === true &&
           (task.pausedReason === "branch-cross-contamination" || task.pausedReason === "branch-conflict-unrecoverable") &&
@@ -11090,7 +11114,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.noCommitsExpected === true) return false;
         if (task.steps.length === 0 || !task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
         const noCommitsError = typeof task.error === "string" && /no_commits/i.test(task.error);
-        return task.column === "in-review" || noCommitsError;
+        return task.column === this.reviewLaneOf(task.id) || noCommitsError;
       });
 
       if (candidates.length === 0) return 0;
@@ -11225,7 +11249,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       const stranded = tasks.filter((task) => {
-        if (task.column !== "in-progress" || task.paused) {
+        if (task.column !== this.wipLaneOf(task.id) || task.paused) {
           return false;
         }
         const hasMissingWorktreePath = typeof task.worktree === "string" && task.worktree.length > 0 && !existsSync(task.worktree);
@@ -11390,7 +11414,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       const orphaned = tasks.filter((t) => {
-        if (t.column !== "in-progress" || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
+        if (t.column !== this.wipLaneOf(t.id) || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
           return false;
         }
         const staleness = now - new Date(t.updatedAt).getTime();
@@ -11471,7 +11495,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const candidates: Task[] = [];
 
       for (const task of tasks) {
-        if (task.column !== "in-progress") continue;
+        if (task.column !== this.wipLaneOf(task.id)) continue;
         if (task.paused || task.deletedAt) continue;
         if (!task.assignedAgentId) continue;
         if (executingIds.has(task.id)) continue;
@@ -12329,7 +12353,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const candidates = tasks.filter((task) =>
-        task.column === "in-progress" &&
+        task.column === this.wipLaneOf(task.id) &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
         !task.paused &&
@@ -12562,7 +12586,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
