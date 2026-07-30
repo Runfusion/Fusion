@@ -1,10 +1,10 @@
 {
   "packages/core/src/async-mission-store-queries.ts": 1,
   "packages/core/src/async-mission-store.ts": 2,
-  "packages/core/src/github-issue-analytics.ts": 2,
-  "packages/core/src/gitlab-issue-analytics.ts": 2,
+  "packages/core/src/github-issue-analytics.ts": 1,
+  "packages/core/src/gitlab-issue-analytics.ts": 1,
   "packages/core/src/mission-store.ts": 1,
-  "packages/core/src/productivity-analytics.ts": 2,
+  "packages/core/src/productivity-analytics.ts": 1,
   "packages/core/src/task-store/async-archive-lineage.ts": 3,
   "packages/core/src/task-store/async-maintenance.ts": 1,
   "packages/core/src/task-store/async-merge-coordination.ts": 1,

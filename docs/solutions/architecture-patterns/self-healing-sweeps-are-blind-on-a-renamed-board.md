@@ -86,10 +86,35 @@ The two shapes that work:
 
 ## Converting a sweep: the four-part shape, and the part that is easy to miss
 
-Four sweeps are converted (`reconcileDoneTaskIntegrity`, `recoverAlreadyMergedReviewTasks`,
-`recoverStuckMergeDeadlocks`, `recoverInterruptedMergingTasks`). They are deliberately identical, because
-the second one drifted from the first — it was written from the pre-review version and reproduced a flaw
-review had already fixed one commit earlier.
+**Eight sweeps are converted**, all deliberately identical because the second one drifted from the first —
+it was written from the pre-review version and reproduced a flaw review had already fixed one commit
+earlier:
+
+```text
+  reconcileDoneTaskIntegrity                 recoverMergeableReviewTasks
+  recoverAlreadyMergedReviewTasks            recoverReviewTasksWithFailedPreMergeSteps
+  recoverStuckMergeDeadlocks                 finalizeNoOpReviewTasks
+  recoverInterruptedMergingTasks             recoverCompletionHandoffLimbo
+```
+
+**Measured, and the measurement needed three corrections — recount before quoting it.** Literal column
+queries in `self-healing.ts`, comments stripped: **47 before, 36 now.**
+
+Every intermediate number I published was wrong, and each in a different way:
+
+- The per-commit "N remaining" counts were **arithmetic on an assumed starting point**, not measurements.
+- A raw `grep -c` counts **explanatory comments that quote the old query form** — including the ones this
+  conversion adds, so converting a sweep could leave the count unchanged.
+- The obvious comment filter (`startsWith("//") || startsWith("*")`) misses block-comment lines that begin
+  with ordinary prose, which is most of them here.
+
+Count with block comments actually stripped:
+
+```bash
+node -e 'const s=require("fs").readFileSync("packages/engine/src/self-healing.ts","utf8")
+  .replace(/\/\*[\s\S]*?\*\//g,"").replace(/^\s*\/\/.*$/gm,"");
+  console.log((s.match(/listTasks\(\{ column: "/g)||[]).length)'
+```
 
 1. **Read** — `resolveProjectColumnsForRoles(store, ROLES)`, then query each column and dedupe by id. A
    read happens before any task is in hand, so there is nothing to resolve a per-task lane from. The
@@ -119,14 +144,12 @@ Widen the read and they become reachable for the first time. `recoverMergeableRe
 one of them. **The sweep would have found the cards and refused them** — strictly worse than not finding
 them, because it looks fixed.
 
-Measured across `self-healing.ts`: **4 sweeps hold both a literal column query and a genuinely unwired lane
-guard**; 32 hold a literal query with no such guard.
+Measured across `self-healing.ts`: **2 sweeps hold both a literal column query and a genuinely unwired lane
+guard**; 34 hold a literal query with no such guard.
 
 ```text
-  finalizeNoOpReviewTasks             getTaskMergeBlocker
   recoverOrphanOnlyScopeViolations    getTaskHardMergeBlocker
   recoverPostDoneNonContinuableWedge  getTaskHardMergeBlocker
-  recoverCompletionHandoffLimbo       getTaskMergeBlocker
 ```
 
 **That number was 6 in the first version of this doc, and both extra rows were my scanner lying.** Worth
@@ -150,7 +173,7 @@ renamed-board cards and declined them.
 parameter at all, and every one of its callers sat behind a literal query. Nothing exercised it.
 
 Parts 4 and 5 are both invisible to the census — one is string contents, the other is reachability — and
-each of the **43 remaining queries** carries both risks.
+each of the **36 remaining queries** carries both risks.
 
 ## Testing a sweep: assert what happens ONLY when the change is correct
 
@@ -180,6 +203,34 @@ guard (part 5), a query-only assertion passes while the guard silently rejects e
 precisely the bug being fixed. Where a guard exists, assert the end-to-end outcome instead.
 
 And run the revert. Every one of the four above was found that way and none by reading.
+
+### "It needs a git fixture" is usually a private method you have not stubbed
+
+Twice on this branch I judged a sweep's lane-sensitive guard unreachable in a unit test because it sat
+behind git-backed calls, and shipped a candidacy-only assertion with the limit stated in the PR. Review
+pushed back on the second one, and the objection was right: the git-backed calls —
+`resolveSelfHealingMergeTarget`, `findAlreadyMergedTaskCommit` — are **private instance methods**, so
+stubbing them on the manager reaches the guard with no git anywhere on the path.
+
+```ts
+const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+Object.assign(manager, {
+  resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main", source: "settings" })),
+  findAlreadyMergedTaskCommit: vi.fn(async () => ({ sha: "abcdef1234567890" })),
+});
+```
+
+`executor-worktree-owner-renamed-lanes.test.ts` already did exactly this for `findActiveWorktreeOwner`,
+with a header explaining why. I had read that file the same week. The guard was never unreachable — it
+was unreachable *the way I first tried to reach it*, and "I stated the limit honestly in the PR" made a
+gap feel resolved when it was merely disclosed.
+
+Once you are past the guard, the assertion writes itself: the sweep's own write differs by exactly the
+wiring under test — blocker clear → `status: null`, blocker fires → `status: "failed"` with a
+finalization-blocked error. Prefer that over candidacy whenever a lane-sensitive guard exists.
+
+**Before writing "this cannot be tested without a fixture", check whether the thing in the way is
+private.** If it is, it is a stub, not a fixture.
 
 ## Related
 

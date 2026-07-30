@@ -102,10 +102,20 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
   const title = args.resourceType === "merge_request"
     ? `Review MR !${args.item.iid}: ${args.item.title.slice(0, 180)}`
     : args.item.title.slice(0, 200);
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:55:
+  NO explicit `column`. An imported GitLab item enters INTAKE, and `createTask` already resolves the
+  intake column from the workflow it selects (`resolvedEntryColumn`); an explicit `column` OVERRIDES
+  that resolution, which is why this import was still naming `triage`.
+
+  `triage` was DELETED as a column by U11 — the default board's lanes are now
+  `todo | in-progress | in-review | done | archived` — so every GitLab import was landing its card in
+  a lane no workflow declares. It is not an error and nothing rejects it: the row is written, the
+  import route reports success with a task id, and the card is simply not on the board.
+  */
   const task = await store.createTask({
     title: title || undefined,
     description: buildGitLabTaskDescription(args.item),
-    column: "triage",
     dependencies: [],
     sourceIssue: provenance.sourceIssue,
     gitlabTracking: provenance.gitlabTracking,

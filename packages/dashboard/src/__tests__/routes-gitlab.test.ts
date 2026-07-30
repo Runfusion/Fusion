@@ -91,6 +91,32 @@ describe("GitLab import routes", () => {
   });
 
   /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:55:
+  THE INVARIANT: an import names no column, so the card enters the workflow's OWN intake lane.
+
+  This route passed `column: "triage"`. U11 deleted `triage` — the default board's lanes are
+  `todo | in-progress | in-review | done | archived` — and an explicit `column` OVERRIDES the intake
+  column `createTask` resolves for the workflow it selects. So every GitLab import wrote its row into
+  a lane no workflow declares. Nothing rejects it and nothing logs it: the route answers 201 with a
+  task id and the card is simply not on the board.
+
+  Asserted as ABSENCE rather than as a resolved id on purpose — the store here is a fake whose
+  `createTask` echoes its input, so a resolved value would be testing the fake. Absence is exactly
+  the property that hands the decision to the real `createTask`, and it is what fails on revert.
+  */
+  it("imports without naming a column, so createTask resolves the workflow's intake lane", async () => {
+    const fetchImpl = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ id: 9, iid: 9, project_id: 3, title: "Lane", description: "Body", web_url: "https://gitlab.example.com/g/p/-/issues/9", state: "opened", labels: [] })));
+    const { app, store } = buildApp(fetchImpl);
+
+    const res = await request(app, "POST", "/api/gitlab/project/issues/import", JSON.stringify({ project: 3, iid: 9 }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    const created = store.createTask.mock.calls[0][0];
+    expect(created.column).toBeUndefined();
+    expect(Object.keys(created)).not.toContain("column");
+  });
+
+  /*
   FNXC:IssueImportAttachments 2026-07-15-13:40:
   GitLab imports must hand the agent the same `.fusion/tasks/<id>/attachments/` contract as GitHub imports — the agent-facing behavior cannot depend on which forge the issue came from.
   Covers both image sources (description + notes) and the project-relative `/uploads/` resolution that is the easy thing to get wrong.
