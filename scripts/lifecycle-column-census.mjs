@@ -516,11 +516,17 @@ if (regressions.length > 0) {
   console.error(
     reclassifiedOnly
       /*
-      The whole failure here is a bookkeeping step, and the previous message actively misdirected:
-      it announced a RISE for a change that LOWERS unconverted debt, so the reader went hunting for a
-      regression that does not exist. Say what happened and give the one command that fixes it.
+      The whole failure here is a bookkeeping step, and the original message actively misdirected: it
+      announced a RISE for a change that does not raise unconverted debt, so the reader went hunting
+      for a regression that does not exist.
+
+      FNXC:LifecycleColumnCensus 2026-07-30-20:30 (#2811 review — coderabbit):
+      "did NOT increase", not "went DOWN". `reclassified` is `guardsNow <= guardsBefore`, so it is TRUE
+      when the guard count is UNCHANGED — which is exactly what adding a DELIBERATE-LITERAL marker to a
+      site the parser already excluded produces. Claiming a decrease there is a second wrong number in
+      a message whose whole purpose is to stop the reader chasing one.
       */
-      ? "\nUnconverted debt went DOWN — a marker moved these sites out of the guard count.\n" +
+      ? "\nUnconverted debt did NOT increase — a marker moved these sites out of the guard count.\n" +
         "The baseline records both totals, so it must be re-recorded in the same change:\n\n" +
         "  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n"
       : "\nResolve a lifecycle column from the task's own workflow (resolveLifecycleColumns /\n" +

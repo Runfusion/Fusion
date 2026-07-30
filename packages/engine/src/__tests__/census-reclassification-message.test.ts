@@ -61,9 +61,17 @@ function runWithBaseline(mutate: (baseline: Record<string, unknown>) => void): {
 describe("the ratchet distinguishes a reclassification from a regression", () => {
   it("names a marker-only diff as a reclassification and prints the fix", () => {
     /*
-    Simulate the shape that turned main red: the tree has a marker the baseline has not recorded, and
-    the same file's guard count has fallen. Done by REMOVING deliberate entries from a copy of the
-    real baseline, which is exactly what a PR that forgot to re-record leaves behind.
+    Simulate the shape that turned main red: the tree has a marker the baseline has not recorded.
+    Done by REMOVING deliberate entries from a copy of the real baseline, which is exactly what a PR
+    that forgot to re-record leaves behind.
+
+    FNXC:LifecycleColumnCensus 2026-07-30-20:30 (#2811 review — coderabbit):
+    NOTE WHAT THIS FIXTURE ACTUALLY DOES, because the previous wording here was wrong in the same way
+    the message was. Deleting only deliberate entries does NOT lower the guard count — it leaves it
+    UNCHANGED. `reclassified` is `guardsNow <= guardsBefore`, so this case is the equality branch, and
+    the message must therefore claim "did NOT increase" rather than a decrease. Asserting a decrease
+    here would pin a second wrong number in a message whose whole job is to stop the reader chasing
+    one.
     */
     const { status, stderr } = runWithBaseline((baseline) => {
       const deliberate = baseline.deliberateByFile as Record<string, number>;
@@ -72,7 +80,9 @@ describe("the ratchet distinguishes a reclassification from a regression", () =>
 
     expect(status).toBe(1);
     expect(stderr).toContain("RECLASSIFIED as DELIBERATE-LITERAL");
-    expect(stderr).toContain("Unconverted debt went DOWN");
+    expect(stderr).toContain("Unconverted debt did NOT increase");
+    /* And it must not claim a decrease for a count that did not move. */
+    expect(stderr).not.toContain("went DOWN");
     expect(stderr).toContain("--update-baseline");
     // The misleading wording must be gone for this case.
     expect(stderr).not.toContain("column-guard count ROSE");
