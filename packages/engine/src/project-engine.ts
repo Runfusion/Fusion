@@ -18,6 +18,8 @@ import type {
   PlannerOversightStage,
 } from "@fusion/core";
 import {
+  resolveProjectColumnsForRoles,
+  REVIEW_ROLES,
   allowsAutoMergeProcessing,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
@@ -2848,7 +2850,7 @@ export class ProjectEngine {
     this.legacyAutoMergeStampAdvisoryEmitted = true;
 
     try {
-      const candidates = (await store.listTasks({ column: "in-review" }))
+      const candidates = (await this.listTasksInLaneRoles(store, REVIEW_ROLES))
         .filter((task) => task.autoMerge === true && task.autoMergeProvenance !== "user");
       if (candidates.length === 0) {
         return;
@@ -2956,8 +2958,8 @@ export class ProjectEngine {
     const overseer = this.plannerOverseer;
     try {
       const [inProgress, inReview] = await Promise.all([
-        store.listTasks({ column: "in-progress" }).catch(() => [] as Task[]),
-        store.listTasks({ column: "in-review" }).catch(() => [] as Task[]),
+        this.listTasksInLaneRoles(store, ["countsTowardWip"]).catch(() => [] as Task[]),
+        this.listTasksInLaneRoles(store, REVIEW_ROLES).catch(() => [] as Task[]),
       ]);
       const inFlight = [...inProgress, ...inReview];
       const inFlightIds = new Set(inFlight.map((t) => t.id));
@@ -5063,8 +5065,39 @@ export class ProjectEngine {
    * Clear crash-leftover merging statuses so manual merge is unblocked.
    * Unconditional (not gated on autoMerge). Safe to run on the critical path.
    */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-00:20:
+  ONE lane-aware read for this class's six `listTasks({ column: "<literal>" })` sites.
+
+  `listTasks`' `column` option filters in the STORE, so on a board whose lanes are renamed each of
+  those reads returned an EMPTY array and the machinery behind it did nothing. The census cannot see
+  any of them — it scores comparisons, and a query filter is not a comparison — so this file reads as
+  fully converted (0 column guards) while the whole auto-merge path was inert on a custom board:
+
+    - `clearStaleMergingStatuses` never cleared a crash-leftover `merging` status, so MANUAL MERGE
+      stayed blocked after an engine crash — the one that costs an operator directly;
+    - the three `enqueueEligibleInReviewTasks` feeds never enqueued anything, so auto-merge never ran;
+    - the legacy auto-merge stamp advisory never warned;
+    - the planner overseer never saw an in-progress or in-review card.
+
+  Project-level resolution, because a read has no task in hand to resolve from, and the legacy ids are
+  always unioned so a board mid-rename still finds rows stored under the old ones. Deduped by id
+  because one column can carry two roles.
+  */
+  private async listTasksInLaneRoles(
+    store: TaskStore,
+    roles: Parameters<typeof resolveProjectColumnsForRoles>[1],
+  ): Promise<Task[]> {
+    const columns = await resolveProjectColumnsForRoles(store, roles);
+    const byId = new Map<string, Task>();
+    for (const column of columns) {
+      for (const task of await store.listTasks({ column })) byId.set(task.id, task as Task);
+    }
+    return [...byId.values()];
+  }
+
   private async clearStaleMergingStatuses(store: TaskStore): Promise<Task[]> {
-    const tasks = await store.listTasks({ column: "in-review" });
+    const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
     // No merge is actually running at startup, so any task still marked
     // as merging is a leftover from a previous engine lifecycle.
     const staleStatuses = new Set(["merging", "merging-pr"]);
@@ -5091,7 +5124,7 @@ export class ProjectEngine {
         runtimeLog.log("Auto-merge startup enqueue skipped: pause active");
         return;
       }
-      const tasks = await store.listTasks({ column: "in-review" });
+      const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
       if (this.shuttingDown) return;
       const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
@@ -5163,7 +5196,7 @@ export class ProjectEngine {
       try {
         const settings = await store.getSettings();
         if (!settings.globalPause && !settings.enginePaused) {
-          const tasks = await store.listTasks({ column: "in-review" });
+          const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
           await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
         }
       } catch (err: unknown) {
@@ -5243,7 +5276,7 @@ export class ProjectEngine {
     }
 
     try {
-      const tasks = await store.listTasks({ column: "in-review" });
+      const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
       await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
     } catch (err: unknown) {
       runtimeLog.warn(

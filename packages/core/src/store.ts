@@ -127,6 +127,7 @@ import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
@@ -844,7 +845,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     const shiftedTaskIds: string[] = [];
-    const tasks = await this.listTasks({ column: "in-progress", includeArchived: false, slim: true });
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    The engine-downtime timing shift read the wip lane by name, so on a renamed board it found NO
+    tasks and no active-timing anchor was ever shifted — every card's active time then silently
+    absorbed the stopped-engine wall-clock this sweep exists to exclude.
+    */
+    const wipColumns = await resolveProjectColumnsForRoles(this, ["countsTowardWip"]);
+    const byId = new Map<string, Task>();
+    for (const column of wipColumns) {
+      for (const task of await this.listTasks({ column, includeArchived: false, slim: true })) byId.set(task.id, task);
+    }
+    const tasks = [...byId.values()];
     for (const task of tasks) {
       const startedMs = Date.parse(task.executionStartedAt ?? "");
       if (!Number.isFinite(startedMs) || startedMs > heartbeatMs) continue;

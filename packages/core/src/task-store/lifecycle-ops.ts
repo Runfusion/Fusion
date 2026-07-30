@@ -32,7 +32,8 @@ import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
-import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
+import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError, readTaskRow} from "./async-persistence.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 
@@ -1045,11 +1046,46 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
         // `default-workflow:postCommit` needs no re-run — just a clear).
         const hasSurvivingPluginHook = hooksRemaining.some((h) => h !== "default-workflow:postCommit");
         if (hasSurvivingPluginHook) {
+          /*
+          FNXC:PostgresCutover 2026-07-31-15:40 (DEADLOCK, introduced by the backend-mode port above):
+          LOCK-FREE READ, and it must stay lock-free. This whole block runs inside
+          `store.withTaskLock(id, ...)`, and the per-task lock is NON-REENTRANT — the same invariant
+          `branch-and-pr-entities.ts` and `workflow-ops.ts` both state in prose. `store.getTask()`
+          acquires that lock (`getTaskImpl` opens with `store.withTaskLock(id, ...)`), so reading
+          through it here waits forever on a lock this very frame holds.
+
+          The SQLite path on the line below never had the bug: `readTaskFromDb` is a lock-free row
+          read. The port swapped it for `getTask` on the backend arm only, so the deadlock is
+          PostgreSQL-only — which is every production install.
+
+          Reachability is narrow but real, and it is exactly the state a crash leaves behind: the
+          branch runs only when a stale marker names a plugin hook the registry still knows
+          (`hasSurvivingPluginHook`). A marker with no plugin hook, or one naming an uninstalled
+          plugin, takes the degraded path and never reaches here — which is why every existing test
+          passes. This sweep runs at STARTUP, and it deadlocks while holding the task's lock, so the
+          affected task is also left permanently unlockable.
+          */
           const task = backend
-            ? await store.getTask(id).catch(() => null)
+            ? await readTaskRow(store.asyncLayer!, id).catch(() => null) as { column?: string } | null
             : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
-            const ir = store.resolveTaskWorkflowIrSync(id);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-18:40 (PR #2809 review — greptile P1):
+            ASYNC RESOLVER, because the sync one cannot answer here. `resolveTaskWorkflowIrSync`
+            returns the DEFAULT workflow IR for every task under PostgreSQL (its selection reader is
+            a cutover stub that answers `undefined` unconditionally). The hook runner below derives
+            its pending set from the columns of the IR it is handed, so with the default IR a task on
+            a CUSTOM workflow matched no plugin trait and its interrupted hook was silently skipped —
+            the recovery reported success having re-run nothing.
+
+            Nothing forced the sync call: this frame is already `async`, and awaiting here does not
+            reorder anything (the marker read above is awaited on the same path). The sync reader was
+            simply the one the SQLite-era code had.
+
+            This site is removed from the `resolveTaskWorkflowIrSync` call-site allow-list in the same
+            change, so the two cannot drift.
+            */
+            const ir = await resolveWorkflowIrForTask(store, id);
             // fromColumn is unknown post-crash; the marker only records toColumn.
             // The hook runner keys onEnter off toColumn (and onExit off fromColumn);
             // re-running onEnter for the destination is the recoverable, idempotent
@@ -1057,7 +1093,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
             // toColumn at marker-write time, so current == toColumn and onExit is a
             // no-op, which is correct — we never re-fire an exit we may have run).
             try {
-              await store.runPluginColumnTransitionHooks(id, ir, task.column, live.toColumn);
+              await store.runPluginColumnTransitionHooks(id, ir, task.column as string, live.toColumn);
             } catch (err) {
               storeLog.warn("transitionPending recovery: hook re-run faulted (degraded)", {
                 phase: "recover-stale-transition-pending",
