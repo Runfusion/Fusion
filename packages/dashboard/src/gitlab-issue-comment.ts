@@ -1,5 +1,6 @@
 import type { ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { resolveGitLabClient, resolveGitLabTarget, resolveGitLabTargetFromItem, safeLogGitLabEntry } from "./gitlab-lifecycle.js";
+import { hasTaskLanded } from "./task-lifecycle-lanes.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import { formatReleaseVersionLines } from "./fusion-release-version.js";
 
@@ -71,7 +72,13 @@ export class GitLabIssueCommentService {
   }
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
-    if (event.to !== "done" || event.task.sourceIssue?.provider !== "gitlab") return;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:15 (batch-core):
+    The GitLab twin of the GitHub commenter's landed check — same question, same literal, same silent
+    no-op on a renamed board. Provider is tested first because it is free; the lane resolution is not.
+    */
+    if (event.task.sourceIssue?.provider !== "gitlab") return;
+    if (!(await hasTaskLanded(this.store, event.task.id, event.to))) return;
     const settings = await this.store.getSettings() as Pick<ProjectSettings, "gitlabCommentOnDone" | "gitlabCommentTemplate">;
     if (settings.gitlabCommentOnDone !== true) return;
 

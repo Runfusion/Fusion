@@ -1,5 +1,6 @@
 import type { TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
+import { hasTaskLanded } from "./task-lifecycle-lanes.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import {
   FUSION_SELF_REPO,
@@ -115,7 +116,15 @@ export class GitHubIssueCommentService {
   }
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
-    if (event.to !== "done") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:15 (batch-core):
+    "Did this task land?" — resolved from the task's own workflow. Keyed on `done`, a board that
+    renamed its complete lane never commented on or closed its GitHub source issues at all: the
+    listener returned before reading a single setting, so the feature looked disabled rather than
+    broken. Shared with the GitLab commenter and the backfill reconciler, which asked the same
+    question with the same literal.
+    */
+    if (!(await hasTaskLanded(this.store, event.task.id, event.to))) {
       return;
     }
 
