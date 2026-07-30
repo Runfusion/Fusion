@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   LEGACY_COLUMN_IDS_BY_ROLE,
+  TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -6650,9 +6651,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async reconcileStaleMergerStatus(): Promise<number> {
     try {
-      const done = await this.store.listTasks({ column: "done", slim: true });
-      const archived = await this.store.listTasks({ column: "archived", slim: true });
-      const candidates = [...done, ...archived].filter((task) => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (the query-filter class, sixteenth sweep):
+      A card that reached a terminal lane while still carrying `merging`/`merging-pr` holds the merger
+      queue. Two literal reads meant that on a renamed board the stale status was never cleared, so one
+      finished card blocked the queue for every task behind it.
+
+      ONE union read, not two buckets: unlike the sweeps before it, nothing here treats complete and
+      archived differently — the only filter is on `status` — so splitting them would add a distinction
+      the code does not make. Deduped, because the two roles can share a column (the P1 on #2879).
+      */
+      const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+      const terminalById = new Map<string, Task>();
+      for (const column of terminalColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) terminalById.set(task.id, task);
+      }
+      const candidates = [...terminalById.values()].filter((task) => {
         const s = task.status;
         return s === "merging" || s === "merging-pr";
       });
