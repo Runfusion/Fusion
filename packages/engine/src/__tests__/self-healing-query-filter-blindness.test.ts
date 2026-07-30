@@ -118,6 +118,7 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    parseFileScopeFromPrompt: vi.fn(async () => []),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -898,5 +899,56 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:50 (the query-filter class, eleventh sweep):
+  `clearStaleBlockedBy` is the sweep that unsticks a card still pointing at a blocker that has since
+  finished. Its BODY was already lane-resolved — per-referenced-task lanes, a shared IR cache, legacy ids
+  unioned, all of it — and none of that ran, because the three reads above it asked for the literal
+  `todo`/`in-progress`/`in-review`. A textbook case of the class this file exists for: the expensive half
+  was converted and delivered nothing while the cheap half above it stayed literal.
+
+  Three reads, not one union: the buckets are treated DIFFERENTLY downstream (hold cards seed the
+  queued-dependency pass; review cards are exempted when paused), so each card is classified against its
+  own workflow after the union read.
+
+  REVERT CHECK, measured: with the three literal reads restored, this fails — the blocked card is never
+  listed, so its stale `blockedBy` is never cleared.
+  */
+  it("clears a stale blockedBy on a RENAMED board once the blocker has landed", async () => {
+    const blocker = { ...shippedCard(), id: "FN-BLOCKER", column: RENAMED_VOCAB.complete } as Task;
+    const blocked = {
+      ...shippedCard(),
+      id: "FN-STUCK",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-BLOCKER",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([blocker, blocked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).clearStaleBlockedBy();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-STUCK", expect.objectContaining({ blockedBy: null }));
+  });
+
+  it("leaves blockedBy alone while the blocker is still in flight on a RENAMED board", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared every blockedBy it found would satisfy the
+    case above. Same board, same pair — only the blocker's lane changes.
+    */
+    const blocker = { ...shippedCard(), id: "FN-BLOCKER", column: RENAMED_VOCAB.wip } as Task;
+    const blocked = {
+      ...shippedCard(),
+      id: "FN-STUCK",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-BLOCKER",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([blocker, blocked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).clearStaleBlockedBy();
+
+    expect(updateTask).not.toHaveBeenCalled();
   });
 });
