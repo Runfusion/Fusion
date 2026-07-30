@@ -157,6 +157,47 @@ function seedAgentsCache(projectId: string, agents: Array<{ id: string; name: st
   );
 }
 
+/*
+FNXC:TaskCardParity 2026-07-31-00:25:
+READ DECLARED CSS FROM THE CSSOM — `getComputedStyle` cannot be trusted for tokenized values here.
+
+jsdom does not substitute `var()`. Worse, WHAT it does instead changed under us: on jsdom 27 an
+unresolvable shorthand echoed its raw text (`padding` read back as
+"var(--space-xs) var(--space-sm)"), and on jsdom 29 (bumped in 4819c2634) the same declaration
+computes to "0", while single-value longhands like `gap` still echo. Tests that asserted the echoed
+string were pinning a jsdom implementation detail, so the upgrade turned them red with the CSS
+completely unchanged.
+
+This reads the DECLARED value off the mounted stylesheet's CSSOM and resolves a single `var()`
+against `:root`, which is stable across jsdom versions and is what the assertions actually meant.
+The CSSOM is used rather than a regex over the CSS text on purpose: a hand-rolled matcher over
+grouped selectors silently matches the wrong rule and still reports success.
+
+Later rules win, matching the cascade for equal specificity.
+*/
+function declaredStyle(selector: string, property: string): string {
+  let declaration: string | undefined;
+  for (const sheet of Array.from(document.styleSheets)) {
+    for (const rule of Array.from(sheet.cssRules ?? [])) {
+      if (!(rule instanceof CSSStyleRule)) continue;
+      if (!rule.selectorText.split(",").some((part) => part.trim() === selector)) continue;
+      const value = rule.style.getPropertyValue(property).trim();
+      if (value) declaration = value;
+    }
+  }
+  expect(declaration, `no ${property} declaration found for ${selector}`).toBeDefined();
+  return declaration!;
+}
+
+/** Resolves a bare `var(--token)` against `:root`; any other value is returned unchanged. */
+function resolveCssToken(value: string): string {
+  const token = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value.trim());
+  if (!token) return value.trim();
+  const resolved = getComputedStyle(document.documentElement).getPropertyValue(token[1]).trim();
+  expect(resolved, `token ${token[1]} resolved to nothing`).not.toBe("");
+  return resolved;
+}
+
 function mountCssForBadgeTests() {
   const style = document.createElement("style");
   style.textContent = loadAllAppCss();
@@ -5903,12 +5944,33 @@ describe("TaskCard", () => {
       expect(githubStyles.padding).toBe(timeStyles.padding);
       expect(githubStyles.fontSize).toBe(timeStyles.fontSize);
       expect(githubStyles.lineHeight).toBe(timeStyles.lineHeight);
-      const githubBorderTopWidth = githubStyles.borderTopWidth || "1px";
-      const timeBorderTopWidth = timeStyles.borderTopWidth || "1px";
-      const githubBorderBottomWidth = githubStyles.borderBottomWidth || "1px";
-      const timeBorderBottomWidth = timeStyles.borderBottomWidth || "1px";
-      expect(githubBorderTopWidth).toBe(timeBorderTopWidth);
-      expect(githubBorderBottomWidth).toBe(timeBorderBottomWidth);
+      /*
+      FNXC:TaskCardParity 2026-07-31-00:10:
+      BORDER WIDTH IS READ FROM THE CSSOM, because computed style cannot answer it in jsdom.
+
+      The chips are in real parity: the GitHub badge declares `border: 1px solid transparent`, the
+      timer chip declares `border: var(--btn-border-width) solid transparent`, and
+      `--btn-border-width` is `1px` (styles.css:183). jsdom does not substitute `var()`, so the
+      shorthand fails to parse and `borderTopWidth` comes back as the initial value `medium` —
+      producing `expected '1px' to be 'medium'` for a card whose geometry never drifted.
+
+      Computed style cannot be repaired here: the width is not merely unsubstituted, it is
+      DISCARDED, leaving no token to resolve. (The old `|| "1px"` fallbacks never fired either —
+      `medium` is a non-empty string, so it was the fallback that never ran, not the value that was
+      missing.)
+
+      So parity is asserted against the DECLARED rules via the CSSOM the mounted stylesheet already
+      exposes, with tokens resolved from `:root`. Using the CSSOM rather than a regex over the CSS
+      text on purpose: a hand-rolled matcher over grouped selectors is the kind of cheap check that
+      silently matches the wrong rule and still reports success.
+
+      A real divergence — one chip moving to 2px, or a token change touching only one of them —
+      still fails, which is the FN-4511 invariant. Everything jsdom CAN resolve (padding, font-size,
+      line-height, gap) stays asserted against computed style above.
+      */
+      const declaredBorderWidth = (selector: string): string =>
+        resolveCssToken(declaredStyle(selector, "border").split(/\s+/)[0]);
+      expect(declaredBorderWidth(".card-time-indicator")).toBe(declaredBorderWidth(".card-github-badge"));
       expect(githubStyles.gap).toBe(timeStyles.gap);
 
       if (githubBadge.offsetHeight > 0 || timeIndicator.offsetHeight > 0) {
@@ -7584,9 +7646,14 @@ describe("TaskCard mission badge", () => {
       expect(promoteButton).toHaveClass("card-promote-action");
       expect(promoteButton.textContent).toContain("Promote");
 
-      const styles = getComputedStyle(promoteButton);
-      expect(styles.gap).toBe("var(--space-xs)");
-      expect(styles.padding).toBe("var(--space-xs) var(--space-sm)");
+      /*
+      Asserted against the DECLARED rule, not `getComputedStyle`. The computed reading of `padding`
+      here was "var(--space-xs) var(--space-sm)" under jsdom 27 and became "0" under jsdom 29 with
+      the CSS untouched — see the note on `declaredStyle`. The intent is that the promote action
+      uses the standard chip spacing tokens, which is what these now check.
+      */
+      expect(declaredStyle(".card-promote-action", "gap")).toBe("var(--space-xs)");
+      expect(declaredStyle(".card-promote-action", "padding")).toBe("var(--space-xs) var(--space-sm)");
     } finally {
       style.remove();
     }
