@@ -373,6 +373,43 @@ describe("#3 the continuation drain holds, and never cancels, an approval-blocke
     expect(resolvePlanningContinuationCandidate(dueItem(), task()).kind).toBe("actionable");
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (fleet phase — the drain's TERMINAL test):
+  `resolvePlanningContinuationCandidate` orphans a continuation whose task has reached a terminal lane.
+  That test was `column === "archived" || column === "done"`, so on a renamed board it matched nothing and
+  a FINISHED card's planning continuation was still handed to the executor — re-entering plan review on
+  work that is already done.
+
+  `lifecycle` is optional, so every case above keeps asserting the legacy-id behaviour unchanged; these
+  two supply it. That is also why none of the existing 25 cases could have caught this.
+
+  REVERT CHECK, measured: restoring the literals makes the renamed case fail — kind is "actionable"
+  where it must be "orphan". The default-vocabulary case passes either way.
+  */
+  const RENAMED_LIFECYCLE = { hold: "backlog", wip: "building", review: "checking", complete: "shipped", archived: "attic" };
+
+  it("orphans a continuation whose card reached a RENAMED terminal lane", () => {
+    for (const column of ["shipped", "attic"]) {
+      const resolved = resolvePlanningContinuationCandidate(
+        dueItem(),
+        task({ column } as never),
+        { lifecycle: RENAMED_LIFECYCLE as never },
+      );
+      expect(resolved.kind, `${column} should be terminal`).toBe("orphan");
+      if (resolved.kind === "orphan") expect(resolved.reason).toBe("task-terminal");
+    }
+  });
+
+  it("still dispatches for a live card on that same renamed board", () => {
+    // Non-vacuous: the terminal test must not swallow every column on a renamed board.
+    const resolved = resolvePlanningContinuationCandidate(
+      dueItem(),
+      task({ column: "building" } as never),
+      { lifecycle: RENAMED_LIFECYCLE as never },
+    );
+    expect(resolved.kind).toBe("actionable");
+  });
+
   for (const hold of APPROVAL_HOLDS) {
     it(`skips dispatch (${hold.label}) and leaves the item claimable for after the decision`, () => {
       const resolved = resolvePlanningContinuationCandidate(dueItem(), task({ ...hold.fields }));
