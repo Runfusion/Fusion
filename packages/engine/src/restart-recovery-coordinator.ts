@@ -82,6 +82,9 @@ export function isRecoverableMissingWorktreeReviewFailureWithProgress(
   task: Task,
   reviewColumns?: ReadonlySet<string>,
 ): boolean {
+  /* DELIBERATE-LITERAL — the no-metadata default documented above: an unconverted caller keeps
+     today's behaviour. Deleting it makes every card read as outside the review lane, which disables
+     the recovery entirely rather than degrading it. */
   return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && task.status === "failed"
@@ -93,6 +96,9 @@ export function isRecoverableMissingWorktreeReviewFailureNoProgress(
   task: Task,
   reviewColumns?: ReadonlySet<string>,
 ): boolean {
+  /* DELIBERATE-LITERAL — the no-metadata default documented above: an unconverted caller keeps
+     today's behaviour. Deleting it makes every card read as outside the review lane, which disables
+     the recovery entirely rather than degrading it. */
   return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && task.status === "failed"
@@ -107,6 +113,9 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(
   task: Task,
   reviewColumns?: ReadonlySet<string>,
 ): boolean {
+  /* DELIBERATE-LITERAL — the no-metadata default documented above: an unconverted caller keeps
+     today's behaviour. Deleting it makes every card read as outside the review lane, which disables
+     the recovery entirely rather than degrading it. */
   return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && typeof task.status === "string"
@@ -132,6 +141,7 @@ export function isInReviewMissingWorktreeSessionStartFailure(
   task: Task,
   isReviewColumn?: boolean,
 ): boolean {
+  /* DELIBERATE-LITERAL — same documented default, boolean-shaped for the caller that resolves it. */
   return (isReviewColumn ?? task.column === "in-review")
     && isMissingWorktreeSessionStartFailure(task.error);
 }
@@ -166,6 +176,14 @@ export class RestartRecoveryCoordinator {
     in-progress sweep and `server.ts`'s reliability counts, both flagged in earlier fleet PRs.
     */
     const allInProgress = await this.store.listTasks({ slim: true, column: "in-progress" });
+    /*
+    DELIBERATE-LITERAL — redundant with the query above, per the note preceding it.
+
+    The real gap here is the QUERY, which the census tracks in its own category (this file is counted
+    there, so marking the filter hides nothing). Converting the filter alone would drop the guard
+    count by one and change nothing an operator sees, because the query never asked for a renamed
+    wip lane's rows in the first place.
+    */
     const candidates = allInProgress.filter((task) => task.column === "in-progress" && !task.paused);
 
     if (candidates.length === 0) return;
