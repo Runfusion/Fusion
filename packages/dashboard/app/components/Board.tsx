@@ -551,17 +551,34 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
-  Every HOLD-trait column id across ALL workflows on the board, not just the selected one:
-  the worktree grouping scans every task, so a card sitting in another workflow's hold lane
-  still belongs in the upcoming-work list.
+  The TASK IDS whose own column is a hold lane IN THEIR OWN WORKFLOW.
+
+  Resolved per task rather than as a board-wide set of hold column IDS (PR #2625 review —
+  greptile). Column ids are namespaced per workflow, so two workflows can both declare
+  `staging` with one marking it `hold` and the other `countsTowardWip`. A unioned id set
+  cannot tell those apart, and every executing card in the second workflow would have shown
+  up under Up Next as waiting work — a wrong answer presented confidently, which is worse
+  than the renamed-board emptiness this change set out to fix.
+
+  Resolving through `getEffectiveTaskWorkflowId` removes the ambiguity instead of narrowing
+  it: the question "is this card waiting?" is answered by the card's own workflow, which is
+  the only workflow that can answer it.
   */
-  const holdColumnIds = useMemo(() => {
-    const ids = new Set<string>();
+  const holdTaskIds = useMemo(() => {
+    const holdColumnsByWorkflowId = new Map<string, Set<string>>();
     for (const workflow of boardWorkflows?.workflows ?? []) {
-      for (const col of workflow.columns) if (col.flags.hold === true) ids.add(col.id);
+      holdColumnsByWorkflowId.set(
+        workflow.id,
+        new Set(workflow.columns.filter((col) => col.flags.hold === true).map((col) => col.id)),
+      );
+    }
+    const ids = new Set<string>();
+    for (const task of tasks) {
+      const workflowId = getEffectiveTaskWorkflowId(task);
+      if (workflowId && holdColumnsByWorkflowId.get(workflowId)?.has(task.column)) ids.add(task.id);
     }
     return ids;
-  }, [boardWorkflows]);
+  }, [boardWorkflows, tasks, getEffectiveTaskWorkflowId]);
 
   const selectedWorkflowContextMenuColumns = useMemo(() => (
     selectedWorkflow ? workflowContextMenuColumnsByWorkflowId.get(selectedWorkflow.id) : undefined
@@ -904,7 +921,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   columnDisplayName={columnDef.name}
                   columnDescription={columnDef.description}
                   columnFlags={columnDef.flags}
-                  holdColumnIds={holdColumnIds}
+                  holdTaskIds={holdTaskIds}
                   taskContextMenuColumnsByTaskId={taskContextMenuColumnsByTaskId}
                   tasks={aggregateTasksByColumn[columnDef.id] ?? []}
                   projectId={projectId}
@@ -987,7 +1004,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 columnDisplayName={columnDef.name}
                 columnDescription={columnDef.description}
                 columnFlags={columnDef.flags}
-                holdColumnIds={holdColumnIds}
+                holdTaskIds={holdTaskIds}
                 workflowContextMenuColumns={selectedWorkflowContextMenuColumns}
                 tasks={selectedWorkflowTasksByColumn[columnDef.id] ?? []}
                 allTasks={selectedWorkflowTasks}
@@ -1048,7 +1065,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               columnDisplayName={selectedWorkflowArchivedColumn.name}
               columnDescription={selectedWorkflowArchivedColumn.description}
               columnFlags={selectedWorkflowArchivedColumn.flags}
-              holdColumnIds={holdColumnIds}
+              holdTaskIds={holdTaskIds}
               workflowContextMenuColumns={selectedWorkflowContextMenuColumns}
               tasks={selectedWorkflowTasksByColumn[selectedWorkflowArchivedColumn.id] ?? []}
               allTasks={selectedWorkflowTasks}

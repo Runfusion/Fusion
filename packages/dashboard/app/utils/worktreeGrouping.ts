@@ -61,13 +61,19 @@ export function groupByWorktree(
   maxConcurrent: number,
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
-  The ids of every column on the board carrying the HOLD trait, when the caller resolved
-  them. A SET rather than one column's flags because this helper scans `allTasks`: it must
-  recognise the hold lane of any workflow represented on the board, which is the reason the
-  earlier note said there was no seam here. Board has that information; Lane does not, and
-  omitting it keeps the documented legacy-id fallback.
+  The ids of TASKS whose own column is a hold lane in their own workflow, when the caller
+  resolved them.
+
+  Task ids, not column ids (PR #2625 review — greptile). This helper scans `allTasks`, which
+  can span workflows, and column ids are namespaced per workflow — two workflows may both
+  declare `staging` with only one of them marking it `hold`. A unioned column-id set cannot
+  tell those apart and would list every executing card of the second workflow as waiting.
+  Only a card's own workflow can answer "is this waiting?", so the caller answers it per task
+  and passes the result.
+
+  Board resolves this; Lane does not pass it and keeps the legacy-id fallback.
   */
-  holdColumnIds?: ReadonlySet<string>,
+  holdTaskIds?: ReadonlySet<string>,
 ): WorktreeGroupData[] {
   // Separate assigned vs unassigned in-progress tasks
   const assigned = inProgressTasks.filter((t) => t.worktree);
@@ -98,9 +104,9 @@ export function groupByWorktree(
   */
   // Find queued hold-lane tasks: cards in the hold column with all deps satisfied.
   const taskById = new Map(allTasks.map((t) => [t.id, t]));
-  const isWaitingColumn = (column: string): boolean =>
-    holdColumnIds ? holdColumnIds.has(column) : isHoldColumnRole(undefined, column);
-  const todoTasks = allTasks.filter((t) => isWaitingColumn(t.column));
+  const isWaitingTask = (task: Task): boolean =>
+    holdTaskIds ? holdTaskIds.has(task.id) : isHoldColumnRole(undefined, task.column);
+  const todoTasks = allTasks.filter(isWaitingTask);
   const eligible = todoTasks.filter((t) =>
     !t.paused &&
     (t.dependencies || []).every((depId) => {
