@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { isCompleteColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
 import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit, WrapText, Maximize2 } from "lucide-react";
 import type { MergeDetails, ColumnId } from "@fusion/core";
@@ -14,6 +15,8 @@ import "./TaskDiffShared.css";
 import "./TaskChangesTab.css";
 
 interface TaskChangesTabProps {
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  columnFlags?: Parameters<typeof isCompleteColumnRole>[0];
   taskId: string;
   worktree?: string;
   projectId?: string;
@@ -136,7 +139,7 @@ interface NormalizedFile {
  * modifiedFiles view instead of showing a hard error. This preserves the prior
  * graceful behavior while allowing FN-4563/FN-4576 lineage-backed parity.
  */
-export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetails, modifiedFiles, isWorkspace }: TaskChangesTabProps) {
+export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, column, mergeDetails, modifiedFiles, isWorkspace }: TaskChangesTabProps) {
   const { t } = useTranslation("app");
   const [files, setFiles] = useState<NormalizedFile[]>([]);
   const [stats, setStats] = useState<{ filesChanged: number; additions: number; deletions: number }>({ filesChanged: 0, additions: 0, deletions: 0 });
@@ -147,10 +150,21 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
   const [wordWrap, setWordWrap] = useState(true);
   const [expandedViewOpen, setExpandedViewOpen] = useState(false);
 
-  const isDone = column === "done";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-17:00 (batch-dashboard-app):
+  Two role questions, both resolved; `columnFlags` omitted -> the legacy ids.
+
+  `isDone` picks the diff SOURCE: a finished card diffs against its merge commit, an in-flight one
+  against its worktree. `canLoad` decides whether a diff can be fetched at all — and it was the
+  narrower failure: on a renamed board NONE of the three ids matched, so the Changes tab loaded
+  nothing and reported no changes for every task, whatever state it was in.
+  */
+  /* `column` is optional on these props; `column === "done"` was false for undefined, so the empty
+     string preserves that exactly — no role matches it. */
+  const isDone = isCompleteColumnRole(columnFlags, column ?? "");
   const isDoneWithCommit = isDone && Boolean(mergeDetails?.commitSha);
 
-  const canLoad = column === "in-progress" || column === "in-review" || isDone;
+  const canLoad = isWipColumnRole(columnFlags, column ?? "") || isReviewColumnRole(columnFlags, column ?? "") || isDone;
 
   const loadDiff = useCallback(async () => {
     if (!canLoad && !isDone) {
@@ -471,6 +485,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
         stats={stats}
         mergeDetails={mergeDetails}
         column={column}
+        columnFlags={columnFlags}
         onClose={() => setExpandedViewOpen(false)}
         onRefresh={loadDiff}
       />
