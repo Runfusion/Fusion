@@ -85,6 +85,28 @@ pgDescribe("live planning-lane E2E: real hold-release sweep + real PostgreSQL st
       { taskId, applyDefaultWorkflowSteps: false } as never,
     );
     await store.writeTaskWorkflowSelection(taskId, workflowId, []);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (release-leg fixture fix, same defect as #2634):
+    The card needs a PLANNED PROMPT.md before the sweep will release it. Task creation leaves a
+    bootstrap seed ("# <id>\n\n<description>"), and FN-7648's `isUnplannedForExecution` reads that
+    file for any card resting in an intake- or hold-trait column and refuses to move an unplanned
+    card into a processing column. So the sweep released NOTHING and even this file's own control
+    case ("releases an ordinary held card on a default board") went red — the gate working, not a
+    scheduler defect.
+
+    Identical to the defect #2634 repaired in workflow-lifecycle-live-e2e, and the reason it is
+    worth stating twice: a release/scheduler fixture that does not model a card which cleared
+    specification is testing the gate, not the sweep.
+    */
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join((store as never as { getTasksDir(): string }).getTasksDir(), taskId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "PROMPT.md"),
+      `# ${taskId}\n\n## Context\nA planned spec, so the release sweep does not classify this card as an unplanned seed.\n\n## Steps\n### Step 1\n- [ ] do the planned work\n`,
+      "utf-8",
+    );
     if (Object.keys(fields).length > 0) await store.updateTask(taskId, fields as never);
     store.taskCache.delete(taskId);
   }
