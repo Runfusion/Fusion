@@ -9499,22 +9499,54 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const now = Date.now();
-      const inReview = await this.store.listTasks({ column: "in-review", slim: true });
       /*
-      FNXC:WorkflowColumns 2026-07-29-17:40 (PR #2560 review):
-      This trio is a UNION and is deliberately left on literals. For the merged
-      default lineage the `triage` read returns empty and `todo` supplies the cards;
-      for a legacy/custom workflow that still declares `triage` it supplies them.
-      Either way the union is complete, and the role filter below decides which rows
-      count as pre-WIP. Unlike the recoverAdvancedTriageTasks query this replaces
-      nothing and disables nothing — it is a redundant read, not a dead sweep.
+      FNXC:WorkflowResolvedColumns 2026-07-30-19:20 (the query-filter class, third sweep):
+      FOUR reads, two different jobs, and only the reads were broken.
+
+      `inReview` supplies the CANDIDATES — cards blocked on merge — so it needs both halves: the project
+      union for the read, and a per-card verdict against the card's own workflow, because this sweep
+      mutates. Same shape as `recoverAlreadyMergedReviewTasks`, provenance and reporting included.
+
+      The other three supply DEPENDENTS, and their verdict is already correct: `filterByPreWipRole`
+      resolves intake/hold per card below. The 2026-07-29-17:40 note reasoned that the literal trio was a
+      complete union "and the role filter below decides which rows count" — which held for the default and
+      legacy lineages it considered, and does not hold for a RENAMED board, where all three reads return
+      empty and the role filter is handed nothing to decide about. Widening the reads restores exactly the
+      property that note relied on; the filter it points at is unchanged.
       */
-      const triage = await this.store.listTasks({ column: "triage", slim: true });
-      const todo = await this.store.listTasks({ column: "todo", slim: true });
-      const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
+      const reviewColumnsForDeadlock = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const inReviewById = new Map<string, Task>();
+      for (const column of reviewColumnsForDeadlock) {
+        for (const task of await this.store.listTasks({ column, slim: true })) inReviewById.set(task.id, task);
+      }
+      const deadlockIrCache = new Map<string, WorkflowIr>();
+      const unresolvedDeadlockCards: string[] = [];
+      const inOwnReviewLaneForDeadlock = async (task: Task): Promise<boolean> => {
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, deadlockIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+          : [];
+        if (!resolved || resolved.source === "default") unresolvedDeadlockCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-19:20. */
+        return own.length > 0 ? own.includes(task.column) : task.column === "in-review";
+      };
+      const inReview = [...inReviewById.values()];
+
+      /* Dependents: read every pre-WIP and WIP lane the project declares; `filterByPreWipRole` below
+         still decides per card which of them actually count. */
+      const dependentSourceColumns = await resolveProjectColumnsForRoles(
+        this.store,
+        ["intake", "hold", "countsTowardWip"],
+      );
+      const dependentsById = new Map<string, Task>();
+      for (const column of dependentSourceColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) dependentsById.set(task.id, task);
+      }
+      const dependentSources = [...dependentsById.values()];
 
       const dependentsByBlocker = new Map<string, Task[]>();
-      for (const task of [...triage, ...todo, ...inProgress]) {
+      for (const task of dependentSources) {
         if (!task.blockedBy) continue;
         const dependents = dependentsByBlocker.get(task.blockedBy) ?? [];
         dependents.push(task);
@@ -9540,8 +9572,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const hasBlockedDependents = (dependentsByBlocker.get(task.id) ?? []).some(
           (dep) => preWipDependentIds.has(dep.id),
         );
-        return task.column === "in-review" &&
-          allowsAutoMergeProcessing(task, settings) &&
+        /* Lane identity is decided per card by `inOwnReviewLaneForDeadlock` below — this synchronous
+           filter keeps every other condition, so the async check runs only for rows that already qualify. */
+        return allowsAutoMergeProcessing(task, settings) &&
           !task.paused &&
           task.status === "failed" &&
           (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
@@ -9550,10 +9583,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           cooldownElapsed >= DEADLOCK_RECOVERY_COOLDOWN_MS;
       });
 
-      if (candidates.length === 0) return 0;
+      /* The per-card lane verdict is async, so it cannot live in the filter above. */
+      const laneQualified: Task[] = [];
+      for (const task of candidates) {
+        if (await inOwnReviewLaneForDeadlock(task)) laneQualified.push(task);
+      }
+      if (unresolvedDeadlockCards.length > 0) {
+        log.warn(
+          `merge-deadlock recovery: ${unresolvedDeadlockCards.length} card(s) measured against the `
+          + `built-in review lane because their own workflow could not be resolved `
+          + `(${unresolvedDeadlockCards.slice(0, 5).join(", ")}); a renamed review lane there stays deadlocked.`,
+        );
+      }
+
+      if (laneQualified.length === 0) return 0;
 
       let recovered = 0;
-      for (const task of candidates) {
+      for (const task of laneQualified) {
         if (task.deletedAt) continue;
         const blockedDependents = dependentsByBlocker.get(task.id) ?? [];
         const blockedTaskIds = blockedDependents.map((dep) => dep.id);

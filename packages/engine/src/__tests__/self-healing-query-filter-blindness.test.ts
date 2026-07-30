@@ -409,4 +409,39 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(warned).toContain("already-merged review rescue");
     expect(warned).toContain("FN-UNRESOLVED");
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:20 (the query-filter class, third sweep):
+  `recoverStuckMergeDeadlocks` reads FOUR lanes: the review lane for its candidates, and intake/hold/wip
+  for the DEPENDENTS whose blocked state proves the deadlock. All four were literals, so on a renamed
+  board the sweep saw no candidates AND no dependents — doubly blind.
+
+  Its 2026-07-29-17:40 note reasoned the literal `triage`/`todo` pair was a complete union "and the role
+  filter below decides which rows count". That held for the default and legacy lineages it considered and
+  fails on a renamed board, where the reads return nothing and the filter is handed nothing to decide
+  about. Widening the reads restores the property that note relied on; the filter itself is untouched.
+
+  REVERT CHECK, measured: restoring the literal review read fails this — the board's own review lane is
+  never asked for.
+  */
+  it("the merge-deadlock recovery asks for the board's OWN review and dependent lanes", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-DEADLOCK",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      mergeRetries: 99,
+      worktree: "/tmp/wt",
+    } as unknown as Task;
+    const { store, listTasks } = productionFaithfulStore([parked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStuckMergeDeadlocks();
+
+    /* Candidates: the board's own review lane, plus the legacy id the union keeps reachable. */
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
+    /* Dependents: the board's own pre-WIP and WIP lanes, not just `triage`/`todo`/`in-progress`. */
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.hold }));
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.wip }));
+  });
 });
