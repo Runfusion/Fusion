@@ -7,7 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
-import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import type {Task, ColumnId, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, Agent} from "../types.js";
 import {runReconciliationAbort} from "../workflow-reconciliation.js";
@@ -165,12 +166,27 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     const satisfiedColumns = new Set<string>(["done", "archived"]);
     /* FNXC:WorkflowResolvedColumns 2026-07-30-14:50 (#2739 review): reuses the dispatch cache above, so a
        task and its dependency in one workflow read that IR once between them. */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:10 (#2739 review — greptile P1, MEMBERSHIP not first-per-role):
+    `resolveLifecycleColumns` returns the FIRST column carrying each trait, so a workflow declaring two
+    complete lanes (or a complete plus a separate sign-off-complete) had only one of them counted as
+    satisfying a dependency. A dependent whose blocker landed in the SECOND terminal lane read as unfinished
+    and was dropped from both ready and actionable-blocked dispatch — silently, since "no work available" is
+    indistinguishable from "correctly waiting".
+
+    Fixed locally with `columnsWithFlag`, and worth distinguishing from the arity gap I declined to fix on
+    the earlier thread. That one asked a single-id question (`lifecycle.wip`) where making it membership
+    changes what the shared resolver returns for ~30 consumers. THIS loop already builds a SET and already
+    unions across dependencies, so membership is what it was always trying to express — no resolver change,
+    no consumer migration, and it matches the `register-task-workflow-routes` precedent.
+    */
     for (const dependencyId of new Set(
       roleCompatibleAssignedTasks.flatMap((task) => task.dependencies ?? []),
     )) {
-      const lifecycle = await resolveTaskLifecycleColumns(store, dependencyId, lifecycleIrCache);
-      if (lifecycle?.complete) satisfiedColumns.add(lifecycle.complete);
-      if (lifecycle?.archived) satisfiedColumns.add(lifecycle.archived);
+      const ir = await resolveWorkflowIrForTask(store, dependencyId, lifecycleIrCache);
+      if (!ir) continue;
+      for (const columnId of columnsWithFlag(ir, "complete")) satisfiedColumns.add(columnId);
+      for (const columnId of columnsWithFlag(ir, "archived")) satisfiedColumns.add(columnId);
     }
     const isDoneLike = (task: Task | undefined) => task !== undefined && satisfiedColumns.has(task.column);
 

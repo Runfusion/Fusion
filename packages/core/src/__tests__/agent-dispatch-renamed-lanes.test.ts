@@ -46,6 +46,13 @@ function ir(wip: string, hold: string, complete: string): WorkflowIr {
       { id: hold, name: "Hold", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
       { id: wip, name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: complete, name: "Complete", traits: [{ trait: "complete" }] },
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:15 (#2739 review — greptile P1):
+      A SECOND complete lane. `resolveLifecycleColumns` returns the FIRST column per trait, so a dependency
+      resting here was not counted as satisfied and its dependent was dropped from dispatch entirely.
+      Declared on every vocabulary so the case below is not special-cased to a renamed board.
+      */
+      { id: `${complete}-signoff`, name: "Signed off", traits: [{ trait: "complete" }] },
     ],
   } as unknown as WorkflowIr;
 }
@@ -55,8 +62,22 @@ function makeStore(tasks: Task[], workflowIr: WorkflowIr): TaskStore {
     listTasks: async () => tasks,
     getTaskWorkflowSelection: () => ({ workflowId: "wf-dispatch", stepIds: [] }),
     getWorkflowDefinition: async () => ({ ir: workflowIr }),
-    // Every dependency list in this file is empty, so "all done" is the honest answer.
-    areAllDependenciesDone: () => true,
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:25 (#2739 review — a fake that hid the thing under test):
+    REAL semantics, mirroring `areAllDependenciesDoneImpl`: a dependency is satisfied only if its column is
+    in the `satisfiedColumns` set the caller computed. The previous `() => true` made every dependency
+    trivially done, so the membership fix and the first-per-role bug were indistinguishable — the new case
+    passed with the change reverted, which is exactly the vacuous-test failure this program keeps finding.
+    */
+    areAllDependenciesDone: (
+      dependencies: string[],
+      tasksById: Map<string, Task>,
+      satisfiedColumns?: ReadonlySet<string>,
+    ) => dependencies.every((id) => {
+      const dependency = tasksById.get(id);
+      return dependency !== undefined
+        && (satisfiedColumns ?? new Set(["done", "archived"])).has(dependency.column);
+    }),
   } as unknown as TaskStore;
 }
 
@@ -139,5 +160,26 @@ describe("agent dispatch selects by lifecycle ROLE, not by column id", () => {
 
     // Current behaviour, not desired behaviour: the bind check is bypassed, so the task IS selected.
     expect(selected?.task?.id).toBe("FN-9");
+  });
+
+  it("a dependency in a SECOND complete lane satisfies the dependent (#2739 review)", async () => {
+    /*
+    The dependency loop unions terminal columns across dependencies, but added only the resolver's single
+    canonical `complete`/`archived` ids. A workflow with two complete lanes therefore left a finished
+    blocker reading as unfinished, and the dependent silently never dispatched.
+
+    REVERT CHECK, measured: putting back
+      `if (lifecycle?.complete) satisfiedColumns.add(lifecycle.complete)`
+    in place of `columnsWithFlag(ir, "complete")` fails this with `expected null to be truthy` — the
+    dependent is withheld because its blocker sits in `shipped-signoff`.
+    */
+    const dependency = task({ id: "FN-DEP", column: "shipped-signoff", assignedAgentId: undefined } as never);
+    const dependent = task({ id: "FN-8", column: "backlog", dependencies: ["FN-DEP"] } as never);
+    const store = makeStore([dependent, dependency], ir("building", "backlog", "shipped"));
+
+    const selected = await selectNextTaskForAgentImpl(store, AGENT_ID, EXECUTOR_AGENT);
+
+    expect(selected, "dependent withheld: its blocker's terminal lane was not counted").toBeTruthy();
+    expect(selected?.task?.id).toBe("FN-8");
   });
 });
