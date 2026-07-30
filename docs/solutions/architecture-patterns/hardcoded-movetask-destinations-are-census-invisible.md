@@ -50,28 +50,41 @@ excluding `__tests__`/`*.test.*` and comment lines:
 | …passing `recoveryRehome: true` — **deliberate**, see below | 22 |
 | …plain, i.e. rejected on a board that does not declare the target | **29** |
 
-The plain 29, by file:
+The plain 29 at the time of measurement, by file. **13 have since been converted** on this branch and
+in PRs #2797/#2807 — the parenthesised entries are done, and the count stands at **16 remaining**:
 
 ```text
-  6  packages/engine/src/self-healing.ts
-  3  packages/engine/src/executor.ts
-  3  packages/engine/src/project-engine.ts
+  6  packages/engine/src/self-healing.ts          (all 6 sit in query-gated sweeps — see below)
   3  plugins/fusion-plugin-even-realities-glasses/src/agent-actions.ts
-  2  packages/engine/src/recovery/foreign-only-contamination.ts
-  2  packages/engine/src/replan-target.ts
   2  packages/cli/src/extension.ts
-  2  packages/cli/src/commands/task-lifecycle.ts
-  1  packages/core/src/duplicate-intake.ts
-  1  packages/core/src/duplicate-guard.ts
-  1  packages/engine/src/auto-recovery-handlers/contamination.ts
-  1  packages/engine/src/restart-recovery-coordinator.ts
-  1  packages/engine/src/pr-comment-handler.ts   (fixed by #2807)
+  2  packages/engine/src/replan-target.ts         (both are COMMENT lines, not call sites)
   1  packages/dashboard/app/utils/appLifecycle.ts
+  1  packages/engine/src/project-engine.ts
+  ---- converted ----
+  3  packages/engine/src/executor.ts              (done)
+  2  packages/engine/src/project-engine.ts        (done)
+  2  packages/engine/src/recovery/foreign-only-contamination.ts   (done)
+  2  packages/cli/src/commands/task-lifecycle.ts  (done)
+  1  packages/core/src/duplicate-intake.ts        (done)
+  1  packages/core/src/duplicate-guard.ts         (done)
+  1  packages/engine/src/auto-recovery-handlers/contamination.ts  (done)
+  1  packages/engine/src/restart-recovery-coordinator.ts          (done)
+  1  packages/engine/src/pr-comment-handler.ts    (done, #2807)
 ```
+
+**`self-healing.ts`'s 6 are deliberately last.** Every one sits inside a sweep whose task list comes from
+a hardcoded `listTasks({ column: … })` filter, so on a renamed board the sweep returns no rows and the
+`moveTask` below it is never reached. Converting those destinations changes nothing observable until the
+query layer is fixed — see the sibling doc on self-healing. Converting them first would look like
+progress and deliver none.
+
+Three shared resolvers now cover the converted sites, in `workflow-lifecycle-traits.ts` beside
+`resolveTaskLifecycleColumns`: `resolveReboundTargetForTask`, `resolveArchiveTargetForTask`,
+`resolveWipTargetForTask`. Use them rather than re-deriving a destination per call site.
 
 Re-measure with:
 
-```text
+```bash
 grep -rn 'moveTask(' packages/*/src packages/dashboard/app packages/cli/src plugins \
   --include=*.ts --include=*.tsx | grep -v __tests__ | grep -v '\.test\.'
 ```
