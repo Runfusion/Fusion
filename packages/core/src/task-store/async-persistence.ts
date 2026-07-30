@@ -215,7 +215,7 @@ export async function resolveActiveTaskWedgeEpisodeRow(
       updatedAt: transitionedAt,
     })
     .where(and(
-      eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+      taskProjectScope(layer),
       eq(schema.project.tasks.id, id),
       isNull(schema.project.tasks.deletedAt),
       sql`${schema.project.tasks.wedgeNotification}::jsonb ->> 'episodeId' = ${episodeId}`,

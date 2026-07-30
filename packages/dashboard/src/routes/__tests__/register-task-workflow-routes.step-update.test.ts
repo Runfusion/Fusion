@@ -39,6 +39,7 @@ function createHarness(options: HarnessOptions = {}) {
     return task;
   });
   const updateStep = vi.fn(async (_id: string, index: number, status: string) => {
+    if (options.deleted) throw new TaskDeletedError("FN-001", "2026-07-29T00:00:00.000Z");
     if (!options.rejectStepTransition) task.steps[index].status = status;
     return task;
   });
@@ -160,17 +161,25 @@ describe("task checklist step update route", () => {
     expect(resolveTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
   });
 
-  it("maps a soft-deleted wedge mutation to 404", async () => {
+  /**
+   * FNXC:TaskStateReconciliation 2026-07-29-17:43:
+   * Both live mutation routes expose the same deleted-task 404 contract; testing only wedge resolution leaves checklist updates free to regress to a server error.
+   */
+  it.each([
+    ["PATCH", "/api/tasks/FN-001/steps/0", { status: "done" }],
+    ["POST", "/api/tasks/FN-001/wedge/resolve", { episodeId: "episode-observed" }],
+  ])("maps a soft-deleted task to 404 for %s %s", async (method, path, body) => {
     const { app } = createHarness({ deleted: true });
     const response = await REQUEST(
       app,
-      "POST",
-      "/api/tasks/FN-001/wedge/resolve",
-      JSON.stringify({ episodeId: "episode-observed" }),
+      method,
+      path,
+      JSON.stringify(body),
       { "content-type": "application/json" },
     );
 
     expect(response.status).toBe(404);
+    expect(response.body).toEqual(expect.objectContaining({ error: expect.stringContaining("Task FN-001 is soft-deleted") }));
   });
 
   it.each([

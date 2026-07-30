@@ -2,7 +2,7 @@
  * FNXC:TaskStateReconciliation 2026-07-29-16:10:
  * Wedge resolution is a PostgreSQL compare-and-set across dashboard processes. A resolver that waits behind a replacement write must preserve the replacement episode, while an exact active episode resolves normally.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
@@ -20,6 +20,7 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
   beforeAll(h.beforeAll);
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
+  afterEach(() => vi.restoreAllMocks());
   afterAll(h.afterAll);
 
   it("resolves the exact active episode", async () => {
@@ -39,6 +40,32 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
     expect(result.resolved).toBe(true);
     expect(result.task.wedgeNotification).toMatchObject({
       episodeId: "episode-observed",
+      status: "resolved",
+    });
+  });
+
+  it("reports a committed resolution when the derived task JSON projection fails", async () => {
+    const store = h.store();
+    const task = await h.createTestTask();
+    await store.updateTask(task.id, {
+      wedgeNotification: {
+        reasonKey: "failed:stale",
+        episodeId: "episode-projection-failure",
+        status: "active",
+        transitionedAt: "2026-07-29T00:00:00.000Z",
+      },
+    });
+    vi.spyOn(store, "writeTaskJsonFile").mockRejectedValueOnce(new Error("projection unavailable"));
+
+    const result = await store.resolveTaskWedgeNotificationEpisode(task.id, "episode-projection-failure");
+
+    expect(result.resolved).toBe(true);
+    expect(result.task.wedgeNotification).toMatchObject({
+      episodeId: "episode-projection-failure",
+      status: "resolved",
+    });
+    expect((await store.getTask(task.id)).wedgeNotification).toMatchObject({
+      episodeId: "episode-projection-failure",
       status: "resolved",
     });
   });

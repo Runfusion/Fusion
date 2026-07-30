@@ -381,7 +381,16 @@ export async function resolveTaskWedgeNotificationEpisodeImpl(
   const row = await resolveActiveTaskWedgeEpisodeRow(layer, id, episodeId, new Date().toISOString());
   if (row) {
     const task = store.rowToTask(store.pgRowToTaskRow(row));
-    await store.writeTaskJsonFile(store.taskDir(id), task);
+    /*
+    FNXC:TaskStateReconciliation 2026-07-29-17:43:
+    PostgreSQL commits wedge resolution before the task JSON projection runs. A projection failure must not report the committed mutation as failed; keep cache and lifecycle observers current while startup reconciliation repairs the derived file.
+    */
+    await store.writeTaskJsonFile(store.taskDir(id), task).catch((error) => {
+      severityAuditLog.warn("Failed to project committed wedge resolution to task JSON", {
+        taskId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (store.isWatching) store.taskCache.set(id, { ...task });
     store.emitTaskLifecycleEventSafely("task:updated", [task]);
     return { task, resolved: true };
