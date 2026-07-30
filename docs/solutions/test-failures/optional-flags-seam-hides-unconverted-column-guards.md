@@ -107,6 +107,43 @@ which is the same churn already removed from the census baseline by dropping its
 So the requirement lives here, as a review criterion, until someone finds a sound signal. The honest
 version of the automated attempt is recorded above so it is not re-attempted from scratch.
 
+## The census counts comparisons, so a literal COLLECTION is invisible to it
+
+Measured on `origin/main` while assessing the next conversion target, and worth stating because the fleet
+treats the census total as the completion bar:
+
+- **47** array/Set literals of two or more lifecycle ids, in 35 files.
+- Of those, **25 are used as MEMBERSHIP PREDICATES against a task's column** — `SET.has(task.column)` /
+  `ARRAY.includes(task.column)` — in 19 files. Two are documented fallbacks behind a resolved primary
+  (`triage.ts`, `mission-feature-sync.ts`), so roughly 23 are unconverted guards.
+- The census scans `===` / `!==` against a column. **None of these is a comparison, so none is counted.**
+
+They behave exactly like the guards the census does count. The largest concentrations:
+
+| file | constant |
+| --- | --- |
+| `cli/src/commands/task.ts` (3) | `retryReviewColumns` |
+| `dashboard/app/components/TaskCard.tsx` (2) | `TIME_INDICATOR_COLUMNS` |
+| `engine/src/eval-followups.ts` (2) | `OPEN_COLUMNS` |
+| `engine/src/merger.ts` (2) | `sourceTerminal` |
+| `engine/src/task-revert.ts` (2) | `REVERTABLE_COLUMNS` |
+| `core/src/agent-role-policy.ts` (1) | `IMPLEMENTATION_TASK_COLUMNS` |
+
+**One is a proven live defect.** `isImplementationTask` is `IMPLEMENTATION_TASK_COLUMNS.has(task.column)`,
+and `evaluateImplementationTaskBind` short-circuits to `allowed: true` when it returns false — so on a
+renamed board every agent is bind-compatible with every task and the role check that stops a liaison being
+handed implementation work does not apply. It surfaced only because a reviewer questioned a coverage claim
+in a dispatch test; asserting the claim properly made the defect fail a test.
+
+**So the census total is a floor, not a total.** That is not an argument against it — it is the best
+instrument here and it is AST-based and honest about what it measures. It is an argument against reading
+"backlog: N" as "N guards remain". The same shape appeared in the archived gate (PR #2724), where the rule
+is also encoded in Drizzle predicates and raw `sql` templates that no comparison scan can see.
+
+Extending the census to count membership predicates is a coordinator-level call, not a worker one: it would
+move every worker's number mid-fleet, and the classification work (which sets are lifecycle guards versus
+board-config definitions or type unions) is exactly the judgement the `deliberate` marker exists for.
+
 ## Related
 
 - `docs/solutions/test-failures/store-fake-defects-that-masquerade-as-production-bugs.md` — the adjacent
