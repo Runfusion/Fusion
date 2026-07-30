@@ -128,4 +128,58 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
       status: "active",
     });
   });
+
+  it.each([
+    { label: "without audit", runContext: undefined, persistMethod: "atomicWriteTaskJson" as const },
+    { label: "with audit", runContext: { agentId: "wedge-test", runId: "stale-wedge-write" }, persistMethod: "atomicWriteTaskJsonWithAudit" as const },
+  ])("does not let an ordinary $label task write reactivate a resolved episode", async ({ runContext, persistMethod }) => {
+    const store = h.store();
+    const task = await h.createTestTask();
+    await store.updateTask(task.id, {
+      wedgeNotification: {
+        reasonKey: "failed:stale",
+        episodeId: "episode-resolved-before-stale-write",
+        status: "active",
+        transitionedAt: "2026-07-29T00:00:00.000Z",
+      },
+    });
+
+    const originalPersist = store[persistMethod].bind(store) as (...args: unknown[]) => Promise<void>;
+    let reportStaleSnapshot!: () => void;
+    const staleSnapshotReady = new Promise<void>((resolve) => {
+      reportStaleSnapshot = resolve;
+    });
+    let releaseStaleWrite!: () => void;
+    const staleWriteMayPersist = new Promise<void>((resolve) => {
+      releaseStaleWrite = resolve;
+    });
+    const persistSpy = vi.spyOn(store, persistMethod) as unknown as {
+      mockImplementationOnce: (implementation: (...args: unknown[]) => Promise<void>) => void;
+    };
+    persistSpy.mockImplementationOnce(async (...args: unknown[]) => {
+      reportStaleSnapshot();
+      await staleWriteMayPersist;
+      await originalPersist(...args);
+    });
+
+    const staleWrite = store.updateTask(task.id, { title: "ordinary concurrent update" }, runContext);
+    await staleSnapshotReady;
+    const resolution = await store.resolveTaskWedgeNotificationEpisode(
+      task.id,
+      "episode-resolved-before-stale-write",
+    );
+    releaseStaleWrite();
+    const updated = await staleWrite;
+
+    expect(resolution.resolved).toBe(true);
+    expect(updated.title).toBe("ordinary concurrent update");
+    expect(updated.wedgeNotification).toMatchObject({
+      episodeId: "episode-resolved-before-stale-write",
+      status: "resolved",
+    });
+    expect((await store.getTask(task.id)).wedgeNotification).toMatchObject({
+      episodeId: "episode-resolved-before-stale-write",
+      status: "resolved",
+    });
+  });
 });

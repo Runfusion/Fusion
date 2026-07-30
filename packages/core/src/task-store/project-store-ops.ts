@@ -32,7 +32,7 @@ import {CentralCore} from "../central-core.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
-import {type TaskRow} from "../task-store/persistence.js";
+import {preserveResolvedTaskWedgeEpisode, type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
@@ -136,6 +136,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
       */
       if (row) {
         const existing = store.pgRowToTaskRow(row);
+        preserveResolvedTaskWedgeEpisode(existing, task);
         const changedColumns = store.getChangedTaskColumns(existing, task);
         if (changedColumns.size > 0) {
           const context = store.createTaskPersistSerializationContext(task, existing);

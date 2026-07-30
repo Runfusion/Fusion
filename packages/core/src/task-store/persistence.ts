@@ -9,7 +9,7 @@
  */
 import type { Task } from "../types.js";
 import { normalizeTaskPriority } from "../task-priority.js";
-import { toJson, toJsonNullable } from "../db.js";
+import { fromJson, toJson, toJsonNullable } from "../db.js";
 
 /** Database row shape for the tasks table (all columns). */
 export interface TaskRow {
@@ -182,6 +182,22 @@ export type TaskColumnDescriptor = {
   sqlIdentifier: string;
   serialize: (task: Task, context: TaskPersistSerializationContext) => unknown;
 };
+
+/**
+ * FNXC:TaskStateReconciliation 2026-07-29-20:53:
+ * A generic PostgreSQL task write may carry an active wedge snapshot that was read before the live API resolved that episode. Preserve the durable resolution for the same episode so changed-column persistence, task.json projection, and cache publication cannot reactivate an acknowledged operator notification; a genuinely new wedge must use a new episode ID.
+ */
+export function preserveResolvedTaskWedgeEpisode(existingRow: Pick<TaskRow, "wedgeNotification">, task: Task): void {
+  const durable = fromJson<Task["wedgeNotification"]>(existingRow.wedgeNotification);
+  const incoming = task.wedgeNotification;
+  if (
+    durable?.status === "resolved"
+    && incoming?.status === "active"
+    && durable.episodeId === incoming.episodeId
+  ) {
+    task.wedgeNotification = durable;
+  }
+}
 
 /*
 FNXC:TaskLifecyclePersistence 2026-07-14-13:27:
