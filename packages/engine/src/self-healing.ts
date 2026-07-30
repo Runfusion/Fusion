@@ -3397,7 +3397,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         limitMs: timeoutMs,
         status: task?.status ?? null,
       });
-      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
+      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && this.resolveMoveLanesSync(task.id).review.has(task.column)) {
         try {
           this.options.enqueueMerge?.(activeId);
         } catch (enqueueErr: unknown) {
@@ -4882,7 +4882,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-07:40 (batch-engine — reachable, unlike its neighbours):
+      This sweep's list is NOT column-filtered (`listTasks({ slim, includeArchived: false })`), so unlike
+      recoverTransientMergeFailures and recoverMergedReviewTasks its predicate genuinely runs for every
+      lane — and on a renamed board it selected nothing, so in-review branch rebinding never happened.
+
+      The sync resolver keeps this a one-line filter rather than turning it into an async prefetch.
+      */
+      const tasks = allTasks.filter((task) => this.resolveMoveLanesSync(task.id).review.has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,
