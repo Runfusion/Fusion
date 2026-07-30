@@ -177,6 +177,20 @@ export default defineConfig({
           Removed merger-post-merge.test.ts — retired by FN-7039 (graph is sole post-merge owner); it matched zero files. Graph post-merge is covered by workflow-graph-post-merge.test.ts in engine-default; no gate replacement needed.
           */
           include: [
+            /*
+            FNXC:EngineTests 2026-07-31-00:40 (PR #2557 review — greptile):
+            THE CENSUS RATCHET MUST BE IN THE BLOCKING GATE, or it cannot do the one
+            thing it exists for. Outside the gate a PR can add a legacy column
+            comparison and every blocking check stays green while the count rises —
+            the ratchet notices hours later in a non-blocking run, which is exactly
+            the window this program kept losing work in.
+
+            Admission evidence: it is pure computation over `git ls-files` plus file
+            reads — no store, no network, no timers, no subprocess beyond one
+            `ls-files`. Measured ~0.3s. Deterministic by construction: same tree,
+            same number.
+            */
+            "src/__tests__/legacy-column-literal-census.test.ts",
             "src/__tests__/merger-merge-lifecycle.test.ts",
             "src/__tests__/merger-conflict-resolution.test.ts",
             "src/__tests__/merger-diff-scope.test.ts",

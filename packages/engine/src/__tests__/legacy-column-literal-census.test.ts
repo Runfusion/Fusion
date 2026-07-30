@@ -71,8 +71,41 @@ import { resolve } from "node:path";
 /** Repo root, derived from this file rather than cwd (vitest chdirs per worker). */
 const REPO_ROOT = resolve(__dirname, "../../../..");
 
-/** Deciding BY a legacy column name. */
-const LEGACY_COLUMN_COMPARISON = /\.column\s*(?:===|!==)\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
+/*
+FNXC:LegacyColumnCensus 2026-07-31-01:00 (PR #2557 review — third finding, mine):
+THE RECEIVER PATTERN WAS THE SECOND BLIND SPOT, and it is the one that stops this
+being a ratchet at all.
+
+`\.column === "..."` only sees receivers that END in `.column`. A guard written
+against a bare identifier — `taskColumn`, `col`, `toColumn`, `fromColumn`,
+`originColumn`, `resumeColumn`, `from`, `c` — was invisible. Verified by probe: a new
+`.column === "in-review"` in a dashboard component trips the ceiling, while
+`taskColumn === "in-review"` on the very next line does not. A ratchet that a new
+violation can walk past by choosing a variable name is not enforcing anything.
+
+This is the same defect that produced three different hand counts of the role
+sites (6, 8, then 12) — everyone was matching on the receiver's SPELLING.
+
+So: match ANY receiver, then SUBTRACT the ones that are provably not columns. That
+inversion is what makes the number stable, because the exclusion set is small,
+enumerable and reviewable, whereas the inclusion set is unbounded.
+*/
+const LEGACY_COLUMN_COMPARISON =
+  /[A-Za-z_$][\w$.?[\]]*\s*(?:===|!==)\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
+
+/*
+FNXC:LegacyColumnCensus 2026-07-31-01:00:
+NOT COLUMNS. `"triage"` also names an agent role, a session purpose, an agent-log
+lane and an agent surface; `"done"` and friends likewise appear as statuses. Counting
+these would be worse than missing them: a ratchet that demands converting
+`role === "triage"` to a column trait pushes the next person into a real bug, and can
+never reach zero because those lines are correct as written.
+
+Two independent classifiers agreed on exactly this receiver set, which is the
+strongest evidence available that it is complete as of today.
+*/
+const NON_COLUMN_RECEIVER =
+  /(?:\brole\b|\bagent\b|agentType|agentId|assignedAgentId|\bsurface\b|sessionPurpose|\bpurpose\b|\blane\b|capability|\bstatus\b)\s*(?:===|!==)/;
 
 /** DEFAULTING to a legacy column name when a role does not resolve. */
 const LEGACY_COLUMN_FALLBACK = /\?\?\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
@@ -93,16 +126,53 @@ const LEGACY_COLUMN_DECISION = new RegExp(
 );
 
 /*
-The pinned ceiling. Measured 2026-07-29 on main at the U12-part-9 tip:
-417 comparisons + 31 column fallbacks, minus 8 agent-id false positives and 2 lines carrying both shapes -> 438 lines. LOWER THIS when a conversion slice reduces the count —
-in the same PR.
+The pinned ceiling. LOWER THIS when a conversion slice reduces the count — in the
+same PR.
+
+RAISED 438 -> 755 on 2026-07-31, in two steps, and NEITHER is a regression. Nothing
+was converted or reverted; only the measurement changed.
+
+  438 -> 549  the pathspec fix: .tsx files and the dashboard app tree were never
+              scanned, hiding 111 lines.
+  549 -> 755  the receiver fix: only `.column`-suffixed receivers were matched, so
+              206 more lines written against a bare identifier were invisible.
+
+Recording the direction and the split explicitly, because a ceiling that jumps is
+normally the alarm this file exists to raise. Both jumps mean the OLD number was
+wrong, not that the code got worse — and together they say the tracked figure was
+missing 42% of the surface it claimed to bound.
 */
-const CEILING = 438;
+const CEILING = 755;
 
 function productionSources(): string[] {
+  /*
+  FNXC:LegacyColumnCensus 2026-07-31-00:25 (PR #2557 review — greptile):
+  THE PATHSPEC WAS THE BUG, and it under-reported in two independent directions.
+
+    .tsx was absent entirely, so every dashboard component — the single largest
+    cluster of lifecycle guards in the repo — was invisible to the census.
+
+    A "packages, any package, src" glob misses the dashboard's own tree, which lives
+    under `app` rather than `src`: its components, hooks and utils carry dozens of
+    comparisons and none were counted.
+
+  This is not hypothetical. I under-counted the triage backlog as 48 when it was 60
+  for most of a session on exactly this assumption, and the program's tracked number
+  was corrected twice for the same reason. A ceiling measured over a subset is not a
+  ratchet: it lets the untracked majority grow freely while reporting green.
+
+  (The literal glob strings are kept out of this comment on purpose — one of them
+  contains the block-comment terminator and silently truncates the note.)
+  */
   const out = execFileSync(
     "git",
-    ["ls-files", "packages/*/src/**/*.ts", "packages/*/src/*.ts"],
+    [
+      "ls-files",
+      "packages/*/src/**/*.ts", "packages/*/src/*.ts",
+      "packages/*/src/**/*.tsx", "packages/*/src/*.tsx",
+      "packages/*/app/**/*.ts", "packages/*/app/*.ts",
+      "packages/*/app/**/*.tsx", "packages/*/app/*.tsx",
+    ],
     { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   return out
@@ -128,6 +198,8 @@ function census(): { total: number; byFile: Map<string, number> } {
     for (const line of text.split("\n")) {
       if (!LEGACY_COLUMN_DECISION.test(line)) continue;
       if (AGENT_ID_FALLBACK.test(line) && !LEGACY_COLUMN_COMPARISON.test(line)) continue;
+      /* Receiver is provably not a column — see NON_COLUMN_RECEIVER. */
+      if (NON_COLUMN_RECEIVER.test(line) && !LEGACY_COLUMN_FALLBACK.test(line)) continue;
       n += 1;
     }
     if (n > 0) {
