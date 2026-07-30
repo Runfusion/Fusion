@@ -19,7 +19,7 @@ import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePr
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
@@ -589,10 +589,27 @@ export async function updateTaskImpl(store: TaskStore,
     explicit error instead of letting updateTaskUnlocked write a no-op nodeId field.
     */
     if (updates.nodeId !== undefined) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (#2821 review — greptile):
+      THE COLUMN IS READ AFTER THE AWAIT, NOT BEFORE IT.
+
+      My first version read the task, then awaited lane resolution, then validated — so a move landing
+      in that window was judged with a STALE column against freshly resolved lanes. The dangerous
+      direction is the obvious one: a task that entered a WIP lane during the gap still carried its
+      pre-move column, and the mid-flight guard passed for a task that had started running.
+
+      Resolving the lanes FIRST closes it. `resolveNodeOverrideLanes` needs only the task id, so the
+      order is free, and the column then comes from the latest read before validation. This does not
+      make the check atomic — `updateTaskUnlocked` runs outside the per-task lock by design, as the
+      note above explains — but it removes the window this change introduced rather than leaving a
+      new one behind a resolved-lane improvement.
+      */
+      const overrideLanes = await resolveNodeOverrideLanes(store, id);
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
         const validation = validateNodeOverrideChange(currentTask, updates.nodeId ?? null, {
           isTerminalNodeId: (nodeId) => isTaskTerminalNodeIdImpl(store, id, nodeId),
+          ...overrideLanes,
         });
         if (!validation.allowed) {
           throw new Error(validation.message);
