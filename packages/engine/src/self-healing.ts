@@ -7065,9 +7065,46 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-22:00 (the query-filter class, seventh sweep):
+      `listTasks({ column: "in-review" })` returned EMPTY on a renamed board, so a task whose branch has
+      NO commits ahead of base — a genuine no-op merge — was never finalised and sat in review forever.
+
+      Activation check run first: this sweep is one of the four holding both a literal query and an
+      unwired `getTaskMergeBlocker`. Widening the read alone would have made it find renamed-board cards
+      and then decline every one, so the guard is wired in the same change.
+
+      Lane set precomputed per card so the candidate filter stays synchronous; one resolution feeds both
+      the lane test and the blocker.
+      */
+      const noOpReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const noOpById = new Map<string, Task>();
+      for (const column of noOpReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) noOpById.set(task.id, task);
+      }
+      const tasks = [...noOpById.values()];
+      const noOpIrCache = new Map<string, WorkflowIr>();
+      const unresolvedNoOpCards: string[] = [];
+      const noOpLanesByTask = new Map<string, ReadonlySet<string>>();
+      for (const task of tasks) {
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, noOpIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+          : [];
+        if (!resolved || resolved.source === "default") unresolvedNoOpCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-22:00. */
+        noOpLanesByTask.set(task.id, own.length > 0 ? new Set(own) : new Set(["in-review"]));
+      }
+      if (unresolvedNoOpCards.length > 0) {
+        log.warn(
+          `no-op review finalize: ${unresolvedNoOpCards.length} card(s) measured against the built-in `
+          + `review lane because their own workflow could not be resolved `
+          + `(${unresolvedNoOpCards.slice(0, 5).join(", ")}); a renamed review lane there stays unfinalised.`,
+        );
+      }
       const candidates = tasks.filter((t) =>
-        t.column === "in-review" &&
+        (noOpLanesByTask.get(t.id) ?? new Set(["in-review"])).has(t.column) &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
         // FNXC:AutoMergeHold 2026-07-09-17:10: FN-7750 intentionally keeps the pure branchContext-shape predicate here. Stale shared-group members must stay OUT of solo no-op finalize even when their group is not live; only the positive auto-merge-off exemption gates use the live-group predicate.
@@ -7084,7 +7121,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         t.status !== "merging-pr" &&
         t.status !== "awaiting-user-review" &&
         t.status !== "failed" &&
-        getTaskMergeBlocker(t) === undefined,
+        /* Wired: unwired, this would decline every card the widened read now finds. */
+        getTaskMergeBlocker(t, { reviewColumns: noOpLanesByTask.get(t.id) ?? new Set(["in-review"]) }) === undefined,
       );
 
       if (candidates.length === 0) return 0;

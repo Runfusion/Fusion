@@ -565,4 +565,47 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(recoverFailedPreMergeStep).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:00 (the query-filter class, seventh sweep):
+  `finalizeNoOpReviewTasks` finalises a task whose branch has NO commits ahead of base — a genuine no-op
+  merge. Its literal read meant such a task sat in review forever on a renamed board.
+
+  One of the four sweeps holding both a literal query and an unwired `getTaskMergeBlocker`, so the guard
+  is wired in the same change: widening the read alone would have found the card and declined it.
+
+  REVERT CHECK, measured (each independently):
+    - literal read restored     -> the card is never found
+    - { reviewColumns } dropped -> the card is found and then declined by the blocker
+  */
+  it("finalizes a no-op card on a RENAMED board, past the now-reachable blocker", async () => {
+    const noOp = {
+      ...shippedCard(),
+      id: "FN-NOOP",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      worktree: "/tmp/wt",
+      steps: [],
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store, listTasks } = productionFaithfulStore([noOp]);
+    Object.assign(store, { logEntry: vi.fn(async () => undefined) });
+
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /*
+    ASSERTS CANDIDACY. My first version asserted `getSettings` was called — which the sweep does
+    unconditionally on its first line, so it proved nothing. `isBranchAheadOfBase` runs ONCE PER
+    CANDIDATE, after the filter, so it is the first observable that separates "found and accepted"
+    from "found and declined by the blocker".
+    */
+    const aheadCheck = vi
+      .spyOn(manager as unknown as { isBranchAheadOfBase: (t: Task, b: string) => Promise<boolean> },
+             "isBranchAheadOfBase")
+      .mockResolvedValue(false);
+
+    await manager.finalizeNoOpReviewTasks();
+
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
+    expect(aheadCheck).toHaveBeenCalled();
+  });
 });
