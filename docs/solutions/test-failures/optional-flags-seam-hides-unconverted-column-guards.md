@@ -113,9 +113,12 @@ Measured on `origin/main` while assessing the next conversion target, and worth 
 treats the census total as the completion bar:
 
 - **47** array/Set literals of two or more lifecycle ids, in 35 files.
-- Of those, **25 are used as MEMBERSHIP PREDICATES against a task's column** — `SET.has(task.column)` /
-  `ARRAY.includes(task.column)` — in 19 files. Two are documented fallbacks behind a resolved primary
-  (`triage.ts`, `mission-feature-sync.ts`), so roughly 23 are unconverted guards.
+- **100** membership tests against a task's column overall — `SET.has(task.column)` /
+  `ARRAY.includes(task.column)`. MOST ARE ALREADY CORRECT: the set is RESOLVED at runtime from the task's
+  IR, which is the converted shape this program produces.
+- **19** of them, in 16 files, test a set built from HARDCODED ids. Three are seeds or documented fallbacks
+  sitting behind a resolved primary (`triage.ts`, `mission-feature-sync.ts`, `branch-group-ops.ts`), so
+  **~16 are unconverted guards**.
 - The census scans `===` / `!==` against a column. **None of these is a comparison, so none is counted.**
 
 They behave exactly like the guards the census does count. The largest concentrations:
@@ -134,12 +137,23 @@ TaskCard.tsx:333 with uses at 1712 and 3070.
 
 | file | constant |
 | --- | --- |
-| `cli/src/commands/task.ts` (4) | `retryReviewColumns` |
 | `dashboard/app/components/TaskCard.tsx` (2) | `TIME_INDICATOR_COLUMNS` |
 | `engine/src/eval-followups.ts` (1) | `OPEN_COLUMNS` |
-| `engine/src/merger.ts` (2) | `sourceTerminal` |
 | `engine/src/task-revert.ts` (2) | `REVERTABLE_COLUMNS` |
 | `core/src/agent-role-policy.ts` (1) | `IMPLEMENTATION_TASK_COLUMNS` |
+
+<!--
+FNXC:LifecycleColumnCensus 2026-07-30-20:40 (self-correction after the #2763 review):
+THE REVIEW FIXED THE COUNTS; TWO ROWS WERE WRONG IN KIND. `retryReviewColumns` and `sourceTerminal` are
+already RESOLVED — `columnsWithFlag(ir, ...)` with a legacy array as the no-IR fallback — and my scan
+classified a constant by whether its initializer text contained only lifecycle ids, so the FALLBACK array
+matched and they read as hardcoded. Six sites across the tree were miscounted that way, which is why the
+headline moved 25 -> 19.
+
+That is this section's own thesis one level up: my instrument counted syntax and called it meaning. The
+corrected rule excludes any initializer deriving from an IR or a resolver at runtime. Rows removed rather
+than renumbered, because a wrong KIND is not fixed by a better count.
+-->
 
 **One is a proven live defect.** `isImplementationTask` is `IMPLEMENTATION_TASK_COLUMNS.has(task.column)`,
 and `evaluateImplementationTaskBind` short-circuits to `allowed: true` when it returns false — so on a
