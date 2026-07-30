@@ -120,11 +120,23 @@ treats the census total as the completion bar:
 
 They behave exactly like the guards the census does count. The largest concentrations:
 
+<!--
+FNXC:LifecycleColumnCensus 2026-07-30-20:10 (PR #2763 review):
+COUNTS ARE MEMBERSHIP USES, not occurrences of the identifier — the declaration line does not count.
+Re-measured every row against the tree rather than only the one the review questioned:
+
+    grep -c '<CONST>.has(' <file>
+
+Two were wrong and are corrected above: `retryReviewColumns` 3 -> 4, `OPEN_COLUMNS` 2 -> 1. The row
+the review questioned (`TIME_INDICATOR_COLUMNS`) is CORRECT at 2, and the constant is present at
+TaskCard.tsx:333 with uses at 1712 and 3070.
+-->
+
 | file | constant |
 | --- | --- |
-| `cli/src/commands/task.ts` (3) | `retryReviewColumns` |
+| `cli/src/commands/task.ts` (4) | `retryReviewColumns` |
 | `dashboard/app/components/TaskCard.tsx` (2) | `TIME_INDICATOR_COLUMNS` |
-| `engine/src/eval-followups.ts` (2) | `OPEN_COLUMNS` |
+| `engine/src/eval-followups.ts` (1) | `OPEN_COLUMNS` |
 | `engine/src/merger.ts` (2) | `sourceTerminal` |
 | `engine/src/task-revert.ts` (2) | `REVERTABLE_COLUMNS` |
 | `core/src/agent-role-policy.ts` (1) | `IMPLEMENTATION_TASK_COLUMNS` |
