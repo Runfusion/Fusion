@@ -178,6 +178,19 @@ export function literalText(node) {
 }
 
 /** Per-file counts of SQL literals comparing a task column to a legacy id. */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-15:10:
+`--list` prints every match, because a baseline number cannot be reviewed.
+
+This gate reported "14 sites" for days and the real population was 31 — the gap was five classes of
+false negative, and the one that mattered was found by asking "why is the merge-queue query, the
+reason this check exists, not in the output?". That question is unanswerable against a count. A tool
+that freezes a population has to be able to show it, or its own number is the only evidence anyone
+has for what it covers.
+*/
+const LIST = process.argv.includes("--list");
+const matches = [];
+
 function scan() {
   const counts = {};
   for (const file of walk(PACKAGES)) {
@@ -188,7 +201,14 @@ function scan() {
       const text = literalText(node);
       if (text !== null) {
         COMPARISON.lastIndex = 0;                         // a /g regex carries state between calls
-        for (const match of text.match(COMPARISON) ?? []) hits += comparisonWeight(match);
+        for (const match of text.match(COMPARISON) ?? []) {
+          hits += comparisonWeight(match);
+          if (LIST) {
+            const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+            const rel = relative(REPO, file).split("\\").join("/");
+            matches.push(`  ${rel}:${line}  ${match.replace(/\s+/g, " ").trim()}`);
+          }
+        }
       }
       ts.forEachChild(node, visit);
     };
@@ -211,7 +231,13 @@ to pass or fail by unrelated repo state is not a test.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const found = scan();
 
-  if (process.argv.includes("--update-baseline")) {
+  if (LIST) {
+  for (const line of matches.sort()) console.log(line);
+  console.log(`\n[check-sql-column-literals] ${matches.length} match(es) in ${Object.keys(found).length} file(s).`);
+  process.exit(0);
+}
+
+if (process.argv.includes("--update-baseline")) {
     writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
     const total = Object.values(found).reduce((a, b) => a + b, 0);
     console.log(`[check-sql-column-literals] baseline written: ${total} site(s) in ${Object.keys(found).length} file(s)`);
