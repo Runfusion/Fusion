@@ -821,4 +821,42 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:10 (the P1 raised on #2879, same hazard in this sweep):
+  Resolved reads can return ONE column for TWO roles, so a dependent lands in two buckets and the release
+  below runs twice — `updateTask` and `logEntry` both fire twice for one card, and `blockedByCleared`
+  over-counts. The literal reads could not do this: one column each, disjoint by construction.
+
+  REVERT CHECK, measured: without the dedupe this fails with 2 clearing writes instead of 1.
+  */
+  it("releases a dependent ONCE when its column carries two queried roles", async () => {
+    const multiRoleIr = {
+      ...RENAMED_IR,
+      columns: RENAMED_IR.columns.map((column) =>
+        column.id === RENAMED_VOCAB.hold
+          ? { ...column, traits: [...column.traits, { trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } }] }
+          : column,
+      ),
+    } as typeof RENAMED_IR;
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      column: RENAMED_VOCAB.hold,
+      blockedBy: "FN-DONE",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, waiting]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: multiRoleIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: multiRoleIr } : undefined)),
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    const clearingWrites = (updateTask as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter(([id, patch]) => id === "FN-WAITING" && (patch as { blockedBy?: unknown }).blockedBy === null);
+    expect(clearingWrites).toHaveLength(1);
+  });
 });

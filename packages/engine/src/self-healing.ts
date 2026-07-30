@@ -4627,16 +4627,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       `readDependentBucket` dedupes by id inside ONE role's read. A custom workflow may put two queried
       roles on ONE column, which two reads then return, so the dependent landed in two buckets and was
       reconciled twice from the same stale snapshot — the second pass deciding against `blockedBy` state
-      the first pass had already cleared.
+      the first pass had already cleared, and `updateTask`/`logEntry` firing twice for one card.
 
-      Order is preserved (first bucket wins), so `todoTaskIds` below still classifies the dependent by
-      the read that found it first and role precedence is unchanged.
+      FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (precedence correction):
+      Written first as `new Map(entries)` with a comment claiming first-bucket precedence. That
+      constructor keeps first insertion ORDER but the LAST value for a repeated key, so it did the
+      opposite of what it said. The explicit `has` guard below makes the code match the claim; order is
+      still preserved, so `todoTaskIds` classifies the dependent by the read that found it first.
       */
-      const dependents = [
-        ...new Map(
-          [...todoTasks, ...inProgressTasks, ...inReviewTasks].map((t) => [t.id, t] as const),
-        ).values(),
-      ].filter((t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId);
+      const dependentById = new Map<string, Task>();
+      for (const entry of [...todoTasks, ...inProgressTasks, ...inReviewTasks]) {
+        if (!dependentById.has(entry.id)) dependentById.set(entry.id, entry);
+      }
+      const dependents = [...dependentById.values()].filter(
+        (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
+      );
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
       for (const dependent of dependents) {
         try {
