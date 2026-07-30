@@ -349,6 +349,30 @@ describe("inReviewDurationMetrics keys on the board's resolved lanes", () => {
     expect(metric.reason).toBe("insufficient-samples");
   });
 
+  it("keeps the ORIGINAL review-entry time when a card moves between two review lanes", () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:35 (#2875 review — greptile P1):
+    A board may declare several review-role lanes, and a card moving between them has NOT re-entered
+    review. Overwriting the start on every move into a review lane made the metric measure only the
+    LAST lane — so the number shrank exactly on the boards that review most carefully, and it looked
+    plausible the whole time.
+
+    Each card here spends 30 minutes in `checking`, hops to a second review lane, then completes 30
+    minutes later. The honest duration is 60; the defect reports 30.
+    */
+    const twoReviewLanes = { review: new Set(["checking", "signoff"]), complete: new Set(["shipped"]) };
+    const activity = ["A", "B", "C"].flatMap((id, i) => [
+      move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+      move(id, "checking", "signoff", `2026-05-10T0${i}:30:00.000Z`),
+      move(id, "signoff", "shipped", `2026-05-10T0${i}:59:59.999Z`),
+    ]);
+
+    const metric = inReviewDurationMetrics(activity, from, to, twoReviewLanes);
+
+    expect(metric.sampleCount).toBe(3);
+    expect(metric.p50Ms).toBe(59 * 60_000 + 59_999);
+  });
+
   it("does NOT count a card that ENTERED review and then bounced out to WIP", () => {
     /*
     The paired negative, and it has to look like this to bite. A card that never enters review records

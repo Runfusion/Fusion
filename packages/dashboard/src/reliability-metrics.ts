@@ -160,8 +160,24 @@ export function inReviewDurationMetrics(
     const from = metadataColumn(entry, "from");
     const to = metadataColumn(entry, "to");
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:30 (#2875 review — greptile P1, "internal review moves
+    reset duration"): ENTERING REVIEW IS A CROSSING, NOT AN ARRIVAL.
+
+    A board may declare several review-role lanes — merge orchestration beside a human sign-off lane —
+    and a card moving BETWEEN them has not re-entered review. Overwriting the timestamp on every move
+    whose destination is a review lane made the metric measure only the LAST lane, so the number shrank
+    exactly on the boards that review most carefully. It read plausible, which is why it needed the
+    review to find.
+
+    The start is therefore recorded only when the card was NOT already in a review lane. An unknown
+    `from` (absent metadata) still records, because a first observation with no prior lane is an entry
+    as far as this data can tell — dropping it would lose the sample entirely, which is worse than
+    dating it slightly late.
+    */
     if (to !== undefined && reviewLanes.has(to)) {
-      latestInReviewEntryByTask.set(taskId, ms);
+      const alreadyInReview = from !== undefined && reviewLanes.has(from);
+      if (!alreadyInReview) latestInReviewEntryByTask.set(taskId, ms);
       continue;
     }
 
