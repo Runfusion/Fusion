@@ -1,4 +1,5 @@
 import "./DocumentsView.css";
+import { isLegacyPreImplementationColumn } from "../utils/legacyLifecycleColumns.js";
 import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -70,7 +71,13 @@ function formatFileSize(bytes: number): string {
 function getTaskColumnStatusDotClass(taskColumn: string): string {
   if (taskColumn === "done") return "status-dot status-dot--online";
   if (taskColumn === "archived") return "status-dot status-dot--offline";
-  if (taskColumn === "todo" || taskColumn === "triage") return "status-dot status-dot--pending";
+  /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:50 (U11): "pending" means the card is
+     PRE-IMPLEMENTATION. This view aggregates artifacts across tasks and has no resolved
+     column traits to consult, so it uses the shared legacy-id fallback rather than a
+     bare literal — same helper, and same reason, as the other no-metadata dashboard
+     surfaces. A renamed workflow's pre-implementation column falls to "connecting",
+     which is the pre-existing behaviour for any unrecognised id, not a new gap. */
+  if (isLegacyPreImplementationColumn(taskColumn)) return "status-dot status-dot--pending";
   return "status-dot status-dot--connecting";
 }
 

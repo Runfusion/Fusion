@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isPlanningAgentLane } from "../utils/agentLanes.js";
 import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
 import { normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
@@ -159,7 +160,7 @@ function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogAct
   if (
     !PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)
     || task.status === "planning"
-    || entry.agent !== "triage"
+    || !isPlanningAgentLane(entry.agent)
     || !hasFreshAgentLog(task, entry)
   ) {
     return task;

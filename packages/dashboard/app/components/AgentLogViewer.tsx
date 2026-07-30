@@ -1,4 +1,5 @@
 import type { AgentLogEntry } from "@fusion/core";
+import { isPlanningAgentLane } from "../utils/agentLanes.js";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ProviderIcon } from "./ProviderIcon";
@@ -101,7 +102,7 @@ export const markdownComponents: Components = {
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
 
 function getAgentDisplayName(agent: string, t: TFunction<"app">): string {
-  if (agent === "triage") return t("agentLog.agentNameTriage", "Plan");
+  if (isPlanningAgentLane(agent)) return t("agentLog.agentNameTriage", "Plan");
   return agent;
 }
 

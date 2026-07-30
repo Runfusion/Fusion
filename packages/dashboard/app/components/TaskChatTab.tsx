@@ -1,4 +1,5 @@
 import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
+import { isPlanningAgentLane } from "../utils/agentLanes.js";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -79,7 +80,7 @@ function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
 
 function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
   if (entry.type !== "status" && entry.type !== "text") return null;
-  const role = entry.agent === "triage" ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
+  const role = isPlanningAgentLane(entry.agent) ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
   if (!role) return null;
   return parseRuntimeModelMarker(entry.text, role);
 }
@@ -90,7 +91,7 @@ function makeModelInfo(provider: string | undefined, modelId: string | undefined
 }
 
 function getExplicitModelForRole(task: Task | TaskDetail, role: AgentLogRole): TaskChatModelInfo | null {
-  if (role === "triage" && task.planningModelProvider) {
+  if (isPlanningAgentLane(role) && task.planningModelProvider) {
     return makeModelInfo(task.planningModelProvider, task.planningModelId);
   }
   if (role === "executor" && task.modelProvider) {
