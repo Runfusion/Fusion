@@ -14,7 +14,9 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../../logger.js", () => {
-  const mockLogger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  // FNXC:EngineTests 2026-07-31-00:20: `debug` is part of the logger surface; omitting it throws
+  // "runtimeLog.debug is not a function" on the first demoted line and fails the whole file.
+  const mockLogger = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   return {
     runtimeLog: mockLogger,
     createLogger: () => mockLogger,
@@ -225,7 +227,18 @@ describe("child-process-worker", () => {
     expect(runtime.config).toEqual(testConfig);
     expect(runtime.start).toHaveBeenCalledTimes(1);
     expect(runtime.getStatus).toHaveBeenCalled();
-    expect(typeof runtime.centralCore.getGlobalConcurrencyState).toBe("function");
+    /*
+    FNXC:CapacityModel 2026-07-31-00:45:
+    RE-PINNED to the stub's current surface. `getGlobalConcurrencyState` is DELETED — the
+    cross-project cap was dropped (central-core.ts:2124, FNXC:CapacityModel 2026-07-28-23:30),
+    together with `updateGlobalConcurrency`, `acquireGlobalSlot`, `releaseGlobalSlot` and the
+    `concurrency:changed` event. Capacity is now two numbers PER PROJECT.
+
+    The worker's stub provides `getLiveRunningAgentCounts` and `recordTaskCompletion`, so those are
+    what this case should hold stable. Asserting the deleted method pinned an API the product
+    removed on purpose.
+    */
+    expect(typeof runtime.centralCore.getLiveRunningAgentCounts).toBe("function");
     expect(typeof runtime.centralCore.recordTaskCompletion).toBe("function");
   });
 

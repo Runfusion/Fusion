@@ -3,8 +3,15 @@ import type { NotificationPayload, NotificationProvider, Settings, Task } from "
 import { NotificationService } from "../notification-service.js";
 import { schedulerLog } from "../../logger.js";
 
+/*
+FNXC:EngineTests 2026-07-31-00:20:
+`debug` is part of the logger surface (logger.ts:25) — it is the channel the noisy-line demotion
+moved subsystem chatter onto, gated on FUSION_DEBUG. A mock that omits it throws
+"<log>.debug is not a function" on the FIRST demoted call, which fails every case in the file for a
+reason unrelated to what any of them assert.
+*/
 vi.mock("../../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 type Listener = (...args: any[]) => void | Promise<void>;
@@ -187,7 +194,13 @@ describe("NotificationService deferred failure notifications", () => {
 
     expect(sendNotification).not.toHaveBeenCalledWith("failed", expect.anything());
     expect(service.getMetrics().failureNotificationSuppressedCount).toBe(1);
-    expect(schedulerLog.log).toHaveBeenCalledWith(expect.stringContaining("suppressed transient failed"));
+    /*
+    FNXC:EngineTests 2026-07-31-00:30:
+    Suppression lines are DEBUG, not log. notification-service.ts routes all five of its
+    "suppressed ..." messages through `schedulerLog.debug` — the noisy-line demotion moved them off
+    the default channel. Asserting on `.log` looked for them where the product no longer writes.
+    */
+    expect(schedulerLog.debug).toHaveBeenCalledWith(expect.stringContaining("suppressed transient failed"));
     await service.stop();
   });
 
@@ -243,7 +256,8 @@ describe("NotificationService deferred failure notifications", () => {
 
     expect(sendNotification).not.toHaveBeenCalledWith("failed", expect.anything());
     expect(service.getMetrics().failureNotificationSuppressedCount).toBe(1);
-    expect(schedulerLog.log).toHaveBeenCalledWith("[notify] FN-1 non-terminal failure — suppressed (mode=terminal-only)");
+    // Same demotion as above: this suppression line is on the debug channel.
+    expect(schedulerLog.debug).toHaveBeenCalledWith("[notify] FN-1 non-terminal failure — suppressed (mode=terminal-only)");
     await service.stop();
   });
 
