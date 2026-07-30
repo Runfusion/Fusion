@@ -430,40 +430,58 @@ memo-less calls in the pause-abort family is the property that actually has to h
 moment someone adds a fifth classifier that resolves on its own.
 */
 describe("one lane snapshot per recovery, across every classifier", () => {
-  it("has no memo-less resolveResumeLanes call inside the pause-abort classifiers", async () => {
+  const MEMO_THREADED = [
+    "isRetryableBenignMergePauseAbort",
+    "isBenignManualMergeHoldPauseAbort",
+    "handleStaleInReviewPlanPauseAbortReplay",
+    "handleStaleInReviewParsePauseAbortReplay",
+    "isReentrantPausedAbortedInFlightNode",
+    "routeUnusableWorktreeGraphFailureToRecovery",
+    "routeGraphFailureToExecutionResume",
+  ];
+  /* Methods that own their own recovery: no caller memo to share, so the FIRST resolution is correct and a
+     SECOND is the split. `handleNonContinuableSessionError` was added here after exactly that defect
+     (PR #2703 review) — its eligibility check and its review branch each resolved independently. */
+  const SELF_CONTAINED = ["handleNonContinuableSessionError"];
+
+  async function methodBody(name: string): Promise<string> {
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-
+    const start = code.indexOf(`private async ${name}(`);
+    expect(start, `${name} not found — update this test, do not delete it`).toBeGreaterThan(-1);
     /*
-    The pause-abort family, by name. A memo-less call in any of them is the defect; the allowlist is
-    deliberately explicit rather than a regex over "classifier-looking" functions, so adding a new one
-    does not silently inherit an exemption.
+    Bounded by the next `private ` declaration of ANY kind. My first version bounded on the next member of
+    the same list, so the last entry's window ran to EOF and it accused a method of a call living 1200 lines
+    away. A ratchet with the wrong window accuses the wrong function — worse than no ratchet, because the
+    "fix" lands on code that was already correct.
     */
-    const family = [
-      "isRetryableBenignMergePauseAbort",
-      "isBenignManualMergeHoldPauseAbort",
-      "handleStaleInReviewPlanPauseAbortReplay",
-      "handleStaleInReviewParsePauseAbortReplay",
-      "isReentrantPausedAbortedInFlightNode",
-      "routeUnusableWorktreeGraphFailureToRecovery",
-      "routeGraphFailureToExecutionResume",
-    ];
+    const next = code.indexOf("\n  private ", start + 1);
+    return code.slice(start, next === -1 ? code.length : next);
+  }
 
+  it("threads the shared memo in every classifier that has one", async () => {
     const offenders: string[] = [];
-    for (const name of family) {
-      const start = code.indexOf(`private async ${name}(`);
-      expect(start, `${name} not found — update this test, do not delete it`).toBeGreaterThan(-1);
-      /*
-      Bounded by the next `private ` declaration of ANY kind, not the next family member. My first version
-      bounded on the family and the last member's slice therefore ran to EOF — it reported
-      `isReentrantPausedAbortedInFlightNode` as an offender because of a memo-less call in an unrelated
-      method 1200 lines later. A ratchet whose window is wrong accuses the wrong function, which is worse
-      than not having it: I would have "fixed" a method that was already correct.
-      */
-      const next = code.indexOf("\n  private ", start + 1);
-      const body = code.slice(start, next === -1 ? code.length : next);
+    for (const name of MEMO_THREADED) {
+      const body = await methodBody(name);
+      // A memo-less call — `resolveResumeLanes(x)` with a single argument — is the defect.
       if (/resolveResumeLanes\(\s*[^,)]+\s*\)/.test(body)) offenders.push(name);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("resolves lanes AT MOST ONCE in a method that owns its own recovery", async () => {
+    /*
+    The rule differs by kind and that distinction is the point: a method called from `handleGraphFailure`
+    must take the memo (zero independent resolutions), while a self-contained recovery legitimately resolves
+    once. What neither may do is resolve TWICE — that is a split snapshot in both shapes.
+    */
+    const offenders: Array<{ name: string; calls: number }> = [];
+    for (const name of SELF_CONTAINED) {
+      const body = await methodBody(name);
+      const calls = [...body.matchAll(/resolveResumeLanes\(/g)].length;
+      if (calls > 1) offenders.push({ name, calls });
     }
 
     expect(offenders).toEqual([]);
@@ -474,15 +492,8 @@ describe("one lane snapshot per recovery, across every classifier", () => {
     const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-    // The call sites must pass it, not merely accept it — accepting an unused optional proves nothing.
-    for (const name of [
-      "isRetryableBenignMergePauseAbort",
-      "isBenignManualMergeHoldPauseAbort",
-      "handleStaleInReviewPlanPauseAbortReplay",
-      "handleStaleInReviewParsePauseAbortReplay",
-      "routeUnusableWorktreeGraphFailureToRecovery",
-      "routeGraphFailureToExecutionResume",
-    ]) {
+    // The call sites must PASS it — accepting an unused optional parameter proves nothing.
+    for (const name of MEMO_THREADED.filter((n) => n !== "isReentrantPausedAbortedInFlightNode")) {
       const callSite = new RegExp(`this\\.${name}\\([^;]*resumeLanesMemo`);
       expect(callSite.test(code), `${name} call site does not pass resumeLanesMemo`).toBe(true);
     }

@@ -4681,7 +4681,19 @@ export class TaskExecutor {
 
     await this.persistTokenUsage(task.id);
 
-    if (liveTask.column === (await this.resolveResumeLanes(task.id)).review) {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-05:50 (PR #2703 review — greptile P1, and it is the same split
+    I have been fixing all day, in code I wrote an hour earlier):
+    ONE SNAPSHOT. The eligibility check above already resolved this task's lanes
+    (`nonContinuableLanes`), and this branch resolved them AGAIN. A workflow selection or review-column
+    edit between the two makes eligibility accept the card on the old board while this branch reads the new
+    one — the card is then handed to `handoffTaskToReview`, reprocessing a row already in review.
+
+    Writing the second resolution was not carelessness about the rule; it is that the rule is invisible at
+    the call site. That is the argument for the structural ratchet in
+    `executor-graph-failure-lanes-resolved.test.ts` rather than for trying harder.
+    */
+    if (liveTask.column === nonContinuableLanes.review) {
       this.clearCompletedTaskWatchdog(task.id);
       this.signalTaskComplete(liveTask);
       return true;
