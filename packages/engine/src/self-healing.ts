@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  LEGACY_COLUMN_IDS_BY_ROLE,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -3683,16 +3684,70 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const todoCandidates = await this.store.listTasks({ column: "todo", slim: true });
-      const inProgressCandidates = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (the query-filter class, twelfth sweep):
+      Three lane reads AND three lane guards in the body, so both halves convert together — widening the
+      read alone would admit renamed-board cards and then mis-decide every one of them (the phantom-binding
+      check, the blocked-hold skip, and the review triple-proof are all keyed on lane).
+
+      On a renamed board all three reads returned empty, so a task whose own worktree held its own branch
+      hostage was never reclaimed and stayed wedged behind a conflict only this sweep resolves.
+      */
+      const reclaimHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
+      const reclaimWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const reclaimReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      /*
+      Buckets are built FROM THE READ that produced each row, not by re-deriving from `task.column`.
+      A row returned by `listTasks({ column: X })` is by definition in X, so re-deriving adds nothing and
+      would silently drop any row whose column field is absent.
+      */
+      const readBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+        }
+        return [...byId.values()];
+      };
+      const todoCandidates = await readBucket(reclaimHoldColumns);
+      const inProgressCandidates = await readBucket(reclaimWipColumns);
+      const inReviewPausedCandidates = (await readBucket(reclaimReviewColumns))
+        .filter((task) => task.paused === true && task.pausedReason === "branch-conflict-unrecoverable");
+      /*
+      Per-card lanes, used by the three lane GUARDS below (phantom-binding, blocked-hold skip, review
+      triple-proof). Legacy ids unioned so a degraded or mid-rename board still decides correctly.
+      */
+      const reclaimLanes = new Map<string, { hold: Set<string>; wip: Set<string>; review: Set<string> }>();
+      const unresolvedReclaimCards: string[] = [];
+      for (const task of [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]) {
+        if (reclaimLanes.has(task.id)) continue;
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        if (source === "default") unresolvedReclaimCards.push(task.id);
+        const lanes = {
+          hold: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.hold ?? []),
+          wip: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? []),
+          review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
+        };
+        for (const id of columnsWithFlag(ir, "hold")) lanes.hold.add(id);
+        for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
+        for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
+        reclaimLanes.set(task.id, lanes);
+      }
+      if (unresolvedReclaimCards.length > 0) {
+        log.warn(
+          `self-owned branch reclaim: ${unresolvedReclaimCards.length} card(s) decided against the built-in workflow (${unresolvedReclaimCards.slice(0, 5).join(", ")})`,
+        );
+      }
+      const lanesOfReclaim = (id: string) => reclaimLanes.get(id) ?? {
+        hold: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.hold ?? []),
+        wip: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? []),
+        review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
+      };
       const inProgressByWorktree = new Map<string, string>();
       for (const inProgressTask of inProgressCandidates) {
         if (inProgressTask.worktree) {
           inProgressByWorktree.set(inProgressTask.worktree, inProgressTask.id);
         }
       }
-      const inReviewPausedCandidates = (await this.store.listTasks({ column: "in-review", slim: true }))
-        .filter((task) => task.paused === true && task.pausedReason === "branch-conflict-unrecoverable");
       // Per-task auto-merge gating applies to ALL candidate columns, not just
       // in-review: the FN-5704 regression contract ("short-circuits reclaim
       // when autoMerge is false") deliberately keeps execution-stage reclaim
@@ -3717,7 +3772,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           includeCheckedOutLease: true,
         });
         if (liveExecutionSignal) {
-          const canEvaluatePhantomBinding = task.column === "in-progress"
+          const canEvaluatePhantomBinding = lanesOfReclaim(task.id).wip.has(task.column)
             && (liveExecutionSignal.reason === "executor-active" || liveExecutionSignal.reason === "live-worktree-and-branch");
           if (canEvaluatePhantomBinding) {
             const nowMs = Date.now();
@@ -3789,7 +3844,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           );
           continue;
         }
-        if (task.column === "todo" && task.blockedBy) {
+        if (lanesOfReclaim(task.id).hold.has(task.column) && task.blockedBy) {
           log.debug(`[self-healing] skipping blocked todo task ${task.id} during self-owned branch reclaim (blockedBy=${task.blockedBy})`);
           continue;
         }
@@ -3811,7 +3866,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
         if (!await isUsableTaskWorktree(this.options.rootDir, task.worktree)) continue;
 
-        const reviewProof = task.column === "in-review"
+        const reviewProof = lanesOfReclaim(task.id).review.has(task.column)
           ? await this.evaluateBackwardMoveTripleProof(task, {
             stage: "reclaim-self-owned-branch-conflict",
             graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
