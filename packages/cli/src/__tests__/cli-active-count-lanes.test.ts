@@ -34,13 +34,15 @@ const RENAMED_IR = {
 function storeFor(ir: WorkflowIr | undefined) {
   const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
   const getWorkflowDefinition = vi.fn(async () => (ir ? { ir } : undefined));
+  const getTaskWorkflowSelectionAsync = vi.fn(async () => (ir ? selection : undefined));
   return {
     store: {
       getTaskWorkflowSelection: () => (ir ? selection : undefined),
-      getTaskWorkflowSelectionAsync: async () => (ir ? selection : undefined),
+      getTaskWorkflowSelectionAsync,
       getWorkflowDefinition,
     } as unknown as TaskStore,
     getWorkflowDefinition,
+    getTaskWorkflowSelectionAsync,
   };
 }
 
@@ -67,6 +69,29 @@ describe("the CLI's active-task count resolves the board's lanes", () => {
       { id: "FN-5", column: "backlog" },
       { id: "FN-6", column: "shipped" },
     ])).toBe(0);
+  });
+
+  it("PINS the per-task selection read, so the cost is visible rather than hidden", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-13:40 (PR #2728 review — greptile P2, and it is a fair catch):
+    The shared IR cache avoids repeated workflow-DEFINITION reads, not the per-task SELECTION read — a board
+    can mix workflows, so "which workflow governs this card" has to be asked per card. My first version
+    asserted only the definition count, which made the aggregation look cheaper than it is.
+
+    THE TRADE-OFF, stated rather than hidden: the previous implementation did ZERO reads and was wrong on
+    every renamed board (`active=0` on a busy board). N selection reads per stats refresh is the price of a
+    correct answer with today's resolver. The durable fix is a bulk selection read or a list projection that
+    carries column flags — the dashboard already avoids this entirely by reading board flags it has in hand
+    (`enrichRunningAgentTaskShapeFromFlags`), which is the shape a `listTasks` projection should copy.
+
+    Pinned as an EXACT count so a future bulk read shows up here as a deliberate change rather than drifting.
+    */
+    const { store, getTaskWorkflowSelectionAsync } = storeFor(RENAMED_IR);
+    const tasks = Array.from({ length: 12 }, (_, i) => ({ id: `FN-${i}`, column: "building" }));
+
+    await countActiveTasks(store, tasks);
+
+    expect(getTaskWorkflowSelectionAsync).toHaveBeenCalledTimes(12);
   });
 
   it("resolves one IR per WORKFLOW, not per task", async () => {
