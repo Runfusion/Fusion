@@ -374,7 +374,7 @@ export function archiveEntryToTask(
     columnMovedAt: entry.columnMovedAt,
     firstExecutionAt: entry.firstExecutionAt,
     cumulativeActiveMs: entry.cumulativeActiveMs,
-    // FNXC:TaskTiming 2026-08-01-13:00: archive/restore must retain both
+    // FNXC:TaskTiming 2026-07-20-13:00: archive/restore must retain both
     // planning fields so archived tasks neither lose accumulated AI time nor
     // revive without the live segment anchor needed for exactly-once finalize.
     cumulativePlanningMs: entry.cumulativePlanningMs,

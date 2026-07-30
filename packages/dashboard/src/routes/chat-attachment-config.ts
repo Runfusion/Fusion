@@ -1,5 +1,5 @@
 /*
-FNXC:ChatAttachments 2026-08-03-00:00:
+FNXC:ChatAttachments 2026-07-23-00:00:
 Chat upload validation must match task attachments: the composer now allows the full task-store MIME
 set, so direct and room routes must persist videos, Markdown, and TOML instead of rejecting them.
 */

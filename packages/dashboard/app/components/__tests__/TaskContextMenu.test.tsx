@@ -335,7 +335,7 @@ describe("TaskContextMenu shared task action model", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-10:20 (PR #2626 review — greptile P2):
+FNXC:WorkflowResolvedColumns 2026-07-30-10:20 (PR #2626 review — greptile P2):
 The intake-only vs intake+hold distinction, covered per workflow SHAPE rather than per column id.
 
 `shouldShowActionsMenu` suppresses the menu only for a PURE intake lane. That distinction is the
@@ -378,7 +378,7 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-08:00 (U12 — the last `triage` column guard):
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:00 (U12 — the last `triage` column guard):
 THE INVERSION. `isPreExecutionHoldColumn` ORed the legacy id with the traits unconditionally, so a
 resolved column merely NAMED `triage` answered true even when its own traits said work was underway
 — offering Plan, which re-plans, on a card that is already executing.

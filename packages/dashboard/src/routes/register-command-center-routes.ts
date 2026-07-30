@@ -140,7 +140,7 @@ export function resolveTokenGranularity(query: Request["query"]): TokenTimeGranu
 
 /** True when the caller asked for CSV via `?format=csv` (case-insensitive). */
 /*
-FNXC:SdlcFunnelColumns 2026-07-31-10:15:
+FNXC:SdlcFunnelColumns 2026-07-30-10:15:
 The project's own workflow columns, in the shape the funnel's trait mapping needs. Resolved from the
 project's DEFAULT workflow, which is the board the activity log's column ids come from.
 
@@ -309,7 +309,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
       /*
-      FNXC:SdlcFunnelColumns 2026-07-31-10:10:
+      FNXC:SdlcFunnelColumns 2026-07-30-10:10:
       PASS THE PROJECT'S OWN COLUMNS. The funnel maps column ids to SDLC stages by trait, and any id it
       was not given folds to OTHER — so without this the Command Center funnel on a renamed or custom
       board read as empty while the board was plainly busy. `aggregateSdlcFunnel`'s doc comment already

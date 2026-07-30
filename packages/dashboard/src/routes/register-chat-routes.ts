@@ -242,7 +242,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   });
 
   /*
-  FNXC:ChatTags 2026-08-05-10:55:
+  FNXC:ChatTags 2026-07-25-10:55:
   Tags are a Direct-conversation taxonomy, not room metadata. Every endpoint
   resolves the project-scoped ChatStore and passes its project identity into the
   store mutation, preventing unqualified tag/session IDs from crossing scopes.

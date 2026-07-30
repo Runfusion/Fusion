@@ -214,7 +214,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     }), [workflowPayload, workflowPending]);
     const setWorkflowPairValue = useCallback((pair: WorkflowModelPair, value: string) => {
         /*
-        FNXC:SettingsAutoSave 2026-08-03-01:00:
+        FNXC:SettingsAutoSave 2026-07-20-01:00:
         FN-8395 removes the primary Save button. Notify the Settings shell for
         every workflow-lane mutation because these pending overrides are local
         section state rather than keys in its shared form.

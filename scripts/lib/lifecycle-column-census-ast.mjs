@@ -279,7 +279,7 @@ export function summarize(findings) {
   zero. The property-assignment counts are a second, independent instrument and live beside it.
   */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (PR #2661 review — greptile P1):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-09:00 (PR #2661 review — greptile P1):
   DELIBERATE counts are tracked PER FILE, not only as a repo total. A total lets an addition in one
   marked construct be offset by a removal in another and stay flat, and because deliberate findings
   are excluded from `byFile`, the newly exempt guard is invisible there too — so the gate passes with
@@ -304,7 +304,7 @@ export function summarize(findings) {
     totals[finding.kind] += 1;
     if (finding.kind === "deliberate") {
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2661 review — greptile P1, same class again):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-10:00 (PR #2661 review — greptile P1, same class again):
       Keyed by FILE **and COLUMN ID**, not a per-file integer. A per-file aggregate is offset within a
       single file: remove one reviewed `todo` exemption, add a `in-review` one beside it, and the
       number never moves — so a fresh guard hides inside an existing marker.

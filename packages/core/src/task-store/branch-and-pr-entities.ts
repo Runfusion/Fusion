@@ -627,7 +627,7 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      *       key by it too.
      *   (b) `store.rootDir` — absolute filesystem path, last-resort key.
      *
-     * FNXC:CentralProjectIdentity 2026-07-31-13:00 (documentation corrected):
+     * FNXC:CentralProjectIdentity 2026-07-30-13:00 (documentation corrected):
      * There USED to be a middle step reading `store.db.getProjectIdentity()?.id`, and this block still
      * described it long after `FNXC:SqliteDualPathCleanup 2026-07-26-14:15` removed it. It is not
      * merely unused — it is unreachable BY CONSTRUCTION: `dbImpl` throws unconditionally and ignores

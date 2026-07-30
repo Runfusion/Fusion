@@ -78,7 +78,7 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
  */
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-07:25 (U12 — census gate repair) DELIBERATE-LITERAL:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-07:25 (U12 — census gate repair) DELIBERATE-LITERAL:
   This IS the no-metadata fallback, so the literal is the answer rather than an unconverted guard —
   the same status as `LEGACY_INTAKE_COLUMN_ID` on the line above, which reads as a named constant and
   so was never counted while this inline twin was.
@@ -100,7 +100,7 @@ const LEGACY_FIELD_EDITABLE_COLUMN_IDS: ReadonlySet<string> = new Set(["triage",
 /**
  * May a card's title/description be edited in this column?
  *
- * FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — one affordance, two components):
+ * FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12 — one affordance, two components):
  * Editing belongs to PRE-IMPLEMENTATION lanes: the card has no session, no worktree, and no plan
  * being executed against the text. Any terminal, executing or review trait VETOES it even when
  * `intake`/`hold` is also present — a column carrying both is still one where work is underway, and

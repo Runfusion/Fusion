@@ -242,7 +242,7 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
 
   it("stays silent when planning has capacity", async () => {
     /*
-    FNXC:PlanAdmissionThrottle 2026-07-31-11:25 (PR #2562 review — coderabbit):
+    FNXC:PlanAdmissionThrottle 2026-07-30-11:25 (PR #2562 review — coderabbit):
     THIS TEST PROVED THE WRONG SILENCE. It used `createStore([])`, which seeds only
     the running claimant and NO eligible card — so it asserted that an EMPTY QUEUE
     emits no throttle, which is true of any implementation, including one that emits

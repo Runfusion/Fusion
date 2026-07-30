@@ -104,7 +104,7 @@ pgDescribe("addComment re-triage under a renamed planner vocabulary (PostgreSQL)
   }
 
   /*
-  FNXC:PostCommentRetriage 2026-07-31-10:20 (PR #2612 review — coderabbit):
+  FNXC:PostCommentRetriage 2026-07-30-10:20 (PR #2612 review — coderabbit):
   `needs-replan` is written by BOTH branches — approval invalidation and ordinary
   planned-task re-triage — so asserting the status alone cannot tell them apart. A
   card taking the WRONG branch persists the same status and the test still passes.

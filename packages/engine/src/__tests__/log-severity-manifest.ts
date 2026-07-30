@@ -1,5 +1,5 @@
 /*
-FNXC:EngineDiagnostics 2026-08-01-10:46:
+FNXC:EngineDiagnostics 2026-07-26-10:46:
 FN-8603 requires routine and expected diagnostic sites to default to debug so a
 single accidental severity reversion cannot flood the operator log pane.
 */

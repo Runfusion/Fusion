@@ -87,7 +87,7 @@ export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     options?: MoveTaskOptions,
   ): boolean {
   /*
-  FNXC:WorkflowColumns 2026-07-31-11:00 (PR #2655 review — BOTH findings are right, and they are
+  FNXC:WorkflowColumns 2026-07-30-11:00 (PR #2655 review — BOTH findings are right, and they are
   the same defect seen from two sides. REVERTED to reading `options?.moveSource`.)
 
   Round 1 said an optionless `moveTask(id, target)` LOSES bypass, because the call site resolves

@@ -447,7 +447,7 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
         resilientStore.createSecret({ scope: "project", key: "RESILIENT", plaintextValue: "still-created" }),
       ).resolves.toMatchObject({ key: "RESILIENT" });
       /*
-      FNXC:EngineDiagnostics 2026-07-31-15:00:
+      FNXC:EngineDiagnostics 2026-07-30-15:00:
       Asserted with stringContaining, because the logger deliberately wraps every message in a
       machine-readable severity marker: `withSeverityMarker` (logger.ts:31) emits
       `\u0000fnlvl=warn\u0000[core-async-secrets-store] …` so the TUI log pane can colour by level.

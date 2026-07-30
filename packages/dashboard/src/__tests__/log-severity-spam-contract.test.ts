@@ -1,5 +1,5 @@
 /*
-FNXC:EngineDiagnostics 2026-08-01-11:12:
+FNXC:EngineDiagnostics 2026-07-26-11:12:
 FN-8603 keeps dashboard-server diagnostics on @fusion/core's shared logger so
 routine output is debug-gated and no dashboard-local console sink can drift.
 */

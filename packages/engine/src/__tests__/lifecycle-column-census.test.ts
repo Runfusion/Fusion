@@ -344,7 +344,7 @@ describe("the summary separates the three classes", () => {
 });
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-18:40 (the ratchet's one unusable state, now fixed):
+FNXC:LifecycleColumnCensus 2026-07-30-18:40 (the ratchet's one unusable state, now fixed):
 
 `--update-baseline` MUST RUN EVEN WHEN A FILE ROSE. It could not: the rise check exited before the write,
 so the only supported way to re-record was unavailable in exactly the situation that needs it.
@@ -399,7 +399,7 @@ describe("the baseline can always be re-recorded", () => {
   });
 
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-18:30 (PR #2668 review — greptile):
+  FNXC:LifecycleColumnCensus 2026-07-30-18:30 (PR #2668 review — greptile):
   END-TO-END, because every assertion above reads this file's SOURCE TEXT. Substrings,
   marker ordering and `writeFileSync` counts cannot see control flow: move the exit,
   reorder the branches, or return before the write, and all of them stay green while

@@ -177,7 +177,7 @@ export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenu
   interchangeable. Kept separate with the difference recorded, rather than made to look shared.
   */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-08:00 (U12 — the LAST `triage` column guard):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-08:00 (U12 — the LAST `triage` column guard):
   FLAGS-FIRST, id only as the degraded answer. It used to OR the legacy id with the traits
   UNCONDITIONALLY, which is not a fallback: a resolved column that happens to be named `triage` but
   whose traits say it is mid-flight answered true, offering Plan on a card that is already executing.

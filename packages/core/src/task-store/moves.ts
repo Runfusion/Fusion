@@ -389,13 +389,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     */
     const workflowSelectionForMove = await store.getTaskWorkflowSelectionAsync(id);
     /*
-    FNXC:WorkflowColumns 2026-07-31-05:25 (PR #2655 review — greptile P2 follow-through):
+    FNXC:WorkflowColumns 2026-07-30-05:25 (PR #2655 review — greptile P2 follow-through):
     `effectiveWorkflowIdForMove` is DELETED. It existed only to feed the emitted `workflowId`, and it
     applied a `?? DEFAULT_WORKFLOW_ID` fallback — so keeping it would have meant either an unused
     binding or the very fallback-as-authoritative stamp that review flagged. The emit site now reads
     the SELECTION directly, so the absence signal is preserved and there is nothing left to guess.
     */
-    // FNXC:WorkflowColumns 2026-07-31-04:00 (U12): resolved unconditionally — the gate is gone, so
+    // FNXC:WorkflowColumns 2026-07-30-04:00 (U12): resolved unconditionally — the gate is gone, so
     // `undefined` now means only "no IR on this path or a v1 column-less IR", never "flag off".
     const workflowIr: WorkflowIr | undefined = await resolveTaskWorkflowIrForMove(store, id);
 
@@ -781,7 +781,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     });
 
     const movedAt = internal.now ?? new Date().toISOString();
-    // FNXC:TaskTiming 2026-08-01-10:00: column dwell is wall-clock stage data,
+    // FNXC:TaskTiming 2026-07-20-10:00: column dwell is wall-clock stage data,
     // accumulated before replacing the prior column anchor and never used as AI active time.
     const priorColumnMovedAt = Date.parse(task.columnMovedAt ?? "");
     const moveMs = Date.parse(movedAt);
@@ -793,7 +793,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     task.updatedAt = movedAt;
 
     /*
-    FNXC:WorkflowColumns 2026-07-31-04:00 (U12 — the compatibility flag is RESOLVED):
+    FNXC:WorkflowColumns 2026-07-30-04:00 (U12 — the compatibility flag is RESOLVED):
     Column side effects run through the default-workflow TRAIT HOOKS unconditionally. The
     `if (useWorkflow)` gate and its inline legacy `else` branch are DELETED, not converted —
     converting a branch we intended to delete would have left a second definition of every
@@ -1307,7 +1307,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         OMIT rather than guess. An absent `workflowId` means "not resolved here";
         a subscriber that needs it reads the selection itself.
 
-        FNXC:WorkflowColumns 2026-07-31-05:20 (PR #2655 review — greptile P2):
+        FNXC:WorkflowColumns 2026-07-30-05:20 (PR #2655 review — greptile P2):
         The flag deletion nearly destroyed that signal. `effectiveWorkflowIdForMove`
         is `selection?.workflowId ?? DEFAULT_WORKFLOW_ID`, so emitting it
         unconditionally would stamp `builtin:coding` onto every task that has no

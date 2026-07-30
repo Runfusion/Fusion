@@ -45,13 +45,13 @@ FNXC:LegacyAdoption 2026-07-21-17:30:
 SCHEMA_BASELINE_VERSION advances to 0037 for dropping the cross-project concurrency table; it previously advanced to 0036 for normalized Direct conversation tags; it previously advanced to 0032 for fusion_runtime SELECT +
 SECURITY DEFINER write access to the legacy-adoption drained marker.
 
-FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+FNXC:TaskWedgeNotifications 2026-07-23-00:00:
 Advance the PostgreSQL schema ceiling for the durable wedge episode column. The
 forward migration must run before TaskStore writes the new field on fresh and
 upgraded databases.
 */
 export const SCHEMA_BASELINE_VERSION = "0037";
-/** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
+/** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
@@ -137,20 +137,20 @@ export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
 export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
 /** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
 export const BIGINT_COUNTERS_VERSION = "0026";
-/** FNXC:TaskTiming 2026-08-01-10:00: existing clusters need planning-session timing columns. */
+/** FNXC:TaskTiming 2026-07-20-10:00: existing clusters need planning-session timing columns. */
 export const PLANNING_ACTIVE_TIMING_VERSION = "0029";
 /** Dashboard health needs project-scoped, read-only runtime access to the SQLite cutover ledger. */
 export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
 export const WORKFLOW_TASK_CONTINUATIONS_VERSION = "0031";
 /** FNXC:LegacyAdoption 2026-07-21-17:30: runtime role needs drained-marker read + restricted write. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION = "0032";
-/** FNXC:TaskWedgeNotifications 2026-10-19-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
+/** FNXC:TaskWedgeNotifications 2026-07-23-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
 export const TASK_WEDGE_NOTIFICATION_VERSION = "0033";
 /** FNXC:MissionValidation 2026-07-23-14:30: provenance-safe milestone criteria require an explicit upgrade. */
 export const MILESTONE_ASSERTION_PROVENANCE_VERSION = "0034";
 /** FNXC:MissionLineageBudget 2026-07-22-12:00: migration is explicit because upgraded clusters need durable root stop tombstones. */
 export const MISSION_LINEAGE_STOP_VERSION = "0035";
-/** FNXC:ChatTags 2026-08-05-10:55: existing clusters need normalized project-scoped Direct conversation tags. */
+/** FNXC:ChatTags 2026-07-25-10:55: existing clusters need normalized project-scoped Direct conversation tags. */
 export const CHAT_SESSION_TAGS_VERSION = "0036";
 /*
 FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
@@ -950,7 +950,7 @@ export async function applySchemaBaseline(
     }
 
     /*
-    FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+    FNXC:TaskWedgeNotifications 2026-07-23-00:00:
     PostgreSQL migrations are explicitly registered rather than discovered.
     Apply the wedge episode column before persistence writes it, including on
     databases that already recorded the prior schema ceiling.
@@ -991,7 +991,7 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
-    /* FNXC:ChatTags 2026-08-05-10:55: migrations are explicitly registered; this must run after the baseline on both fresh and upgrade databases. */
+    /* FNXC:ChatTags 2026-07-25-10:55: migrations are explicitly registered; this must run after the baseline on both fresh and upgrade databases. */
     if (!chatSessionTagsAlreadyApplied) {
       const migrationSql = await readFile(CHAT_SESSION_TAGS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));

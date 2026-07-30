@@ -8179,7 +8179,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — the affordance this file never covered):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12 — the affordance this file never covered):
 THE EDIT BUTTON ON A RENAMED BOARD.
 
 TaskDetailModal resolved field editability from column traits in U10/R8. TaskCard implemented the

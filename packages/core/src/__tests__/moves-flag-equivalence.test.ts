@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowColumns 2026-07-31-04:15 (U12 — THIS FILE'S EQUIVALENCE CASES ARE RETIRED, ON PURPOSE):
+FNXC:WorkflowColumns 2026-07-30-04:15 (U12 — THIS FILE'S EQUIVALENCE CASES ARE RETIRED, ON PURPOSE):
 The compatibility flag is deleted in this same PR, so the two-flag-states comparison below cannot
 run any more — there is only one path now. Its result is preserved in the commit that added it and
 in the deletion's own comment: identical persisted rows across 128 fields plus an equal timing shape,
@@ -13,7 +13,7 @@ custom boards and it looks like dead weight to anyone tidying up.
 
 --- original header, kept for the record ---
 
-FNXC:WorkflowColumns 2026-07-31-02:00 (U12 — precondition 1 for flipping the move-path flag):
+FNXC:WorkflowColumns 2026-07-30-02:00 (U12 — precondition 1 for flipping the move-path flag):
 DO THE TWO COLUMN-SIDE-EFFECT IMPLEMENTATIONS AGREE?
 
 `moves.ts` gates six behaviours on the raw compatibility flag (#2639 pins all six). Seam 3 is the one
@@ -58,7 +58,7 @@ pgDescribe("move-path side effects are equivalent with the compatibility flag OF
   afterAll(harness.afterAll);
 
   /*
-  FNXC:WorkflowColumns 2026-07-31-03:00 (U12 — seam 2, demonstrated rather than inferred):
+  FNXC:WorkflowColumns 2026-07-30-03:00 (U12 — seam 2, demonstrated rather than inferred):
   WHAT THE FLIP WOULD BREAK ON A CUSTOM BOARD.
 
   Precondition 2's census established that 20 of 41 literal engine `moveTask` targets carry no

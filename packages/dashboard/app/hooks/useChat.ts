@@ -1551,7 +1551,7 @@ export function useChat(
           const acceptedByServer = meta?.requestAccepted === true;
 
           /*
-          FNXC:ChatAttachments 2026-08-03-00:00:
+          FNXC:ChatAttachments 2026-07-23-00:00:
           A direct composer owns its staged File objects and preview URLs until the server accepts
           the multipart turn. Tell it to retain those files on pre-delivery/upload failure, but
           release them after an accepted turn even when the provider cannot produce a reply.
@@ -1730,7 +1730,7 @@ export function useChat(
     return () => clearTimeout(timeoutId);
   }, [trimmedSearchQuery, projectId]);
 
-  /* FNXC:ChatTags 2026-08-05-10:55: optimistic assignment keeps shared Chat hosts in sync while a failed API mutation rolls back exactly the prior session snapshot. */
+  /* FNXC:ChatTags 2026-07-25-10:55: optimistic assignment keeps shared Chat hosts in sync while a failed API mutation rolls back exactly the prior session snapshot. */
   const createTag = useCallback(async (name: string): Promise<ChatTag> => { const response = await apiCreateChatTag(name, projectId); setTags((previous) => [...previous, response.tag].sort((a, b) => a.name.localeCompare(b.name))); return response.tag; }, [projectId]);
   const renameTag = useCallback(async (id: string, name: string) => { const response = await apiRenameChatTag(id, name, projectId); setTags((previous) => previous.map((tag) => tag.id === id ? response.tag : tag).sort((a, b) => a.name.localeCompare(b.name))); setSessions((previous) => previous.map((session) => ({ ...session, tags: (session.tags ?? []).map((tag) => tag.id === id ? response.tag : tag) }))); }, [projectId]);
   const deleteTag = useCallback(async (id: string) => { await apiDeleteChatTag(id, projectId); setTags((previous) => previous.filter((tag) => tag.id !== id)); setSessions((previous) => previous.map((session) => ({ ...session, tags: (session.tags ?? []).filter((tag) => tag.id !== id) }))); setSelectedTagId((selected) => selected === id ? null : selected); }, [projectId]);

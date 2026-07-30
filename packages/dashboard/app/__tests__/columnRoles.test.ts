@@ -73,7 +73,7 @@ describe("isPreImplementationColumnRole", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — one affordance, two components):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12 — one affordance, two components):
 FIELD EDITABILITY. TaskDetailModal resolved this from traits in U10/R8; TaskCard kept a hardcoded
 `{triage, todo}` set with no trait path, so a renamed board lost the pencil on the card while the
 modal kept it — the same one-surface-missed shape as the FN-6115 chevron chain.

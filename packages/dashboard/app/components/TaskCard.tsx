@@ -333,7 +333,7 @@ const TIME_INDICATOR_COLUMNS = new Set<ColumnId>([
 // ticker (`hooks/useLiveTimeTicker`) so the cadence and the single timer that honors it cannot drift.
 
 /*
-FNXC:TaskCardStatus 2026-07-31-00:00:
+FNXC:TaskCardStatus 2026-07-22-00:00:
 FN-8482 requires compact no-ellipsis active-merge labels on task cards, while the shared
 status mapper retains its ellipsis-bearing output for ListView and other non-card surfaces.
 Only strip a terminal Unicode ellipsis after the shared mapper resolves one of the active
@@ -368,7 +368,7 @@ function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
 // inside instrumented code paths. Returns null on legacy tasks that completed
 // before `executionStartedAt` was tracked, so callers can fall back.
 function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
-  // FNXC:TaskTiming 2026-08-01-12:00: planning-only tasks have no execution
+  // FNXC:TaskTiming 2026-07-20-12:00: planning-only tasks have no execution
   // accumulator, but their active AI duration still belongs on the card chip.
   // Use the legacy execution window only when neither active-time source exists.
   const totalActiveMs = getTotalAgentActiveMs(task, nowMs);
@@ -1504,7 +1504,7 @@ function TaskCardComponent({
 
   // Check if this card can be edited inline
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — R8 drift conversion):
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12 — R8 drift conversion):
   THE ASYMMETRY: this read a hardcoded `{triage, todo}` set with no trait path, while
   TaskDetailModal resolved the SAME affordance from column traits (U10/R8). So on a renamed board an
   operator could edit a task's title in the detail modal but the pencil was missing from its card,

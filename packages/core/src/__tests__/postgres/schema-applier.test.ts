@@ -874,7 +874,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   the audit trail showed an unidentifiable writer).
   */
   /*
-  FNXC:SymbolLock 2026-07-31-10:00:
+  FNXC:SymbolLock 2026-07-20-10:00:
   Existing databases recorded through 0027 must receive the durable declaration
   column before scheduler admission can resolve task-owned symbol keys.
   */

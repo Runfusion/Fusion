@@ -1899,7 +1899,7 @@ export const chatSessions = projectSchema.table("chat_sessions", {
 ]);
 
 /*
-FNXC:ChatTags 2026-08-05-10:55:
+FNXC:ChatTags 2026-07-25-10:55:
 Tags deliberately retain an owner scope independent of the RLS partition. The
 canonical `__default__` scope makes nullable legacy session project IDs unique
 without relying on PostgreSQL's NULL-unique behavior.
@@ -1924,7 +1924,7 @@ export const chatSessionTags = projectSchema.table("chat_session_tags", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   assignedAt: text("assigned_at").notNull(),
 }, (t) => [
-  // FNXC:ChatTags 2026-08-05-12:15: both parents include the RLS partition, preventing bypass/admin access from joining a same-named ID in another project.
+  // FNXC:ChatTags 2026-07-25-12:15: both parents include the RLS partition, preventing bypass/admin access from joining a same-named ID in another project.
   primaryKey({ columns: [t.projectId, t.sessionId, t.tagId] }),
   foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [chatSessions.projectId, chatSessions.id] }).onDelete("cascade"),
   foreignKey({ columns: [t.projectId, t.tagId], foreignColumns: [chatTags.projectId, chatTags.id] }).onDelete("cascade"),

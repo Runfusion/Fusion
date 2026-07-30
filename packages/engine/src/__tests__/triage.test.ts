@@ -1947,7 +1947,7 @@ Planner rewrote mission without the raw request.
   FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
   FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked, while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
 
-  FNXC:ManualIntakeAdmission 2026-07-31-04:45 — READ THIS BEFORE TRUSTING THE FIRST CASE BELOW:
+  FNXC:ManualIntakeAdmission 2026-07-30-04:45 — READ THIS BEFORE TRUSTING THE FIRST CASE BELOW:
   the parked-ideas case passes here for a reason unrelated to the rule. Its store has NO workflow
   readers, so lifecycle resolution falls back to `triage`/`todo` and an `ideas` card matches neither
   admission branch. The mechanism this comment used to name — "only matches column === triage" — was

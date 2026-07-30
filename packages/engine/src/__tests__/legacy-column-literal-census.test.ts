@@ -72,7 +72,7 @@ import { resolve } from "node:path";
 const REPO_ROOT = resolve(__dirname, "../../../..");
 
 /*
-FNXC:LegacyColumnCensus 2026-07-31-01:00 (PR #2557 review — third finding, mine):
+FNXC:LegacyColumnCensus 2026-07-30-01:00 (PR #2557 review — third finding, mine):
 THE RECEIVER PATTERN WAS THE SECOND BLIND SPOT, and it is the one that stops this
 being a ratchet at all.
 
@@ -94,7 +94,7 @@ const LEGACY_COLUMN_COMPARISON =
   /[A-Za-z_$][\w$.?[\]]*\s*(?:===|!==)\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
 
 /*
-FNXC:LegacyColumnCensus 2026-07-31-01:00:
+FNXC:LegacyColumnCensus 2026-07-30-01:00:
 NOT COLUMNS. `"triage"` also names an agent role, a session purpose, an agent-log
 lane and an agent surface; `"done"` and friends likewise appear as statuses. Counting
 these would be worse than missing them: a ratchet that demands converting
@@ -104,7 +104,7 @@ never reach zero because those lines are correct as written.
 Two independent classifiers agreed on exactly this receiver set, which is the
 strongest evidence available that it is complete as of today.
 
-FNXC:LegacyColumnCensus 2026-07-31-03:05 (PR #2557 review — greptile, and a real
+FNXC:LegacyColumnCensus 2026-07-30-03:05 (PR #2557 review — greptile, and a real
 defect in my own widening): the status exclusion was `\bstatus\b`, which catches
 `s.status` (the dot is a word boundary) but NOT a camelCase local. Measured:
 `tStatus`, `rStatus`, `sStatus` and `kStatus` account for SEVEN comparisons that were
@@ -160,7 +160,7 @@ const CEILING = 745;
 
 function productionSources(): string[] {
   /*
-  FNXC:LegacyColumnCensus 2026-07-31-00:25 (PR #2557 review — greptile):
+  FNXC:LegacyColumnCensus 2026-07-30-00:25 (PR #2557 review — greptile):
   THE PATHSPEC WAS THE BUG, and it under-reported in two independent directions.
 
     .tsx was absent entirely, so every dashboard component — the single largest

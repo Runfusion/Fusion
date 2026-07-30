@@ -150,7 +150,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   const showTerminalLauncher = !isMobile && Boolean(onToggleTerminal);
   const columnFlagsByTaskId = suppliedColumnFlagsByTaskId;
   /*
-  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FNXC:ConcurrencyIndicators 2026-07-21-12:00:
   FN-8453 receives a task-scoped board trait index from App before the shared
   live-agent predicate runs. Literal column ids are only a loading/legacy fallback.
   */

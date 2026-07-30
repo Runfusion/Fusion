@@ -106,7 +106,7 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     expect(workflowHasColumn(ir, "todo")).toBe(true);
 
     /*
-    FNXC:WorkflowColumns 2026-07-31-04:30 (U12 — the move-path flag is RESOLVED; this is the fix):
+    FNXC:WorkflowColumns 2026-07-30-04:30 (U12 — the move-path flag is RESOLVED; this is the fix):
     THE DEFECT IS GONE, so this case now asserts the refusal instead of the acceptance, and the
     `it.todo` below it — "should REFUSE a move into a column the task's workflow does not declare
     (U2b)" — is fulfilled rather than left dangling.

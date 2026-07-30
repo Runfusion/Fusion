@@ -53,7 +53,7 @@ function harness(ir: WorkflowIr | undefined) {
 describe("one lane snapshot per recovery decision", () => {
   it("resolves the workflow ONCE when a memo is shared, not once per half", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (PR #2640 review, greptile P2):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (PR #2640 review, greptile P2):
     Eligibility and re-entry are two halves of the SAME decision. Resolving separately is not just
     extra I/O: a workflow edit landing between the two calls would have the halves reading DIFFERENT
     boards — eligibility admits a card in review, then re-entry resolves a board where that column

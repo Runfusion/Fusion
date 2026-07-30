@@ -350,7 +350,7 @@ export async function prepareWorkflowMovePolicyPreflightImpl(store: TaskStore, i
     const task = await store.readTaskForMove(id);
     const moveSource = options?.moveSource ?? "engine";
     /*
-    FNXC:WorkflowColumns 2026-07-31-04:00 (U12 — flipped ATOMICALLY with moves.ts):
+    FNXC:WorkflowColumns 2026-07-30-04:00 (U12 — flipped ATOMICALLY with moves.ts):
     The compatibility-flag gate is DELETED. This preflight computes the `movePolicyPreflight` that
     `moves.ts` consumes and validates, so the two could never be flipped independently: un-gating
     this alone would evaluate workflow move policies — with their plugin-gate side effects — while

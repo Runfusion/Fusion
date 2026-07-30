@@ -1,5 +1,5 @@
 /*
-FNXC:LifecycleColumnRatchet 2026-07-31-09:10 (U12 R12 — AST, replacing the grep):
+FNXC:LifecycleColumnRatchet 2026-07-30-09:10 (U12 R12 — AST, replacing the grep):
 
 THE MEASURING INSTRUMENT for the lifecycle-column conversion, and the authority on the number.
 
@@ -197,7 +197,7 @@ function comparisonSites(columnId: string): Site[] {
  * to NON_COLUMN_RECEIVERS with a reason.
  */
 /*
-FNXC:LifecycleColumnRatchet 2026-07-31-01:30 (PR #2647 review — greptile, and worse than reported):
+FNXC:LifecycleColumnRatchet 2026-07-30-01:30 (PR #2647 review — greptile, and worse than reported):
 TIGHTENED TO THE MEASURED COUNTS, because slack made this a ratchet in name only.
 
 The review's finding was that this test is not in the blocking gate, so a regression can merge. True,
@@ -384,7 +384,7 @@ describe("the detector counts every reintroduction shape (fail closed)", () => {
 });
 
 /*
-FNXC:LifecycleColumnRatchet 2026-07-31-00:45 (U12 — the bar is a FLOOR, not zero):
+FNXC:LifecycleColumnRatchet 2026-07-30-00:45 (U12 — the bar is a FLOOR, not zero):
 SITES THAT MUST NEVER BE CONVERTED, asserted as a positive.
 
 The program has been tracking these counts toward zero. Zero is not reachable, and pursuing it means

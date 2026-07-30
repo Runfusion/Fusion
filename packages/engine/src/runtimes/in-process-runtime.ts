@@ -1459,7 +1459,7 @@ export class InProcessRuntime
           this.executor?.releasePreExecutionWorktree(taskId, reason) ?? Promise.resolve(false),
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
         getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
-        // FNXC:TaskTiming 2026-08-01-12:00: orphan planning recovery must defer
+        // FNXC:TaskTiming 2026-07-20-12:00: orphan planning recovery must defer
         // while executor-owned graph Plan Review holds the sole planning anchor.
         hasActivePlanningWorkflowSession: (taskId) => this.executor?.hasActivePlanningWorkflowSession(taskId) ?? false,
         reserveAdvancedTriageRecovery: (taskId) => this.triageProcessor?.tryReserveAdvancedRecovery(taskId),

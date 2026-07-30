@@ -212,7 +212,7 @@ export async function resolveActiveTaskWedgeEpisodeRow(
     .update(schema.project.tasks)
     .set({
       /*
-      FNXC:WedgeNotification 2026-07-31-12:00:
+      FNXC:WedgeNotification 2026-07-30-12:00:
       `${transitionedAt}::text` — the CAST is load-bearing, not decoration.
 
       PostgreSQL cannot infer the type of a bare bind parameter used as a `jsonb_build_object` value:

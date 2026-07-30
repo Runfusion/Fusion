@@ -500,7 +500,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   researchView: "Research View",
   evalsView: "Evals View",
   /*
-  FNXC:SettingsExperimental 2026-08-01-00:00:
+  FNXC:SettingsExperimental 2026-07-19-00:00:
   FN-8352 promotes Ideation to a default-off top-level view. Keep its toggle
   visible so operators explicitly opt into the sidebar and mobile More surface.
   */
@@ -946,7 +946,7 @@ export function SettingsModal({
   const settingsContentRef = useRef<HTMLDivElement>(null);
   const workflowLaneSaverRef = useRef<SectionSaveHandler | null>(null);
   /*
-  FNXC:SettingsAutoSave 2026-08-03-01:00:
+  FNXC:SettingsAutoSave 2026-07-20-01:00:
   Workflow lane edits live outside the shared Settings form. Track their revision
   alongside form dirtiness so Option 1 auto-save and every close path flush them
   too; a completion only clears the revision it actually persisted.
@@ -1341,7 +1341,7 @@ export function SettingsModal({
     // jump; otherwise the row we just scrolled to would be scrolled away from.
     settingsJumpPendingRef.current = true;
     /*
-    FNXC:SettingsAutoSave 2026-08-03-00:00:
+    FNXC:SettingsAutoSave 2026-07-20-00:00:
     Search navigation is an operator-initiated section change too. Route it
     through the same flush path as sidebar/mobile navigation so a pending edit
     to raw global GitLab fields cannot be re-scoped as a project save after the
@@ -3319,7 +3319,7 @@ export function SettingsModal({
   }, []);
 
   /*
-  FNXC:SettingsAutoSave 2026-08-02-12:00:
+  FNXC:SettingsAutoSave 2026-07-20-12:00:
   FN-8395 implements issue #2343 Option 1: form-backed Settings persist through
   this debounced single-flight path, never a Save button or dirty-leave prompt.
   Each request works from a captured render snapshot and advances only matching
@@ -3502,7 +3502,7 @@ export function SettingsModal({
       // Quiet state feedback avoids a toast for each debounced edit.
       setAutoSaveStatus("saved");
       /*
-      FNXC:SettingsAutoSave 2026-08-02-20:50:
+      FNXC:SettingsAutoSave 2026-07-20-20:50:
       A completed request may describe an older form snapshot. Advance only the
       keys that request actually wrote so a response can never bless unrelated,
       newer edits as already persisted.
@@ -3519,7 +3519,7 @@ export function SettingsModal({
         };
       });
       /*
-      FNXC:SettingsAutoSave 2026-08-02-21:45:
+      FNXC:SettingsAutoSave 2026-07-20-21:45:
       A successful snapshot becomes the next autosave comparison point. If the
       user edited while this request was in flight, the live snapshot differs
       and the effect queues exactly one trailing write.
@@ -3573,7 +3573,7 @@ export function SettingsModal({
 
   useEffect(() => {
     /*
-    FNXC:SettingsAutoSave 2026-08-02-21:35:
+    FNXC:SettingsAutoSave 2026-07-20-21:35:
     Some legacy form values are normalized differently from their raw scoped
     settings. Snapshot the hydrated form before enabling autosave so opening
     Settings cannot write those untouched defaults; later user edits change the
@@ -3607,7 +3607,7 @@ export function SettingsModal({
       autoSaveTimerRef.current = null;
     }
     /*
-    FNXC:SettingsAutoSave 2026-08-02-20:50:
+    FNXC:SettingsAutoSave 2026-07-20-20:50:
     Close is never a discard path. If a request is already running, queue its
     latest trailing snapshot and wait for that queue to drain before the modal
     unmounts; otherwise flush the current dirty snapshot synchronously.
@@ -3655,7 +3655,7 @@ export function SettingsModal({
       autoSaveTimerRef.current = null;
     }
     /*
-    FNXC:SettingsAutoSave 2026-08-03-22:15:
+    FNXC:SettingsAutoSave 2026-07-20-22:15:
     Parent-driven unmount is also a dismissal path. Retain a dirty snapshot's
     flush even when a debounce timer is not present at cleanup, rather than
     treating the timer itself as the source of durability.
@@ -4835,7 +4835,7 @@ export function SettingsModal({
             (only Cancel is), so this button renders in both automatically (FN-7506
             Surface Enumeration: modal + embedded).
 
-            FNXC:SettingsReset 2026-08-02-21:45:
+            FNXC:SettingsReset 2026-07-20-21:45:
             The mobile Settings footer needs the compact Reset label to preserve horizontal space alongside Help, version, Import, Export, and Close. Desktop and tablet keep the full Reset Settings wording while the existing destructive confirmation dialog remains unchanged.
             */}
             <button

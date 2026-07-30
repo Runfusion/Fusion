@@ -93,7 +93,7 @@ pgDescribe("TaskStore review-signal hydration under a renamed review column (Pos
   }
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-14:20 (PR #2586 review — greptile):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-14:20 (PR #2586 review — greptile):
   THE STALLED SIBLING NEEDS ITS OWN FIXTURE, and its absence is why the gap existed.
   `getInReviewStalledSignal` requires `paused !== true` — it is the UNPAUSED
   counterpart of `getStalePausedReviewSignal` — so `seedPaused` cannot exercise it,

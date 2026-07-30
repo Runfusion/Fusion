@@ -676,7 +676,7 @@ where the traits are unknown rather than known-false.
 */
 function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12): body moved UNCHANGED to
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12): body moved UNCHANGED to
   `isFieldEditableColumnRole`, so this and TaskCard cannot drift apart again. TaskCard implemented the
   same affordance with the raw id set and no trait path, which is how a renamed board lost inline
   editing on the card while this surface kept it.
@@ -6675,7 +6675,7 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
   useMobileScrollLock(true);
   const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
-  FNXC:TaskDetailSwipeBack 2026-08-07-00:00:
+  FNXC:TaskDetailSwipeBack 2026-07-25-00:00:
   Gate predictive-back animation through useViewportMode, the same physical-screen-aware
   classifier used for resize behavior. This preserves phone animation while keeping known
   768px tablets in their desktop/tablet presentation.

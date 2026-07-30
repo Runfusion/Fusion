@@ -116,7 +116,7 @@ describe("an engine rebound does not move a card that is already in its rebound 
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-16:20 (PR #2644 review, CodeRabbit):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-16:20 (PR #2644 review, CodeRabbit):
   THIS FIXTURE HAD TO DIFFER FROM THE DEFAULT-LINEAGE ONE. Both used `harness(undefined, ...)`, which
   supplies no workflow SELECTION at all — so "the default lineage" and "the workflow cannot be resolved"
   were the same setup, and this case could pass without ever exercising a selection whose definition lookup

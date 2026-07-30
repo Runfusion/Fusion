@@ -56,7 +56,7 @@ pgTest("TaskStore moveTask column transitions (PostgreSQL)", () => {
 
   it("moves an in-progress task back to the workflow's planning column, and REFUSES `triage`", async () => {
     /*
-    FNXC:WorkflowColumns 2026-07-31-04:45 (U12 — the move-path flag is resolved):
+    FNXC:WorkflowColumns 2026-07-30-04:45 (U12 — the move-path flag is resolved):
     Was "allows moving an in-progress task back to triage". The default lineage stopped declaring
     `triage` at #2515, and the move path now resolves targets against the task's own workflow instead
     of a hardcoded legacy adjacency table — so that move is refused rather than stranding the card in

@@ -62,7 +62,7 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "research", label: "Research", labelKey: "header.researchView" },
   { id: "evals", label: "Evals", labelKey: "header.evalsView" },
   /*
-  FNXC:Navigation 2026-08-01-00:00:
+  FNXC:Navigation 2026-07-27-00:00:
   FN-8352 promotes Ideation from a Command Center tab to a persisted,
   default-off experimental top-level view.
   */

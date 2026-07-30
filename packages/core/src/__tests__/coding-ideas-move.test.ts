@@ -115,7 +115,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
       store.moveTask(task.id, "ideas", { moveSource: "user" }),
     ).rejects.toThrow(/Invalid transition: '.*' → 'ideas'/);
     /*
-    FNXC:WorkflowColumns 2026-07-31-04:30 (U12 — the move-path flag is resolved):
+    FNXC:WorkflowColumns 2026-07-30-04:30 (U12 — the move-path flag is resolved):
     ...and so is a non-adjacent target. The advertised target list changed from
     `in-progress, triage, archived` to `archived, in-progress`, and that is the FIX rather than a
     regression: the old list came from the hardcoded legacy adjacency table, which still offered

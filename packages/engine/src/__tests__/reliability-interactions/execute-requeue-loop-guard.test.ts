@@ -366,7 +366,7 @@ describe("execute requeue loop guard", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-12:50 (PR #2568 review — greptile):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:50 (PR #2568 review — greptile):
   Both fixes below were UNPROVEN when written: I mutated each and the existing 17
   cases stayed green, which is the same "converted but untested" state this program
   keeps finding in other people's work. These two pin them.

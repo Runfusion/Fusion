@@ -195,7 +195,7 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
     const retriageColumns = author === "user"
       ? await (async () => {
         /*
-        FNXC:PostCommentRetriage 2026-07-31-08:05 (PR #2612 review — greptile):
+        FNXC:PostCommentRetriage 2026-07-30-08:05 (PR #2612 review — greptile):
         SAY SO WHEN THE FALLBACK FIRES. The legacy pair is the right BEHAVIOUR on a
         resolution failure — this is best-effort re-triage whose failure mode is a
         MISSED re-spec — but swallowing the cause left the one question an operator

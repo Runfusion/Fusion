@@ -1,5 +1,5 @@
 /*
-FNXC:TaskMovement 2026-07-31-11:30 (PR #2655 review — the contract that was only a comment):
+FNXC:TaskMovement 2026-07-30-11:30 (PR #2655 review — the contract that was only a comment):
 AN OPTIONLESS `moveTask(id, toColumn)` MUST NOT INHERIT GUARD BYPASS.
 
 `moves.ts` resolves `moveSource = options?.moveSource ?? "engine"` for the EMITTED source, while

@@ -73,7 +73,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   reports what it assumed, not what happened.
   */
   /*
-  FNXC:WorkflowColumns 2026-07-31-04:45 (U12 — the move-path flag is resolved):
+  FNXC:WorkflowColumns 2026-07-30-04:45 (U12 — the move-path flag is resolved):
   There is only ONE path now, so this no longer selects between them. It is kept rather than deleted
   because the probe half is still worth doing: it proves the move path is live and rejecting before
   a capacity case draws conclusions from a rejection, so a capacity test cannot pass because moves

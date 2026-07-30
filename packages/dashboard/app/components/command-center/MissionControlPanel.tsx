@@ -71,7 +71,7 @@ receiver is a column id, purpose is presentation, not a lifecycle decision.
 const TRIAGE_STAGE_COLUMN_ALIASES: ReadonlySet<string> = new Set(["triage", "signal", "backlog"]);
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:20 (U12 — census gate repair) DELIBERATE-LITERAL:
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:20 (U12 — census gate repair) DELIBERATE-LITERAL:
 The marker above was ATTACHED TO THE WRONG NODE and therefore did nothing.
 
 `hasDeliberateMarker` walks a node's leading comments and its ancestors. The existing

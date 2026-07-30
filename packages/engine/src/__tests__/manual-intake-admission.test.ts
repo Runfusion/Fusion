@@ -1,5 +1,5 @@
 /*
-FNXC:ManualIntakeAdmission 2026-07-31-04:35 (live bug, found while scoping the coding-ideas merge):
+FNXC:ManualIntakeAdmission 2026-07-30-04:35 (live bug, found while scoping the coding-ideas merge):
 
 THE INVARIANT: a card sitting at a MANUAL intake (`autoTriage: false`) is never auto-planned. Coding
 (Ideas) exists so an operator can park a card without the engine touching it; the operator promotes

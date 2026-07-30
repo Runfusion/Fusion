@@ -721,7 +721,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.modifiedFiles !== undefined) {
         task.modifiedFiles = updates.modifiedFiles;
       }
-      /* FNXC:SymbolLock 2026-07-31-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
+      /* FNXC:SymbolLock 2026-07-20-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
       if (hasOwnDeclaredSymbols(updates)) {
         const normalized = normalizeDeclaredSymbols(Array.isArray(updates.declaredSymbols) ? updates.declaredSymbols : []);
         task.declaredSymbols = normalized.length ? normalized : undefined;
@@ -776,7 +776,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
 
       /*
-      FNXC:MissionSymbolAdmission 2026-08-01-00:00:
+      FNXC:MissionSymbolAdmission 2026-07-20-00:00:
       A workflow failure may park in the current in-progress column rather than
       move out of it. Release that task's durable symbols on the status edge as
       well as moveTask's column-exit path, allowing engine reconciliation to

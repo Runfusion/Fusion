@@ -114,7 +114,7 @@ export function getActiveRuntimeMs(
   return null;
 }
 
-/** FNXC:TaskTiming 2026-08-01-10:00: rendered task totals include planning AI
+/** FNXC:TaskTiming 2026-07-20-10:00: rendered task totals include planning AI
  * segments while getActiveRuntimeMs intentionally remains execution-only. */
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,

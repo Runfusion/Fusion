@@ -209,7 +209,7 @@ describe("getWorkflowSettingsProjectIdImpl resolution order (unit)", () => {
       },
     } as unknown as TaskStore;
     /*
-    FNXC:CentralProjectIdentity 2026-07-31-13:00:
+    FNXC:CentralProjectIdentity 2026-07-30-13:00:
     rootDir, NOT the legacy identity — and the store double above is the reason this case used to
     expect otherwise. It supplies a `db.getProjectIdentity()` that RETURNS a value, which the real
     accessor can never do: `dbImpl` throws unconditionally and ignores its store argument entirely
