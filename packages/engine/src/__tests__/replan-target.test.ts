@@ -304,6 +304,7 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
       .toContain(target);
   });
 
+<<<<<<< HEAD
   it("returns UNDEFINED for a workflow that declares no planning lane at all", async () => {
     // Plan U5: "skipped with a log rather than moved arbitrarily". Inventing a column
     // is what this change removes.
@@ -324,6 +325,30 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
   });
 
     /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
+=======
+  /*
+  FNXC:WorkflowReplan 2026-07-31-14:10 (kept from consolidate/u7 during the rebase):
+  MAIN converted this fallback through `resolveReboundTarget` — the KTD-10 helper (hold -> intake ->
+  first declared) — while this branch converted it to `hold ?? intake`. Main's is BETTER: it is the
+  helper every other rebound path already uses, and it has a third tier for a workflow that declares
+  neither role. So main's implementation and its test are kept verbatim and mine is dropped.
+
+  The one case main does not cover is kept: a column-less v1 IR resolves NO lane, and the legacy id is
+  then the only answer that is not invented. That is the sole surviving literal on the success path and
+  it carries a DELIBERATE-LITERAL marker at the site, so the census scores it reviewed rather than
+  backlog — worth a test precisely because a later cleanup would otherwise read it as drift.
+  */
+  it("still returns the legacy planner id when the IR resolves NO lane at all", async () => {
+    const store = {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-v1", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "wf-v1", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ id: "wf-v1", ir: { version: "v1", name: "legacy", nodes: [], edges: [] } })),
+    } as unknown as TaskStore;
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+  });
+
+  /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
+>>>>>>> 6f25ab3a82 (test(engine): keep the column-less replan case; main's implementation of item 3 wins)
      the error and hands back the default IR, whose planner lane is now `todo`. The
      two literal `return "triage"` fallbacks survive only for workflows that declare
      neither column (see the marketing case above) — a pre-existing wart, since that
