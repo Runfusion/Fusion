@@ -27,6 +27,7 @@ import {
 } from "../workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../default-workflow-hooks.js";
 import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
@@ -314,9 +315,32 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
         );
       }
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-08:20 (batch-core):
+      HANDOFF TARGETS THE BOARD'S OWN REVIEW LANE.
+
+      This was the literal `"in-review"`, and the consequence is worse than a guard that fails to
+      match: `moveTaskInternal` REJECTS a target the workflow does not declare
+      (`TransitionRejectionError: unknown-column`). So on any board that renamed its review lane,
+      completion handoff did not silently no-op — it THREW, and every task finishing implementation
+      failed to reach review at all.
+
+      Found by a merge-queue regression test that tried to drive the real handoff path; the merge-queue
+      guards below could never have been exercised on a renamed board because nothing could get a card
+      into review in the first place.
+
+      A SINGLE ID, not the broad set: this is a move TARGET, and a move takes exactly one column. That
+      is the opposite arity from the enqueue/dequeue membership guards in this same file — same
+      vocabulary, different question. `lifecycle.review` is the first `mergeOrchestration` lane, which
+      is the lane a completion handoff belongs in; a `humanReview`-only lane is somewhere a card can BE
+      in review, not somewhere the engine should PUT it.
+      */
+      const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+      const handoffTarget = (handoffIr ? resolveLifecycleColumns(handoffIr)?.review : undefined) ?? "in-review";
+
       return store.moveTaskInternal(
         taskId,
-        "in-review",
+        handoffTarget,
         {
           ...opts.moveOptions,
           skipMergeBlocker: true,
@@ -408,6 +432,22 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     the fallback: a move must behave exactly as before when there is no basis to resolve from.
     */
     const moveLifecycle = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-07:45 (batch-core):
+    The BROAD review set for the merge-queue pair below. Resolved once here, beside `moveLifecycle`,
+    and handed to both `enqueueMergeQueueInTransaction` and
+    `dequeueMergeQueueOnColumnExitInTransaction` — those run inside the move transaction with only a
+    `tx` handle and cannot resolve it themselves.
+
+    Broad rather than `moveLifecycle.review`: enqueue/dequeue ask "is this card in / has it left a
+    review lane", which is MEMBERSHIP. A board may declare a merge-orchestration lane and a separate
+    human sign-off lane, and a card moving between them has not left review — the narrow single-id
+    answer would dequeue it and drop it out of the merge queue mid-review.
+
+    `undefined` when the workflow could not be read, which is what makes the helpers fall back to the
+    legacy id rather than to an empty set that matches nothing.
+    */
+    const moveReviewColumns = workflowIr ? new Set(resolveReviewColumns(workflowIr)) : undefined;
 
     if (task.column === toColumn) {
       if (internal.fromHandoff && toColumn === "in-review") {
@@ -447,7 +487,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           await enqueueMergeQueueInTransaction(tx, id, { priority: task.priority, now: internal.now }, {
             agentId: internal.runContext?.agentId,
             runId: internal.runContext?.runId,
-          });
+          }, moveReviewColumns);
           // FNXC:PostgresCutover 2026-07-15-12:00:
           // Same-column retries must share the outer handoff transaction too,
           // so workflow work cannot survive a rolled-back queue/audit handoff.
@@ -1083,7 +1123,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
 
       // Dequeue from merge queue on column exit (if leaving in-review).
-      await dequeueMergeQueueOnColumnExitInTransaction(tx, id, fromColumn, toColumn, movedAt);
+      await dequeueMergeQueueOnColumnExitInTransaction(tx, id, fromColumn, toColumn, movedAt, moveReviewColumns);
 
       // FNXC:WorkflowReviewGates 2026-07-26-16:40: see isRecognizedInReviewEntry — a
       // graph-owned crossing into the review column is a legitimate arrival, not a violation.
@@ -1113,7 +1153,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         await enqueueMergeQueueInTransaction(tx, id, { priority: task.priority, now: internal.now }, {
           agentId: internal.runContext?.agentId,
           runId: internal.runContext?.runId,
-        });
+        }, moveReviewColumns);
         // FNXC:PostgresCutover 2026-06-27-10:25:
         // Thread the outer move transaction so cancel + upsert commit
         // atomically with the handoff (no orphaned merge-gate items on rollback).
