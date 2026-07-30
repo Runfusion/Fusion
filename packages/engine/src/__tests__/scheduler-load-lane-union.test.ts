@@ -89,8 +89,23 @@ describe("the scheduler's load-lane union covers every legacy role", () => {
     const source = readFileSync(new URL("../scheduler.ts", import.meta.url), "utf8");
     const sf = ts.createSourceFile("scheduler.ts", source, ts.ScriptTarget.Latest, true);
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:45 (#2804 review — greptile):
+    SCOPED TO `resolveLoadLanes`, not the whole file.
+
+    The first version collected EVERY `columnsWithFlag` call in scheduler.ts. `resolveDependencySatisfactionColumns`
+    in the same file passes `mergeBlocker` and `humanReview` for its own, unrelated question — so
+    deleting either from the load-lane union left them in the set anyway and every assertion below
+    still passed. The test could not fail for the regression it exists to catch.
+
+    Scoping means two things have to be sanity-checked, not one: that the function was FOUND, and that
+    it contained calls. Either being false is a silent pass, which is the failure mode this whole
+    exercise keeps producing.
+    */
     const flagsPassed = new Set<string>();
-    const visit = (node: import("typescript").Node): void => {
+    let loadLaneFnFound = false;
+
+    const collectWithin = (node: import("typescript").Node): void => {
       if (ts.isCallExpression(node)
         && ts.isIdentifier(node.expression)
         && node.expression.text === "columnsWithFlag"
@@ -98,11 +113,27 @@ describe("the scheduler's load-lane union covers every legacy role", () => {
         && ts.isStringLiteral(node.arguments[1])) {
         flagsPassed.add(node.arguments[1].text);
       }
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, collectWithin);
     };
-    visit(sf);
 
-    // Sanity: a parse that found nothing would make every assertion below vacuous.
+    const findLoadLaneFn = (node: import("typescript").Node): void => {
+      if (ts.isVariableDeclaration(node)
+        && ts.isIdentifier(node.name)
+        && node.name.text === "resolveLoadLanes"
+        && node.initializer) {
+        loadLaneFnFound = true;
+        collectWithin(node.initializer);
+        return;
+      }
+      ts.forEachChild(node, findLoadLaneFn);
+    };
+    findLoadLaneFn(sf);
+
+    /*
+    Both sanity checks are load-bearing. A rename of `resolveLoadLanes` would otherwise leave the set
+    empty and the loop below would assert nothing — the exact vacuity this scoping was meant to remove.
+    */
+    expect(loadLaneFnFound, "scheduler.ts no longer declares resolveLoadLanes — this test is scoped to it").toBe(true);
     expect(flagsPassed.size).toBeGreaterThan(0);
 
     for (const flag of ["intake", "hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview"]) {
