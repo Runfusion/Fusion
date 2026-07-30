@@ -110,7 +110,7 @@ export interface ArchivedTaskEntry {
   modelId?: string;
   validatorModelProvider?: string;
   validatorModelId?: string;
-  /** Optional: planning model override for triage agent */
+  /** Optional: planning model override for the triage AGENT (a lane/role id, not a column). */
   planningModelProvider?: string;
   planningModelId?: string;
   mergerModelProvider?: string;
@@ -760,7 +760,13 @@ export interface ProjectHealth {
   /**
    * FNXC:Concurrency 2026-06-26-23:46:
    * Persisted project-health bookkeeping refreshed only by health polling / slot accounting paths; it is not a live read-layer running-agent count.
-   * Consumers that need current running agents must derive from the shared top-level slot predicate: in-progress executors, active triage planners (`column === "triage" && status === "planning" && !paused`), and active in-review reviewer/merger/fix agents including PR/fix merge substates, leaving this stored value untouched.
+   * Consumers that need current running agents must derive from the shared top-level slot predicate: implementation-column executors, active planners (a card in its workflow's INTAKE column with `status === "planning" && !paused`), and active review/merge-column reviewer/merger/fix agents including PR/fix merge substates, leaving this stored value untouched.
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (triage-guard census):
+   * This prescribed a hardcoded intake-column id verbatim. No executable guard lives in this file, but a
+   * doc that hands out a dead predicate is worse than a dead guard: whoever implements from it
+   * writes a comparison that matches nothing on the default lineage, which post-merge declares one
+   * Planning column and no `triage`. Roles, not ids — resolve intake/wip/review by trait.
    */
   inFlightAgentCount: number;
   /** ISO-8601 timestamp of last activity */
