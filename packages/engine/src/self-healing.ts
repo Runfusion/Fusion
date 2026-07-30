@@ -11484,7 +11484,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       const linkedTask = await this.store.getTask(agent.taskId);
-      if (linkedTask && (linkedTask.column === "in-progress" || linkedTask.column === "in-review" || linkedTask.column === "done" || linkedTask.column === "archived")) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (fleet: self-healing.ts):
+      "The agent's task is still being worked, or has finished" — WIP, review, complete or archived.
+      Keyed by role so an agent linked to a card on a renamed board is not treated as orphaned and
+      reaped while its task is genuinely active. No source query to pair: the loop is over running
+      AGENTS, and the task is fetched by id.
+      */
+      const linkedLanes = linkedTask
+        ? await (async () => {
+          try {
+            return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, linkedTask.id));
+          } catch {
+            return undefined;
+          }
+        })()
+        : undefined;
+      if (linkedTask && (
+        linkedTask.column === (linkedLanes?.wip ?? "in-progress")
+        || linkedTask.column === (linkedLanes?.review ?? "in-review")
+        || linkedTask.column === (linkedLanes?.complete ?? "done")
+        || linkedTask.column === (linkedLanes?.archived ?? "archived")
+      )) {
         continue;
       }
 
