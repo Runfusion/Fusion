@@ -28,6 +28,25 @@ CLASSES (only the first is backlog):
   status      — StepStatus / mission / goal / feature status. `done`, `in-progress` and `archived`
                 collide with column ids; `pending` and `skipped` never do.
   deliberate  — reviewed literal carrying a DELIBERATE-LITERAL marker in its leading comments.
+
+FOREIGN VOCABULARIES (audited 2026-07-30, batch-cli-plugins).
+
+  The `status` category above catches a foreign enum reached through a PROPERTY (`step.status`,
+  `feature.status`). It cannot catch one held in a BARE VARIABLE — `if (next === "archived")`, where
+  `next` is a ReportStatus — because the receiver name carries no type information. Those land in the
+  `column` backlog and read as unconverted lifecycle guards.
+
+  Do NOT convert them: resolving a report's status against a task workflow is a category error. Mark
+  the site DELIBERATE-LITERAL with the owning vocabulary named, as the reports plugin now does.
+
+  Measured scope, so nobody re-hunts this: a full receiver-level audit of all 392 column-category
+  sites found exactly 3 such false positives, all in `plugins/fusion-plugin-reports` (`next`, a
+  ReportStatus), and all now marked. Every other receiver sampled — `to`, `from`, `column`,
+  `fromColumn`, `toColumn`, `latestColumn`, `state`, `preArchiveColumn` — resolved to a genuine task
+  column. Bare `status`/`currentStatus`/`liveStatus` step comparisons are correctly excluded already
+  (`merge-queue-ops.ts` counts 1 of its 11 literals, and that 1 is the real `.column` guard).
+
+  The backlog number is therefore real. Treat a surprising count as work, not as noise.
 */
 
 import { createRequire } from "node:module";
