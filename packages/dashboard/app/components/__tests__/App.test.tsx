@@ -88,12 +88,7 @@ vi.mock("../../api", async (importOriginal) => {
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
     fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
-    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
-      flagEnabled: false,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [],
-      taskWorkflowIds: {},
-    })),
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve(DEFAULT_BOARD_WORKFLOWS)),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -669,6 +664,48 @@ import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-06:10 (why these tests went red):
+
+ListView early-returns a workflow SKELETON when the board has no workflows:
+
+    if (boardWorkflows === null || boardWorkflows.workflows.length === 0) {
+      return renderListWorkflowSkeleton(boardWorkflows !== null);
+    }
+
+That skeleton carries the SAME `list-view` class as the real body, so every test that waits on
+`.list-view` and then reaches for a control inside it passed its `waitFor` and failed on the control,
+with a DOM that looks like the list rendered fine. Probe on the failing case:
+
+    cluster: false | listview: true | buttons: []
+
+The mock returned `workflows: []` with `flagEnabled: false`, which used to be fine: the flag-off path
+rendered legacy columns and needed no workflow. U12 deleted that path, so an empty `workflows` array
+now means "this board has no lanes" and there is nothing to render. The fixture, not the product,
+is what went stale.
+
+Mirrors the builtin coding lanes with the trait flags the board actually reads.
+*/
+const DEFAULT_BOARD_WORKFLOWS = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [
+    {
+      id: "builtin:coding",
+      name: "Coding",
+      columns: [
+        { id: "todo", name: "Todo", flags: { hold: true, intake: true } },
+        { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
+        { id: "in-review", name: "In Review", flags: { countsTowardWip: true, mergeBlocker: true, mergeOrchestration: true, humanReview: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+        { id: "archived", name: "Archived", flags: { archived: true, hiddenFromBoard: true } },
+      ],
+    },
+  ],
+  taskWorkflowIds: {},
+};
+
+
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
@@ -700,12 +737,7 @@ beforeEach(() => {
     },
     taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
   });
-  vi.mocked(fetchBoardWorkflows).mockResolvedValue({
-    flagEnabled: false,
-    defaultWorkflowId: "builtin:coding",
-    workflows: [],
-    taskWorkflowIds: {},
-  });
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_BOARD_WORKFLOWS);
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReset();
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReturnValue({
     projects: [],
