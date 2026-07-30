@@ -2781,16 +2781,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       `done`, so nothing was ever archived and every dependent counted as active. Benign, but the
       auto-archive lifecycle simply stopped existing there.
       */
-      const terminalLanesFor = (taskId: string) => {
+      const terminalLanesFor = async (taskId: string) => {
         try {
-          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
+          return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
         } catch {
           return undefined;
         }
       };
       const tasksWithActiveDependents = new Set<string>();
       for (const t of tasks) {
-        const depLanes = terminalLanesFor(t.id);
+        const depLanes = await terminalLanesFor(t.id);
         if (t.column === (depLanes?.complete ?? "done") || t.column === (depLanes?.archived ?? "archived")) continue;
         for (const depId of t.dependencies ?? []) {
           tasksWithActiveDependents.add(depId);
@@ -2798,7 +2798,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       const stale = tasks.filter((t) => {
-        if (t.column !== (terminalLanesFor(t.id)?.complete ?? "done")) return false;
+        if (t.column !== "done") return false;
         // Prefer columnMovedAt (when the task entered done); fall back to updatedAt
         // for legacy tasks that lack the field.
         const ts = t.columnMovedAt || t.updatedAt;
@@ -4586,9 +4586,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const task = taskById.get(derivedTaskId.toUpperCase());
         /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): archived lane by role. */
         const staleArchivedLane = task
-          ? (() => {
+          ? await (async () => {
             try {
-              return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id))?.archived ?? "archived";
+              return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id))?.archived ?? "archived";
             } catch {
               return "archived";
             }
@@ -5753,13 +5753,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       };
       /* Sync variant for the `.filter` below, which cannot await. Same resolution, same fallbacks. */
-      const lanesForSync = (taskId: string) => {
-        try {
-          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
-        } catch {
-          return undefined;
-        }
-      };
       const todoTasks = await this.filterByPreWipRole(staleBlockedBoard, ["hold"], blockedLaneCache);
       const inProgressTasks = await this.filterByWipRole(staleBlockedBoard, blockedLaneCache);
       const inReviewTasks = await this.filterByReviewRole(staleBlockedBoard, blockedLaneCache);
@@ -5842,10 +5835,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // listTasks excludes soft-deleted rows, so missing dependency IDs are
           // treated as resolved here by design.
           if (!dep || dep.deletedAt) return false;
-          const depLanes = lanesForSync(dep.id);
-          return dep.column !== (depLanes?.complete ?? "done")
-            && dep.column !== (depLanes?.review ?? "in-review")
-            && dep.column !== (depLanes?.archived ?? "archived");
+          /* FNXC:WorkflowLifecycleColumns 2026-08-03-10:20: sync `.filter`, so no async lane
+             resolution is available here. Left on literals rather than on a sync reader that
+             cannot see the task's workflow and would only look converted. */
+          return dep.column !== "done"
+            && dep.column !== "in-review"
+            && dep.column !== "archived";
         });
         const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(task, task.overlapBlockedBy);
 
@@ -7938,15 +7933,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return { ...fallbackBudget, key: "pre-merge-optional-step", attempts: 0, label: fallbackBudget.unbounded ? "unbounded" : String(fallbackBudget.max) };
       };
 
-      const reviewLaneSync = (taskId: string) => {
-        try {
-          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.review ?? "in-review";
-        } catch {
-          return "in-review";
-        }
-      };
       const candidates = tasks.filter((task) => {
-        if (task.column !== reviewLaneSync(task.id)) return false;
+        if (task.column !== "in-review") return false;
         if (!allowsAutoMergeProcessing(task, settings)) return false;
         if (task.paused) return false;
         /*
@@ -9254,13 +9242,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         The literal form was dangerous in the releasing direction: on a renamed board none of the
         four matched, so an ACTIVE card's worktree looked parked and was eligible for release.
         */
-        const activeLanes = (() => {
-          try {
-            return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id));
-          } catch {
-            return undefined;
-          }
-        })();
+        /* FNXC:WorkflowLifecycleColumns 2026-08-03-10:30: sync `.filter`, so no async lane
+           resolution is reachable. Left on the literals below rather than on a sync reader that
+           cannot see the task's workflow — that would have looked converted and behaved identically.
+           This sweep fails in the RELEASING direction on a renamed board, so it is the one most
+           worth restructuring into an async loop when someone owns that change. */
+        const activeLanes = undefined as ReturnType<typeof resolveLifecycleColumns> | undefined;
         if (
           task.column === (activeLanes?.hold ?? "todo")
           || task.column === (activeLanes?.wip ?? "in-progress")
@@ -13082,13 +13069,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverStarvedRefinementTriageTasks(): Promise<number> {
     /* FNXC:WorkflowLifecycleColumns 2026-07-30-20:50 (fleet): hold lane per peer, sync because the
        peer scans below are `.filter` callbacks. Same resolution and fallbacks as the async form. */
-    const lanesForStarved = (taskId: string) => {
-      try {
-        return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
-      } catch {
-        return undefined;
-      }
-    };
     try {
       this.options.evictStaleTriageProcessing?.();
 
@@ -13116,7 +13096,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === (lanesForStarved(peer.id)?.hold ?? "todo") &&
+          peer.column === "todo" &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -13137,7 +13117,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === (lanesForStarved(peer.id)?.hold ?? "todo") &&
+            peer.column === "todo" &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
