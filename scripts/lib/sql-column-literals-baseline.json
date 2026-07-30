@@ -1,0 +1,11 @@
+{
+  "packages/core/src/github-issue-analytics.ts": 2,
+  "packages/core/src/gitlab-issue-analytics.ts": 2,
+  "packages/core/src/mission-store.ts": 1,
+  "packages/core/src/productivity-analytics.ts": 2,
+  "packages/core/src/task-store/async-maintenance.ts": 1,
+  "packages/core/src/task-store/task-artifacts-ops.ts": 1,
+  "packages/core/src/task-store/workflow-definitions.ts": 2,
+  "packages/core/src/team-analytics.ts": 2,
+  "packages/core/src/workflow-analytics.ts": 1
+}
