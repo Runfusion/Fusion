@@ -56,15 +56,12 @@ import { describe, expect, it } from "vitest";
  */
 const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/agent-store.ts": 1,
-  "packages/core/src/assigned-task-ranking.ts": 1,
   "packages/core/src/async-mission-store-queries.ts": 2,
   "packages/core/src/async-mission-store.ts": 2,
-  "packages/core/src/duplicate-intake.ts": 1,
   "packages/core/src/eval-signal-collector.ts": 1,
   "packages/core/src/live-agent-count.ts": 1,
   "packages/core/src/mission-store.ts": 1,
-  "packages/core/src/near-duplicate-canonical.ts": 1,
-  "packages/core/src/store.ts": 2,
+  "packages/core/src/store.ts": 1,
   "packages/core/src/task-merge.ts": 2,
   "packages/core/src/task-store/archive-lifecycle-2.ts": 2,
   "packages/core/src/task-store/async-comments-attachments.ts": 8,
