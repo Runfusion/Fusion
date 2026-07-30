@@ -194,6 +194,7 @@ import {
   createTaskPromptWriteTool,
   createWorkflowListTool,
   createWorkflowSelectTool,
+  resolveTerminalColumnsForTasks,
 } from "./agent-tools.js";
 import {
   getResearchGuidanceForSurface,
@@ -3181,7 +3182,11 @@ export class TriageProcessor {
       parameters: Type.Object({}),
       execute: async () => {
         const tasks = await store.listTasks({ slim: true, includeArchived: false });
-        const active = tasks.filter((t) => t.column !== "done");
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): triage's own copy of the
+           fn_task_list terminal filter — same defect, same helper. Converting one copy and leaving the
+           other is the Surface Enumeration failure this program keeps hitting. */
+        const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
+        const active = tasks.filter((t) => !isTerminal(t));
         if (active.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No active tasks." }],
@@ -3237,9 +3242,10 @@ export class TriageProcessor {
           limit: params.limit ?? 20,
         });
         const includeDone = params.includeDone ?? true;
+        const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
         const filtered = includeDone
           ? results
-          : results.filter((t) => t.column !== "done");
+          : results.filter((t) => !isTerminalResult!(t));
         if (filtered.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No tasks matched." }],
@@ -4039,9 +4045,13 @@ export class TriageProcessor {
           }
 
           const nowMs = Date.now();
-          const candidates = (await this.store.listTasks({ slim: false, includeArchived: false }))
+          const listed = await this.store.listTasks({ slim: false, includeArchived: false });
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): a FINISHED card passed this
+             dedup filter on a renamed board, so completed work was offered as a duplicate candidate. */
+          const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);
+          const candidates = listed
             .filter((candidate) => candidate.id !== task.id)
-            .filter((candidate) => candidate.column !== "done")
+            .filter((candidate) => !isTerminalCandidate(candidate))
             .filter((candidate) => Date.parse(candidate.createdAt) >= nowMs - 7 * 24 * 60 * 60 * 1000)
             .map((candidate) => ({
               id: candidate.id,

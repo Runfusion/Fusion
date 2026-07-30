@@ -1250,7 +1250,7 @@ would go inert.
 
 ONE CACHE per call, so a list spanning three workflows reads three IRs rather than one per task.
 */
-async function resolveTerminalColumnsForTasks(
+export async function resolveTerminalColumnsForTasks(
   store: TaskStore,
   tasks: readonly Task[],
 ): Promise<(task: Task) => boolean> {
