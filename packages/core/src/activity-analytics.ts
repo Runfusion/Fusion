@@ -607,6 +607,24 @@ const TRAIT_TO_STAGE: Record<string, SdlcStage> = {
   triage: "triage",
   // todo
   "reset-on-entry": "todo",
+  /*
+  FNXC:SdlcFunnel 2026-07-31-14:00:
+  `hold` was absent from this map entirely, so a column whose ONLY pre-implementation trait is
+  `hold` — a renamed board's wait-for-capacity lane — resolved to OTHER and vanished from the
+  funnel. Measured before the fix: `stageForTraits(["hold"]) === "other"`.
+
+  Adding it does NOT change where the merged default Planning column lands. That column carries
+  `["intake","hold","reset-on-entry"]`, and `stageForTraits` prefers the earliest stage in flow
+  order, so `intake` (stage 0) still wins and it resolves to `triage` exactly as before. This is
+  strictly the hold-only case.
+
+  The merged column landing in `triage` while the `todo` stage stays empty is a SEPARATE and larger
+  question — it makes the funnel show a phantom 100% drop between Triage and Todo on every default
+  board since U11 — and it is deliberately not settled here. Changing which stage the Planning column
+  reports would retroactively alter how historical analytics read, which is not a reversible call the
+  way this one is. Flagged for a product decision on PR #2669.
+  */
+  hold: "todo",
   // in-progress
   wip: "in-progress",
   timing: "in-progress",
