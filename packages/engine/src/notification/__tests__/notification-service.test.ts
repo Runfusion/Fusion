@@ -2,16 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotificationPayload, NotificationProvider, Settings, Task } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
 import { schedulerLog } from "../../logger.js";
+import { flushAsyncHandlers } from "../../__tests__/_flush-async-handlers.js";
 
-/*
-FNXC:EngineTests 2026-07-31-00:20:
-`debug` is part of the logger surface (logger.ts:25) — it is the channel the noisy-line demotion
-moved subsystem chatter onto, gated on FUSION_DEBUG. A mock that omits it throws
-"<log>.debug is not a function" on the FIRST demoted call, which fails every case in the file for a
-reason unrelated to what any of them assert.
-*/
 vi.mock("../../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  /*
+  FNXC:NotificationTestHarness 2026-07-30-23:50 (fix-forward: this file was asserting nothing):
+  `debug` MUST be in this mock. Production moved its suppression traces from `schedulerLog.log` to
+  `schedulerLog.debug`, and the mock was not updated — so `NotificationService.start()` threw
+  `schedulerLog.debug is not a function` and ALL 26 cases in this file died in setup. They were reported
+  as failures on main, which is the only reason it was visible at all; a suite that dies in `start()`
+  asserts nothing about notifications.
+
+  The two `.log` assertions below moved to `.debug` for the same reason — the messages they name are
+  emitted by `debug` now, so asserting `log` could only ever have passed against the old production code.
+  */
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 type Listener = (...args: any[]) => void | Promise<void>;
@@ -194,12 +199,6 @@ describe("NotificationService deferred failure notifications", () => {
 
     expect(sendNotification).not.toHaveBeenCalledWith("failed", expect.anything());
     expect(service.getMetrics().failureNotificationSuppressedCount).toBe(1);
-    /*
-    FNXC:EngineTests 2026-07-31-00:30:
-    Suppression lines are DEBUG, not log. notification-service.ts routes all five of its
-    "suppressed ..." messages through `schedulerLog.debug` — the noisy-line demotion moved them off
-    the default channel. Asserting on `.log` looked for them where the product no longer writes.
-    */
     expect(schedulerLog.debug).toHaveBeenCalledWith(expect.stringContaining("suppressed transient failed"));
     await service.stop();
   });
@@ -256,7 +255,6 @@ describe("NotificationService deferred failure notifications", () => {
 
     expect(sendNotification).not.toHaveBeenCalledWith("failed", expect.anything());
     expect(service.getMetrics().failureNotificationSuppressedCount).toBe(1);
-    // Same demotion as above: this suppression line is on the debug channel.
     expect(schedulerLog.debug).toHaveBeenCalledWith("[notify] FN-1 non-terminal failure — suppressed (mode=terminal-only)");
     await service.stop();
   });
@@ -463,7 +461,7 @@ describe("NotificationService workflow transition notifications", () => {
       pausedReason: "waiting-for-review",
       log: [{ timestamp: new Date().toISOString(), action: "Paused for an unrelated reason" }],
     }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
     await service.stop();
@@ -487,7 +485,7 @@ describe("NotificationService workflow transition notifications", () => {
       pausedReason: "manual-cli-approval: pnpm test",
     }));
 
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledTimes(1);
     expect(sendNotification).toHaveBeenCalledWith(
@@ -619,7 +617,7 @@ describe("NotificationService workflow transition notifications", () => {
       },
     }));
 
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
     await service.stop();
@@ -646,7 +644,7 @@ describe("NotificationService workflow transition notifications", () => {
       },
     }));
 
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
     await service.stop();
