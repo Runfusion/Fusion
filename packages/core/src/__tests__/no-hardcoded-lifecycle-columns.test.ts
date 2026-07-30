@@ -13,7 +13,9 @@ Two jobs, and the second is why a plain grep is not enough:
    resolution, and the resulting failure would look nothing like a column bug.
 
    Measured at the time of writing, `triage` alone: 72 raw matches across the five source roots, of
-   which 10 are NOT columns and 62 are. So the reachable floor for the RAW number is 10, not 0 —
+   which 10 are NOT columns and 62 are. A further 2 of the 62 ARE columns but are documented
+   permanent fallbacks (see the live-agent-count case below), so the reachable floor for the RAW
+   number is 12, not 0 —
    anyone tracking the raw grep toward zero is chasing a target that would require breaking working
    code to hit.
 
@@ -127,6 +129,35 @@ describe("lifecycle-column literal ratchet", () => {
     expect([...files].some((f) => f.endsWith("agent-prompts.ts"))).toBe(false);
     expect([...files].some((f) => f.endsWith("skill-resolver.ts"))).toBe(false);
     expect([...files].some((f) => f.endsWith("tool-availability.ts"))).toBe(false);
+  });
+
+  /*
+  FNXC:LifecycleColumnRatchet 2026-07-30-14:20 (audited, not converted):
+  PERMANENT FALLBACKS. Two sites in `live-agent-count.ts` compare a column literal and must STAY
+  that way, which lowers the honest floor further — to 12 raw matches, not 10.
+
+  `enrichRunningAgentTaskShapeFromFlags` derives intake/hold/wip/review membership from board
+  trait flags, with `task.column === "triage" || task.column === "todo"` as the no-flags arm. That
+  arm is REACHABLE in two documented ways, and the second is the one U11 creates:
+
+    - remote tasks: `App.tsx` deliberately supplies an EMPTY flag map for a remote store, because
+      local board-workflow metadata must not be applied to another store's ids;
+    - a card whose column its workflow does not declare: the flag lookup finds nothing, so the card
+      has no flags at all. Post-U11 that is precisely a row left in `triage`.
+
+  Removing the literal would make such a card match NO arm — counted as neither running nor
+  waiting, so the footer's queued total silently under-reports a stranded card. The file's own
+  comment reaches the same conclusion and names the correct fix: supply flags, do not delete the
+  fallback. That is caller-side work in the dashboard, not a conversion here.
+
+  Asserted so the exclusion is a recorded decision rather than an oversight, and so a future edit
+  that DOES delete the fallback fails here and has to argue with this reasoning.
+  */
+  it("keeps the live-agent-count no-flags fallbacks, which U11 makes load-bearing", () => {
+    const sites = comparisonSites("triage").filter((s) => s.file.endsWith("live-agent-count.ts"));
+    expect(sites.length).toBe(2);
+    // Both are the `?:` / `??` no-flags arm, never the primary decision.
+    expect(sites.every((s) => /flags|\?\?/.test(s.code))).toBe(true);
   });
 
   it("still detects a column comparison when one is present (the classifier is not vacuous)", () => {
