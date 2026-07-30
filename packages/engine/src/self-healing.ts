@@ -5762,21 +5762,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             reasonCode = "in-review-paused";
             reason = `blocker ${blockerId} in-review + paused`;
           } else if (
-            blocker.column === "in-review" &&
+            blocker.column === ((await lanesFor(blocker.id))?.review ?? "in-review") &&
             blocker.status === "failed" &&
             (blocker.mergeRetries ?? 0) >= maxAutoMergeRetries
           ) {
             reasonCode = "failed-retry-exhausted";
             reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${maxAutoMergeRetries})`;
           } else if (
-            blocker.column === "in-review" &&
+            blocker.column === ((await lanesFor(blocker.id))?.review ?? "in-review") &&
             blocker.status === "failed" &&
             isMissingWorktreeSessionStartFailure(blocker.error)
           ) {
             reasonCode = "missing-worktree-session-start";
             reason = `blocker ${blockerId} in-review + failed (missing-worktree session start)`;
           } else if (
-            blocker.column === "in-review" &&
+            blocker.column === ((await lanesFor(blocker.id))?.review ?? "in-review") &&
             (blocker.status === "merging" || blocker.status === "merging-pr" || blocker.status == null) &&
             (!activeMergeTaskId || activeMergeTaskId !== blocker.id)
           ) {
@@ -12826,6 +12826,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * normal triage specification + approval pipeline.
    */
   async recoverStarvedRefinementTriageTasks(): Promise<number> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-20:50 (fleet): hold lane per peer, sync because the
+       peer scans below are `.filter` callbacks. Same resolution and fallbacks as the async form. */
+    const lanesForStarved = (taskId: string) => {
+      try {
+        return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
+      } catch {
+        return undefined;
+      }
+    };
     try {
       this.options.evictStaleTriageProcessing?.();
 
@@ -12853,7 +12862,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === "todo" &&
+          peer.column === (lanesForStarved(peer.id)?.hold ?? "todo") &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -12874,7 +12883,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === "todo" &&
+            peer.column === (lanesForStarved(peer.id)?.hold ?? "todo") &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
