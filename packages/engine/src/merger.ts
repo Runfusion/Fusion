@@ -109,6 +109,8 @@ import {
   resolveReboundTarget,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
+  resolveTaskLifecycleColumns,
+  type WorkflowIr,
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge-trait.js";
@@ -1894,7 +1896,25 @@ async function sweepAutostashOrphans(
         live.push(orphan);
         continue;
       }
-      if (!sourceTask || (sourceTask.column !== "done" && sourceTask.column !== "archived")) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-10:50 (fleet: merger.ts terminal guards):
+      "IS THE SOURCE TASK FINISHED?" from its own workflow, unioned with the legacy pair — a row can outlive
+      the column it is stored in, and this guard decides whether an orphaned stash is still LIVE. Being too
+      strict here keeps a stash alive forever (harmless clutter); being too loose discards a stash whose task
+      is still running (lost work), so over-inclusion of terminal ids is the safe direction, exactly as in
+      `resolveTerminalColumnsFor`.
+
+      With the literal pair, a renamed board answered "not finished" for every completed task, so every
+      orphaned stash stayed classified as live and was never cleaned up.
+      */
+      const sourceLifecycle = await resolveTaskLifecycleColumns(store, sourceTaskId);
+      const sourceTerminal = new Set([
+        sourceLifecycle?.complete ?? "done",
+        sourceLifecycle?.archived ?? "archived",
+        "done",
+        "archived",
+      ]);
+      if (!sourceTask || !sourceTerminal.has(sourceTask.column)) {
         live.push(orphan);
         continue;
       }
@@ -4911,9 +4931,19 @@ export async function findWorktreeUser(
   excludeTaskId: string,
 ): Promise<string | null> {
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-02-10:55 (fleet: merger.ts):
+  The worktree-conflict scan asks "is another UNFINISHED task holding this worktree?". Resolved per task, but
+  ONLY for rows that actually share the worktree path — the path test is free and eliminates all but a
+  handful, so the lane resolution never runs over the whole board. (The naive order — resolve, then filter —
+  is what made the github-tracking reconciler scan proportional to task history; PR #2714 review.)
+  */
+  const conflictIrCache = new Map<string, WorkflowIr>();
   for (const t of tasks) {
     if (t.id === excludeTaskId) continue;
-    if (t.worktree === worktreePath && t.column !== "done") {
+    if (t.worktree !== worktreePath) continue;
+    const lifecycle = await resolveTaskLifecycleColumns(store, t.id, conflictIrCache);
+    if (t.column !== (lifecycle?.complete ?? "done") && t.column !== "done") {
       return t.id;
     }
   }
@@ -6582,7 +6612,14 @@ export async function aiMergeTask(
   // reachable via direct unit tests/importers, so enforce the workspace merge-boundary
   // here too (throws the named WorkspaceTaskMergeError) before any git work.
   assertNotWorkspaceTaskMerge(task);
-  if (task.column === "done" || task.column === "archived") {
+  const finalizedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
+  const finalizedColumns = new Set([
+    finalizedLifecycle?.complete ?? "done",
+    finalizedLifecycle?.archived ?? "archived",
+    "done",
+    "archived",
+  ]);
+  if (finalizedColumns.has(task.column)) {
     const message = `merger: skipping squash for ${taskId} — task already finalized (column=${task.column})`;
     mergerLog.log(message);
     await (store as any).recordRunAuditEvent?.({

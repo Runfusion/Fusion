@@ -11,6 +11,7 @@ import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError} from "./error
 import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
 import type {MergeQueueRow} from "../task-store/row-types.js";
@@ -37,6 +38,18 @@ export function enqueueMergeQueueSyncInternalImpl(store: TaskStore, taskId: stri
       if (!taskRow) {
         throw new MergeQueueTaskNotFoundError(taskId);
       }
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-10:35 (fleet — FLAGGED, deliberately NOT converted):
+      This guard runs inside `store.db.transactionImmediate`, a SYNCHRONOUS SQLite transaction. Converting
+      it needs a synchronous lane resolution, and the only one available (`resolveTaskWorkflowIrSync`) reads
+      `getTaskWorkflowSelectionImpl`, which returns `undefined` unconditionally in PostgreSQL mode — the
+      shipped backend. So a "conversion" here would drop the census count by one and behave exactly as the
+      literal does (documented on `isBenignInReviewPauseAbort` in executor.ts, PR #2703).
+
+      Converting it properly means either making this path async or pushing the trait read into SQL, both of
+      which are store-architecture changes rather than call-site conversions. Left as a literal WITH this
+      note so the next worker does not "fix" it into a false green.
+      */
       if (taskRow.column !== "in-review") {
         invalidColumn = taskRow.column;
         return null;
@@ -172,7 +185,26 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
 
 export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" }> {
     const task = await store.getTask(taskId);
-    if (task.column === "done") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
+    ONE SNAPSHOT for the whole transition — the pre-check, the RE-READ check, and the MOVE TARGET. This
+    function reads the row twice on purpose (a merge can land between the checks), and each read was
+    compared against the default lineage's ids while the move went to the literal `done`.
+
+    On a renamed board every one of those answered wrong in the same direction: `column === "done"` never
+    matched, so an already-complete card was not skipped as `already-done`; `column !== "in-review"` always
+    matched, so the transition bailed with `wrong-column` for a card sitting in review. The net effect is
+    that a PR merged on GitHub never advanced the card — the visible symptom is a merged PR whose Fusion
+    task stays in review forever, which reads as a webhook problem rather than a column problem.
+
+    The move target comes from the same snapshot: converting the guards alone would admit the card and then
+    move it to a column the board does not declare, which is the half-conversion this program keeps paying
+    for. A board with no complete column refuses the transition instead of inventing one.
+    */
+    const prMergedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
+    const completeColumn = prMergedLifecycle?.complete ?? "done";
+    const reviewColumn = prMergedLifecycle?.review ?? "in-review";
+    if (task.column === completeColumn) {
       return { moved: false, skipped: "already-done" };
     }
     if (task.paused) {
@@ -181,13 +213,13 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     if (task.prInfo?.status !== "merged") {
       return { moved: false, skipped: "not-merged" };
     }
-    if (task.column !== "in-review") {
+    if (task.column !== reviewColumn) {
       storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${task.column}`);
       return { moved: false, skipped: "wrong-column" };
     }
 
     const freshTask = await store.getTask(taskId);
-    if (freshTask.column === "done") {
+    if (freshTask.column === completeColumn) {
       return { moved: false, skipped: "already-done" };
     }
     if (freshTask.paused) {
@@ -196,12 +228,12 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     if (freshTask.prInfo?.status !== "merged") {
       return { moved: false, skipped: "not-merged" };
     }
-    if (freshTask.column !== "in-review") {
+    if (freshTask.column !== reviewColumn) {
       storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${freshTask.column}`);
       return { moved: false, skipped: "wrong-column" };
     }
 
-    const movedTask = await store.moveTask(taskId, "done", {
+    const movedTask = await store.moveTask(taskId, completeColumn as Column, {
       moveSource: "engine",
       preserveProgress: true,
       preserveWorktree: true,
