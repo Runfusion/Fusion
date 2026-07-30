@@ -43,6 +43,27 @@ export const LEGACY_COLUMN_IDS = ["triage", "todo", "in-progress", "in-review", 
 export const ROLE_RECEIVER_TOKENS = [
   "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole",
   /*
+  FNXC:LifecycleColumnCensus 2026-07-30-22:00 (fleet phase — the work order was sending workers at
+  non-columns):
+  EVENT/RESULT DISCRIMINATORS, not columns. Found while claiming TaskDetailModal.tsx, whose census
+  entry included `session.agentState === "done"` — an agent state, not a lane. Auditing every
+  receiver the classifier currently counts surfaced four more of the same shape:
+
+    event.type === "done"        register-chat-routes.ts   — an SSE event type
+    mode === "done"              useTaskDiffStats.ts       — a cache-key mode
+    evidence.kind === "done"     async-mission-store.ts    — an evidence kind
+    event.kind === "done"        telemetry-hub.ts          — a telemetry event kind
+
+    Each shares a WORD with a column id and nothing else. Converting one asks the trait registry
+    what lane an SSE event is in, which has no answer — the same failure class as converting
+    `role === "triage"`, which this list already exists to prevent.
+
+    `state` is deliberately NOT added: `state === "archived"` in audit-ops/comments-ops is a task's
+    column reaching those functions under a shorter name, so it is a genuine guard. Checked rather
+    than assumed, because excluding a real one silently lowers the bar.
+  */
+  "type", "mode", "kind", "phase", "agentState",
+  /*
   FNXC:LifecycleColumnCensus 2026-07-29-20:50 (restores the pinned baseline):
   `outcome` names a RESULT enum, not a column. The one live instance is
   `deterministicReconcile.outcome === "archived"` — the verdict of a duplicate reconciliation, which
