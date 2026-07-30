@@ -1227,6 +1227,42 @@ async function carryCanonicalTaskRouting(
   return task;
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:05 (batch-engine — the agent tools listed finished cards as active):
+`fn_task_list` describes itself as "list active tasks that aren't done or archived", and `fn_task_search`
+offers `includeDone: false`. Both filtered with `task.column !== "done"`, so on a board whose complete lane
+is renamed a FINISHED card came back as active — to an AGENT, which then reasons and acts on it as
+outstanding work. `includeArchived: false` is handled by the query, but "done" was only ever a TS predicate.
+
+MEMBERSHIP over the complete AND archived roles, unioned with the legacy pair: `resolveWorkflowIrForTask`
+returns the BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a
+degraded renamed board would resolve a terminal set that excludes its own terminal lane and the filter
+would go inert.
+
+ONE CACHE per call, so a list spanning three workflows reads three IRs rather than one per task.
+*/
+async function resolveTerminalColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const terminalByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (terminalByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["done", "archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) {
+        for (const id of fusionCore.columnsWithFlag(ir, "complete")) columns.add(id);
+        for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+      }
+    } catch { /* degraded: legacy pair only */ }
+    terminalByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
+}
+
 export async function createAgentTask(
   store: TaskStore,
   input: TaskCreateInput,
@@ -1642,7 +1678,8 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
     parameters: taskListParams,
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
-      const active = tasks.filter((task) => task.column !== "done");
+      const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
+      const active = tasks.filter((task) => !isTerminal(task));
       const lines = active.map(formatTaskSummaryLine);
       return {
         content: [{ type: "text" as const, text: formatTaskReadLines(lines, "No active tasks.") }],
@@ -1675,7 +1712,8 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
         limit,
       });
       const includeDone = params.includeDone ?? true;
-      const filtered = includeDone ? results : results.filter((task) => task.column !== "done");
+      const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
+      const filtered = includeDone ? results : results.filter((task) => !isTerminalResult!(task));
       const lines = filtered.map(formatTaskSummaryLine);
       const text = formatTaskReadLines(
         lines.length > 0 ? [`Search results for "${query}" (${filtered.length}):`, ...lines] : [],
