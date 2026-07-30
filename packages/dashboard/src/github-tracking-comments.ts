@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, resolveTaskLifecycleColumns } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-comments");
 import type { GlobalSettings, MergeDetails, ProjectSettings, Task, TaskStore } from "@fusion/core";
@@ -237,6 +237,17 @@ export class GitHubTrackingCommentService {
       return;
     }
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (fleet: github-tracking-comments.ts):
+    Resolved ONCE here — after the tracking-enabled gate — so a move on an UNTRACKED task pays nothing.
+    The early return above still compares the legacy ids deliberately: converting it would move the
+    resolution ahead of that gate and make every task move in the project resolve a workflow to decide
+    it has no GitHub issue. Legacy ids remain each site's fallback.
+    */
+    const movedLifecycle = await resolveTaskLifecycleColumns(this.store, event.task.id);
+    const wipColumn = movedLifecycle?.wip ?? "in-progress";
+    const completeColumn = movedLifecycle?.complete ?? "done";
+
     const issue = event.task.githubTracking?.issue;
     if (!issue) {
       return;
@@ -252,7 +263,7 @@ export class GitHubTrackingCommentService {
       return;
     }
 
-    if (event.to === "in-progress") {
+    if (event.to === wipColumn) {
       if (this.inProgressCommentClaims.has(event.task.id)) {
         return;
       }
@@ -268,7 +279,7 @@ export class GitHubTrackingCommentService {
     const authoritativeTask = await this.store.getTask(event.task.id).catch(() => null);
     const taskForComment = authoritativeTask ?? event.task;
     if (
-      event.to === "in-progress"
+      event.to === wipColumn
       && (
         taskForComment.githubTracking?.inProgressCommentedAt
         || taskForComment.log?.some((entry) => (
@@ -279,7 +290,7 @@ export class GitHubTrackingCommentService {
     ) {
       return;
     }
-    const body = event.to === "done"
+    const body = event.to === completeColumn
       ? formatTrackingComment(taskForComment, event.to, { owner, repo })
       : formatTrackingComment(taskForComment, event.to);
 
@@ -289,7 +300,7 @@ export class GitHubTrackingCommentService {
       const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
       if (!resolution.ok) {
-        if (event.to === "in-progress") {
+        if (event.to === wipColumn) {
           this.inProgressCommentClaims.delete(event.task.id);
         }
         await this.safeLogDeletedTaskEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
@@ -301,7 +312,7 @@ export class GitHubTrackingCommentService {
         : new GitHubClient({ forceMode: "gh-cli" });
       await client.commentOnIssue(owner, repo, number, body);
       commentPosted = true;
-      if (event.to === "in-progress") {
+      if (event.to === wipColumn) {
         try {
           await this.store.updateTask(event.task.id, {
             githubTracking: { inProgressCommentedAt: new Date().toISOString() },
@@ -324,7 +335,7 @@ export class GitHubTrackingCommentService {
         `${owner}/${repo}#${number} (${event.to})`,
       );
     } catch (err) {
-      if (event.to === "in-progress" && !commentPosted) {
+      if (event.to === wipColumn && !commentPosted) {
         this.inProgressCommentClaims.delete(event.task.id);
       }
       const message = err instanceof Error ? err.message : String(err);
