@@ -120,6 +120,31 @@ This matters for the census conversions specifically: replacing `column === "tri
 lookup that resolves through a SYNC reader produces a guard that reads the default workflow's traits
 for every task — plausible, wrong, and invisible. It converts a visible literal into a hidden bug.
 
+## Why #6 is not a mechanical await-insertion (checked, not assumed)
+
+I went to convert one \`resolvePlannerLanes\` call site as a worked example and stopped, because every
+site is SYNC BY CONSTRUCTION. That is why the sync reader is there in the first place:
+
+  - \`triage.ts\` \`taskColumnWakeHandler\` — a synchronous event-handler callback.
+  - \`triage.ts\` dispose handler — same shape.
+  - \`triage.ts\` stale-planning sweep — inside an \`allTasks.filter((t) => …)\` predicate.
+  - \`executor.ts\` — three further call sites.
+
+You cannot \`await\` inside a \`filter\` predicate or an event handler that callers treat as sync, so
+"make it async" is not an edit, it is a restructuring per site.
+
+THE PATTERN THAT WORKS IS ALREADY IN THIS FILE. \`discoverReadyPlanningTasks\` had the same problem and
+solved it by PRE-RESOLVING: a store-free \`couldBeCandidate\` prefilter narrows the set, then a bounded
+(8) concurrent \`resolveTaskLifecycleColumns\` pass resolves the survivors before the synchronous
+decision runs. Each \`resolvePlannerLanes\` site needs that shape — resolve lanes for the candidate set
+up front, then keep the predicate synchronous over the resolved map.
+
+For the event handlers the shape is different again: they fire per task, so they want a small cached
+resolution keyed by task id rather than a batch pass, invalidated on workflow-selection change.
+
+Estimating from that: this is one slice per site with its own test, not one PR. Recording it so the
+next person does not start by trying to add \`await\` and conclude the codebase is fighting them.
+
 ## Not fixed here
 
 Each consequence needs its sync call path made async, which is a real slice per site. This document
