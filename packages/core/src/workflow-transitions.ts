@@ -212,3 +212,82 @@ export function workflowHasColumn(ir: WorkflowIr, columnId: string): boolean {
   const v2 = ir as WorkflowIrV2;
   return Array.isArray(v2.columns) && v2.columns.some((c) => c.id === columnId);
 }
+
+/*
+FNXC:WorkflowRetry 2026-07-29-20:55 (triage census — the dead `hasColumn("triage")` proxy):
+Callers need to know "is this card sitting where its workflow actually plans?" — the manual Retry
+route uses it to choose SPECIFICATION retry (status -> needs-replan AND delete PROMPT.md) over
+generic execution retry.
+
+That question was previously asked as `!workflowHasColumn(ir, "triage")`: a workflow with no triage
+column was assumed to plan in place in `todo`. MEASURED after U11 merged the two pre-implementation
+columns: NO builtin workflow declares a `triage` column any more (`builtin:coding` and
+`builtin:coding-ideas` both report false), so that proxy is now a constant `true` and decides
+nothing. It happens to yield the right answer for both builtins only because their plan nodes really
+are in `todo` — the guard is dead AND accidentally correct, which is worse than wrong, because the
+next workflow that plans somewhere else inherits a spec-deleting false positive with no failing test.
+
+Ask the graph directly instead. The plan family is the authoritative answer to "where does planning
+happen", and it is derived per workflow, so a custom board that plans in its own intake column is
+handled without a vocabulary list.
+*/
+/*
+Planning nodes are recognised by SEMANTIC MARKERS first, ids second.
+
+MEASURED shapes across the 12 builtins: the specification node carries
+`config.seam === "planning"` (builtinPromptConfig), the replan node carries
+`config.workflowAction === "plan-replan"`, and ids in use are `plan`, `planning`
+(builtin:legacy-coding), `plan-review`, `plan-replan`, `plan-review-step`.
+
+Matching on markers means a custom workflow that reuses the builtin planning seam or action is
+classified correctly whatever it names its node — id-only matching reported such a workflow's real
+planning column as non-planning. The id list stays as a backstop for hand-authored IRs that set
+neither marker.
+
+KNOWN LIMIT, stated rather than hidden: a fully bespoke planning node — custom id, custom prompt,
+no seam and no workflowAction — is still not recognised. That is unknowable without guessing, and the
+failure direction is the safe one: the caller falls back to ordinary execution retry, which PRESERVES
+the specification instead of deleting it, and the card stays retryable.
+*/
+const PLANNING_NODE_IDS = new Set(["plan", "planning", "plan-review", "plan-replan", "plan-review-step"]);
+const PLANNING_SEAMS = new Set(["planning", "plan-review"]);
+/*
+An EXACT set, never a `startsWith("plan")` prefix (greptile #2621). The prefix matched in the
+DESTRUCTIVE direction: a custom action such as `plan-execute` would have classified an
+implementation column as a planning column, and the caller then stamps `needs-replan` and DELETES
+PROMPT.md. MEASURED workflowAction vocabulary in tree: `plan-replan`, `code-review`,
+`pre-merge-remediation` — only the first is planning. A new planning action must be added here
+deliberately; being unlisted costs a replan, being wrongly listed costs a specification.
+*/
+const PLANNING_WORKFLOW_ACTIONS = new Set(["plan-replan"]);
+
+function isPlanningNode(node: { id?: unknown; config?: unknown }): boolean {
+  if (typeof node?.id === "string" && PLANNING_NODE_IDS.has(node.id)) return true;
+  const config = node?.config as { seam?: unknown; workflowAction?: unknown } | undefined;
+  if (typeof config?.seam === "string" && PLANNING_SEAMS.has(config.seam)) return true;
+  if (typeof config?.workflowAction === "string" && PLANNING_WORKFLOW_ACTIONS.has(config.workflowAction)) return true;
+  return false;
+}
+
+/**
+ * True when the workflow places any planning node in `columnId` — i.e. cards plan in that column.
+ *
+ * Returns false for an IR with no node list (a v1 IR). Callers gating a DESTRUCTIVE action on this
+ * must not read that false as "this column is past planning" — it means "this IR cannot answer the
+ * question"; use {@link workflowDeclaresColumnModel} to tell the two apart.
+ */
+export function workflowPlansInColumn(ir: WorkflowIr, columnId: string): boolean {
+  const v2 = ir as WorkflowIrV2 & { nodes?: Array<{ id?: string; column?: string; config?: unknown }> };
+  if (!Array.isArray(v2.nodes)) return false;
+  return v2.nodes.some((node) => isPlanningNode(node) && node.column === columnId);
+}
+
+/**
+ * True when the IR describes columns and nodes at all — i.e. a v2 graph whose placement questions
+ * are answerable. A v1 IR answers `false`, so callers can distinguish "not a planning column" from
+ * "this workflow has no column model" instead of treating silence as a verdict.
+ */
+export function workflowDeclaresColumnModel(ir: WorkflowIr): boolean {
+  const v2 = ir as WorkflowIrV2 & { nodes?: unknown };
+  return Array.isArray(v2.columns) && v2.columns.length > 0 && Array.isArray(v2.nodes);
+}

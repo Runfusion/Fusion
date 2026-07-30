@@ -56,6 +56,9 @@ import {
   parseExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
   workflowHasColumn,
+  workflowPlansInColumn,
+  workflowDeclaresColumnModel,
+  resolveLifecycleColumns,
   columnHasFlag,
   columnsWithFlag,
   resolveReboundTarget,
@@ -2628,20 +2631,51 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       this was not a stall — but it worked by accident of the two conditions overlapping,
       not because either was right.
       */
-      const retryIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      let retrySpecification = task.column === retryIntakeColumn && retrySpecificationStatus;
       /*
-      FNXC:ManualRetry 2026-07-13-12:20:
-      Plan-in-place workflows (Coding (Ideas): no "triage" column) keep planning/replanning
-      cards in "todo", so the manual Retry button — which the cards already show for
-      needs-replan/planning/failed states — must offer the planning retry there too instead
-      of 400ing with "not in a retryable state". Gated on the task's OWN workflow declaring
-      no "triage" column, so default-workflow todo cards (where todo failures are execution
-      failures) keep the existing generic-retry semantics.
+      FNXC:ManualRetry 2026-07-30-02:10 (supersedes the 2026-07-13 gate and #2614's intake resolve):
+      The question this branch must answer is "does this card sit where its workflow PLANS?", because
+      the yes-branch is DESTRUCTIVE: it stamps needs-replan AND deletes PROMPT.md.
+
+      Two predicates stood in for it and neither answered it. #2614 resolved the INTAKE column, which
+      is right for the merged lineage but wrong wherever intake and the planning column differ. The
+      older arm asked `!workflowHasColumn(ir, "triage")`, and MEASURED across all 12 builtins: NOT ONE
+      plans in `triage`, while SEVEN still declare that column. So for the five that declare `triage`
+      AND run every plan node in `todo` — quick-fix, review-heavy, compound-engineering, design,
+      legacy-coding — the predicate was FALSE and a planning/needs-replan card sitting in its own
+      planning column was refused outright:
+        400 "Task is not in a retryable state (current status: needs-replan)"
+      The operator had no button at all on a card parked mid-planning. Verified still live on main
+      after #2614: 9 of this file's 14 retry tests fail without the change below.
+
+      The mirror-image fault is destructive rather than obstructive: a workflow that plans anywhere
+      other than `todo` had a `todo` card's PROMPT.md deleted for a re-plan nobody asked for.
+
+      Ask the graph directly. `workflowPlansInColumn` recognises planning nodes by the semantic markers
+      the builtins carry (`config.seam`, an exact `workflowAction` set) with node ids as a backstop.
       */
-      if (!retrySpecification && task.column === "todo" && retrySpecificationStatus) {
-        const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
-        retrySpecification = !workflowHasColumn(workflowIr, "triage");
+      const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
+      const retrySpecification = retrySpecificationStatus && workflowPlansInColumn(workflowIr, task.column);
+      /*
+      Narrowing the DESTRUCTIVE branch must not narrow RETRYABILITY — those were one boolean and are
+      two concerns. A planning-status card parked outside its planning column would otherwise fail the
+      gate below and answer "not in a retryable state", leaving the operator NO button: that trades a
+      card which loses its spec for a card nothing can rescue. Such a card stays retryable and takes
+      the ordinary, non-destructive execution retry.
+
+      A v1 IR declares neither columns nor nodes, so the placement question is UNANSWERABLE rather than
+      answered "no"; treating that silence as "past planning" is what produced a 400 for a v1 planning
+      card. Scoped to pre-WIP columns otherwise, so no in-progress/in-review status gains a retry path
+      it did not have.
+      */
+      let strandedSpecificationRetry = false;
+      if (retrySpecificationStatus && !retrySpecification) {
+        if (!workflowDeclaresColumnModel(workflowIr)) {
+          strandedSpecificationRetry = true;
+        } else {
+          const lifecycle = resolveLifecycleColumns(workflowIr);
+          strandedSpecificationRetry = lifecycle !== undefined
+            && (task.column === lifecycle.intake || task.column === lifecycle.hold);
+        }
       }
       const isInReviewStatusNone =
         task.column === "in-review" && (task.status === null || task.status === undefined);
@@ -2694,7 +2728,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
       */
       const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
-      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
+      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
 

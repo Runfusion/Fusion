@@ -438,6 +438,8 @@ export {
   resolveColumnAdjacency,
   resolveAllowedColumns,
   workflowHasColumn,
+  workflowPlansInColumn,
+  workflowDeclaresColumnModel,
 } from "./workflow-transitions.js";
 export type { ColumnAdjacency } from "./workflow-transitions.js";
 // ── U8: pre-evaluated plugin gate verdicts (KTD-2) ───────────────────────────
