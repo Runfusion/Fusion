@@ -55,10 +55,13 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
         transitionedAt: "2026-07-29T00:00:00.000Z",
       },
     });
-    vi.spyOn(store, "writeTaskJsonFile").mockRejectedValueOnce(new Error("projection unavailable"));
+    const writeTaskJsonFile = vi
+      .spyOn(store, "writeTaskJsonFile")
+      .mockRejectedValueOnce(new Error("projection unavailable"));
 
     const result = await store.resolveTaskWedgeNotificationEpisode(task.id, "episode-projection-failure");
 
+    expect(writeTaskJsonFile).toHaveBeenCalledTimes(1);
     expect(result.resolved).toBe(true);
     expect(result.task.wedgeNotification).toMatchObject({
       episodeId: "episode-projection-failure",
