@@ -1435,23 +1435,24 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.store.on("settings:updated", this.settingsListener);
 
     this.taskMovedFanoutListener = ({ task, from, to }) => {
+      const moveLanes = this.resolveMoveLanesSync(task.id);
       if (
-        from === "in-progress"
-        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
+        moveLanes.wip.has(from)
+        && (moveLanes.hold.has(to) || moveLanes.review.has(to) || moveLanes.complete.has(to) || moveLanes.archived.has(to))
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.
         this.boardStallWindow.transitionsOutOfInProgressInWindow++;
       }
-      if (to === "in-review") {
+      if (moveLanes.review.has(to)) {
         void this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
         });
       }
       const shouldReconcile =
-        (from === "in-review" && to === "done") ||
-        (from === "done" && to === "archived");
+        (moveLanes.review.has(from) && moveLanes.complete.has(to)) ||
+        (moveLanes.complete.has(from) && moveLanes.archived.has(to));
       if (!shouldReconcile) return;
       void this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -3013,6 +3014,51 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       /* degraded: the legacy id alone, matching resolvePreWipColumns' catch */
     }
     return columns;
+  }
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (batch-engine — the SYNC sibling, for the task:moved listener):
+  `taskMovedFanoutListener` is a synchronous subscriber, so an async resolver cannot be used inside it
+  without making the whole listener fire-and-forget and reordering it against every other `task:moved`
+  handler. `store.resolveTaskWorkflowIrSync` is the reader that makes conversion possible there — the same
+  approach `scheduler.ts` and `executor.ts` already use for their own sync move handlers.
+
+  NOT imported from executor.ts: that module's equivalent is module-private and importing it here would
+  couple two large engine modules in the wrong direction. This file already owns a small family of lane
+  resolvers (`resolvePreWipColumns`, `resolveReviewColumnsFor`); this is the sync member of it.
+  */
+  private resolveMoveLanesSync(taskId: string): {
+    hold: ReadonlySet<string>;
+    wip: ReadonlySet<string>;
+    review: ReadonlySet<string>;
+    complete: ReadonlySet<string>;
+    archived: ReadonlySet<string>;
+  } {
+    const legacy = {
+      hold: new Set(["todo"]),
+      wip: new Set(["in-progress"]),
+      review: new Set(["in-review"]),
+      complete: new Set(["done"]),
+      archived: new Set(["archived"]),
+    };
+    try {
+      const ir = this.store.resolveTaskWorkflowIrSync(taskId);
+      if (!ir) return legacy;
+      const withLegacy = (flags: readonly Parameters<typeof columnsWithFlag>[1][], fallback: string) => {
+        const out = new Set<string>([fallback]);
+        for (const flag of flags) for (const id of columnsWithFlag(ir, flag)) out.add(id);
+        return out;
+      };
+      return {
+        hold: withLegacy(["hold"], "todo"),
+        wip: withLegacy(["countsTowardWip"], "in-progress"),
+        review: withLegacy(["mergeOrchestration", "mergeBlocker", "humanReview"], "in-review"),
+        complete: withLegacy(["complete"], "done"),
+        archived: withLegacy(["archived"], "archived"),
+      };
+    } catch {
+      return legacy;
+    }
   }
 
   /** True when the task's own column fills its workflow's intake or hold role. */
