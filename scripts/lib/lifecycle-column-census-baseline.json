@@ -16,7 +16,7 @@
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
-    "packages/dashboard/app/components/TaskCard.tsx": 42,
+    "packages/dashboard/app/components/TaskCard.tsx": 3,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
     "packages/engine/src/scheduler.ts": 26,
     "packages/core/src/store.ts": 12,

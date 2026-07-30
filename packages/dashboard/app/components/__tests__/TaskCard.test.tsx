@@ -804,6 +804,63 @@ describe("TaskCard", () => {
     }
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (fleet phase — evidence for the 39 converted guards):
+  TaskCard asked "is this card terminal / mid-flight / in review?" by comparing `task.column` to a
+  literal THIRTY-NINE times, while `taskColumnFlags` was already threaded in and already consumed by
+  `canEdit` and `isTaskAgentActive`. The failure mode is a card rendering as live work by one question
+  and terminal by the next on the same board.
+
+  These two cases pin the property in BOTH directions, because only one of them can be reached by
+  renaming alone:
+    - traits say mid-flight, column NAMED `done`  -> must NOT offer Archive (the old code did)
+    - traits say complete, column named `shipped` -> MUST offer Archive (the old code did not)
+
+  Archive is the assertion target because `isCompleteColumn` gates it directly and it is a real
+  operator affordance rather than a style detail.
+
+  REVERT CHECK, measured. Restoring `task.column === "done"` on the archive-action guard makes the
+  first case fail (Archive appears on a mid-flight card) and the second fail (Archive missing on the
+  renamed complete lane). Both were run.
+  */
+  it("does not offer Archive on a card whose traits say mid-flight, however its column is spelled", () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done" as any })}
+          taskColumnFlags={{ countsTowardWip: true } as any}
+          onOpenDetail={noop}
+          addToast={noop}
+          onArchiveTask={vi.fn()}
+        />,
+      );
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  it("offers Archive on a RENAMED complete column, which the id comparison could not see", () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "shipped" as any })}
+          taskColumnFlags={{ complete: true } as any}
+          onOpenDetail={noop}
+          addToast={noop}
+          onArchiveTask={vi.fn()}
+        />,
+      );
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
   it("opens the board card context menu from keyboard as a viewport portal, selects an action, and closes", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
