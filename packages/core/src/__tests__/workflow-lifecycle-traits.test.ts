@@ -348,6 +348,10 @@ describe("LifecycleColumns arity — one id per role, even when several qualify"
     expect(missed === lifecycle.complete).toBe(false);
     // The membership form gets it right.
     expect(bothTerminals.includes(missed)).toBe(true);
+  });
+});
+
+/*
 FNXC:WorkflowLifecycleColumns 2026-07-31-05:20:
 The set-shaped answer to "is this card ALREADY in a review lane", which four consumers each invented
 separately before this existed (#2713, #2722, #2723, #2728). Both directions are asserted, because the
