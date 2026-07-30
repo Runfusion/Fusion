@@ -48,11 +48,18 @@ const ALLOWED = new Map([
   ["isRecoverableMissingWorktreeReviewFailure", "Exported for tests only; same scanner limitation."],
   /*
   TEMPORARY — real offenders in packages owned by other batches, reported to them rather than edited
-  from outside. Remove these two entries when those batches wire or delete the parameters; the check
-  will then start guarding those files too. Both are the same shape this check exists to catch.
+  from outside. Remove each entry when that batch wires or deletes the parameter; the check will then
+  start guarding those files too. All three are the same shape this check exists to catch.
   */
   ["getTotalAgentActiveMs", "TEMPORARY: core-owned; reported on #2783. Twin of a dashboard function reverted for exactly this."],
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
+  [
+    "sortTasksForDisplayColumn",
+    "TEMPORARY: core-owned (task-priority.ts). Its `columnFlags` argument is supplied by its own "
+      + "tests and no production caller — the three dashboard call sites bind to a DIFFERENT function "
+      + "of the same name in app/components/taskSorting.ts. Surfaced only once this check resolved "
+      + "imported shadows; before that the dashboard calls raised the arg-count max and cleared it.",
+  ],
 ]);
 
 function* walk(dir) {
@@ -96,17 +103,39 @@ for (const file of walk(PACKAGES)) {
 
   So a file that declares its own function with that name has its calls attributed to the local one.
 
-  STILL NOT HANDLED: an IMPORTED shadow. `Lane.tsx` imports `sortTasksForDisplayColumn` from
-  `./taskSorting`, not from core, and declares nothing — so its calls are still attributed to core's
-  same-named seam. Distinguishing those needs import resolution (which module does this identifier
-  actually bind to), and this scan deliberately stays at the single-file AST level. Consequence: the
-  `sortTasksForDisplayColumn` rows in any report are false positives, and a seam whose only real
-  suppliers are shadowed-by-import could in principle read as unsupplied.
+  IMPORTED shadows are handled separately, below — that limitation is now closed.
 
-  That is a third distinct way this check can mislead, alongside the one-supplier floor and the
-  test-exclusion. All three are limits of matching by NAME; the fix is import resolution, and it is
-  not worth it until a report is wrong in a way that costs more than reading it carefully.
+  Two ways of matching by NAME remain: the one-supplier floor (any single caller passing the argument
+  clears the seam, even if ten others omit it) and the test-exclusion (a function exported only for
+  tests reads as having no callers, hence the two permanent ALLOWED entries).
   */
+  /*
+  IMPORTED SHADOWS, RESOLVED. `Lane.tsx` imports `sortTasksForDisplayColumn` from `./taskSorting`,
+  not from core, so a name-only match attributed its calls to core's seam. That produced false
+  reports twice — once costing a "fix" tsc rejected, once sending two other batches a list they had
+  to audit. Recording the module each callee was imported FROM lets a call be matched to the seam's
+  actual declaring file.
+
+  It did not merely silence a false positive. Core's `sortTasksForDisplayColumn` really is unsupplied
+  — its third `columnFlags` argument is passed by its own tests and nowhere else — and the dashboard
+  function of the same name, called with more arguments from three components, was raising the max
+  and reporting the seam as satisfied. So the name collision was hiding a genuine offender behind a
+  row everyone had learned to read as noise, which is the worse half of this failure mode: a guard
+  that cries wolf trains its readers to skip exactly the line that matters.
+  */
+  const importedFrom = new Map();
+  const collectImports = (node) => {
+    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings
+      && ts.isNamedImports(node.importClause.namedBindings)
+      && ts.isStringLiteral(node.moduleSpecifier)) {
+      for (const element of node.importClause.namedBindings.elements) {
+        importedFrom.set(element.name.text, node.moduleSpecifier.text);
+      }
+    }
+    ts.forEachChild(node, collectImports);
+  };
+  collectImports(sf);
+
   const locallyDeclared = new Set();
   const collectLocal = (node) => {
     if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) locallyDeclared.add(node.name.text);
@@ -139,7 +168,12 @@ for (const file of walk(PACKAGES)) {
       */
       if (callee) {
         if (!callSites.has(callee)) callSites.set(callee, []);
-        callSites.get(callee).push({ file: relative(REPO, file), args: node.arguments.length, shadowed: locallyDeclared.has(callee) });
+        callSites.get(callee).push({
+          file: relative(REPO, file),
+          args: node.arguments.length,
+          shadowed: locallyDeclared.has(callee),
+          from: importedFrom.get(callee),
+        });
       }
     }
     ts.forEachChild(node, visit);
@@ -154,7 +188,16 @@ known.
 */
 const bestArgsFor = (fn, declaringFile) => {
   const sites = callSites.get(fn) ?? [];
-  const relevant = sites.filter((site) => !site.shadowed || site.file === declaringFile);
+  /* Basename of the seam's module, e.g. `near-duplicate-canonical` — enough to tell core's
+     `task-priority` from the dashboard's `taskSorting` without resolving the module graph. */
+  const declaringModule = declaringFile.replace(/\.tsx?$/, "").split("/").pop();
+  const relevant = sites.filter((site) => {
+    if (site.file === declaringFile) return true;                       // the seam's own file
+    if (site.shadowed) return false;                                    // a local same-named function
+    if (site.from === undefined) return true;                           // not imported: ambiguous, count it
+    /* Imported: it must come from the seam's module, or it is a different function of that name. */
+    return site.from.replace(/\.js$/, "").split("/").pop() === declaringModule;
+  });
   return relevant.reduce((best, site) => Math.max(best, site.args), 0);
 };
 
