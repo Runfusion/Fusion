@@ -38,6 +38,7 @@ import {
   registerDefaultWorkflowHooks,
   type DefaultWorkflowMoveContext,
 } from "../default-workflow-hooks.js";
+import { getTotalAgentActiveMs } from "../task-timing.js";
 import { resolveLifecycleColumns } from "../workflow-lifecycle-traits.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import type { Task } from "../types.js";
@@ -293,6 +294,60 @@ describe("timing, completion and in-review effects are keyed on ROLES", () => {
       applyTimingEffects(ctx);
       expect(ctx.task.cumulativeActiveMs, `${label} lineage accrued no active time`).toBe(5 * 60_000);
     }
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:40 (#2842 review — greptile P1, "preserved segment start
+  double-counts runtime"):
+
+  THIS PINS A REAL DEFECT AND DOES NOT FIX IT. `applyTimingEffects` banks the segment on WIP EXIT but
+  never clears `executionStartedAt`, and its re-entry arm is `if (!task.executionStartedAt)` — so the
+  original start survives the round trip. Every later live-tail reader (`getTotalAgentActiveMs`, the
+  planner metrics tool, the dashboard duration displays) then computes `now - originalStart`, which
+  re-adds the banked segment PLUS all the non-WIP time in between.
+
+  NOT A RENAMED-BOARD BUG, and that is why it is pinned rather than folded into a conversion PR: the
+  case below runs the DEFAULT lineage, where every id is legacy. It is an accounting bug in core that
+  predates this program, and correcting it changes numbers on `productivity-analytics.ts` and every
+  duration display — a behaviour change that deserves its own review, not a line in a batch that says
+  it only converts vocabulary.
+
+  THE FIX, so it is not lost: clear `executionStartedAt` in the exit arm right after banking the
+  segment. The re-entry arm already re-stamps it from `columnMovedAt`, so the next segment starts at
+  the re-entry moment, which is the definition the field's own doc-comment gives.
+
+  When that lands this expectation flips from 10 to 5 minutes and this note goes with it.
+  */
+  it("KNOWN DEFECT: a WIP round trip leaves the old executionStartedAt, so the live tail double-counts", () => {
+    const { ir, wip, review } = LINEAGES[0];
+    const task = {
+      id: "FN-ROUNDTRIP",
+      column: review,
+      columnMovedAt: "2026-07-30T00:05:00.000Z",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+      steps: [],
+      dependencies: [],
+      workflowStepResults: [],
+    } as unknown as Task;
+
+    /* Exit: five minutes of work is banked. */
+    applyTimingEffects(makeCtx(ir, wip, review, { task }));
+    expect(task.cumulativeActiveMs).toBe(5 * 60_000);
+
+    /* Re-entry ten minutes later. The start should move to the re-entry moment; it does not. */
+    task.column = wip;
+    task.columnMovedAt = "2026-07-30T00:15:00.000Z";
+    applyTimingEffects(makeCtx(ir, review, wip, { task }));
+    expect(task.executionStartedAt).toBe("2026-07-30T00:00:00.000Z");
+
+    /*
+    The consequence, stated as the number an operator sees. At 00:20 the card has done 5 minutes of
+    banked work plus 5 minutes of live work — 10 total. `getTotalAgentActiveMs` reports 20: the banked
+    5, plus `now - 00:00` which is itself 20 minutes of wall-clock including the 10 minutes the card
+    spent in review.
+    */
+    expect(getTotalAgentActiveMs(task, Date.parse("2026-07-30T00:20:00.000Z")))
+      .toBe(5 * 60_000 + 20 * 60_000);
   });
 
   it("stamps executionCompletedAt on entry to the complete lane on both lineages", () => {
