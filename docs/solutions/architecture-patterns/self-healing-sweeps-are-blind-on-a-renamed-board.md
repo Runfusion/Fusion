@@ -204,6 +204,34 @@ precisely the bug being fixed. Where a guard exists, assert the end-to-end outco
 
 And run the revert. Every one of the four above was found that way and none by reading.
 
+### "It needs a git fixture" is usually a private method you have not stubbed
+
+Twice on this branch I judged a sweep's lane-sensitive guard unreachable in a unit test because it sat
+behind git-backed calls, and shipped a candidacy-only assertion with the limit stated in the PR. Review
+pushed back on the second one, and the objection was right: the git-backed calls —
+`resolveSelfHealingMergeTarget`, `findAlreadyMergedTaskCommit` — are **private instance methods**, so
+stubbing them on the manager reaches the guard with no git anywhere on the path.
+
+```ts
+const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+Object.assign(manager, {
+  resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main", source: "settings" })),
+  findAlreadyMergedTaskCommit: vi.fn(async () => ({ sha: "abcdef1234567890" })),
+});
+```
+
+`executor-worktree-owner-renamed-lanes.test.ts` already did exactly this for `findActiveWorktreeOwner`,
+with a header explaining why. I had read that file the same week. The guard was never unreachable — it
+was unreachable *the way I first tried to reach it*, and "I stated the limit honestly in the PR" made a
+gap feel resolved when it was merely disclosed.
+
+Once you are past the guard, the assertion writes itself: the sweep's own write differs by exactly the
+wiring under test — blocker clear → `status: null`, blocker fires → `status: "failed"` with a
+finalization-blocked error. Prefer that over candidacy whenever a lane-sensitive guard exists.
+
+**Before writing "this cannot be tested without a fixture", check whether the thing in the way is
+private.** If it is, it is a stub, not a fixture.
+
 ## Related
 
 - `docs/solutions/test-failures/optional-flags-seam-hides-unconverted-column-guards.md` — the same lesson one level down: the census counts syntax, and a green suite that omits the new parameter carries no information about the change.
