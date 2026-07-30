@@ -241,8 +241,27 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
   });
 
   it("stays silent when planning has capacity", async () => {
-        const store = createStore([], recorded);
-    await pollWithExhaustedProjectCapacity(store);
+    /*
+    FNXC:PlanAdmissionThrottle 2026-07-31-11:25 (PR #2562 review — coderabbit):
+    THIS TEST PROVED THE WRONG SILENCE. It used `createStore([])`, which seeds only
+    the running claimant and NO eligible card — so it asserted that an EMPTY QUEUE
+    emits no throttle, which is true of any implementation, including one that emits
+    a throttle on every poll where a card is waiting. The name says "has capacity";
+    the setup had no candidate for capacity to matter to.
+
+    Now the real shape: an eligible card AND room to start it. `maxConcurrent: 3`
+    against one running claimant leaves projectRoom > 0, so admission proceeds and
+    the throttle must stay silent for the reason the name claims.
+
+    `specifyTask` is stubbed because admission now actually dispatches — without it
+    the test would drive a real planning session.
+    */
+    const store = createStore([eligibleTodoTask("FN-8600-ROOM")], recorded, { maxConcurrent: 3 });
+    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
+    vi.spyOn(processor, "specifyTask").mockResolvedValue(undefined);
+    (processor as unknown as { running: boolean }).running = true;
+    await (processor as unknown as { poll: () => Promise<void> }).poll();
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
   });

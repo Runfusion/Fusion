@@ -1804,11 +1804,18 @@ export class TriageProcessor {
         pendingSpecifyCount,
       });
       /*
-      FNXC:CapacityModel 2026-07-29-10:20 (drop the cross-project cap — throttle payload):
+      FNXC:CapacityModel 2026-07-31-11:10 (PR #2562 review — coderabbit; CORRECTED):
       Capacity is the PROJECT's agent count, full stop. The second term was the
-      cross-project host semaphore, which is deleted — nothing wires
-      `options.semaphore` any more, so its availability was permanently Infinity and
-      `Math.min` was a no-op keeping a dead limiter visible in the arithmetic.
+      cross-project host semaphore's AVAILABILITY, which no longer constrains
+      admission: permanently Infinity here, so `Math.min` was a no-op keeping a dead
+      limiter visible in the arithmetic.
+
+      REMOVED FROM THROTTLE ACCOUNTING, NOT DELETED. An earlier version of this note
+      said "nothing wires `options.semaphore` any more", which is false and dangerous
+      in a specific way: it reads as permission to delete live coordination code.
+      `options.semaphore` is still wired at five call sites — pre-held slot
+      registration (`reserve`), the release on drop, the leak-recovery path, and the
+      two admission-reservation hand-offs. Only its use as an ADMISSION LIMIT is gone.
       */
       const projectRoom = Math.max(0, maxConcurrent - claimed);
       const maxToStart = projectRoom;
