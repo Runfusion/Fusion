@@ -608,7 +608,7 @@ const TRAIT_TO_STAGE: Record<string, SdlcStage> = {
   // todo
   "reset-on-entry": "todo",
   /*
-  FNXC:SdlcFunnel 2026-07-31-14:00:
+  FNXC:SdlcFunnel 2026-07-30-16:00:
   `hold` was absent from this map entirely, so a column whose ONLY pre-implementation trait is
   `hold` — a renamed board's wait-for-capacity lane — resolved to OTHER and vanished from the
   funnel. Measured before the fix: `stageForTraits(["hold"]) === "other"`.

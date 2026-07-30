@@ -130,7 +130,7 @@ describe("a board whose columns the funnel was not given folds to OTHER", () => 
 });
 
 /*
-FNXC:SdlcFunnel 2026-07-31-14:00:
+FNXC:SdlcFunnel 2026-07-30-16:00:
 A HOLD-ONLY column must land in the funnel, not in OTHER.
 
 `hold` was missing from the trait->stage map, so a renamed board's wait-for-capacity lane resolved to
@@ -151,6 +151,30 @@ is made deliberately and not drifted into.
 describe("SDLC funnel: hold-only columns", () => {
   it("places a hold-only column in the todo stage rather than OTHER", () => {
     expect(stageForTraits(["hold"])).toBe("todo");
+  });
+
+  it("maps a hold-only COLUMN through buildColumnStageMap, not just its traits", () => {
+    /*
+    FNXC:SdlcFunnel 2026-07-30-16:00 (PR #2674 review — greptile, and it is the project's own rule):
+    The reported bug was that a hold-only COLUMN disappeared from the funnel. Asserting
+    `stageForTraits` alone tests the helper, not the surface where the defect shows — and the
+    Surface Enumeration rule exists because a fix proven only at the unit it was written in is how
+    the same bug comes back one caller over.
+
+    `buildColumnStageMap` is the seam the funnel actually consumes: it maps column id -> stage for
+    every column on the board. A hold-only lane must appear there with a real stage, not OTHER.
+    */
+    const stages = buildColumnStageMap([
+      { id: "waiting", traits: [{ trait: "hold" }] },
+      { id: "building", traits: [{ trait: "wip" }] },
+      { id: "shipped", traits: [{ trait: "complete" }] },
+    ] as never);
+
+    expect(stages.get("waiting")).toBe("todo");
+    // The neighbours prove the map is populated normally, so the case above cannot pass because the
+    // map is empty or every column collapsed to one stage.
+    expect(stages.get("building")).toBe("in-progress");
+    expect(stages.get("shipped")).toBe("done");
   });
 
   it("still resolves the merged Planning column to `triage` — unchanged by this fix", () => {
