@@ -926,7 +926,18 @@ export function TaskDetailContent({
     }
   }, [initialTab]);
 
-  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> | null>(null);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-02:30 (PR #2698 review — greptile P1, fourth form):
+  CARRIES THE TASK IT DESCRIBES. The fetch effect resets this to null on a task change, but it is
+  declared BELOW the reconciliation effects, so on the render where the modal switches tasks those
+  run first and still see the PREVIOUS task's flags. Non-null is therefore not the same as
+  "resolved for this task", which is what my earlier guard actually assumed.
+
+  Tagging the payload makes that checkable instead of order-dependent: consumers compare `taskId`
+  and fall back to the legacy id when it does not match, which is the same safe answer they use
+  before any fetch has landed.
+  */
+  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<(Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> & { taskId: string }) | null>(null);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: TaskDetailModal.tsx):
@@ -940,7 +951,14 @@ export function TaskDetailContent({
   late-arriving-flags hazard that produced four stale memos in TaskCard (PR #2688 review). This repo
   has no react-hooks/exhaustive-deps rule, so that is checked by hand.
   */
-  const detailColumnFlags = workflowMoveMetadata?.currentColumnFlags;
+  /*
+  Flags only when they describe THIS task. On the render where the modal switches tasks the state
+  still holds the previous card's payload, and using it would resolve roles from another task's
+  workflow — worse than the legacy fallback, because it is confidently wrong rather than merely
+  stale. `undefined` here gives every role the same answer it uses before any fetch lands.
+  */
+  const detailFlagsAreForThisTask = workflowMoveMetadata?.taskId === task.id;
+  const detailColumnFlags = detailFlagsAreForThisTask ? workflowMoveMetadata?.currentColumnFlags : undefined;
   const isDoneColumn = isCompleteColumnRole(detailColumnFlags, task.column);
   const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
   const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
@@ -970,22 +988,22 @@ export function TaskDetailContent({
     be in review is benign and self-corrects the instant metadata resolves; throwing away a
     deliberate tab selection does not.
     */
-    if (workflowMoveMetadata === null) return;
+    if (!detailFlagsAreForThisTask) return;
     if (activeTab === "pr" && !isReviewColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column, isReviewColumn, workflowMoveMetadata]);
+  }, [activeTab, task.column, isReviewColumn, detailFlagsAreForThisTask]);
 
   useEffect(() => {
     // Same pairing as the PR tab above: visibility resolves the complete role, so reconciliation must
     // too, or the Summary tab appears on a custom terminal column and bounces straight back.
     // Same unresolved-role guard as the PR tab above: a redirect is destructive, so it waits for the
     // real answer rather than acting on the legacy fallback.
-    if (workflowMoveMetadata === null) return;
+    if (!detailFlagsAreForThisTask) return;
     if (activeTab === "summary" && !isDoneColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column, isDoneColumn, workflowMoveMetadata]);
+  }, [activeTab, task.column, isDoneColumn, detailFlagsAreForThisTask]);
 
   // Reset description and planner-chat focus state when task changes
   useEffect(() => {
@@ -1101,6 +1119,9 @@ export function TaskDetailContent({
         }
         setTaskWorkflowBadge(metadata ? { id: metadata.id, name: metadata.name, icon: metadata.icon } : null);
         setWorkflowMoveMetadata(metadata ? {
+          // Tagged so consumers can tell "resolved" from "resolved for THIS task" — see the note at
+          // the state declaration.
+          taskId: task.id,
           moveColumns: metadata.moveColumns,
           currentColumnFlags: metadata.currentColumnFlags,
         } : null);
