@@ -58,7 +58,18 @@ const ALLOWED = new Map([
       + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
   ],
 
-  ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
+  [
+    "isPlanningContinuationTaskDispatchable",
+    "Engine-owned, and the gap is CHARACTERISED rather than pending: #2799 pins today's behaviour in "
+      + "workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts and names it the third "
+      + "instance of this class. The seam is real — `selectActionablePlanningContinuations` calls "
+      + "`resolvePlanningContinuationCandidate` with no `terminalColumns` while the sibling caller at "
+      + "in-process-runtime.ts:386 supplies it, so that path re-tests against the legacy pair. Fixing "
+      + "it needs a new parameter on `selectActionablePlanningContinuations` plus suppliers at its own "
+      + "callers, i.e. more plumbing than a one-argument change, and the file's author is actively in "
+      + "it. Left to them. Was 'reported on #2785'; that PR merged without it, so the pending-owner "
+      + "framing was stale and is replaced with where the analysis actually lives.",
+  ],
   [
     "sortTasksForDisplayColumn",
     "PERMANENT, with evidence. core/task-priority.ts's copy has ZERO callers anywhere: the three "
