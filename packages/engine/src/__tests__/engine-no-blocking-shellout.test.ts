@@ -104,15 +104,45 @@ function scanEngineSource(): ShelloutSite[] {
   return listProductionSource(root).flatMap((path) => scanSource(relative(process.cwd(), path), readFileSync(path, "utf-8")));
 }
 
+/*
+FNXC:EngineProcessRules 2026-07-30-12:20:
+Identity is file + primitive + SIGNATURE, with a per-key COUNT. The line number is documentation.
+
+The key used to include `entry.line`, so ANY edit above an audited call site broke this guard even
+though the call itself was untouched. That is not a hypothetical: it has now produced three false
+failures and been re-pinned twice by hand, most recently when unrelated fleet conversions shifted
+`executor.ts` and `self-healing.ts` (5 sites drifted at once). A guard that fails on edits it does not
+care about trains people to re-pin it without reading it, which is how a real new shellout would slip
+through in the same commit.
+
+The count preserves what the line number was actually buying: a SECOND identical shellout added to the
+same file is still unmatched, because the allowlist declares how many of that exact call it audits.
+What is deliberately given up is distinguishing "the audited call moved" from "the audited call stayed
+put" — which this guard has no reason to care about.
+*/
+function keyOf(entry: { file: string; primitive: string; signature: string }): string {
+  return `${entry.file}:${entry.primitive}:${entry.signature}`;
+}
+
 function classifySites(sites: ShelloutSite[]): { unmatched: ShelloutSite[]; stale: AllowlistEntry[] } {
-  const remaining = new Set(allowlist.map((entry) => `${entry.file}:${entry.line}:${entry.primitive}:${entry.signature}`));
+  const budget = new Map<string, number>();
+  for (const entry of allowlist) budget.set(keyOf(entry), (budget.get(keyOf(entry)) ?? 0) + 1);
+
   const unmatched = sites.filter((site) => {
-    const key = `${site.file}:${site.line}:${site.primitive}:${site.signature}`;
-    if (!remaining.has(key)) return true;
-    remaining.delete(key);
+    const remainingForKey = budget.get(keyOf(site)) ?? 0;
+    if (remainingForKey === 0) return true;
+    budget.set(keyOf(site), remainingForKey - 1);
     return false;
   });
-  return { unmatched, stale: allowlist.filter((entry) => remaining.has(`${entry.file}:${entry.line}:${entry.primitive}:${entry.signature}`)) };
+
+  // Anything still holding budget is an allowlist entry with no matching call site left in source.
+  const stale = allowlist.filter((entry) => {
+    const left = budget.get(keyOf(entry)) ?? 0;
+    if (left === 0) return false;
+    budget.set(keyOf(entry), left - 1);
+    return true;
+  });
+  return { unmatched, stale };
 }
 
 describe("engine blocking-shellout static guard", () => {

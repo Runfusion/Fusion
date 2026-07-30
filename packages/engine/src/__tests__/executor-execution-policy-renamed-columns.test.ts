@@ -426,9 +426,21 @@ describe("a resolved workflow is never given a column it does not declare", () =
     encode the wrong contract; what this case pins is that the DISPATCH-LOOP gate did not claim
     it, and that the run reached a real classifier rather than falling off the end.
 
-    Noted while writing this: the resume router's log says "moved back to todo" and its
-    already-there check is another `"todo"` literal — one of the 20 sites in this method left to
-    U5's executor slice. It is why the card stays put here rather than being rehomed to `inbox`.
+    Noted while writing this: the resume router's log said "moved back to todo" and its
+    already-there check was another `"todo"` literal — one of the 20 sites in this method left to
+    U5's executor slice. It is why the card USED TO stay put here rather than being rehomed to
+    `inbox`.
+
+    FNXC:WorkflowExecutionOwnership 2026-07-30-12:40:
+    That literal is now converted, and this case flipped to the outcome the paragraph above
+    predicted: the resume router rehomes the card to `inbox`, this workflow's declared intake column
+    (`noHoldIr`), instead of leaving it parked in a `todo` the workflow does not declare. The
+    prediction landing is the evidence the conversion is right, so this asserts the rehome rather
+    than the absence of a move.
+
+    What the case still owns is unchanged: the DISPATCH-LOOP gate did not claim the card (no
+    "executor recovery preserved" log), and the run reached a real classifier rather than falling off
+    the end.
     */
     expect(store.logEntry).toHaveBeenCalledWith(
       task.id,
@@ -436,7 +448,13 @@ describe("a resolved workflow is never given a column it does not declare", () =
       undefined,
       undefined,
     );
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalledWith(
+      task.id,
+      "inbox",
+      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }),
+    );
+    // Still never the literal the workflow does not declare.
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
     expect(task.status).not.toBe("failed");
   });
 
