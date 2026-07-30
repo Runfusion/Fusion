@@ -106,47 +106,33 @@ function isInPlanningLane(lanes: Lanes | undefined, column: string, declared: Se
 }
 
 /**
- * A move target from the resolved role.
+ * A move target for `role`, or `undefined` when this workflow has no such lane.
  *
- * FNXC:PluginLifecycleColumns 2026-07-30-07:10 (PR #2607 review, second P1 — greptile):
- * Returns `undefined` rather than substituting a legacy id the workflow DOES NOT
- * DECLARE. The previous version fell back unconditionally, so a valid custom workflow
- * that simply omits the role had `moveTask` called with `todo`/`in-progress` — a column
- * that does not exist on that board. The action then either threw or parked the card
- * somewhere nothing renders it, which is the R7 failure this whole conversion removes,
- * reintroduced by the fallback meant to be conservative.
+ * FNXC:PluginLifecycleColumns 2026-07-30-21:40 (PR #2607 review — FIFTH finding, same rule):
+ * THE LEGACY ID IS NOT A CANDIDATE AT ALL once the workflow speaks columns. Every previous
+ * revision tried to qualify the fallback — "declared", then "declared and not assigned to another
+ * role" — and each qualification left a hole review found: first an aliased review lane named
+ * `todo`, then a TRAITLESS parking column named `todo`, which no role check can see because it
+ * carries no role.
  *
- * The legacy id is used only when the workflow genuinely DECLARES it, which is the
- * migration case (a pre-U11 board still carrying `todo`). Otherwise the caller must
- * refuse — an action with nowhere legitimate to move the card has not been configured
- * for this workflow, and saying so beats guessing.
+ * The qualifications were the mistake. If `resolveLanes` returned a lane set, the workflow HAS a
+ * column vocabulary, so "no column carries the hold trait" is a complete answer: there is nowhere
+ * legitimate to send the card and the action must refuse. A column merely NAMED `todo` implements
+ * nothing.
+ *
+ * The legacy id survives in exactly one case — `lanes` is undefined, meaning the workflow could not
+ * be resolved at all. There is no basis to decide then, and a pre-U11 board really does use these
+ * ids, so refusing would break the migration this program is mid-way through.
+ *
+ * Five attempts at one rule, so it is worth stating plainly: A LEGACY ID IS NOT A ROLE, and
+ * "declared" is not "declared FOR THIS ROLE" — including when it is declared for no role at all.
  */
 function destination(
   lanes: Lanes | undefined,
   role: keyof typeof LEGACY_DESTINATIONS,
-  declared: Set<string>,
 ): string | undefined {
-  const resolved = lanes?.[role];
-  if (resolved) return resolved;
-  const legacy = LEGACY_DESTINATIONS[role];
-  if (!declared.has(legacy)) return undefined;
-  /*
-  FNXC:PluginLifecycleColumns 2026-07-30-19:20 (PR #2607 review — fourth finding, and the FOURTH
-  time I have made this mistake in this file):
-  "DECLARED SOMEWHERE" IS NOT "DECLARED FOR THIS ROLE". `declared` is every column id the workflow
-  has, so a board that declares no hold column but names its REVIEW lane `todo` satisfied
-  `declared.has("todo")` — and `approvePlan` then moved an approved plan straight into REVIEW,
-  skipping implementation entirely. That is worse than the refusal it replaced.
-
-  A legacy id may only stand in for a role the workflow leaves EMPTY. If the workflow has assigned
-  that id to a different lifecycle role, it means something else on this board and is not available
-  as a fallback. A LEGACY ID IS NOT A ROLE — the same sentence as the gate fix, in the destination
-  direction, which is where I keep failing to apply it.
-  */
-  const assignedElsewhere = Object.entries(lanes ?? {}).some(
-    ([laneRole, laneColumn]) => laneRole !== role && laneColumn === legacy,
-  );
-  return assignedElsewhere ? undefined : legacy;
+  if (!lanes) return LEGACY_DESTINATIONS[role];
+  return lanes[role];
 }
 
 
@@ -207,7 +193,7 @@ export async function startWork(input: AgentActionInput, deps: AgentActionDeps):
   ) {
     conflict("start-work", task);
   }
-  const startTarget = destination(startLanes, "wip", startDeclared);
+  const startTarget = destination(startLanes, "wip");
   if (!startTarget) conflict("start-work", task);
   // Intentional v1 limitation: plugin cannot import engine allocator, so moveTask runs without allocateWorktree.
   await deps.taskStore.moveTask(taskId, startTarget);
@@ -234,7 +220,7 @@ export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps
   ) {
     conflict("approve-plan", task);
   }
-  const approveTarget = destination(approveLanes, "hold", approveDeclared);
+  const approveTarget = destination(approveLanes, "hold");
   if (!approveTarget) conflict("approve-plan", task);
   await deps.taskStore.moveTask(taskId, approveTarget);
   await deps.taskStore.updateTask(taskId, { status: undefined });
