@@ -20,6 +20,9 @@ import type {
 import {
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
+  resolveWorkflowIrForTask,
+  resolveColumnFlags,
+  type TraitFlags,
   allowsAutoMergeProcessing,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
@@ -1504,6 +1507,41 @@ export class ProjectEngine {
     return this.prMonitor;
   }
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+  The flags for a task's OWN column, for the planner-overseer stage classification.
+
+  `resolveWatchedStage` is pure and sync with no store, so the answer has to be resolved here and
+  passed in. Keyed on the id it returned null for every card on a renamed board, and `observeTask`
+  returns early on a null stage — so no observation, no `overseer:intervention`, and nothing for
+  `PlannerRecoveryController` to act on. The oversight loop was inert and silent about it.
+
+  The IR cache is what makes this affordable: the poll below already awaits `resolveEffectiveSettings`
+  per task, so it is a per-task async loop regardless, and caching by workflow means the added work is
+  (distinct workflows) resolutions rather than (cards). The cache is per-poll on purpose — a longer
+  lifetime would serve stale lanes after a workflow edit, which is the failure this program exists to
+  remove wearing a different hat.
+
+  Fail-soft: an unresolvable workflow returns undefined and the callee falls back to the legacy ids,
+  which is exactly today's behaviour.
+  */
+  private async resolveTaskColumnFlags(
+    store: TaskStore,
+    task: Pick<Task, "id" | "column">,
+    irCache: Map<string, WorkflowIr>,
+  ): Promise<TraitFlags | undefined> {
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+      /* `WorkflowIr` is a union and the v1 arm declares no columns — a v1 graph has no lane
+         vocabulary to read, so undefined (legacy ids) is the correct answer for it. */
+      const columns = (ir as { columns?: Array<{ id: string }> }).columns;
+      const declared = columns?.find((column) => column.id === task.column);
+      return declared ? resolveColumnFlags(declared as never) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Get the records-only PlannerOverseerMonitor (if initialized). See FN-7511. */
   getPlannerOverseer(): PlannerOverseerMonitor | undefined {
     return this.plannerOverseer;
@@ -1591,7 +1629,10 @@ export class ProjectEngine {
 
       let observation = this.plannerOverseer ? this.plannerOverseer.getObservations(taskId).slice(-1)[0] : undefined;
       if (!observation && this.plannerOverseer) {
-        observation = (await this.plannerOverseer.observeTask(task, level)) ?? undefined;
+        /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: the manual nudge classifies the same way the
+           poll does, or a renamed board answers `no-active-stage` to an operator pressing the button. */
+        const columnFlags = await this.resolveTaskColumnFlags(store, task, new Map());
+        observation = (await this.plannerOverseer.observeTask(task, level, { columnFlags })) ?? undefined;
       }
       if (!observation) {
         return { applied: false, reason: "no-active-stage", task };
@@ -2971,6 +3012,8 @@ export class ProjectEngine {
       // FNXC:PlannerOversight 2026-07-14-00:10: keep session-advisor human-control on live settings.
       this.sessionAdvisor?.setSettings(engineSettings);
 
+      /* One IR cache for the whole sweep: (distinct workflows) resolutions, not (cards). */
+      const overseerIrCache = new Map<string, WorkflowIr>();
       for (const task of inFlight) {
         try {
           const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(() => ({}) as Record<string, unknown>);
@@ -3001,7 +3044,11 @@ export class ProjectEngine {
           // in-progress task reports `signal: "stuck"` instead of always
           // `progressing` (the FN-7732 symptom).
           const executorStuckAfterMs = resolveExecutorStuckAfterMs(workflowEffective.plannerOverseerExecutorStuckAfterMs);
-          await overseer.observeTask(task, level, { executorStuckAfterMs });
+          /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: without this the stage is resolved from
+             the legacy ids and every card on a renamed board classifies as null — see
+             `resolveTaskColumnFlags`. The cache is per-poll so a workflow edit is picked up next tick. */
+          const columnFlags = await this.resolveTaskColumnFlags(store, task, overseerIrCache);
+          await overseer.observeTask(task, level, { executorStuckAfterMs, columnFlags });
 
           // FN-7512: one guarded, autonomous-only bounded recovery tick at the
           // same passive seam FN-7511 uses for observation. Inert for every

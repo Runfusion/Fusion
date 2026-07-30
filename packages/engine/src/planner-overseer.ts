@@ -14,7 +14,7 @@
  * the seam every later planner-oversight subtask reads from.
  */
 
-import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task } from "@fusion/core";
+import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task, type TraitFlags } from "@fusion/core";
 
 /** Alias for the `Task.reviewState` shape without requiring a separate core export. */
 type OverseerTaskReviewState = NonNullable<Task["reviewState"]>;
@@ -98,7 +98,10 @@ export type OverseerTaskRef = Pick<
  *
  * Never throws — missing/partial fields degrade to `null`.
  */
-export function resolveWatchedStage(task: Partial<OverseerTaskRef> | null | undefined): OverseerWatchedStage | null {
+export function resolveWatchedStage(
+  task: Partial<OverseerTaskRef> | null | undefined,
+  columnFlags?: TraitFlags,
+): OverseerWatchedStage | null {
   try {
     if (!task) return null;
 
@@ -111,36 +114,40 @@ export function resolveWatchedStage(task: Partial<OverseerTaskRef> | null | unde
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:35 (audited — REAL and HIGH IMPACT, deferred):
-    On a renamed board this returns `null` for every card, so the planner overseer watches NOTHING.
+    FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+    Keyed on the ROLE, because keyed on the id this returned null for every card on a renamed board.
 
-    Worth stating at full weight because the blast radius is larger than the three literals suggest:
-    `observeTask` returns early on a null stage, so no observation is recorded, no
-    `overseer:intervention` entry is emitted, and `PlannerRecoveryController` — which consumes those
-    observations — has nothing to steer, retry or targeted-fix. The entire oversight loop is inert and
-    silent about it, exactly like the self-healing sweeps whose queries returned empty arrays.
+    The blast radius is why this is worth the parameter rather than a fallback: `observeTask` returns
+    early on a null stage, so no observation is recorded, no `overseer:intervention` entry is emitted,
+    and `PlannerRecoveryController` — which consumes those observations — has nothing to steer, retry
+    or targeted-fix. The entire oversight loop went inert and said nothing about it, the same shape as
+    the self-healing sweeps whose queries returned empty arrays.
 
-    NOT MECHANICAL, which is why it is flagged rather than converted. `resolveWatchedStage` is a pure
-    sync function over a `Partial<OverseerTaskRef>` with no store and no task id it can resolve from,
-    so the lane answer has to arrive as a parameter. Its only production caller, `observeTask`, IS
-    async and the monitor does hold a store — but `observeTask` is called once per task per poll from
-    `project-engine.ts`, so resolving inside it buys a workflow read per card per poll on a timer.
+    THE FLAGS ARRIVE AS A PARAMETER because this function is pure and sync with no store and no task
+    id to resolve from. The cost objection I recorded when first auditing this — "resolving inside
+    `observeTask` buys a workflow read per card per poll" — turned out to be answered by the caller:
+    `project-engine.ts`'s poll ALREADY awaits `resolveEffectiveSettings` per task, so it is a per-task
+    async loop already, and an IR cache keyed by workflow makes the addition (distinct workflows)
+    resolutions rather than (cards).
 
-    The shape that works is the one the board-load enrichment ended up with (#2845): resolve at the
-    POLL, once, with an IR cache keyed by workflow, and pass the flags down. That is a change to
-    `project-engine.ts`'s poll as much as to this file, and it is a cost judgement about a periodic
-    engine loop rather than a rename — the same call `notification-service.ts` documents for its own
-    two sites.
+    THE REVIEW TEST IS THE THREE-TRAIT UNION, not `isReviewColumnRole`, which checks only
+    `mergeBlocker || humanReview`. A board whose review lane carries `merge` (mergeOrchestration) —
+    the default's own shape — would otherwise be classified as not-in-review and skipped, which is the
+    bug this change is removing, arriving through the helper meant to fix it.
 
-    Left counted with no exemption marker so the census keeps pointing here. `columnFlags` is in the
-    unwired-lane-parameter vocabulary, so whoever adds the parameter cannot leave it unwired.
+    `columnFlags` is in the unwired-lane-parameter vocabulary, so the wiring cannot silently rot.
     */
     const column = task.column;
-    if (column !== "in-progress" && column !== "in-review") {
+    if (column === undefined) return null;
+    const isWip = columnFlags ? columnFlags.countsTowardWip === true : column === "in-progress";
+    const isReview = columnFlags
+      ? Boolean(columnFlags.mergeOrchestration || columnFlags.mergeBlocker || columnFlags.humanReview)
+      : column === "in-review";
+    if (!isWip && !isReview) {
       return null;
     }
 
-    if (column === "in-progress") {
+    if (isWip) {
       return "executor";
     }
 
@@ -476,14 +483,14 @@ export class PlannerOverseerMonitor {
   async observeTask(
     task: OverseerTaskRef,
     level: PlannerOversightLevel,
-    options?: { now?: () => number; executorStuckAfterMs?: number },
+    options?: { now?: () => number; executorStuckAfterMs?: number; columnFlags?: TraitFlags },
   ): Promise<OverseerStageObservation | null> {
     try {
       if (level === "off") {
         return null;
       }
 
-      const stage = resolveWatchedStage(task);
+      const stage = resolveWatchedStage(task, options?.columnFlags);
       if (!stage) {
         return null;
       }
