@@ -182,7 +182,12 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
       nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
-        ? isNearDuplicateCanonicalInactive(input.tasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf))
+        ? (() => {
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-23:30: the canonical's own flags, from the map
+             this controller already threads to every dock view. */
+          const canonical = input.tasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf);
+          return isNearDuplicateCanonicalInactive(canonical, canonical ? input.columnFlagsByTaskId?.get(canonical.id) : undefined);
+        })()
         : undefined}
     />
   ), [input]);
