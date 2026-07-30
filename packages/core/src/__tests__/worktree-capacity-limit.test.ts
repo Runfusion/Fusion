@@ -64,15 +64,41 @@ project that turned worktrees off.
 MEASURED at the time of writing: exactly two, and only one of them bounds admission.
 */
 describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
-  /** file → why a raw `maxWorktrees` bound is legitimate there. */
-  const AUDITED_BOUNDS: Record<string, string> = {
-    "packages/engine/src/scheduler.ts":
-      "THE admission gate. Reads the limit only via resolveWorktreeCapacityLimit (single call site), "
-      + "and its gate snapshot is optional so OFF mode constructs no gate at all.",
-    "packages/engine/src/self-healing.ts":
-      "enforceWorktreeCap: on-disk hygiene, not admission. Caps worktree DIRECTORIES at 2x and only "
-      + "removes idle ones. Must keep applying in OFF mode or idle worktrees accumulate unbounded.",
-  };
+  /*
+  Audited bounds, keyed on the EXPRESSION and not the file (greptile #2652).
+
+  This was `Record<file, reason>` and checked `!(file in AUDITED_BOUNDS)`, which exempted every
+  bounding expression in an allowlisted file. A SECOND raw admission bound added to `scheduler.ts` —
+  the single most likely place for one to appear — stayed green, so the ratchet could not fire where it
+  was most needed. Naming the expression means an audited file gets no blanket pass.
+
+  `expr` is matched as a substring of the comment-stripped, generic-stripped line.
+  */
+  const AUDITED_BOUNDS: Array<{ file: string; expr: string; reason: string }> = [
+    {
+      file: "packages/engine/src/scheduler.ts",
+      expr: "settings.maxWorktrees ?? this.options.maxWorktrees ?? 4",
+      reason:
+        "THE admission gate's limit read, and the ONLY one: it feeds resolveWorktreeCapacityLimit, whose "
+        + "gate snapshot is optional so OFF mode constructs no gate at all.",
+    },
+    {
+      file: "packages/engine/src/scheduler.ts",
+      expr: "maxWorktreesGate.used >= maxWorktreesGate.limit",
+      reason:
+        "The gate's own binding check, and SAFE BY CONSTRUCTION in OFF mode: it reads the OPTIONAL "
+        + "`maxWorktreesGate` snapshot, which is `undefined` when resolveWorktreeCapacityLimit returns "
+        + "null, so the `&&` short-circuits and no worktree gate can bind. Surfaced only once this "
+        + "allowlist became per-expression — the file-level version was hiding it.",
+    },
+    {
+      file: "packages/engine/src/self-healing.ts",
+      expr: "(settings.maxWorktrees ?? 4) * 2",
+      reason:
+        "enforceWorktreeCap: on-disk hygiene, not admission. Caps worktree DIRECTORIES at 2x and only "
+        + "removes idle ones. Must keep applying in OFF mode or idle worktrees accumulate unbounded.",
+    },
+  ];
 
   it("every file bounding on maxWorktrees is audited", async () => {
     const { execFileSync } = await import("node:child_process");
@@ -105,10 +131,10 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
         if (!line.includes("maxWorktrees")) continue;
         const bare = stripGenerics(line);
         if (!bare.includes("maxWorktrees")) continue;
-        if (BOUNDING.test(bare) && !(file in AUDITED_BOUNDS)) {
-          offenders.push(`${file}: ${line.trim()}`);
-          break;
-        }
+        if (!BOUNDING.test(bare)) continue;
+        // Per-EXPRESSION: an audited file does not get a blanket pass for a new bound.
+        const audited = AUDITED_BOUNDS.some((a) => a.file === file && bare.includes(a.expr));
+        if (!audited) offenders.push(`${file}: ${line.trim()}`);
       }
     }
 
@@ -119,11 +145,17 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
       + "genuinely not about admission, add it to AUDITED_BOUNDS with the reason.",
     ).toEqual([]);
 
-    // The allowlist must not rot into a list of files that no longer bound anything: a stale entry
-    // would let a real new bound hide behind an audited name.
-    for (const file of Object.keys(AUDITED_BOUNDS)) {
-      const src = await stripComments(readFileSync(resolve(root, file), "utf-8"));
-      expect(src, `${file} no longer bounds on maxWorktrees — drop its AUDITED_BOUNDS entry`).toContain("maxWorktrees");
+    /*
+    The allowlist must not rot: a stale entry naming an expression that no longer exists is a hole a
+    real new bound can hide behind, because the file keeps its audited status. Checked per EXPRESSION
+    for the same reason the offender check is.
+    */
+    for (const entry of AUDITED_BOUNDS) {
+      const src = stripGenerics(await stripComments(readFileSync(resolve(root, entry.file), "utf-8")));
+      expect(
+        src.includes(entry.expr),
+        `${entry.file} no longer contains the audited bound \`${entry.expr}\` — update or drop that entry`,
+      ).toBe(true);
     }
   });
 
