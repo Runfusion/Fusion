@@ -11,7 +11,7 @@
 
 import { TaskStore } from "../store.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
-import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveTaskLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
 import { toJsonNullable } from "../db.js";
@@ -472,7 +472,27 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     }
 
     const fromColumn = task.column;
-    const mergeBlocker = getTaskMergeBlocker(task);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:10 (unwired-parameter class, cf. #2803):
+    THE OUTER QUESTION WAS RESOLVED AND THE INNER ONE WAS NOT — in the same function, four lines apart.
+    `completeColumn` above comes from the task's workflow, then this call re-asked with the literal and
+    refused: on a renamed board the completion move threw
+
+        Cannot move FN-1 to done: task is in 'checking', must be in 'in-review'
+
+    for a card sitting correctly in its own review lane. `getTaskMergeBlocker`'s own note calls out this
+    exact half-conversion shape in `moves.ts`; this is the same shape in a second site it did not cover.
+
+    MEMBERSHIP via `resolveReviewColumns` (mergeOrchestration ∪ mergeBlocker ∪ humanReview), so a board
+    splitting those across columns has all of them accepted, unioned with the legacy id because
+    `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+    */
+    const reviewColumns = new Set<string>(["in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id);
+      if (ir) for (const column of resolveReviewColumns(ir)) reviewColumns.add(column);
+    } catch { /* degraded: legacy id only */ }
+    const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
     if (mergeBlocker) {
       throw new Error(`Cannot move ${task.id} to done: ${mergeBlocker}`);
     }

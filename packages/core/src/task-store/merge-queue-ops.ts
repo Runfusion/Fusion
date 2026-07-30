@@ -12,6 +12,8 @@ import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from 
 import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
 import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../task-merge.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import {resolveReviewColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
@@ -388,7 +390,25 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
         return result;
       }
 
-      const mergeBlocker = getTaskMergeBlocker(task);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (unwired-parameter class, cf. #2803):
+      `getTaskMergeBlocker` has taken an optional RESOLVED `reviewColumns` since its own conversion, and
+      this caller omitted it — so the identity check fell back to the literal `in-review` and threw
+      `Cannot merge <id>: task is not in 'in-review'` for a card sitting correctly in ITS OWN board's
+      review lane. A hard, operator-visible merge failure on every renamed board.
+
+      A resolved seam nobody wired is indistinguishable from no seam at all.
+
+      MEMBERSHIP, not first-per-role: `resolveReviewColumns` unions mergeOrchestration, mergeBlocker and
+      humanReview, so a workflow splitting those across columns has all of them accepted. Unioned with
+      the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+      */
+      const reviewColumns = new Set<string>(["in-review"]);
+      try {
+        const ir = await resolveWorkflowIrForTask(store, id);
+        if (ir) for (const column of resolveReviewColumns(ir)) reviewColumns.add(column);
+      } catch { /* degraded: legacy id only */ }
+      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
       if (mergeBlocker) {
         throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);
       }
