@@ -2406,7 +2406,11 @@ export class TaskExecutor {
       return true;
     }
 
-    if ((latestTask && latestTask.column !== "in-progress") || this.userCanceledTaskIds.has(taskId)) {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:05 (fleet: executor.ts wip-lane liveness family):
+       "still executing" is the board's WIP lane. Spelled as the literal, a renamed board deferred EVERY
+       completion handoff — the card was never in `in-progress`, so this read "no longer active" for a
+       card that was actively executing, and the handoff was dropped with a log line. */
+    if ((latestTask && latestTask.column !== (await this.resolveResumeLanes(taskId)).wip) || this.userCanceledTaskIds.has(taskId)) {
       this.clearCompletedTaskWatchdog(taskId);
       executorLog.log(`${taskId}: completion handoff deferred — task no longer active (${context})`);
       await this.store.logEntry(
@@ -3337,7 +3341,10 @@ export class TaskExecutor {
       executorLog.warn(`${taskId}: failed to read latest task state for deferred approval resume: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
-    if (latestTask.paused || latestTask.userPaused || latestTask.column !== "in-progress") return false;
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:07 (fleet): the deferred approval resume only runs
+       for a card still in its board's wip lane; the literal made it refuse on every renamed board. */
+    if (latestTask.paused || latestTask.userPaused
+      || latestTask.column !== (await this.resolveResumeLanes(taskId)).wip) return false;
     return this.dispatchUnpauseResume(latestTask);
   }
 
@@ -4251,7 +4258,11 @@ export class TaskExecutor {
           return;
         }
 
-        if (!currentTask || currentTask.column !== "in-progress" || currentTask.paused) {
+        /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:09 (fleet): the watchdog fires only while the card
+           is still in the wip lane. On a renamed board it returned immediately every tick, so the
+           completed-task watchdog never did anything. */
+        if (!currentTask || currentTask.paused
+          || currentTask.column !== (await this.resolveResumeLanes(taskId)).wip) {
           return;
         }
         if (!this.isTaskWorkComplete(currentTask)) {
@@ -4453,7 +4464,13 @@ export class TaskExecutor {
         return;
       }
 
-      if (!currentTask || currentTask.paused || currentTask.column === "in-progress") {
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:11 (fleet): the inverse of the guard above — the rerun
+         watchdog skips a card that is STILL executing. Note the direction: with the literal on a renamed
+         board this guard never matched, so the rerun could fire on a card mid-execution. Converting an
+         inverted guard changes behaviour in the opposite direction from its neighbours, which is why the
+         family is converted per method rather than by pattern-matching the text. */
+      if (!currentTask || currentTask.paused
+        || currentTask.column === (await this.resolveResumeLanes(taskId)).wip) {
         return;
       }
 

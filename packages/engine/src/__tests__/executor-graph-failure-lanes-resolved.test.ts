@@ -197,3 +197,70 @@ describe("FN-5147: unusable-worktree recovery does not run on a finished or huma
     expect(recover).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-10:30 (fleet: executor.ts wip-lane liveness family):
+
+THE INVARIANT: "is this card still executing?" is the board's WIP lane.
+
+TWO DIRECTIONS, and this is why the family is converted per method rather than by matching the text.
+Most of these guards read `column !== "in-progress"` and REFUSE when they do not match, so a renamed
+board silently disabled them (the completion handoff was deferred on every card, the deferred
+approval resume never resumed, the completed-task watchdog returned on every tick). But the rerun
+watchdog reads `column === "in-progress"` and SKIPS when it matches — so on a renamed board that one
+never skipped, and a rerun could fire on a card that was still mid-execution. A mechanical swap of
+every `!== "in-progress"` would have converted the refusals and left the admission.
+
+`resumeApprovalAfterUnwindIfNeeded` is the case pinned here: it is a private method with a single
+boolean answer and no side effects on the refusal path, so the assertion is direct.
+*/
+describe("the wip-lane liveness family resolves the board's own wip column", () => {
+  function resumeApproval(executor: TaskExecutor, taskId: string): Promise<boolean> {
+    return (executor as unknown as {
+      resumeApprovalAfterUnwindIfNeeded: (id: string) => Promise<boolean>;
+    }).resumeApprovalAfterUnwindIfNeeded(taskId);
+  }
+
+  function armed(live: Record<string, unknown>, ir: WorkflowIr | undefined) {
+    const { executor, store } = harness(ir, live);
+    // The deferral marker this method consumes, plus a stub for the dispatch it guards.
+    (executor as unknown as { approvalResumeAfterUnwind: Set<string> }).approvalResumeAfterUnwind.add(live.id as string);
+    const dispatch = vi.fn().mockResolvedValue(true);
+    (executor as unknown as Record<string, unknown>).dispatchUnpauseResume = dispatch;
+    return { executor, store, dispatch };
+  }
+
+  it("resumes a deferred approval for a card in the board's wip lane", async () => {
+    // Pre-fix: `building` !== "in-progress", so the resume refused on every renamed board.
+    const live = { id: "FN-11", column: "building" };
+    const { executor, dispatch } = armed(live, RENAMED_IR);
+
+    expect(await resumeApproval(executor, "FN-11")).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refuses a card that has LEFT the wip lane", async () => {
+    // The paired negative: the fix must not resume work on a card that moved on.
+    const live = { id: "FN-12", column: "checking" };
+    const { executor, dispatch } = armed(live, RENAMED_IR);
+
+    expect(await resumeApproval(executor, "FN-12")).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a PAUSED card in the wip lane, so the lane is not the only gate", async () => {
+    const live = { id: "FN-13", column: "building", paused: true };
+    const { executor, dispatch } = armed(live, RENAMED_IR);
+
+    expect(await resumeApproval(executor, "FN-13")).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("behaves identically on the DEFAULT board", async () => {
+    const live = { id: "FN-14", column: "in-progress" };
+    const { executor, dispatch } = armed(live, undefined);
+
+    expect(await resumeApproval(executor, "FN-14")).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+});
