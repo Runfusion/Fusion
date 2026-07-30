@@ -32,7 +32,17 @@ import { describe, expect, it } from "vitest";
 import { findUnwiredLaneParameters, LANE_PARAMETER_NAMES } from "../../../../scripts/lib/unwired-lane-parameter.mjs";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../../../..");
-const SCANNED_PACKAGES = ["packages/core/src", "packages/engine/src", "packages/dashboard/src", "packages/dashboard/app", "packages/cli/src"];
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+`plugins` is scanned, and its absence was half of a real escape.
+
+Plugins hold lane logic like anything else — the glasses plugin resolves workflow IRs, filters by
+column, and decides what "finished" means for a notification — and this list simply did not look at
+them. Combined with the inline-options blind spot below, an unwired `completeColumnsByTaskId` sat on
+`main` unreported: the guard found 0 across 1753 files, and 0 again across 2114 once plugins were
+added, because the shape was invisible too. Fixing either alone would still have missed it.
+*/
+const SCANNED_PACKAGES = ["packages/core/src", "packages/engine/src", "packages/dashboard/src", "packages/dashboard/app", "packages/cli/src", "plugins"];
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -48,18 +58,66 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:35:
+The KNOWN-UNWIRED baseline, and why a guard that reported `[]` is being changed to report 18.
+
+This assertion used to be `toEqual([])` and it passed — because the mention rule it ran on ("the
+parameter name appears in ANY other file") is satisfied by coincidence for every ordinarily-named
+parameter. `completeColumns` alone is a local variable in 15 unrelated production files. The guard
+was not clean; it was answering a question too weak to fail.
+
+Tightening the rule to "the mention must come from a file that also names the declaring symbol"
+surfaced these 18 at once. Spot-checked before recording rather than assumed: `buildUnblockWeightMap`
+in `task-priority.ts` declares `terminalColumns` and `reviewColumns`, and the only files that pass
+either are its own tests — the production caller uses the built-in `{done, archived}` default, which
+is the inert-conversion shape this module exists to name.
+
+Recorded as a RATCHET, in the shape `scripts/lifecycle-column-census.mjs` already uses here: a new
+unwired declaration fails immediately, and each of these can only leave the list. Keyed on
+file + parameter rather than line so an unrelated edit above them does not manufacture a failure.
+
+Wiring them is not this change's job — they span core, engine and dashboard, i.e. three other
+batches — and pretending they did not exist for another week is worse than listing them.
+*/
+const KNOWN_UNWIRED = [
+  "packages/core/src/blocker-fanout.ts escalationColumns",
+  "packages/core/src/blocker-fanout.ts holdColumn",
+  "packages/core/src/blocker-fanout.ts reviewColumns",
+  "packages/core/src/blocker-fanout.ts terminalColumns",
+  "packages/core/src/near-duplicate-canonical.ts columnFlags",
+  "packages/core/src/node-override-guard.ts completeColumns",
+  "packages/core/src/stale-paused-todo.ts holdColumn",
+  "packages/core/src/task-merge.ts satisfactionColumnsByTaskId",
+  "packages/core/src/task-priority.ts reviewColumns",
+  "packages/core/src/task-priority.ts terminalColumns",
+  "packages/core/src/team-analytics.ts columnFlagsByName",
+  "packages/core/src/workflow-analytics.ts columnFlagsByName",
+  "packages/dashboard/app/utils/taskActivity.ts columnFlags",
+  "packages/dashboard/app/utils/taskTiming.ts columnFlags",
+  "packages/engine/src/runtimes/in-process-runtime.ts terminalColumns",
+  "packages/engine/src/scheduler.ts isWipColumn",
+  "packages/engine/src/scheduler.ts satisfactionColumnsByTaskId",
+].sort();
+
 describe("no lane-resolution parameter is left unwired", () => {
-  it("every optional lane parameter is supplied by at least one other file", () => {
+  it("reports exactly the known-unwired declarations, and no new ones", () => {
     const files = SCANNED_PACKAGES.flatMap((pkg) => sourceFiles(join(REPO_ROOT, pkg)));
     const unwired = findUnwiredLaneParameters(files, (f) => readFileSync(f, "utf8"));
 
-    const described = unwired.map((d) => `${d.file.replace(`${REPO_ROOT}/`, "")}:${d.line} ${d.owner}(${d.parameter})`);
+    /* De-duplicated: `in-process-runtime.ts` declares `terminalColumns` on two separate options
+       objects, and the ratchet is about which (file, parameter) pairs are unwired, not how many
+       times each is spelled. */
+    const described = [...new Set(
+      unwired.map((d) => `${d.file.replace(`${REPO_ROOT}/`, "")} ${d.parameter}`),
+    )].sort();
 
     expect(described, [
       "These declarations take a resolved lane answer that NO production file supplies.",
       "That is not a loose end — in four of five audited cases the caller held a larger defect.",
       "Either wire the caller, or make the parameter required so the compiler finds the call sites.",
-    ].join("\n")).toEqual([]);
+      "A parameter LEAVING this list is the goal; one arriving is a regression — update the list only to shorten it.",
+    ].join("\n")).toEqual(KNOWN_UNWIRED);
   });
 
   it("fires on the shape it exists to catch", () => {
@@ -104,6 +162,56 @@ describe("no lane-resolution parameter is left unwired", () => {
     } as Record<string, string>;
 
     expect(findUnwiredLaneParameters(Object.keys(files), (f) => files[f]!).map((d) => d.parameter)).toEqual(["escalationColumns"]);
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+  The INLINE options-object shape — the third spelling, and the one that produced a real escape.
+
+  `diffSnapshots` in the glasses plugin declared
+
+      opts: { notifyOnColumns: ReadonlySet<ColumnId>; completeColumnsByTaskId?: ReadonlyMap<...> }
+
+  and no file anywhere built that map, so its completion test fell through to the literal `"done"`
+  on every real poll. The name was already in the vocabulary list and the declaration was exported
+  and optional — it satisfied every condition the guard checks — yet the guard reported nothing,
+  because the type is an anonymous `TypeLiteral` on the parameter rather than a named `interface`.
+
+  Measured on `main` before the fix: 0 unwired parameters across 2114 files, that one included.
+
+  The point of the case is that the three spellings must be equivalent. Whether a lane answer
+  arrives as a bare parameter, an interface property, or an inline options field is a style choice,
+  and a check evadable by a style choice is decorative.
+  */
+  it("covers an INLINE options-object type on a parameter", () => {
+    const decl = "/repo/plugins/p/src/diff.ts";
+    const files = {
+      [decl]: "export function diffSnapshots(prev: S, next: T[], opts: { notifyOnColumns: ReadonlySet<string>; completeColumns?: ReadonlySet<string> }) { return opts; }",
+      "/repo/plugins/p/src/caller.ts": "diffSnapshots(prev, next, { notifyOnColumns });",
+    } as Record<string, string>;
+
+    expect(findUnwiredLaneParameters(Object.keys(files), (f) => files[f]!).map((d) => d.parameter)).toEqual(["completeColumns"]);
+  });
+
+  it("does NOT report an inline options field that a caller mentions", () => {
+    // The wired case must stay silent, or the guard becomes noise people learn to disable.
+    const decl = "/repo/plugins/p/src/diff.ts";
+    const files = {
+      [decl]: "export function diffSnapshots(prev: S, opts: { completeColumns?: ReadonlySet<string> }) { return opts; }",
+      "/repo/plugins/p/src/caller.ts": "diffSnapshots(prev, { completeColumns });",
+    } as Record<string, string>;
+
+    expect(findUnwiredLaneParameters(Object.keys(files), (f) => files[f]!)).toEqual([]);
+  });
+
+  it("ignores a REQUIRED inline options field — the compiler already finds those call sites", () => {
+    const decl = "/repo/plugins/p/src/diff.ts";
+    const files = {
+      [decl]: "export function diffSnapshots(opts: { completeColumns: ReadonlySet<string> }) { return opts; }",
+      "/repo/plugins/p/src/caller.ts": "diffSnapshots(other);",
+    } as Record<string, string>;
+
+    expect(findUnwiredLaneParameters(Object.keys(files), (f) => files[f]!)).toEqual([]);
   });
 
   it("keeps the vocabulary list explicit, so a new convention opts in deliberately", () => {

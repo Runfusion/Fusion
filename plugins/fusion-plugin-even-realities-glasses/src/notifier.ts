@@ -1,3 +1,4 @@
+import { resolveProjectColumnsForRoles } from "@fusion/core";
 import type { AsyncDataLayer, Task } from "@fusion/core";
 import type { PluginContext } from "@fusion/plugin-sdk";
 import { notificationCard } from "./cards.js";
@@ -77,7 +78,32 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       const tasks = (await deps.taskStore.listTasks({ includeArchived: false })) as Task[];
       const snapshot = await snapshotStore.read(deps.layer);
       const notifyOnColumns = new Set(getNotifyColumns(deps.settings));
-      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone: false });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+      Resolve the project's complete lanes ONCE per poll and hand them to the diff.
+
+      `diffSnapshots` previously declared a per-task `completeColumnsByTaskId` that this — its only
+      caller — never built, so its completion test fell through to the literal `"done"` on every
+      real poll. Supplying the answer is what makes that conversion real rather than decorative.
+
+      Project-scoped, not per task, and the cost is why: this runs on a polling timer over the whole
+      board, so a per-card workflow read would scale with the board on every tick. One
+      `listWorkflowDefinitions()` read per poll is flat, and it matches the granularity the sibling
+      `notifyOnColumns` setting already uses.
+
+      Best-effort: a failed resolve leaves the diff on its documented legacy default rather than
+      dropping a poll — a missed notification is recoverable, a dead notifier is not.
+      */
+      let completeColumns: ReadonlySet<string> | undefined;
+      try {
+        completeColumns = await resolveProjectColumnsForRoles(
+          deps.taskStore as Parameters<typeof resolveProjectColumnsForRoles>[0],
+          ["complete"],
+        );
+      } catch (err) {
+        deps.logger?.debug?.("could not resolve complete lanes; using legacy default", { err, pluginId: deps.pluginId });
+      }
+      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone: false, completeColumns });
       const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
 
       for (const event of events) {

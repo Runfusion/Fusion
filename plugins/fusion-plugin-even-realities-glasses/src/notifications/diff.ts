@@ -4,7 +4,7 @@ import type { NotificationEvent, Snapshot } from "./types.js";
 export function diffSnapshots(
   prev: Snapshot,
   next: ReadonlyArray<Task>,
-  opts: { notifyOnColumns: ReadonlySet<ColumnId>; alsoNotifyOnDone?: boolean; completeColumnsByTaskId?: ReadonlyMap<string, ReadonlySet<string>> },
+  opts: { notifyOnColumns: ReadonlySet<ColumnId>; alsoNotifyOnDone?: boolean; completeColumns?: ReadonlySet<string> },
 ): NotificationEvent[] {
   const events: NotificationEvent[] = [];
 
@@ -44,24 +44,31 @@ export function diffSnapshots(
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-22:25 (batch-cli-plugins):
-    The completion notification asks each card's OWN complete column.
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (supersedes the 2026-07-30-22:25 note):
+    The completion notification asks the PROJECT's complete lanes, and the caller now supplies them.
 
     Keyed on the literal, a renamed board would never fire a "completed" card to the glasses — the
-    wearer would be notified of every column transition EXCEPT the one they care about. The map is
-    per task, not a flat set, because the poll spans the whole board and one workflow's complete
-    column id can be another workflow's WIP id.
+    wearer would be notified of every column transition EXCEPT the one they care about.
 
-    CURRENTLY UNREACHABLE, stated plainly: the only production caller (`notifier.ts`) passes
-    `alsoNotifyOnDone: false`, so this branch does not run today and this change is not observable at
-    runtime. It is converted rather than marked DELIBERATE-LITERAL because the literal is not
-    deliberate — it is simply wrong, and would ship the bug the day someone turns the flag on.
+    WHY THE SHAPE CHANGED, and it is the point of this edit. The previous version took a per-task
+    `completeColumnsByTaskId` map and NO caller ever built one, so the conversion was decorative:
+    the literal below still decided every real notification. That is the unwired-lane-parameter
+    class, and it escaped `scripts/lib/unwired-lane-parameter.mjs` twice over — the guard did not
+    scan `plugins/`, and it did not walk inline options-object types. Both are fixed in the same
+    change, and the guard now reports this declaration if the wiring is ever removed.
 
-    DELIBERATE-LITERAL — the unresolved-workflow default, reviewed 2026-07-30-22:25.
+    A flat set matches the sibling `notifyOnColumns` in this same options object, and it is what the
+    caller can afford: `notifier.ts` resolves it ONCE per poll from the project's workflows, where a
+    per-task map would mean a workflow read per card on a polling loop. The plugin's notification
+    model is already board-flat; a per-task map beside a flat set was the inconsistency, not the
+    rigour.
+
+    The branch is still gated by `alsoNotifyOnDone`, which the production caller passes as `false`
+    today — so this remains unobservable at runtime. It is wired anyway, because the day someone
+    enables the flag the resolution must already be correct.
     */
-    const completeColumns = opts.completeColumnsByTaskId?.get(task.id);
-    /* DELIBERATE-LITERAL — the unresolved-workflow default documented above, reviewed 2026-07-30-22:25. */
-    const isComplete = completeColumns ? completeColumns.has(task.column) : task.column === "done";
+    /* DELIBERATE-LITERAL — the degraded default when the caller resolved no lanes. */
+    const isComplete = opts.completeColumns ? opts.completeColumns.has(task.column) : task.column === "done";
     if (isComplete && opts.alsoNotifyOnDone) {
       events.push({
         taskId: task.id,

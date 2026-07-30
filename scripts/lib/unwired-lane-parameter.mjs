@@ -49,6 +49,7 @@ export const LANE_PARAMETER_NAMES = [
   "columnFlags",
   "columnFlagsByColumnId",
   "columnFlagsByName",
+  "completeColumns",
   "completeColumnsByTaskId",
   "escalationColumns",
   "flagsByColumnId",
@@ -82,9 +83,44 @@ function collectLaneParameters(filePath, source) {
     found.push({ file: filePath, line: line + 1, parameter: param.name.text, owner: ownerName });
   };
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+  An INLINE options-object type is the third spelling of the same declaration, and the guard was
+  blind to it — the blind spot found by an actual escape, not by inspection.
+
+      export function diffSnapshots(
+        prev, next,
+        opts: { notifyOnColumns: ReadonlySet<ColumnId>; completeColumnsByTaskId?: ReadonlyMap<...> },
+      )
+
+  `completeColumnsByTaskId` is in the name list, is optional, is exported, and is supplied by no
+  file anywhere — the exact shape this module exists to report — and it sat on `main` unreported
+  because the type is an anonymous `TypeLiteral` on the parameter rather than a named `interface`.
+  Measured before the fix: the guard found 0 unwired parameters across 2114 files including this one.
+
+  Walking the annotation makes the three spellings equivalent, which is the property the guard needs:
+  whether a lane answer arrives as a bare parameter, an interface property, or an inline options
+  field is a style choice, and a check that can be evaded by a style choice is decorative.
+  */
+  const recordInlineOptionsMembers = (param, ownerName) => {
+    const annotation = param.type;
+    if (!annotation || !ts.isTypeLiteralNode(annotation)) return;
+    for (const member of annotation.members) {
+      if (!ts.isPropertySignature(member) || !member.name || !ts.isIdentifier(member.name)) continue;
+      if (!LANE_PARAMETER_SET.has(member.name.text)) continue;
+      /* Optional only — a required field cannot be silently skipped. Same rule as a parameter. */
+      if (!member.questionToken) continue;
+      const { line } = sourceFile.getLineAndCharacterOfPosition(member.getStart(sourceFile));
+      found.push({ file: filePath, line: line + 1, parameter: member.name.text, owner: ownerName });
+    }
+  };
+
   const visit = (node) => {
     if (ts.isFunctionDeclaration(node) && isExported(node) && node.name) {
-      for (const param of node.parameters) recordParam(param, node.name.text);
+      for (const param of node.parameters) {
+        recordParam(param, node.name.text);
+        recordInlineOptionsMembers(param, node.name.text);
+      }
     }
     /* An options-object property is the same fact wearing a different shape. */
     if (ts.isInterfaceDeclaration(node) && isExported(node)) {
@@ -118,7 +154,25 @@ export function findUnwiredLaneParameters(files, readFile = (f) => readFileSync(
   return declarations.filter((declaration) => {
     for (const [file, source] of sources) {
       if (file === declaration.file) continue;
-      /* A mention anywhere else counts as wired. Deliberately loose — see the header. */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:35:
+      The mention must come from a file that also names the DECLARING symbol.
+
+      The original rule — "the parameter name appears in any other file" — is unusable for any name
+      that is also a common local variable, and I proved it on myself within one edit: renaming an
+      unwired parameter from `completeColumnsByTaskId` to `completeColumns` made the guard go quiet
+      immediately, because 15 unrelated production files happen to declare a local called
+      `completeColumns`. The check had not been satisfied; it had been switched off by a rename.
+
+      That is precisely the "evadable by a style choice" failure this module condemns, so the fix is
+      the cause rather than a name blocklist: a file that never references `diffSnapshots` cannot be
+      the thing that wires `diffSnapshots`'s options.
+
+      Still deliberately loose — this is a co-occurrence test, not a call-graph analysis. It keeps
+      the false-positive rate that makes the guard bearable while removing a false NEGATIVE that
+      scaled with how ordinary the parameter's name was.
+      */
+      if (declaration.owner && !source.includes(declaration.owner)) continue;
       if (source.includes(declaration.parameter)) return false;
     }
     return true;
