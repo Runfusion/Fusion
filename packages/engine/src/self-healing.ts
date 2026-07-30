@@ -904,6 +904,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     settings: Settings,
     isExecuting: boolean,
   ): WorkflowRecoveryRoute {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-04:10 (batch-engine — a SYNC classifier using the sync resolver):
+    This method is synchronous and is called from inside a `.filter(...)` over the board, so it cannot
+    await. `resolveMoveLanesSync` — added to this class for the task:moved listener — is the sync member of
+    the file's resolver family, so no signature change and no async ripple into its two call sites.
+    */
+    const lanes = this.resolveMoveLanesSync(task.id);
     const isPausedAbortPark =
       task.status === "failed" &&
       typeof task.error === "string" &&
@@ -923,13 +930,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       && task.steps.every((step) => step.status === "done" || step.status === "skipped");
     const sharedBranchMember = isSharedBranchGroupMemberIntegration(task);
     const hasReviewProgress =
-      task.column === "in-review"
+      lanes.review.has(task.column)
       && allowsAutoMergeProcessing(task, settings)
       && task.mergeDetails?.mergeConfirmed !== true
       && !isTerminalMergePark
       && completedSteps;
     const hasManualMergeHoldProgress =
-      task.column === "in-review"
+      lanes.review.has(task.column)
       && (!allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
       && !sharedBranchMember
       && task.mergeDetails?.mergeConfirmed !== true
@@ -952,7 +959,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (hasReviewProgress) {
       return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
     }
-    if (task.column === "todo" || task.column === "in-progress") {
+    if (lanes.hold.has(task.column) || lanes.wip.has(task.column)) {
       return { kind: "node-requeue", reason: "pause-abort-active-work" };
     }
     return { kind: "no-action", reason: "unsafe-or-not-routable" };
