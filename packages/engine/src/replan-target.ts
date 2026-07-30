@@ -56,17 +56,60 @@ literal `in-progress` is the half-conversion this program has already been burne
 the guard starts admitting cards on a renamed board and the move then sends them to a column
 that board does not declare — strictly worse than refusing, because the refusal was visible.
 */
-export function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string } {
+export interface PlannerLanes {
+  hold: string;
+  intake: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-16:40 (PR #2628 review — greptile P1 x2):
+  `wip`, `review` and `complete` are OPTIONAL, and that is the whole correction. The first
+  version substituted the legacy id whenever a role was missing, so a workflow that declares
+  columns but no WIP role got `moveTask(..., "in-progress")` — a column that board does not
+  declare. The move is rejected, the caller reports failure, and the card can be left half-moved.
+  A MISSING ROLE IS NOT A LICENCE TO INVENT A COLUMN; the caller must refuse instead.
+
+  `resolvedFromWorkflow` distinguishes the two cases a single `?? legacy` collapsed:
+    - false: no column vocabulary at all (v1 IR, unresolvable store). No basis to decide, so the
+      legacy names ARE the answer and every role is populated.
+    - true: the workflow speaks columns. Roles it does not declare stay undefined, because
+      substituting there is the invention above.
+  */
+  wip: string | undefined;
+  review: string | undefined;
+  complete: string | undefined;
+  /** True when the answer came from the task's workflow rather than the legacy fallback. */
+  resolvedFromWorkflow: boolean;
+}
+
+const LEGACY_PLANNER_LANES: PlannerLanes = {
+  hold: "todo",
+  intake: "triage",
+  wip: "in-progress",
+  review: "in-review",
+  complete: "done",
+  resolvedFromWorkflow: false,
+};
+
+export function resolvePlannerLanes(store: TaskStore, taskId: string): PlannerLanes {
   try {
     const ir = (store as unknown as { resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr }).resolveTaskWorkflowIrSync?.(taskId);
     const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
+    if (!lifecycle) return LEGACY_PLANNER_LANES;
     return {
-      hold: lifecycle?.hold ?? "todo",
-      intake: lifecycle?.intake ?? "triage",
-      wip: lifecycle?.wip ?? "in-progress",
+      /*
+      hold and intake still fall back INDIVIDUALLY: a workflow that declares columns but no hold
+      column has its planning work rest in intake (and vice versa), which is a real shape rather
+      than an invented column — both are planner lanes for the callers that ask. The forward
+      lanes are different: a move needs a column that exists.
+      */
+      hold: lifecycle.hold ?? lifecycle.intake ?? "todo",
+      intake: lifecycle.intake ?? lifecycle.hold ?? "triage",
+      wip: lifecycle.wip,
+      review: lifecycle.review,
+      complete: lifecycle.complete,
+      resolvedFromWorkflow: true,
     };
   } catch {
-    return { hold: "todo", intake: "triage", wip: "in-progress" };
+    return LEGACY_PLANNER_LANES;
   }
 }
 

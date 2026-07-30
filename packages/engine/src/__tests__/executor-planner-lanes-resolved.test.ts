@@ -196,3 +196,108 @@ describe("planner-column classification for the planning-evacuation branch", () 
     expect(isPlanner("in-progress")).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:05 (PR #2628 review — greptile P1 x2):
+
+Both findings are over-reaches in my own first version, and the first one made the branch WORSE
+than the bug it replaced. Recording that plainly because it is the third time this program has
+produced the same shape: role-aware gate, name-matched destinations.
+
+  1. FORWARD MOVES TRIGGERED EVACUATION. The evacuation branch's source check became role-aware
+     while its destination exclusions stayed literal, so on a renamed board an ordinary forward
+     move (planning -> building) passed the source test and matched no exclusion. The evacuation
+     fired on a card that was simply advancing: live planning work aborted, valid pre-execution
+     worktree deleted. Before the conversion the source check failed and nothing happened — so a
+     half-conversion turned a missed rescue into active damage.
+
+  2. A MISSING WIP ROLE INVENTED A COLUMN. `resolvePlannerLanes` substituted the legacy
+     `in-progress` when a workflow declared no WIP role, so the promotion targeted a column that
+     board does not declare. `moveTask` rejects it, recovery reports failure — and since the
+     intake -> hold re-home runs FIRST, the card could be left half-moved. Now `wip`/`review`/
+     `complete` are OPTIONAL when the workflow speaks columns, and the caller refuses BEFORE any
+     move.
+*/
+/** Planning lanes but NO wip role — a legal shape with nowhere to promote completed work to. */
+const NO_WIP_IR = {
+  version: "v2", id: "wf-no-wip", name: "no-wip", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+    { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+  ],
+} as unknown as WorkflowIr;
+
+describe("a forward move off a renamed planner lane is not an evacuation", () => {
+  const isBackward = (h: ReturnType<typeof harness>, from: string, to: string) =>
+    (h.executor as unknown as { isBackwardMoveOutOfPlanning: (id: string, f: string, t: string) => boolean })
+      .isBackwardMoveOutOfPlanning("FN-STRANDED", from, to);
+
+  it("does NOT evacuate a card advancing into the renamed wip/review/complete lanes", () => {
+    // Pre-fix each of these returned true, so the executor aborted live planning work and
+    // deleted the pre-execution worktree of a card that was merely advancing.
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+
+    expect(isBackward(h, "backlog", "building")).toBe(false);
+    expect(isBackward(h, "queued", "checking")).toBe(false);
+    expect(isBackward(h, "queued", "shipped")).toBe(false);
+  });
+
+  it("DOES evacuate a card withdrawn to a non-lifecycle column", () => {
+    // The paired positive: the branch must still fire for the case it was written for
+    // (the reported symptom was todo -> Ideas).
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+
+    expect(isBackward(h, "backlog", "ideas")).toBe(true);
+  });
+
+  it("keeps the legacy answer when the workflow has no column vocabulary", () => {
+    const h = harness(undefined, "todo");
+
+    expect(isBackward(h, "todo", "in-progress")).toBe(false);
+    expect(isBackward(h, "todo", "in-review")).toBe(false);
+    expect(isBackward(h, "todo", "done")).toBe(false);
+    expect(isBackward(h, "todo", "ideas")).toBe(true);
+  });
+
+  it("never fires for a card that was not in a planner lane", () => {
+    const h = harness(RENAMED_SPLIT_IR, "building");
+
+    expect(isBackward(h, "building", "ideas")).toBe(false);
+  });
+});
+
+describe("a workflow with no WIP lane is refused, not promoted to an invented column", () => {
+  it("withholds recovery without issuing ANY move", async () => {
+    // Pre-fix: the intake -> hold re-home was issued first, then the promotion targeted the
+    // undeclared `in-progress` and was rejected — leaving the card half-moved.
+    const h = harness(NO_WIP_IR, "backlog");
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("backlog") as never);
+
+    expect(recovered).toBe(false);
+    expect(h.moves).toEqual([]);
+    expect(h.handoff).not.toHaveBeenCalled();
+  });
+
+  it("says so in the task log rather than skipping the card silently", async () => {
+    // Nothing else owns this state, so a silent withhold is indistinguishable from the
+    // stranding this recovery exists to fix.
+    const h = harness(NO_WIP_IR, "queued");
+
+    await h.executor.recoverCompletedTask(completedTaskIn("queued") as never);
+
+    const messages = (h.store.logEntry as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => String(call[1] ?? ""));
+    expect(messages.some((m) => m.includes("no WIP column"))).toBe(true);
+  });
+
+  it("still promotes when the workflow DOES declare a wip lane", async () => {
+    // The paired negative: "refuse when a role is missing" must not become "refuse always".
+    const h = harness(RENAMED_SPLIT_IR, "queued");
+
+    await h.executor.recoverCompletedTask(completedTaskIn("queued") as never);
+
+    expect(h.moves).toEqual([["FN-STRANDED", "building"]]);
+  });
+});

@@ -2893,6 +2893,41 @@ export class TaskExecutor {
   }
 
   /**
+   * Was this card pulled BACKWARD out of a planner lane — as opposed to advancing forward
+   * out of it?
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-16:55 (PR #2628 review, greptile P1):
+   * THE FORWARD EXCLUSIONS MUST RESOLVE TOO, and leaving them literal made this branch WORSE
+   * than before I touched it. With a role-aware source check and name-matched destinations, a
+   * renamed board's ordinary FORWARD move (planning -> building) passed the source test and
+   * matched none of the exclusions, so the evacuation fired on a card that was simply
+   * advancing: it aborted live planning work and deleted the valid pre-execution worktree.
+   * Before the conversion the source check failed and nothing happened; a half-conversion
+   * turned a missed rescue into active damage. Third time this program has produced that
+   * shape — gates converted, destinations left literal.
+   *
+   * Forward means the workflow's own wip, review, or complete lane. When a role is not
+   * declared it cannot be a forward target, so it is simply not excluded; when the workflow
+   * has no column vocabulary at all, `resolvePlannerLanes` returns the legacy names and this
+   * reads exactly as it did before.
+   */
+  private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string): boolean {
+    const lanes = resolvePlannerLanes(this.store, taskId);
+    if (from !== lanes.hold && from !== lanes.intake) return false;
+    const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter(
+      (column): column is string => typeof column === "string",
+    );
+    /*
+    DELIBERATELY NOT ALSO EXCLUDING planner-to-planner moves. The literal version fired the
+    evacuation on `todo -> triage` (a replan rebound), and whether that is right is a separate
+    question from this review fix — the replan path is engine-initiated, so aborting the planning
+    session there may be exactly wrong, but changing it is a behavior change with its own
+    surfaces to enumerate. This conversion keeps that case behaving as it does today.
+    */
+    return !forwardTargets.includes(to);
+  }
+
+  /**
    * FN-5256: register an in-flight disposal so a subsequent dispatch (task:moved
    * → in-progress) can await it before acquiring/creating a worktree. Swallows
    * errors so a failed disposal doesn't poison the map; surfaces them via the
@@ -3426,7 +3461,7 @@ export class TaskExecutor {
             }
           }),
         );
-      } else if (this.isPlannerColumnFor(task.id, from) && to !== "in-progress" && to !== "in-review" && to !== "done") {
+      } else if (this.isBackwardMoveOutOfPlanning(task.id, from, to)) {
         /*
         FNXC:PlanningEvacuation 2026-07-25-23:00:
         A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all
@@ -4980,6 +5015,25 @@ export class TaskExecutor {
       */
       const plannerLanes = resolvePlannerLanes(this.store, task.id);
       const promotedFromPlannerColumn = originColumn === plannerLanes.hold || originColumn === plannerLanes.intake;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2628 review, greptile P1):
+      REFUSE BEFORE THE FIRST MOVE when the workflow declares no WIP lane. The previous version
+      let `resolvePlannerLanes` substitute the legacy `in-progress`, so the promotion targeted a
+      column that board does not declare: `moveTask` rejects it, recovery reports failure — and
+      because the intake -> hold re-home happens FIRST, the card could be left half-moved, which
+      is worse than the stranding this recovery exists to fix.
+
+      Checked here rather than at the move so no partial hop is issued. A workflow with planning
+      lanes and no WIP lane has nowhere to promote completed work TO; that is an operator
+      configuration question, not something to guess past. Logged so the card is not silently
+      skipped — the whole point of this recovery is that nothing else owns this state.
+      */
+      if (promotedFromPlannerColumn && plannerLanes.wip === undefined) {
+        const message = `Auto-recovery withheld: completed work is in '${originColumn}' but this workflow declares no WIP column to promote it to`;
+        executorLog.warn(`${task.id}: ${message}`);
+        await this.store.logEntry(task.id, message).catch(() => undefined);
+        return false;
+      }
       let completionTask = task;
       if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
@@ -5008,7 +5062,8 @@ export class TaskExecutor {
             preserveResumeState: true,
           });
         }
-        completionTask = await this.store.moveTask(task.id, plannerLanes.wip);
+        // Non-undefined: the guard above returned early when this workflow declares no WIP lane.
+        completionTask = await this.store.moveTask(task.id, plannerLanes.wip as string);
       }
       await this.handoffTaskToReview(completionTask, "completed-task-recovered");
       if (promotedFromPlannerColumn) {
