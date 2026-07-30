@@ -294,6 +294,56 @@ describe("the review set agrees with core on WHICH merge lane", () => {
     expect(await refusalFor("signoff")).not.toContain("to recover branch binding");
   });
 
+  it("STILL admits a second merge lane when it ALSO carries humanReview — traits only ever ADD", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-04:05 (PR #2723 review — greptile; I judge the finding NOT a
+    defect, and pin the behaviour so the question is settled rather than re-litigated).
+
+    The finding asks to exclude a secondary `mergeOrchestration` column that ALSO carries `humanReview`,
+    because core resolves only the first merge lane. That would make the predicate NON-MONOTONIC: adding
+    the merge trait to a human-review lane would REMOVE it from the review set, so a card plainly sitting
+    in a human-review column would stop counting as in review because its column gained an unrelated
+    capability.
+
+    The two traits answer different questions. `humanReview` says "a person reviews cards here" — plural
+    by nature, which is why #2713 made it a set. `mergeOrchestration` says "the merge gate lives here",
+    singular by core's construction. A column may be both, and being both must not be worse than being
+    either.
+
+    The real divergence is upstream: core's `.review` is a single id derived from ONE flag, so every
+    consumer re-derives its own answer. Flagged there rather than papered over per file.
+    */
+    const task = { id: "FN-004", column: "second-signoff", dependencies: [], steps: [], currentStep: 0 };
+    const dualIr = {
+      ...(TWO_MERGE_LANES as unknown as { columns: Array<Record<string, unknown>> }),
+      columns: (TWO_MERGE_LANES as unknown as { columns: Array<Record<string, unknown>> }).columns.map((c) =>
+        c.id === "second-signoff" ? { ...c, traits: [{ trait: "merge" }, { trait: "human-review" }] } : c,
+      ),
+    } as unknown as WorkflowIr;
+
+    const store = {
+      getRootDir: vi.fn(() => process.cwd()),
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
+      getTask: vi.fn(async () => task),
+      getSettings: vi.fn(async () => ({})),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-two-merge" })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "wf-two-merge" })),
+      getWorkflowDefinition: vi.fn(async () => ({ id: "wf-two-merge", name: "Two", kind: "workflow", ir: dualIr })),
+      logEntry: vi.fn(async () => undefined),
+      updateTask: vi.fn(async () => task),
+    } as unknown as TaskStore;
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-004/recover-branch-binding", "{}", {
+      "content-type": "application/json",
+    });
+    const payload = res.body as { error?: string } | undefined;
+
+    expect(payload?.error ?? "").not.toContain("to recover branch binding");
+  });
+
   it("REFUSES a second mergeOrchestration column, because core does not call it the review lane", async () => {
     // Over-inclusion here would have the dashboard move a card out of a lane the engine does not own.
     const message = await refusalFor("second-signoff");
