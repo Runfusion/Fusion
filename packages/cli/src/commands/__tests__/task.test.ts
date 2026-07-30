@@ -1688,7 +1688,16 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "First Issue",
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-02:10:
+      NO `column` HERE — the import deliberately stopped choosing one. #2603 (U11) removed the
+      hardcoded `column: "triage"` from the GitHub/GitLab import writes so `createTaskImpl`
+      resolves the WORKFLOW'S intake column instead; passing `column` would override that
+      resolution and, post-U11, name a lane the default workflow no longer declares. This
+      assertion still required the removed literal, so a correct product change read as five CLI
+      failures. The mock RETURN values elsewhere in this file keep their column: what a created
+      task comes back as is a different question from what the import asks for.
+      */
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -1702,7 +1711,6 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Third Issue",
       description: "Description 3\n\nSource: https://github.com/owner/repo/issues/3",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -1821,7 +1829,6 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Second Issue",
       description: "Description 2\n\nSource: https://github.com/owner/repo/issues/2",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2077,7 +2084,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "First Issue",
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2199,7 +2205,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "No Body Issue",
       description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2221,7 +2226,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "A".repeat(200),
       description: expect.stringContaining("Body"),
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
