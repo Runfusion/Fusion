@@ -5258,18 +5258,6 @@ export class TaskExecutor {
       in an undeclared "triage" column, which the board rendered back in the intake lane.
       */
       const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
-      /*
-      FNXC:ReplanTargetR7 2026-07-29-23:50:
-      No declared replan column: park VISIBLY rather than log a move to `undefined`
-      and then not make it. Same shape as the zero-budget and no-verdict branches
-      nearby — a card left in place with an operator-readable reason.
-      */
-      if (!replanColumn) {
-        executorLog.warn(
-          `${taskId}: replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left in place.`,
-        );
-              return false;
-      }
       await this.store.logEntry(
         taskId,
         `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
@@ -5399,55 +5387,6 @@ export class TaskExecutor {
     }
 
     const replanColumn = await resolveReplanTargetColumn(this.store, task.id);
-    /*
-    FNXC:ReplanTargetR7 2026-07-29-23:50:
-    No declared replan column: park VISIBLY rather than log a move to `undefined`
-    and then not make it. Same shape as the zero-budget and no-verdict branches
-    nearby — a card left in place with an operator-readable reason.
-    */
-    if (!replanColumn) {
-      /*
-      FNXC:ReplanTargetR7 2026-07-30-01:20 (PR #2598 review — greptile P1):
-      PARK IT, do not return silently. My first version left the row UNCHANGED, and
-      the caller (`requestPreMergeOptionalStepFix`) returns `true` unconditionally —
-      so the graph recorded that remediation had been scheduled, the retry budget was
-      never consumed, and graph-entry recovery could hit the identical failure again
-      with nothing to stop it. A silent no-op reported as success is the worst of the
-      three options.
-
-      "No intake or hold column to replan into" is not transient — it is a workflow
-      configuration a human must change — so this takes the same shape as the
-      retries-exhausted branch above: visibly failed, with an operator-readable
-      error, and the recovery counters cleared so nothing retries into the same wall.
-      */
-      /*
-      FNXC:ReplanTargetR7 2026-07-30-06:10 (PR #2598 review, second P1 — greptile):
-      RE-READ before parking. `resolveReplanTargetColumn` awaits a workflow
-      resolution, so the `task` snapshot this branch holds can be arbitrarily stale by
-      the time it writes — and writing `status: "failed"` from a stale snapshot
-      clobbers a row that became completed, archived, paused or human-controlled while
-      we were resolving. The two adjacent recovery branches already guard with
-      `isRequiredArtifactRecoveryProtected` on a FRESH read (5295, 5349); this one was
-      the odd branch out, which is exactly the drift that guard exists to prevent.
-
-      Bailing without the park is correct when protection applies: a completed or
-      operator-parked card does not need an artifact-recovery failure stamped over it,
-      and the caller's `true` is then honest — nothing further is owed on a row that
-      has left this lane.
-      */
-      const liveForPark = await this.store.getTask(task.id).catch(() => null);
-      if (!liveForPark || this.isRequiredArtifactRecoveryProtected(liveForPark)) return;
-      const error = `REQUIRED_ARTIFACT_RECOVERY_UNROUTABLE: ${artifactKeys.join(", ")} missing, and this task's workflow declares no intake or hold column to replan in.`;
-      executorLog.warn(`${task.id}: ${error}`);
-      await this.store.logEntry(task.id, error, undefined, context);
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-      }, context);
-      return;
-    }
     await this.store.logEntry(
       task.id,
       `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,

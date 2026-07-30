@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
-import { resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import { resolveWorkflowIrForTask } from "@fusion/core";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
@@ -277,24 +277,31 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("targets its OWN rebound lane for a workflow declaring neither triage nor todo", async () => {
+  it("targets a workflow's OWN hold column when it declares neither legacy id", async () => {
     /*
-    FNXC:WorkflowReplan 2026-07-31-13:30 (U11 — the flagged fallback, now converted):
-    builtin:marketing declares ideation/backlog/drafting/... — no `triage`, no `todo`.
-    The old fallback handed it the literal `triage`, a column that lineage does not
-    declare AND that the default lineage no longer declares either since #2515. So the
-    replan move targeted a nonexistent column: the card either failed to move or landed
-    somewhere no sweep owns.
+    FNXC:ReplanTargetR7 2026-07-29-23:50:
+    CONTRACT CHANGED — deliberately, and this expectation edit IS the change rather
+    than churn around it. This asserted `"triage"` for builtin:marketing, which
+    declares ideation/backlog/drafting/... and NO triage column: the engine moved the
+    card into a column the workflow does not declare, which is the R7 violation
+    `reconcileUndeclaredTaskColumns` then cleaned up after.
 
-    Resolved through `resolveReboundTarget` (KTD-10: hold -> intake -> first declared),
-    which is the same helper every other rebound path uses. The card now lands in a
-    column its own workflow actually declares.
+    The old note gave two reasons for preferring a wrong-but-legacy column, and both
+    are now obsolete: "triage only scans triage and todo" (discovery resolves the
+    task's own lanes via `resolvePlannerLanes`) and "the legacy move path throws on
+    custom targets" (a move out of a non-legacy source column resolves targets from
+    the task's own workflow adjacency, FN-7591).
+
+    Asserted as "a column this workflow declares" as well as by id, because the id is
+    incidental and the INVARIANT is what matters.
     */
     const store = storeWithSelection("builtin:marketing");
     const target = await resolveReplanTargetColumn(store, "FN-1");
-    expect(target).not.toBe("triage");
+
+    expect(target).toBe("backlog");
     const ir = await resolveWorkflowIrForTask(store as never, "FN-1");
-    expect(workflowHasColumn(ir, target)).toBe(true);
+    expect((ir as unknown as { columns: Array<{ id: string }> }).columns.map((c) => c.id))
+      .toContain(target);
   });
 
   it("returns UNDEFINED for a workflow that declares no planning lane at all", async () => {

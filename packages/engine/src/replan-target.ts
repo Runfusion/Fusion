@@ -1,6 +1,7 @@
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveLifecycleColumns, resolveReboundTarget, resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import { resolveLifecycleColumns, resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
+import { schedulerLog } from "./logger.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:15:
@@ -360,16 +361,33 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     (hold -> intake -> first declared), so the card lands in a column its own workflow
     declares and the replan lanes stay consistent with the rebound lanes.
     */
-    return resolveReboundTarget(ir) ?? "triage";
+    /*
+    FNXC:ReplanTargetR7 2026-07-31-15:30 (CORRECTS my own #2659, superseded by #2598):
+    PREFER HOLD, THEN INTAKE, THEN NOTHING — never an arbitrary column.
+
+    #2659 (mine) used `resolveReboundTarget`, whose third fallback is "first declared
+    column". For a wip-only workflow that returns the WIP column, so a needs-replan
+    card would be moved INTO an execution lane where the scheduler can pick it up
+    against the spec that was just rejected. That is worse than the literal it
+    replaced, and #2598's review surfaced it.
+
+    Hold before intake is deliberate: Coding (Ideas) declares `ideas` as its intake
+    and `ideas` is manual capture with NO AI, so a rejected plan sent there stops
+    being replanned at all. The old literal got Ideas right by accident — it never
+    recognised `ideas` as intake and fell through to `todo`.
+
+    `undefined` means "this workflow declares nowhere to replan"; callers park the
+    card visibly rather than reporting a move that did not happen.
+    */
+    const roles = resolveLifecycleColumns(ir);
+    return roles?.hold ?? roles?.intake;
   } catch {
     /*
-    NO IR MEANS NOTHING TO RESOLVE, so this keeps the legacy literal deliberately
-    rather than guessing. It is reached only when resolution THROWS — not when it
-    falls back to the default IR, which returns a real workflow and takes the `todo`
-    branch above. Changing it to another literal would trade one arbitrary column for
-    another without evidence about the workflow.
+    Unreachable in practice: `resolveWorkflowIrForTask` is TOTAL — every failure path
+    returns the default coding IR rather than throwing. Kept as belt-and-braces and
+    documented so nobody writes a test for a state that cannot occur.
     */
-    return "triage";
+    return undefined;
   }
 }
 
@@ -406,19 +424,20 @@ export async function moveTaskToReplanColumn(
 ): Promise<string | undefined> {
   const replanColumn = target ?? await resolveReplanTargetColumn(store, task.id);
   /*
-  FNXC:ReplanTargetR7 2026-07-29-23:50:
-  No declared replan column: do NOT move. Every caller treats the return value as
-  "where the card now is", so a silent no-op would be a lie — returning `undefined`
-  forces the caller to state the outcome instead of assuming one.
+  FNXC:ReplanTargetR7 2026-07-31-15:35 (PR #2598):
+  NO DECLARED REPLAN COLUMN: do NOT move, and say so. Every caller treats the return
+  value as "where the card now is", so a silent no-op would be a lie — returning
+  `undefined` forces the caller to state the outcome instead of assuming one.
   */
   if (!replanColumn) {
     schedulerLog.warn(
-      `${task.id}: replan rebound skipped — the task's workflow declares no intake or hold column to replan in; card left in ${task.column}`,
+      `${task.id}: replan rebound skipped — the task's workflow declares no intake or hold `
+      + `column to replan in; card left in ${task.column}`,
     );
     return undefined;
   }
   if (task.column !== replanColumn) {
-    await store.moveTask(task.id, replanColumn, { preserveWorktree: true });
+    await store.moveTask(task.id, replanColumn as Task["column"], { preserveWorktree: true });
   }
   return replanColumn;
 }

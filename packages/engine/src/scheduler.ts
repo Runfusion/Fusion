@@ -1829,20 +1829,8 @@ export class Scheduler {
             // status write is what makes triage rediscover a card whose replan column equals
             // its current column.
             const replanColumn = await moveTaskToReplanColumn(this.store, task);
-            /*
-            FNXC:ReplanTargetR7 2026-07-29-23:50:
-            The status write happens EITHER WAY: `needs-replan` is what blocks dispatch,
-            and this branch has already decided the card must not be released. Only the
-            LOG is conditional, so it never claims a move that did not happen.
-            */
             await this.store.updateTask(task.id, { status: "needs-replan" });
-            await this.store.logEntry(
-              task.id,
-              replanColumn
-                ? `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed`
-                : "Task held for re-specification (its workflow declares no planning column to rebound to) — filesystem validation failed",
-              validation.reason,
-            );
+            await this.store.logEntry(task.id, `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed`, validation.reason);
             return null;
           }
 
