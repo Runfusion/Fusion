@@ -8,6 +8,7 @@ import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, 
 import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { useColumnLabel } from "../i18n/labels";
+import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
@@ -657,8 +658,8 @@ export function ListView({
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, R8):
     `LEGACY_LIST_COLUMNS` is DELETED. It synthesised trait flags onto the six
-    hardcoded legacy column ids (`intake: column === "triage"`, `hold: column ===
-    "todo"`, …) — the same defect U10 removed from Board's aggregate lane union,
+    hardcoded legacy column ids (synthesising `intake` onto the legacy intake id,
+    `hold` onto `todo`, …) — the same defect U10 removed from Board's aggregate lane union,
     surviving in the ListView copy. It only ever fed this arm, which the skeleton
     gate below makes unreachable: that gate returns unless a lane resolved, and a
     resolved lane always yields a non-null `selectedWorkflow`. Empty columns render
@@ -858,16 +859,14 @@ export function ListView({
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The card's INTAKE role, from its own column's traits. Both grouped-list render paths
-  gated the transient Planning badge on `task.column === "triage"`, which U11 deletes —
-  the badge would simply stop appearing on planning rows, with nothing failing.
+  gated the transient Planning badge on the legacy intake id, which U11 deletes — the
+  badge would simply stop appearing on planning rows, with nothing failing.
 
-  ONE fallback, matching TaskCard: `columnFlagsById` has no entry for a column the
-  resolved workflow does not declare (a stranded card, or the pre-load window), and a
-  bare trait read would drop the badge there too.
+  The id fallback now lives once in `isIntakeColumnRole`, together with the reason it
+  cannot be deleted; see `utils/columnRoles.ts`.
   */
   const isIntakeColumnForTask = useCallback((task: Task): boolean => {
-    const flags = columnFlagsById.get(task.column);
-    return flags ? flags.intake === true : task.column === "triage";
+    return isIntakeColumnRole(columnFlagsById.get(task.column), task.column);
   }, [columnFlagsById]);
 
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
@@ -1927,11 +1926,7 @@ export function ListView({
       traits when they exist makes the rule mean "moving back into a pre-implementation
       lane", which is the thing worth warning about.
       */
-      const shouldPrompt = hasStepProgress && (
-        targetFlags
-          ? Boolean(targetFlags.intake || targetFlags.hold)
-          : column === "todo" || column === "triage"
-      );
+      const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(targetFlags, column);
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
@@ -2477,13 +2472,8 @@ export function ListView({
         const task = tasks.find((candidate) => candidate.id === taskId);
         const hasStepProgress = task?.steps.some((step) => step.status !== "pending") ?? false;
         const targetFlags = columnFlagsById.get(column);
-        // Same rule as the context-menu move above: flags first, ids only as the
-        // no-metadata fallback.
-        const shouldPrompt = hasStepProgress && (
-          targetFlags
-            ? Boolean(targetFlags.intake || targetFlags.hold)
-            : column === "todo" || column === "triage"
-        );
+        // Same rule as the context-menu move above, and now literally the same function.
+        const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(targetFlags, column);
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
         if (shouldPrompt) {
