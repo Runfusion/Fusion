@@ -12,6 +12,7 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import { isTaskAgentActive } from "../utils/taskActivity";
+import { isPreImplementationColumnRole } from "../utils/columnRoles";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
@@ -441,11 +442,19 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       where the card and the destination differ. Ids remain the fallback for the
       no-metadata window.
       */
-      const shouldPrompt = hasStepProgress && (
-        columnFlags
-          ? Boolean(columnFlags.intake || columnFlags.hold)
-          : column === "todo" || column === "triage"
-      );
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-19:20 (Phase B — consolidated, semantics verified):
+      Routed through `isPreImplementationColumnRole`. This is the SAME preserve-progress prompt that
+      helper was written for — ListView asks it about a move target, this component asks it about
+      itself — and the degraded id sets are identical (`{todo, triage}`), so the consolidation is
+      exact rather than approximately right.
+
+      Verified before consolidating, because the sibling case in TaskContextMenu is NOT
+      interchangeable: `isPreExecutionHoldColumn` drives the Plan affordance and its degraded set is
+      `{triage}` alone, so routing THAT through this helper added `plan` to flagless `todo` cards.
+      Same shape, different degraded answer — matched here, kept separate there.
+      */
+      const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(columnFlags, column);
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
