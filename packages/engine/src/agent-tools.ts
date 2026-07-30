@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy, DbTransaction } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
+import { listTraits, isBuiltinWorkflowId, AgentStore, resolveTaskLifecycleColumns, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -1183,6 +1183,15 @@ async function findDefinedFeatureBootstrapDuplicate(
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
   const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-23:05 (batch-engine feed):
+  This list deliberately INCLUDES archived rows (`includeArchived: true`), so the archived check below
+  is the only thing keeping an archived sibling out of the bootstrap-canonical set — unlike the other
+  three surfaces, where the query has already excluded them. On a renamed board it matched nothing, so
+  an ARCHIVED task could be returned as the canonical for a live one, and `claimDefinedFeatureTask`
+  then rejects the row it was handed. That surfaces as a bootstrap failure with no mention of archiving.
+  */
+  const bootstrapLanes = await resolveTerminalLanesByTaskId(store, candidates);
   const matches = findSameAgentDuplicates({
     title: input.title,
     description: input.description,
@@ -1195,7 +1204,10 @@ async function findDefinedFeatureBootstrapDuplicate(
     task boundary. An archived sibling cannot be a bootstrap canonical because
     claimDefinedFeatureTask rejects non-live task rows.
     */
-    if (Number.isNaN(createdAt) || task.deletedAt || task.column === "archived") return [];
+    const archivedLane = bootstrapLanes.get(task.id)?.archived;
+    /* DELIBERATE-LITERAL — the unresolved-workflow default, reviewed 2026-07-30-23:05. */
+    const isArchived = archivedLane === undefined ? task.column === "archived" : task.column === archivedLane;
+    if (Number.isNaN(createdAt) || task.deletedAt || isArchived) return [];
     return [{
       id: task.id,
       title: task.title ?? "",
@@ -1279,11 +1291,13 @@ export async function createAgentTask(
       try {
         const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
         const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-        const candidates = (await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
+        const rawCandidates = await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
           slim: true,
           includeArchived: false,
-        }))
-          .filter((candidate) => candidate.column !== "done" && candidate.column !== "archived")
+        });
+        const crossParentLanes = await resolveTerminalLanesByTaskId(store, rawCandidates);
+        const candidates = rawCandidates
+          .filter((candidate) => !isTerminalCard(candidate, crossParentLanes))
           .filter((candidate) => Date.parse(candidate.createdAt) >= cutoffMs)
           .filter((candidate) => !acknowledged.has(candidate.id))
           .filter((candidate) => computeCrossParentDiagnosticClaimId({
@@ -1632,6 +1646,70 @@ function formatTaskSummaryLine(task: { id: string; column: string; title?: strin
  * FNXC:AgentTooling 2026-06-27-00:00:
  * Triage and planning-board surfaces now use canonical `fn_task_show`; deprecated `fn_task_get` survives only as a recognition alias in action-gate and analytics compatibility paths, not as a model-visible registered tool.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:05 (batch-engine feed: agent-tools.ts):
+Per-task terminal columns for the AGENT-FACING task lists.
+
+Four filters in this file answer "is this card finished?" with `column !== "done"` /
+`!== "archived"`. On a renamed board none of them matched, so every FINISHED card was handed back to
+the agent as active work: `fn_task_list` advertises "tasks that aren't done or archived" and listed
+them anyway, `fn_task_search` ignored `includeDone: false`, and the duplicate guard offered completed
+tasks as duplicate candidates. The agent then reasons over shipped work as if it were open — it
+re-does it, or flags a live card as a duplicate of a finished one. No error is raised anywhere; the
+symptom is an agent that looks confused.
+
+ONE IR cache per call, per the caller-owned-cache contract on `resolveTaskLifecycleColumns`: these
+are whole-board lists, and a board spanning three workflows must read three IRs, not one per card.
+
+A card whose workflow will not resolve is OMITTED from the map, which lands it on the legacy literal
+rather than on an empty set. An empty set reads as "nothing is terminal", i.e. finished cards would
+flow back into the agent's list — the expensive direction to be wrong in.
+*/
+type ResolvedTerminalLanes = { complete: string | undefined; archived: string | undefined };
+
+async function resolveTerminalLanesByTaskId(
+  store: TaskStore,
+  tasks: ReadonlyArray<{ id: string }>,
+): Promise<Map<string, ResolvedTerminalLanes>> {
+  const irCache = new Map<string, never>();
+  const byTaskId = new Map<string, ResolvedTerminalLanes>();
+  for (const task of tasks) {
+    const lifecycle = await resolveTaskLifecycleColumns(store, task.id, irCache as never).catch(() => undefined);
+    if (!lifecycle) continue;
+    if (lifecycle.complete === undefined && lifecycle.archived === undefined) continue;
+    byTaskId.set(task.id, { complete: lifecycle.complete, archived: lifecycle.archived });
+  }
+  return byTaskId;
+}
+
+/*
+The two predicates are SEPARATE because the surfaces genuinely differ: `fn_task_list` hides done AND
+archived, while `fn_task_search`'s `includeDone: false` hides only done (archived is governed by its
+own `includeArchived` parameter). Collapsing them would silently change what search returns.
+*/
+
+/** True when the card sits in one of ITS OWN terminal columns (complete or archived). */
+function isTerminalCard(
+  task: { id: string; column: string },
+  lanesByTaskId: ReadonlyMap<string, ResolvedTerminalLanes>,
+): boolean {
+  const resolved = lanesByTaskId.get(task.id);
+  /* DELIBERATE-LITERAL — the unresolved-workflow default documented above, reviewed 2026-07-30-23:05. */
+  if (!resolved) return task.column === "done" || task.column === "archived";
+  return task.column === resolved.complete || task.column === resolved.archived;
+}
+
+/** True when the card sits in ITS OWN complete column. Archived is deliberately NOT included. */
+function isCompleteCard(
+  task: { id: string; column: string },
+  lanesByTaskId: ReadonlyMap<string, ResolvedTerminalLanes>,
+): boolean {
+  const resolved = lanesByTaskId.get(task.id);
+  /* DELIBERATE-LITERAL — same documented default, reviewed 2026-07-30-23:05. */
+  if (!resolved) return task.column === "done";
+  return resolved.complete !== undefined && task.column === resolved.complete;
+}
+
 export function createTaskListTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_list",
@@ -1642,7 +1720,8 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
     parameters: taskListParams,
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
-      const active = tasks.filter((task) => task.column !== "done");
+      const listLanes = await resolveTerminalLanesByTaskId(store, tasks);
+      const active = tasks.filter((task) => !isCompleteCard(task, listLanes));
       const lines = active.map(formatTaskSummaryLine);
       return {
         content: [{ type: "text" as const, text: formatTaskReadLines(lines, "No active tasks.") }],
@@ -1675,7 +1754,10 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
         limit,
       });
       const includeDone = params.includeDone ?? true;
-      const filtered = includeDone ? results : results.filter((task) => task.column !== "done");
+      const searchLanes = includeDone
+        ? new Map<string, ResolvedTerminalLanes>()
+        : await resolveTerminalLanesByTaskId(store, results);
+      const filtered = includeDone ? results : results.filter((task) => !isCompleteCard(task, searchLanes));
       const lines = filtered.map(formatTaskSummaryLine);
       const text = formatTaskReadLines(
         lines.length > 0 ? [`Search results for "${query}" (${filtered.length}):`, ...lines] : [],
