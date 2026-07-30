@@ -63,16 +63,19 @@ import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./a
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
 /*
-FNXC:PlannerLanePredicate 2026-07-29-22:10 (PR #2551 review — greptile P1):
-`LEGACY_PLANNER_LANE` is named EXPLICITLY here rather than taken as a default. These
-three sweeps have no resolved workflow in scope, so they keep the pre-U11 answer —
-which is WRONG for a renamed intake column, exactly as greptile described: such a
-card reads as "advanced past planning" and the sweep skips it.
+FNXC:PlannerLanePredicate 2026-07-29-23:30 (PR #2551 review — greptile P1, now FIXED):
+These three sweeps used `LEGACY_PLANNER_LANE`, so on a renamed intake column the card
+read as "advanced past planning" and the sweep skipped it — a recovery that silently
+does not recover.
 
-Recording it at the call site instead of hiding it behind a default is the point.
-Wiring these three properly means threading lifecycle resolution through the
-self-healing sweeps, which is that file owner's slice under the drift-review split —
-not something to smuggle in from the planning lane.
+The previous note deferred this on the grounds that the sweeps "have no resolved
+workflow in scope". That was not accurate: `this.store` is in scope at all three sites,
+and this file already resolves a task's IR per task in four other sweeps. So the lane is
+resolved here the same way, via `plannerLaneFor`, and the deferral is gone rather than
+documented.
+
+Resolution happens OUTSIDE `updateTaskAtomic`'s callback, which is synchronous — one
+resolution per recovered task, on a rare failure path, never inside the row lock.
 */
 import { isTaskStillInPlanningStage, LEGACY_PLANNER_LANE } from "./replan-target.js";
 import { getPromptPath } from "./spec-staleness.js";
@@ -906,6 +909,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     /* U4 substrate PR1: the git-evidence readers moved to a base class, so this
        derived constructor needs an explicit super(). No other change. */
     super();
+  }
+
+  /**
+   * The task's PLANNER LANE (its intake column), resolved from its own workflow.
+   * Fail-soft to the legacy `triage` so an unresolvable or column-less workflow behaves
+   * exactly as before — a recovery sweep must never be abandoned by a lookup failure.
+   */
+  private async plannerLaneFor(taskId: string): Promise<{ intake: string }> {
+    try {
+      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
+      return { intake: lifecycle?.intake ?? LEGACY_PLANNER_LANE.intake };
+    } catch {
+      return LEGACY_PLANNER_LANE;
+    }
   }
 
   private classifyPausedAbortWorkflowRecovery(
@@ -12135,7 +12152,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Narrow test/legacy adapters can return an unrelated fixture row; only use a
         // re-read when it identifies the requested candidate.
         const recoveryTask = live?.id === task.id ? live : task;
-        if (!isTaskStillInPlanningStage(recoveryTask, LEGACY_PLANNER_LANE)) continue;
+        if (!isTaskStillInPlanningStage(recoveryTask, await this.plannerLaneFor(recoveryTask.id))) continue;
         log.log(`Recovering specified triage task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(recoveryTask);
         if (success) recovered++;
@@ -12455,15 +12472,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // FN-8361 closes the stale listTasks → updateTask race: only clear planning
           // under the TaskStore lock, never overwrite a scheduler-claimed row.
           let applied = false;
+          // Resolved before the atomic callback, which is synchronous and cannot await.
+          const plannerLane = await this.plannerLaneFor(task.id);
           if (typeof this.store.updateTaskAtomic === "function") {
             await this.store.updateTaskAtomic(task.id, (live) => {
-              if (!isTaskStillInPlanningStage(live, LEGACY_PLANNER_LANE)) return null;
+              if (!isTaskStillInPlanningStage(live, plannerLane)) return null;
               applied = true;
               return { status: null };
             });
           } else {
             const live = await this.store.getTask(task.id);
-            if (live && isTaskStillInPlanningStage(live, LEGACY_PLANNER_LANE)) {
+            if (live && isTaskStillInPlanningStage(live, plannerLane)) {
               await this.store.updateTask(task.id, { status: null });
               applied = true;
             }
