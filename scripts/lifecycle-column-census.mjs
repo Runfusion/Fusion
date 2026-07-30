@@ -262,7 +262,38 @@ if (!existsSync(BASELINE_PATH)) {
   process.exit(1);
 }
 
-const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-15:10:
+FAIL WITH A DIAGNOSIS, not a stack trace, when the baseline is not valid JSON.
+
+Measured cause, twice in one program: a rebase or cherry-pick leaves CONFLICT MARKERS in the baseline,
+the operator runs `--update-baseline` to "fix" it, THIS parse throws first, the run dies before
+writing, and the still-conflicted file gets staged. `--strict` then fails in CI with a raw
+`SyntaxError` that names a byte offset and nothing about what to do.
+
+Both halves are covered: `--strict` explains the real cause and the fix, and `--update-baseline`
+REFUSES to run against an unparseable baseline rather than reading it and dying midway. Regenerating
+is safe (the file is derived), but it must be a deliberate act with the corruption named, not a side
+effect of a command that appears to have worked.
+*/
+function readBaselineOrExplain() {
+  const raw = readFileSync(BASELINE_PATH, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const conflicted = /^(<{7}|={7}|>{7})/m.test(raw);
+    console.error(`lifecycle-column-census: ${BASELINE_PATH} is not valid JSON (${err.message}).`);
+    if (conflicted) {
+      console.error("  It still contains MERGE CONFLICT MARKERS — a rebase or cherry-pick left them behind.");
+    }
+    console.error("  The baseline is derived, so regenerate it from the target branch rather than hand-editing:");
+    console.error("    git show origin/main:scripts/lib/lifecycle-column-census-baseline.json > scripts/lib/lifecycle-column-census-baseline.json");
+    console.error("    node scripts/lifecycle-column-census.mjs --strict --update-baseline");
+    process.exit(1);
+  }
+}
+
+const baseline = readBaselineOrExplain();
 const baselineByFile = new Map(Object.entries(baseline.byFile ?? {}));
 const currentByFile = new Map(summary.byFile);
   /*
@@ -425,6 +456,9 @@ function writeBaseline() {
 }
 
 if (updateBaseline) {
+  /* Refuse to regenerate ON TOP of a corrupt file: the run would die inside the strict comparison
+     below and leave the corruption staged, which is exactly how it reached CI twice. */
+  if (existsSync(BASELINE_PATH)) readBaselineOrExplain();
   writeBaseline();
   if (regressions.length > 0) {
     console.log("\n  ACCEPTED RISES (a merge or a conversion added guards here — convert them or they stay in the bar):");
