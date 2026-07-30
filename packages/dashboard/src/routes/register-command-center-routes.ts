@@ -536,7 +536,9 @@ async function resolveColumnFlagsByName(
       const result = await aggregateGithubIssueAnalytics(requireAsyncLayer(store, "Command Center GitHub analytics"), {
         from: range.from,
         to: range.to,
-      });
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:15: store supplied so resolved-issue counts use
+         the board's complete lanes instead of the literal 'done'. */
+      }, store);
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-github.csv", githubIssueAnalyticsToTable(result));
         return;
@@ -561,7 +563,9 @@ async function resolveColumnFlagsByName(
       const result = await aggregateGitlabIssueAnalytics(requireAsyncLayer(store, "Command Center GitLab analytics"), {
         from: range.from,
         to: range.to,
-      });
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:15: store supplied so resolved-issue counts use
+         the board's complete lanes instead of the literal 'done'. */
+      }, store);
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-gitlab.csv", gitlabIssueAnalyticsToTable(result));
         return;
