@@ -929,7 +929,8 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     } as unknown as Task;
     const { store } = productionFaithfulStore([stuck]);
     const manager = new SelfHealingManager(store, { rootDir: "/repo" });
-    const isPhantomExecutorBinding = vi.fn(() => null);
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
     Object.assign(manager, {
       getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
       getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
@@ -962,7 +963,8 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     } as unknown as Task;
     const { store } = productionFaithfulStore([stuck]);
     const manager = new SelfHealingManager(store, { rootDir: "/repo" });
-    const isPhantomExecutorBinding = vi.fn(() => null);
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
     Object.assign(manager, {
       getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
       getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
@@ -973,5 +975,55 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(isPhantomExecutorBinding).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:50 (review P1 on #2879 — the hazard the conversion CREATED):
+  The three literal reads were disjoint BY CONSTRUCTION: one column each, so a card could not appear
+  twice. Resolved reads are not. A custom workflow may put more than one queried role flag on the SAME
+  column — here `hold` beside `wip`, a lane that both parks work and counts as work — and that column is
+  returned by two reads.
+
+  Concatenating the buckets then hands the loop the same STALE SNAPSHOT twice. Not a wasted iteration:
+  the second pass reads `branch`/`worktree` from state captured before the first pass mutated anything,
+  so a worktree already reclaimed is reclaimed again against state that no longer exists.
+
+  REVERT CHECK, measured: with the dedupe removed, this fails with 2 calls instead of 1.
+  */
+  it("processes a multi-role column ONCE, not once per role", async () => {
+    const multiRoleIr = {
+      ...RENAMED_IR,
+      columns: RENAMED_IR.columns.map((column) =>
+        column.id === RENAMED_VOCAB.hold
+          ? { ...column, traits: [...column.traits, { trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } }] }
+          : column,
+      ),
+    } as typeof RENAMED_IR;
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-MULTIROLE",
+      column: RENAMED_VOCAB.hold,
+      branch: "fusion/FN-MULTIROLE",
+      worktree: "/tmp/worktrees/FN-MULTIROLE",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: multiRoleIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: multiRoleIr } : undefined)),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).toHaveBeenCalledTimes(1);
   });
 });
