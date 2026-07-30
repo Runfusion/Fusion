@@ -153,4 +153,34 @@ describe("board surfaces resolve column roles per column, not per board", () => 
       "a per-task flag lookup must go through getTaskColumnFlags, not the cross-workflow union",
     ).toBeNull();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (PR #2738 review — greptile P1):
+  The stranded-card case, pinned as source because it is a resolution-precedence rule.
+
+  `getTaskColumnFlags` has three states and they are NOT two:
+    1. the task's workflow declares the column   -> those flags
+    2. the task's workflow is KNOWN but does not declare it -> undefined (legacy-id degrade)
+    3. no per-task metadata at all               -> the union, an admitted approximation
+
+  Collapsing 2 into 3 reinstates the bug one level down: a card stranded in a column its OWN workflow
+  no longer declares — the exact card this change exists for — would take a neighbouring workflow's
+  traits for the same id.
+  */
+  it("treats a known workflow that does not declare the column as ABSENT flags, not a union hit", () => {
+    const source = readFileSync(resolve(__dirname, "../components/ListView.tsx"), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+    expect(
+      code,
+      "the union may only answer when there is NO per-task metadata (state 3), never when the task's own workflow simply lacks the column (state 2)",
+    ).toMatch(/fromOwnWorkflow\s*\?\?\s*\(\s*own\s*\?\s*undefined\s*:\s*columnFlagsById\.get\(\s*task\.column\s*\)\s*\)/);
+  });
+
+  /* And the behaviour that rule produces: absent flags degrade to the legacy id, per column. */
+  it("absent flags degrade per column rather than granting a neighbour's role", () => {
+    expect(isCompleteColumnRole(undefined, "wrapped")).toBe(false);
+    expect(isArchivedColumnRole(undefined, "wrapped")).toBe(false);
+    expect(isCompleteColumnRole(undefined, "done")).toBe(true);
+  });
 });

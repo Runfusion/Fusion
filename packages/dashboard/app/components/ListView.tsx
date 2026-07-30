@@ -879,7 +879,20 @@ export function ListView({
   ): Parameters<typeof isCompleteColumnRole>[0] | undefined => {
     const own = taskContextMenuColumnsByTaskId.get(task.id);
     const fromOwnWorkflow = own?.find((column) => column.id === task.column)?.flags;
-    return fromOwnWorkflow ?? columnFlagsById.get(task.column);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (PR #2738 review — greptile P1):
+    KNOWING the task's workflow and finding no such column is an ANSWER, not a miss.
+
+    The first version fell through to the union in both cases, which put back the bug one level down:
+    a task mapped to workflow A whose column A no longer declares — the stranded card this whole
+    change is about — picked up workflow B's traits for the same id. Archive/Revert, progress, the
+    Planning badge and agent-active styling all followed a workflow the card does not belong to.
+
+    Absent flags is the RIGHT answer there: the role helpers then degrade to the legacy id, which is
+    exactly the documented no-metadata path and the same argument this PR makes for `Column.tsx`. The
+    union is an approximation reserved for the case where we have no per-task metadata AT ALL.
+    */
+    return fromOwnWorkflow ?? (own ? undefined : columnFlagsById.get(task.column));
   }, [columnFlagsById, taskContextMenuColumnsByTaskId]);
 
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
