@@ -4,7 +4,7 @@ const severityAuditLog = createLogger("core-activity-analytics");
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
+import { resolveDefaultWorkflowIr } from "./builtin-workflows.js";
 import type { WorkflowIrColumn } from "./workflow-ir-types.js";
 
 /**
@@ -212,7 +212,7 @@ function rangeClauses(
  */
 export async function aggregateActivityAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
-  query: ActivityAnalyticsQuery = {},
+  query: SdlcFunnelQuery = {},
 ): Promise<ActivityAnalytics> {
   // FNXC:RuntimeSatelliteAsync 2026-06-24-13:45:
   // The activity analytics queries (sessions, messages, nodes, agents, daily
@@ -713,8 +713,32 @@ interface MoveRow {
   ts: string;
 }
 
+/*
+FNXC:SdlcFunnelColumns 2026-07-31-09:40:
+THE FALLBACK WAS THE LEGACY MONOLITHIC IR, and the only production callers use the fallback.
+`aggregateActivityAnalytics` (Command Center's `/command-center/activity`, and the OTel exporter) never
+passes `columns`, so every project's funnel was mapped through `BUILTIN_CODING_WORKFLOW_IR` — the
+constant the catalog now publishes as `builtin:legacy-coding`, not the current default. The same
+legacy-constant-vs-catalog split produced the "preflight is stale" drift in the move resolvers.
+
+Consequence: any column id absent from that legacy set folds to OTHER, so a renamed or custom board's
+Command Center funnel reads as empty while the board is plainly busy. The doc comment says callers with
+a custom workflow "should call `aggregateSdlcFunnel` directly"; no caller does, which is what makes this
+the default path rather than an edge case.
+
+`resolveDefaultWorkflowIr()` is the shared authority every other default resolution uses, so the
+built-in fallback now agrees with the board Fusion actually ships.
+
+SCOPE, corrected after I overstated it: post-U11 the current lineage's column ids are a SUBSET of the
+legacy constant's, so this change alone fixes NO renamed board — it only stops the fallback describing a
+board Fusion no longer ships (a consistency fix, and it is why `defaultColumns` cannot have a
+behaviour-revealing test on its own). The renamed/custom case is fixed by the CALLER passing `columns`,
+which is why `aggregateActivityAnalytics` now accepts them and the Command Center route resolves the
+project's own workflow. I nearly shipped the consistency change as if it were the whole fix; the
+give-away was a revert proof that would not go red.
+*/
 function defaultColumns(): FunnelColumnTraitSource[] {
-  const ir = BUILTIN_CODING_WORKFLOW_IR;
+  const ir = resolveDefaultWorkflowIr();
   if (ir.version === "v2") {
     return (ir.columns as WorkflowIrColumn[]).map((c) => ({
       id: c.id,

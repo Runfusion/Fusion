@@ -1,4 +1,5 @@
 import {
+  resolveWorkflowIrById,
   aggregateTokenAnalytics,
   aggregateToolAnalytics,
   aggregateActivityAnalytics,
@@ -138,6 +139,38 @@ export function resolveTokenGranularity(query: Request["query"]): TokenTimeGranu
 }
 
 /** True when the caller asked for CSV via `?format=csv` (case-insensitive). */
+/*
+FNXC:SdlcFunnelColumns 2026-07-31-10:15:
+The project's own workflow columns, in the shape the funnel's trait mapping needs. Resolved from the
+project's DEFAULT workflow, which is the board the activity log's column ids come from.
+
+Returns `undefined` — not an empty array — when nothing resolves: undefined lets the core fall back to
+the built-in default (the previous behaviour), while `[]` would map EVERY column to OTHER and silently
+empty the funnel. That distinction is the whole reason this returns optionally.
+*/
+async function resolveFunnelColumnsForProject(
+  store: { getDefaultWorkflowId?: () => Promise<string | undefined> },
+): Promise<Array<{ id: string; traits: Array<{ trait: string }> }> | undefined> {
+  try {
+    const workflowId = await store.getDefaultWorkflowId?.();
+    if (!workflowId) return undefined;
+    const ir = await resolveWorkflowIrById(store as never, workflowId);
+    const columns = (ir as { columns?: Array<{ id?: unknown; traits?: Array<{ trait?: unknown }> }> }).columns ?? [];
+    const mapped = columns
+      .filter((column): column is { id: string; traits?: Array<{ trait?: unknown }> } => typeof column?.id === "string")
+      .map((column) => ({
+        id: column.id,
+        traits: (column.traits ?? [])
+          .map((trait) => trait?.trait)
+          .filter((trait): trait is string => typeof trait === "string")
+          .map((trait) => ({ trait })),
+      }));
+    return mapped.length > 0 ? mapped : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function wantsCsv(query: Request["query"]): boolean {
   const raw = typeof query.format === "string" ? query.format : undefined;
   return raw !== undefined && raw.toLowerCase() === "csv";
@@ -275,9 +308,18 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
+      /*
+      FNXC:SdlcFunnelColumns 2026-07-31-10:10:
+      PASS THE PROJECT'S OWN COLUMNS. The funnel maps column ids to SDLC stages by trait, and any id it
+      was not given folds to OTHER — so without this the Command Center funnel on a renamed or custom
+      board read as empty while the board was plainly busy. `aggregateSdlcFunnel`'s doc comment already
+      said callers with a custom workflow should supply their columns; this is the caller, and it did
+      not. Unresolvable workflow falls through to the built-in default, which is the previous behaviour.
+      */
       const result = await aggregateActivityAnalytics(requireAsyncLayer(store, "Command Center activity analytics"), {
         from: range.from,
         to: range.to,
+        columns: await resolveFunnelColumnsForProject(store),
       });
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-activity.csv", activityAnalyticsToTable(result));
