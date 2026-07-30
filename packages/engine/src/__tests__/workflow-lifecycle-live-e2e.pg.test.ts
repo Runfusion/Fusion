@@ -739,7 +739,8 @@ NOT PROVEN end to end — real callers this suite does not reach:
     predicate never reads it, so the admission-count E2E cannot reach it
   - dashboard register-task-workflow-routes.ts:151,166,175,1797
 
-WHY, and what each would take. Two lanes, and neither is another table row:
+FNXC:WorkflowLifecycleColumns 2026-07-29-17:20 — WHY, and what each would take. Two lanes,
+and neither is another table row:
 
   LANE 1 — REAL GIT (engine-slow), now SMALLER than it looked. Only two things
   genuinely need it: merger-ai's `isAlreadyFinalizedColumn` and executor's
@@ -758,7 +759,7 @@ WHY, and what each would take. Two lanes, and neither is another table row:
   live-agent-count's `columnIsIntakeOrHold`: it is read only by the WAITING
   predicate, whose consumers are dashboard-side.
 
-TABLE FIT. Three rows fit. The merge/rebound family does NOT — not because the table is too rigid,
+FNXC:WorkflowLifecycleColumns 2026-07-29-17:20 — TABLE FIT. Three rows fit. The merge/rebound family does NOT — not because the table is too rigid,
 but because those sweeps have no observable persisted effect without a real repository, so `acted`
 cannot be written against the row at all. That is a finding about the lane they need, not a reason
 to hand-roll a scenario beside the table.
