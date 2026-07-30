@@ -21,6 +21,7 @@ import {
 } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
+import { createDefaultNodeHandlers } from "../workflow-node-handlers.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const TASK = { id: "FN-PRIM-EXIT", column: "in-progress", steps: [], paused: false } as unknown as TaskDetail;
@@ -85,15 +86,50 @@ describe("the LIVE implementation primitive announces the exit", () => {
   preference is ever inverted or made conditional, every behavior wired to the primitives path
   silently stops running — the same failure that put the announcement on a dead seam.
   */
-  it("prompt-node dispatch prefers the PRIMITIVES handler, so seam-only wiring is dead", () => {
-    const handlers = readFileSync(new URL("../workflow-node-handlers.ts", import.meta.url), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-    expect(handlers).toMatch(/deps\?\.primitives\s*\?\s*createPrimitivePromptLikeHandler/);
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-21:10 (U8 / R12, PR #2578 review — greptile):
+  BEHAVIOURAL, not textual. The first version grepped for `deps?.primitives ? createPrimitive...`
+  and for the executor's wiring string. Those fragments can both survive while an earlier fallback,
+  an extracted dispatch helper, or a reordered condition stops selecting the primitive handler —
+  so the ratchet would stay green through exactly the regression it exists to catch, which is the
+  same "proves syntax, not behaviour" mistake that put a shipped behaviour on a dead seam.
 
-    const executor = readFileSync(new URL("../executor.ts", import.meta.url), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-    expect(executor).toContain("primitives: this.createAuthoritativeWorkflowPrimitives(settings)");
+  This builds the real handler map from spied seams AND spied primitives and asserts, per seam,
+  which one ran. It fails if dispatch ever stops preferring primitives, however that happens.
+  */
+  it("dispatches every seam through the PRIMITIVES handler, never the legacy seams", async () => {
+    const calls: string[] = [];
+    const seamSpy = (name: string) => async () => { calls.push(`seam:${name}`); return { outcome: "success" as const }; };
+    const seams = {
+      planning: seamSpy("planning"),
+      execute: seamSpy("execute"),
+      review: seamSpy("review"),
+      "review-handoff": seamSpy("review-handoff"),
+      merge: seamSpy("merge"),
+      schedule: seamSpy("schedule"),
+      stepExecute: seamSpy("step-execute"),
+    } as never;
+    const primitives = {
+      prepareWorktree: async () => { calls.push("prim:prepareWorktree"); return { outcome: "success", data: { worktreePath: "/tmp/wt", branchName: "b" } }; },
+      runPlanningSession: async () => { calls.push("prim:runPlanningSession"); return { outcome: "success" }; },
+      runCodingSession: async () => { calls.push("prim:runCodingSession"); return { outcome: "success", value: "implemented" }; },
+      requestReviewHandoff: async () => { calls.push("prim:requestReviewHandoff"); return { outcome: "success" }; },
+      requestReview: async () => { calls.push("prim:requestReview"); return { outcome: "success" }; },
+      requestMerge: async () => { calls.push("prim:requestMerge"); return { outcome: "success" }; },
+      scheduleWork: async () => { calls.push("prim:scheduleWork"); return { outcome: "success" }; },
+      runTaskStep: async () => { calls.push("prim:runTaskStep"); return { outcome: "success" }; },
+    } as never;
+
+    const handlers = createDefaultNodeHandlers(seams, undefined, { primitives });
+    for (const seam of ["planning", "execute", "review", "review-handoff", "merge", "schedule"]) {
+      await handlers.prompt!(
+        { id: `${seam}-node`, kind: "prompt", column: "in-progress", config: { seam } } as never,
+        { task: { id: "FN-DISPATCH" }, context: {} } as never,
+      ).catch(() => undefined);
+    }
+
+    /* The assertion that matters: no seam function ran, for any seam name. */
+    expect(calls.filter((c) => c.startsWith("seam:"))).toEqual([]);
+    expect(calls.some((c) => c.startsWith("prim:"))).toBe(true);
   });
 });
