@@ -131,7 +131,6 @@
     "packages/engine/src/self-healing.ts": 48,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
-    "packages/core/src/task-store/moves.ts": 2,
     "packages/cli/src/extension.ts": 1,
     "packages/core/src/async-mission-store.ts": 1,
     "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
