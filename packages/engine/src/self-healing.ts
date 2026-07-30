@@ -7012,15 +7012,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         for (const task of tasks) {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
-          // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+          /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:45 (fleet): executor-owned rows are the
+             WIP lane. A literal skipped nothing on a renamed board, so this sweep would rewrite a
+             pending result belonging to a LIVE executor run — the one row it must never touch. */
+          const orphanWipLane = await this.resolveWipColumn(task.id);
+          if (task.column === orphanWipLane) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+          if (!fresh || fresh.userPaused === true || fresh.column === orphanWipLane) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
@@ -11655,7 +11658,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!linkedTask) {
         shouldClear = true;
         reason = "linked task missing";
-      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+      } else if (await (async () => {
+        const driftLanes = await (async () => {
+          try {
+            return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, linkedTask.id));
+          } catch {
+            return undefined;
+          }
+        })();
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:45 (fleet): terminal lanes by role — an agent
+           linked to a finished card should be cleared, and on a renamed board none matched so the
+           link was never cleared. */
+        return linkedTask.column === (driftLanes?.complete ?? "done")
+          || linkedTask.column === (driftLanes?.archived ?? "archived");
+      })()) {
         shouldClear = true;
         reason = `linked task in terminal column ${linkedTask.column}`;
       } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
@@ -13212,7 +13228,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (task.column === "done" || task.column === "archived") {
+                /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:45 (fleet): a finished task's temp
+                   merge worktree gets the shorter grace period; by role so a renamed board is not
+                   left holding stale merge scratch for the full window. */
+                const tempLanes = await (async () => {
+                  try {
+                    return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
+                  } catch {
+                    return undefined;
+                  }
+                })();
+                if (task.column === (tempLanes?.complete ?? "done") || task.column === (tempLanes?.archived ?? "archived")) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }
