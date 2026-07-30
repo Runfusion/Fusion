@@ -8,10 +8,18 @@ applies_when: converting lifecycle-column literals in React components that read
 
 # Converting a column literal to a role turns a stable value into an async one
 
-Recorded 2026-07-30 after converting `TaskCard.tsx` (42 → 0) and `TaskDetailModal.tsx` (30 → 5).
-Four separate review rounds each found a real defect in those two files. None was in the conversion
-itself — every one came from the same property change, and they are cheap to prevent and expensive
-to find one at a time.
+Recorded 2026-07-30 while converting `TaskCard.tsx` and `TaskDetailModal.tsx`. Four separate review
+rounds each found a real defect in those two files. None was in the conversion itself — every one
+came from the same property change, and they are cheap to prevent and expensive to find one at a
+time.
+
+**Status of those conversions, stated because an earlier draft of this line got it wrong.** It read
+"after converting `TaskCard.tsx` (42 → 0) and `TaskDetailModal.tsx` (30 → 5)" as accomplished fact.
+Neither reduction has landed: on `main` both files still measure 42 and 30, and the census baseline
+in this very PR records the same. The work is in flight in #2688 and #2698. The hazard below is real
+regardless — it was found BY those conversions, and it is what the four review rounds were about —
+but a solutions doc that reports unlanded numbers as history is worse than no doc, because the next
+reader has no way to tell which of its claims were measured.
 
 ## The property that changes
 
