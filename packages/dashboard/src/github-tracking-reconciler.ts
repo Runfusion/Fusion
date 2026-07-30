@@ -44,11 +44,29 @@ async function resolveLifecycleByTaskId(
   store: TaskStore,
   tasks: readonly Task[],
   irCache: Map<string, WorkflowIr>,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-12:10 (#2737 review — greptile P2):
+  STOP once `limit` tasks have matched. The first version resolved for every row `listTasks` returned —
+  an unbounded board — before slicing to RECONCILE_SCAN_LIMIT, so the prefetch did unbounded work to feed
+  a bounded scan. `match` is applied here rather than by the caller precisely so the loop can stop.
+
+  Rows past the cut are left unresolved and absent from the map. That is safe because the only consumers
+  are the terminal predicates, which fall back to the legacy ids for an absent entry — the same degraded
+  answer they would give on a store with no workflow reader — and those rows are dropped by the slice
+  anyway.
+  */
+  options?: { match?: (task: Task, lifecycle: LifecycleColumns | undefined) => boolean; limit?: number },
 ): Promise<LifecycleByTaskId> {
   const byTaskId = new Map<string, LifecycleColumns | undefined>();
+  let matched = 0;
   for (const task of tasks) {
     if (byTaskId.has(task.id)) continue;
-    byTaskId.set(task.id, await resolveTaskLifecycleColumns(store, task.id, irCache));
+    const lifecycle = await resolveTaskLifecycleColumns(store, task.id, irCache);
+    byTaskId.set(task.id, lifecycle);
+    if (options?.match && options.match(task, lifecycle)) {
+      matched += 1;
+      if (options.limit !== undefined && matched >= options.limit) break;
+    }
   }
   return byTaskId;
 }
@@ -66,14 +84,6 @@ function isArchivedTask(task: Task, lifecycleByTaskId: LifecycleByTaskId): boole
 }
 
 export class GitHubTrackingReconciler {
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-05:10:
-  ONE workflow-IR cache for the whole reconciler, so the three passes below read each distinct workflow's
-  IR once between them instead of once per pass. Instance-scoped rather than module-scoped: a module cache
-  would outlive an operator's workflow edit with no event to invalidate on, which is the same reason the
-  notification service refuses a long-lived one.
-  */
-  private readonly irCache = new Map<string, WorkflowIr>();
   /*
   FNXC:GithubTrackingReconcile 2026-07-16-15:40:
   The three reconcile passes are INDEPENDENT and each MUST run even when another throws.
@@ -115,7 +125,11 @@ export class GitHubTrackingReconciler {
   async reconcile(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
     const listedTasks = await store.listTasks({ slim: true, includeArchived: true });
     const allTasks = Array.isArray(listedTasks) ? listedTasks : [];
-    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, this.irCache);
+    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, new Map<string, WorkflowIr>(), {
+      match: (task, lifecycle) => task.column === (lifecycle?.complete ?? "done")
+        || task.column === (lifecycle?.archived ?? "archived"),
+      limit: RECONCILE_SCAN_LIMIT,
+    });
     const tasks = allTasks
       .filter((task) => isTerminalTask(task, lifecycleByTaskId))
       .slice(0, RECONCILE_SCAN_LIMIT);
@@ -171,7 +185,11 @@ export class GitHubTrackingReconciler {
   async reconcileSourceIssues(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
     const listedTasks = await store.listTasks({ slim: false, includeArchived: true });
     const allTasks = Array.isArray(listedTasks) ? listedTasks : [];
-    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, this.irCache);
+    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, new Map<string, WorkflowIr>(), {
+      match: (task, lifecycle) => task.sourceIssue?.provider === "github"
+        && (task.column === (lifecycle?.complete ?? "done") || task.column === (lifecycle?.archived ?? "archived")),
+      limit: RECONCILE_SCAN_LIMIT,
+    });
     const tasks = allTasks
       .filter((task) => isTerminalTask(task, lifecycleByTaskId) && task.sourceIssue?.provider === "github")
       .slice(0, RECONCILE_SCAN_LIMIT);
@@ -256,7 +274,7 @@ export class GitHubTrackingReconciler {
       ? Math.min(options?.limit ?? RECONCILE_SCAN_LIMIT, RECONCILE_SCAN_LIMIT)
       : RECONCILE_SCAN_LIMIT;
     const allTasks = Array.isArray(listedTasks) ? listedTasks : [];
-    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, this.irCache);
+    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, new Map<string, WorkflowIr>());
     const matchingTasks = allTasks
       .filter((task) => isTerminalTask(task, lifecycleByTaskId)
         && task.sourceIssue?.provider === "github"
@@ -339,7 +357,7 @@ export class GitHubTrackingReconciler {
     documented FN-5577 done-heuristic, and whether that fallback should be wired here is a separate
     question from what vocabulary it speaks.
     */
-    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, tasks, this.irCache);
+    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, tasks, new Map<string, WorkflowIr>());
 
     const projectSettings = ((await store.getSettings()) ?? {}) as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
