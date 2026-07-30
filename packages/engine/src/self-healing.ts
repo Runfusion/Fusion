@@ -11070,7 +11070,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
            for an action. I widened on an action site, which my own note says not to do.
 
       The honest third answer: without the card's board we cannot say whether its column carries the
-      role, so we do not decide. The card keeps the legacy ids seeded above — which is what it had
+      role, so we do not decide — EXCEPT where the card sits on a legacy id, which is deliberate and
+      worth stating because it looks like an inconsistency (#2891 review, third round).
+
+      A card in literal `in-review`/`in-progress` still passes, because the legacy seed above is not a
+      guess: it is the documented degraded vocabulary, the same three-state answer used everywhere in
+      this program when a board cannot be read. Skipping those would REGRESS every unconverted and
+      legacy-id project — cards this sweep has always recovered would stop being recovered — to gain
+      consistency with a case that only arises on renamed boards. The renamed card is the one we
+      genuinely cannot classify, and it is the one that is skipped and reported. The card keeps the legacy ids seeded above — which is what it had
       before any of this — and is REPORTED, so a card the sweep cannot classify is visible instead of
       silently mis-decided in either direction. Same shape as the done-integrity sweep's unresolvable
       report: the fix for "cannot answer" is to say so, not to pick a side.
