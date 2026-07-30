@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { isBuiltinWorkflowId, resolveLifecycleColumns, resolveWorkflowIrById, resolveWorkflowIrForTask } from "@fusion/core";
+import { columnsWithFlag, isBuiltinWorkflowId, resolveLifecycleColumns, resolveWorkflowIrById, resolveWorkflowIrForTask } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import { GlassesInputError } from "./quick-capture.js";
 
@@ -207,7 +207,31 @@ async function laneContext(
   }
 
   const roles = snapshotIr ? resolveLifecycleColumns(snapshotIr as never) : undefined;
-  const lanes: Lanes | undefined = roles ?? undefined;
+  let lanes: Lanes | undefined = roles ?? undefined;
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-23:10 (the review lane this plugin could never resolve):
+  `resolveLifecycleColumns` keys its `review` role on the `mergeOrchestration` trait ALONE. A board whose
+  review column carries only `merge-blocker` and/or `human-review` — the common custom shape, since
+  `merge` is opt-in — therefore resolves NO review lane at all.
+
+  Every review-gated action here (`requestReview`, `acceptReview`, `returnToAgent`, `retryTask`) compares
+  against that lane, so on such a board they refused every card, and `requestReview` had nowhere to move
+  one. Not a regression from converting them: it is why they could not be converted with
+  `lanes.review` as-is.
+
+  Widened HERE rather than in the shared resolver: `resolveLifecycleColumns` is consumed well beyond this
+  plugin and its `review` role deliberately means "the merge-orchestration column" for the merge queue.
+  The gap is recorded in `notification-renamed-lifecycle-columns.test.ts` and in PR #2807; reconciling the
+  two definitions is a core-level decision, not one to make from a plugin.
+
+  `mergeBlocker` first, then `humanReview` — a card cannot leave a merge-blocking column without the
+  merge gate clearing, which is the closer analogue of the legacy `in-review`.
+  */
+  if (lanes && lanes.review === undefined && snapshotIr) {
+    const widenedReview = columnsWithFlag(snapshotIr as never, "mergeBlocker")[0]
+      ?? columnsWithFlag(snapshotIr as never, "humanReview")[0];
+    if (widenedReview) lanes = { ...lanes, review: widenedReview };
+  }
   const declared = new Set(
     Object.values(lanes ?? {}).filter((value): value is string => typeof value === "string"),
   );
@@ -277,10 +301,21 @@ export async function startWork(input: AgentActionInput, deps: AgentActionDeps):
 export async function requestReview(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  if (task.column !== "in-progress") {
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-22:50 (census-invisible moveTask destinations):
+  Both halves, from ONE snapshot — the same rule `startWork` above already follows. The GATE was the
+  literal `in-progress` (counted by the census) and the DESTINATION was the literal `in-review` (a call
+  argument, so invisible to it). On a renamed board the gate refused every card, and had it not, the
+  move would have targeted a lane the board may not declare.
+  */
+  const { lanes: reviewLanes, degraded: reviewDegraded } = await laneContext(deps.taskStore, taskId);
+  if (reviewDegraded) conflict("request-review", task);
+  if (String(task.column) !== destination(reviewLanes, "wip")) {
     conflict("request-review", task);
   }
-  await deps.taskStore.moveTask(taskId, "in-review");
+  const reviewTarget = destination(reviewLanes, "review");
+  if (!reviewTarget) conflict("request-review", task);
+  await deps.taskStore.moveTask(taskId, reviewTarget);
   return toResult(deps.taskStore, taskId);
 }
 
@@ -305,7 +340,11 @@ export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps
 export async function acceptReview(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  if (task.column !== "in-review") {
+  /* FNXC:PluginLifecycleColumns 2026-07-30-22:50: review lane by ROLE; on a renamed board this refused
+     every card. No destination and no degraded-conflict: acceptReview only clears fields, and the same
+     "do not block an action that moves nothing" rule the retry cases pin applies here. */
+  const { lanes: acceptLanes } = await laneContext(deps.taskStore, taskId);
+  if (String(task.column) !== destination(acceptLanes, "review")) {
     conflict("accept-review", task);
   }
   await deps.taskStore.updateTask(taskId, { status: null, assigneeUserId: null });
@@ -315,15 +354,25 @@ export async function acceptReview(input: AgentActionInput, deps: AgentActionDep
 export async function returnToAgent(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  if (task.column !== "in-review") {
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-22:50 (census-invisible moveTask destinations):
+  Gate AND destination from one snapshot. The destination is resolved BEFORE the field clear below:
+  `updateTask` used to run first, so a rejected move left the assignee and status cleared with the card
+  still in review — the half-applied shape this audit keeps finding.
+  */
+  const { lanes: returnLanes, degraded: returnDegraded } = await laneContext(deps.taskStore, taskId);
+  if (returnDegraded) conflict("return-to-agent", task);
+  if (String(task.column) !== destination(returnLanes, "review")) {
     conflict("return-to-agent", task);
   }
+  const returnTarget = destination(returnLanes, "hold");
+  if (!returnTarget) conflict("return-to-agent", task);
   await deps.taskStore.updateTask(taskId, {
     assigneeUserId: null,
     status: null,
     assignedAgentId: null,
   });
-  await deps.taskStore.moveTask(taskId, "todo");
+  await deps.taskStore.moveTask(taskId, returnTarget);
   return toResult(deps.taskStore, taskId);
 }
 
@@ -331,7 +380,18 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
 
-  if (task.column === "in-review" && RETRYABLE_FAILURE_STATUSES.has(String(task.status))) {
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-22:50: review lane by ROLE, resolved once and reused by the
+  rebound below so the gate and the destination cannot disagree.
+
+  NO degraded-conflict here, unlike `startWork`. The suite pins "a degraded workflow does not block
+  retries that move nothing": the status-only retry above just clears fields, and refusing it because
+  the workflow could not be read would break a recovery that needs no lane at all. `destination()`
+  already falls back to the legacy ids when lanes are unresolved, which is the behaviour those cases
+  assert. Only the branch that actually MOVES needs a resolved target.
+  */
+  const { lanes: retryGateLanes } = await laneContext(deps.taskStore, taskId);
+  if (String(task.column) === destination(retryGateLanes, "review") && RETRYABLE_FAILURE_STATUSES.has(String(task.status))) {
     await deps.taskStore.updateTask(taskId, { status: null, error: null, stuckKillCount: 0, mergeRetries: 0 });
     return toResult(deps.taskStore, taskId);
   }
@@ -366,6 +426,15 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
   }
 
   if (RETRYABLE_FAILURE_STATUSES.has(String(task.status))) {
+    /*
+    FNXC:PluginLifecycleColumns 2026-07-30-22:50 (census-invisible moveTask destinations):
+    Destination resolved BEFORE the field clear. The clear used to run first, so a rejected move left the
+    worktree, branch and base refs nulled with the card exactly where it was — the retry destroyed the
+    pointers back to the work and then did not requeue. Reuses the snapshot taken at the top of this
+    action so the gate and the destination cannot disagree.
+    */
+    const retryTarget = destination(retryGateLanes, "hold");
+    if (!retryTarget) conflict("retry", task);
     // Intentional v1 limitation: omits dashboard retry step-reset/branch-inspection behavior.
     await deps.taskStore.updateTask(taskId, {
       status: null,
@@ -378,7 +447,7 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
       recoveryRetryCount: null,
       nextRecoveryAt: null,
     });
-    await deps.taskStore.moveTask(taskId, "todo");
+    await deps.taskStore.moveTask(taskId, retryTarget);
     return toResult(deps.taskStore, taskId);
   }
 
