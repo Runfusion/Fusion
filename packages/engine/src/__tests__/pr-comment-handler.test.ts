@@ -11,6 +11,13 @@ const mockStore = {
   logEntry: vi.fn<(id: string, action: string, outcome?: string) => Promise<Task>>().mockResolvedValue({ id: "FN-001" } as Task),
   recordRunAuditEvent: vi.fn<(event: unknown) => Promise<void>>().mockResolvedValue(),
   moveTask: vi.fn<(id: string, column: Task["column"]) => Promise<Task>>().mockResolvedValue({ id: "FN-001", column: "in-progress" } as Task),
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10:
+  The workflow readers `resolveTerminalColumnsFor` needs. Default to "no workflow" so every existing case
+  keeps the legacy-pair fallback unchanged; the renamed case overrides them per test.
+  */
+  getTaskWorkflowSelection: vi.fn<(id: string) => unknown>().mockReturnValue(undefined),
+  getWorkflowDefinition: vi.fn<(id: string) => Promise<unknown>>().mockResolvedValue(undefined),
 } as unknown as TaskStore;
 
 describe("PrCommentHandler", () => {
@@ -306,6 +313,56 @@ describe("PrCommentHandler", () => {
       expect(description).toContain("@reviewer2");
       expect(description).toContain("First issue");
       expect(description).toContain("Second issue");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (#2770 review — the SECOND copy, which I converted and did not cover):
+    `PrCommentHandler` carries the same dedup as `eval-followups.ts` and I converted both in one commit,
+    then wrote a regression case for only one of them. That is the Surface Enumeration rule I had just
+    accepted on #2766 and repeated in the very next PR, which is why this case exists rather than an
+    argument that the other file's coverage generalises.
+
+    The reuse case below uses `todo` — open under both the old literal and the resolved answer, so it
+    cannot tell them apart. This one puts the prior follow-up in a RENAMED complete lane, where they
+    disagree: keyed on {done, archived} the finished card reads as open and blocks the new one forever.
+
+    REVERT CHECK, measured: restoring the literal pair here fails this with `createTask` never called.
+    */
+    it("files a fresh PR follow-up when the prior one finished in a RENAMED complete lane", async () => {
+      (mockStore.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-finished",
+        column: "shipped",
+        description: "finished pr follow-up",
+        sourceParentTaskId: "FN-001",
+        sourceMetadata: { prNumber: 42 },
+      }]);
+      (mockStore.getTaskWorkflowSelection as ReturnType<typeof vi.fn>).mockReturnValue({ workflowId: "wf-renamed", stepIds: [] });
+      (mockStore.getWorkflowDefinition as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ir: {
+          version: "v2",
+          id: "wf-renamed",
+          name: "renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+            { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      });
+
+      await handler.createFollowUpTask("FN-001", mockPrInfo, [
+        {
+          id: 1,
+          body: "This needs fixing",
+          user: { login: "reviewer" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          html_url: "https://github.com/owner/repo/pull/42#issuecomment-1",
+        },
+      ]);
+
+      expect(mockStore.createTask).toHaveBeenCalled();
     });
 
     it("reuses an existing PR follow-up when the same parent/prNumber is still open", async () => {
