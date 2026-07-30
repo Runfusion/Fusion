@@ -9959,7 +9959,7 @@ export class TaskExecutor {
   ): Promise<boolean> {
     if (live.deletedAt) return false;
     if (live.paused || live.userPaused === true) return false;
-    if (live.column === "done" || live.column === "archived") return false;
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     // Pause/abort provenance owns aborted runs; a genuine abort never carries the
     // session-start refusal as its terminal node error in the same walk.
     if (this.pausedAborted.has(task.id)) return false;
@@ -10124,7 +10124,7 @@ export class TaskExecutor {
     */
     if (!await this.isPreMergeRemediationGraphNode(live.id, failedNode)) return false;
     if (live.deletedAt || live.paused || live.userPaused === true) return false;
-    if (live.column === "done" || live.column === "archived") return false;
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     if (!live.worktree) return false;
     const settings = await this.store.getSettings().catch(() => undefined);
     if (!settings || settings.globalPause === true || settings.enginePaused === true) return false;
@@ -10460,7 +10460,7 @@ export class TaskExecutor {
     if (userCanceled) return false;
     if (live.paused || live.userPaused === true) return false;
     if (live.status != null || live.error != null) return false;
-    if (live.column === "done" || live.column === "archived") return false;
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     if (result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
     if (!result.interruptedNodeId) return false;
     if (live.column === "in-review" && result.interruptedNodeId === "plan") return false;
@@ -11677,7 +11677,7 @@ export class TaskExecutor {
      */
     if (live.deletedAt) return false;
     if (live.paused || live.userPaused === true) return false;
-    if (live.column === "done" || live.column === "archived") return false;
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     /*
      * FNXC:WorkflowCompletion 2026-07-01-16:26:
      * Backstop for issue #1863. The advisory completion-summary node must never
@@ -11729,7 +11729,7 @@ export class TaskExecutor {
     */
     if (live.deletedAt) return false;
     if (live.paused || live.userPaused === true) return false;
-    if (live.column === "done" || live.column === "archived") return false;
+    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     const hasImplementationProgress =
       (live.currentStep ?? 0) > 0
       || (live.steps ?? []).some((step) => step.status === "done" || step.status === "in-progress" || step.status === "skipped");
