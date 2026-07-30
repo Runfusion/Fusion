@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 
 /**
@@ -161,6 +162,22 @@ function nearestRankPercentile(sortedValues: readonly number[], percentile: numb
 export async function aggregateProductivityAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: ProductivityAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:20:
+  The store, used ONLY to resolve which columns carry the `complete` trait.
+
+  The duration query filtered on `"column" = 'done'`. That id lives inside a SQL string, which the
+  lifecycle census cannot see (it parses TypeScript comparisons), so the sweep that converted this
+  file's TS guards left it alone and the file scored as converted. On a renamed board the
+  task-duration distribution — median, p90, the whole spread — is computed from an EMPTY row set and
+  reports zeros while the project ships work.
+
+  Resolved per PROJECT: this aggregates a whole project, so the union of the complete columns across
+  its workflows is the right set and a bound IN list is enough.
+
+  Omitted, the legacy id answers, so an unconverted caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<ProductivityAnalytics> {
   // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
   // Backend (PostgreSQL) path. The async connection does not put `project` on
@@ -172,7 +189,7 @@ export async function aggregateProductivityAnalytics(
   // epoch ms. Semantics (range columns, COALESCE/SUM/COUNT, statsRows gate, LOC
   // unavailable sentinel, duration percentiles) mirror the sync branch exactly.
   if ("ping" in dbOrLayer) {
-    return aggregateProductivityAnalyticsAsync(dbOrLayer, query);
+    return aggregateProductivityAnalyticsAsync(dbOrLayer, query, laneStore);
   }
   const db = dbOrLayer as Database;
   // Modified files: read the JSON array off tasks updated in range.
@@ -347,7 +364,14 @@ export async function aggregateProductivityAnalytics(
 async function aggregateProductivityAnalyticsAsync(
   layer: AsyncDataLayer,
   query: ProductivityAnalyticsQuery,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<ProductivityAnalytics> {
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
+     into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
+  const completeIn = sql.join(completeLanes.map((lane) => sql`${lane}`), sql`, `);
   // Modified files: tasks updated in range whose modified_files is a non-empty
   // jsonb array. postgres-js returns jsonb already parsed.
   const mfFrom = query.from !== undefined ? sql`AND updated_at >= ${query.from}` : sql``;
@@ -403,7 +427,7 @@ async function aggregateProductivityAnalyticsAsync(
   const durationRows = (await layer.db.execute(
     sql`SELECT cumulative_active_ms AS "cumulativeActiveMs", cumulative_planning_ms AS "cumulativePlanningMs", execution_completed_at AS "executionCompletedAt"
         FROM project.tasks
-        WHERE "column" = 'done'
+        WHERE "column" IN (${completeIn})
           AND execution_completed_at IS NOT NULL
           AND (COALESCE(cumulative_active_ms, 0) + COALESCE(cumulative_planning_ms, 0)) > 0
           ${dFrom} ${dTo}
