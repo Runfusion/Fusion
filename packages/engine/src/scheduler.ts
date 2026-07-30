@@ -40,7 +40,8 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole } from "@fusion/core";
+import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
 import { moveTaskToReplanColumn } from "./replan-target.js";
@@ -1668,27 +1669,36 @@ export class Scheduler {
           workflowIdByTaskId.set(task.id, "builtin:coding");
         }
       }));
-      // Per distinct workflow: columnId → countsTowardWip flag; null when the IR
-      // failed to resolve or has no v2 columns (forces the literal fallback).
-      const wipFlagsByWorkflowId = new Map<string, Map<string, boolean> | null>();
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (fleet conversion, scheduler.ts):
+      Per distinct workflow: columnId → resolved trait flags; null when the IR failed to resolve or
+      has no v2 columns, which leaves every lookup undefined and defers to the helper's documented
+      degraded mode.
+
+      Was a hand-rolled copy of `isWipColumnRole`: it stored only `countsTowardWip` as a boolean and
+      re-implemented flags-first-then-legacy-id inline. Storing the flags object instead lets the
+      shared predicate decide, so this scheduler and the role helpers cannot drift on what "counts as
+      WIP" means. Behaviour is identical in all four states — column present with the flag true or
+      false (flags win), column absent from a resolved IR, and IR resolution failed (both fall back
+      to the legacy id).
+      */
+      const columnFlagsByWorkflowId = new Map<string, Map<string, ColumnRoleTraitFlags> | null>();
       for (const workflowId of new Set(workflowIdByTaskId.values())) {
         try {
           const ir = await resolveWorkflowIrById(this.store, workflowId, wipIrCache);
           const columns = (ir as WorkflowIrV2).columns;
-          wipFlagsByWorkflowId.set(
+          columnFlagsByWorkflowId.set(
             workflowId,
-            columns ? new Map(columns.map((c) => [c.id, resolveColumnFlags(c).countsTowardWip === true])) : null,
+            columns ? new Map(columns.map((c) => [c.id, resolveColumnFlags(c)])) : null,
           );
         } catch {
-          wipFlagsByWorkflowId.set(workflowId, null);
+          columnFlagsByWorkflowId.set(workflowId, null);
         }
       }
-      const isWipColumnTask = (task: Task): boolean => {
-        const flags = wipFlagsByWorkflowId.get(workflowIdByTaskId.get(task.id) ?? "builtin:coding");
-        const wip = flags?.get(task.column);
-        if (wip !== undefined) return wip;
-        return task.column === "in-progress";
-      };
+      const columnFlagsForTask = (task: Task): ColumnRoleTraitFlags | undefined =>
+        columnFlagsByWorkflowId.get(workflowIdByTaskId.get(task.id) ?? "builtin:coding")?.get(task.column);
+      const isWipColumnTask = (task: Task): boolean =>
+        isWipColumnRole(columnFlagsForTask(task), task.column);
       const wipTaskIds = tasks.filter(isWipColumnTask).map((task) => task.id);
       let reservedWorktreeSlots = wipTaskIds.length;
       let reservedConcurrentSlots = reservedWorktreeSlots;
