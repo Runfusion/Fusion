@@ -35,6 +35,24 @@ its own right, and a guard written as `task.paused` alone would pass every other
 
 const WF = "custom:paused-dispatch";
 
+/*
+FNXC:TaskDispatch 2026-07-31-01:35 (PR #2779 review — greptile P2):
+Each `createStore` mints a temp tasks dir for the planned spec, so without this every local and CI
+run leaves `fusion-paused-dispatch-*` directories behind in the OS temp dir forever.
+
+Removed by exact recorded path — never by scanning the temp root. AGENTS.md forbids an unbounded
+walk of $TMPDIR//var/folders, and this file has no need of one: it created these paths, so it knows
+them. `force` keeps teardown quiet if a case never got as far as seeding. Per-test rather than per-file so
+nothing accumulates even across a long run.
+*/
+const seededTaskDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of seededTaskDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-PARKED",
@@ -86,6 +104,7 @@ function createStore(task: Task, freshTask: Task | null = null, settings: Partia
   `isUnplannedSeedPrompt` predicate, so a future change to the heuristic fails loudly here.
   */
   const tasksDir = mkdtempSync(join(tmpdir(), "fusion-paused-dispatch-"));
+  seededTaskDirs.push(tasksDir);
   /*
   FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
   Every `createStore` call seeds a real spec on disk, and nothing removed it, so each local and CI
