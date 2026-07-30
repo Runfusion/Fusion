@@ -3391,7 +3391,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      if (task && task.column !== "in-review") {
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:15 (fleet): the merge lane by ROLE — a wedged
+         merge is detected by the owning card having LEFT review, which a literal cannot see on a
+         renamed board (every card looks like it left, so every active merge looks wedged). */
+      const wedgedReviewLane = await this.resolveReviewColumn(task?.id ?? activeId);
+      if (task && task.column !== wedgedReviewLane) {
         const aborted = this.options.abortActiveMerge?.(activeId, "wedged-active-merge-left-in-review") ?? false;
         if (aborted) {
           log.warn(`Force-aborted wedged active merge ${activeId}: task column is ${task.column}`);
@@ -3427,7 +3431,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         limitMs: timeoutMs,
         status: task?.status ?? null,
       });
-      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
+      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === wedgedReviewLane) {
         try {
           this.options.enqueueMerge?.(activeId);
         } catch (enqueueErr: unknown) {
@@ -5871,8 +5875,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     let recovered = 0;
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:15 (fleet): holder must be in the WIP lane and the
+       dependency in the hold lane; both resolved per task, both with their own legacy fallback. */
     for (const holder of tasks) {
-      if (holder.column !== "in-progress") continue;
+      if (holder.column !== await this.resolveWipColumn(holder.id)) continue;
       if (holder.paused === true || holder.userPaused === true) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
@@ -5891,7 +5897,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           deadlockEvidence = "stale-overlap-blocker";
           break;
         }
-        if (dependency.column !== "todo") continue;
+        if (dependency.column !== (await this.resolvePreWipColumns(dependency.id, new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>())).hold) continue;
         const dependencyScope = await getFilteredFileScope(dependency.id);
         if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
         if (pathsOverlap(holderScope, dependencyScope)) {
@@ -6905,8 +6911,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let detected = 0;
       const seen = new Set<string>();
 
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-18:15 (fleet): terminal lanes by role — a finished
+         card is not a stalled card, and on a renamed board the literal made every finished card a
+         stall candidate. */
+      const stallLaneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       for (const task of tasks) {
-        if (task.column === "done" || task.column === "archived") continue;
+        const stallLanes = await (async () => {
+          try {
+            return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id, stallLaneCache));
+          } catch {
+            return undefined;
+          }
+        })();
+        if (task.column === (stallLanes?.complete ?? "done") || task.column === (stallLanes?.archived ?? "archived")) continue;
         if (task.paused === true || task.userPaused === true) continue;
         if (executingIds.has(task.id) || executingTaskLock.has(task.id)) continue;
         if (this.options.isTaskActive?.(task.id) === true) continue;
