@@ -180,6 +180,33 @@ describe("GitHubTrackingStateService", () => {
       expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "not_planned");
     });
 
+    it("closes the issue from a SECOND complete lane, not just the first", async () => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (PR #2754 review — greptile):
+      `LifecycleColumns` names ONE column per role by design (#2721), so a workflow declaring `complete`
+      on two columns had the second invisible: a card moved there left its linked GitHub issue OPEN, with
+      no error and nothing in the log to notice. Core's `resolveTerminalColumns` is the same singular
+      pair, so the flag SETS are the membership answer.
+      */
+      const TWO_COMPLETE_IR = {
+        ...RENAMED_IR,
+        columns: [
+          ...RENAMED_IR.columns,
+          { id: "shipped-two", name: "Shipped 2", traits: [{ trait: "complete" }] },
+        ],
+      };
+      const s = Object.assign(new MockStore(), {
+        getTaskWorkflowSelection: () => ({ workflowId: "custom:renamed", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: TWO_COMPLETE_IR }),
+      });
+      new GitHubTrackingStateService(s as unknown as TaskStore).start();
+
+      s.emit("task:moved", { task: createTask(), from: "building", to: "shipped-two" });
+      await flushAsync();
+
+      expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
+    });
+
     it("does nothing for a move between two lanes that play neither terminal role", async () => {
       // Non-vacuous: the resolved classifier must still return null for non-terminal moves.
       const s = renamedStore();

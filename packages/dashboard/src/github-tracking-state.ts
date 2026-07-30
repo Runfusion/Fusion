@@ -2,7 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
 import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { columnsWithFlag, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
@@ -202,10 +202,28 @@ export class GitHubTrackingStateService {
       return;
     }
 
-    const lifecycle = await resolveTaskLifecycleColumns(store, event.task.id);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (PR #2754 review — greptile):
+    EVERY TERMINAL LANE, NOT THE FIRST ONE. `LifecycleColumns` names one column per role by design
+    (#2721 pinned that), so a workflow declaring `complete` or `archived` on two columns had the second
+    invisible here: moving a card there left the linked GitHub issue OPEN, and moving it back out never
+    reopened one.
+
+    Core's `resolveTerminalColumns` does not help — it is the same singular pair, one `complete` and one
+    `archived`. The flag sets are the membership answer.
+
+    RESOLUTION FAILURE vs A RESOLVED ABSENCE, the distinction this program keeps paying for (#2731,
+    #2733, #2734): `ir === undefined` means the workflow could not be READ, and the legacy ids are the
+    only answer available. A resolved IR that declares no complete lane is an ANSWER — moving a card
+    somewhere is not "completing" it on a board with no completion lane — so the empty set is used as-is
+    rather than falling back to `done`.
+    */
+    const ir = await resolveWorkflowIrForTask(store, event.task.id).catch(() => undefined);
+    const completeLanes = ir === undefined ? undefined : columnsWithFlag(ir, "complete");
+    const archivedLanes = ir === undefined ? undefined : columnsWithFlag(ir, "archived");
     const decision = decideIssueAction(event.from, event.to, (columnId) => ({
-      complete: columnId === (lifecycle?.complete ?? "done"),
-      archived: columnId === (lifecycle?.archived ?? "archived"),
+      complete: completeLanes === undefined ? columnId === "done" : completeLanes.includes(columnId),
+      archived: archivedLanes === undefined ? columnId === "archived" : archivedLanes.includes(columnId),
     }));
     if (!decision) {
       return;
