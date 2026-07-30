@@ -92,25 +92,6 @@ const ALLOWED_OMISSIONS = new Map([
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
       + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
   ],
-  /*
-  The five engine sites below became VISIBLE only when barrel imports stopped being filtered out.
-  They are not new defects; they were always there and the check could not see them.
-
-  NOTE ON KEY GRANULARITY: the key is <file>::<function>, so a file with two omitting calls is
-  exempted for both. self-healing.ts and triage.ts each have more than one. That is coarser than I
-  would like and it is recorded rather than hidden — a second omission added to either file would be
-  covered by an entry written for the first.
-  */
-  [
-    "packages/engine/src/self-healing.ts::isNearDuplicateCanonicalInactive",
-    "TEMPORARY: engine-owned; reported on #2785. Two sites (the stale-marker sweep and the duplicate "
-      + "reconcile) pass the canonical alone, so a canonical resting in a RENAMED active column reads "
-      + "as inactive and its dependants' markers are cleared against live work.",
-  ],
-  [
-    "packages/engine/src/triage.ts::isNearDuplicateCanonicalInactive",
-    "TEMPORARY: engine-owned; reported on #2785. Three sites, same shape as the self-healing pair.",
-  ],
   [
     "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
     "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
