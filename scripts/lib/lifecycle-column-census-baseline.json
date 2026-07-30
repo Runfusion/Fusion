@@ -8,7 +8,6 @@
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
     "packages/engine/src/notification/notification-service.ts": 9,
-    "packages/core/src/default-workflow-hooks.ts": 7,
     "packages/dashboard/app/components/Column.tsx": 7,
     "packages/core/src/live-agent-count.ts": 6,
     "packages/core/src/task-merge.ts": 6,
