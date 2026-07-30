@@ -1040,8 +1040,21 @@ export class NotificationService {
     Reached only after the transient-merge and wedge classifications above have both declined to
     suppress, so this is already the narrow tail of the deferred-failure path.
     */
-    const deferredLifecycle = await this.resolveLifecycleColumnsForTask(task.id);
-    const isTerminal = task.paused === true || task.column === (deferredLifecycle?.review ?? "in-review");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site, which my own
+    first pass missed):
+    Same defect as the moved-to-review guard above: `.review` reads `mergeOrchestration` only, so a
+    lane carrying `human-review` alone resolved to nothing and this fell back to the literal. Under
+    `failureNotificationMode: "terminal-only"` that means a task failing in a renamed review lane is
+    not treated as terminal, and its failure notification is deferred forever.
+
+    Recording that I fixed one site and shipped the other: I converted the moved-to-review guard and
+    did not grep this file for the remaining `.review` reads — the exact Surface Enumeration failure I
+    had been flagging in other people's PRs the same day. Both reads in this file now go through the
+    same set.
+    */
+    const isTerminal = task.paused === true
+      || (await this.resolveReviewColumnsForTask(task.id)).has(task.column);
     if (this.failureNotificationMode === "terminal-only" && !isTerminal) {
       this.failureNotificationSuppressedCount += 1;
       schedulerLog.debug(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);

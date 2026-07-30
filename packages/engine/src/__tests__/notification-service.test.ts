@@ -1343,6 +1343,49 @@ describe("NotificationService", () => {
     vi.useRealTimers();
   });
 
+  it("treats a RENAMED human-review lane as terminal, so the failure is not deferred forever", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site in this file):
+    Under a deferred failure mode, `isTerminal` decided whether a failure notification fires now or
+    waits. It read `.review`, which is `mergeOrchestration`-only, so a task failing in a lane carrying
+    `human-review` alone was never terminal and its notification was deferred indefinitely.
+
+    I fixed the moved-to-review guard in the first pass and shipped this one — the Surface Enumeration
+    failure I had been flagging in other people's PRs the same day. Both reads in the file now go
+    through the same set, and this pins the second.
+    */
+    vi.useFakeTimers();
+    const HUMAN_REVIEW_IR = {
+      version: "v2", id: "wf-hr", name: "Human review",
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "building" }], edges: [],
+    };
+    /* `terminal-only` is the mode `isTerminal` actually gates — my first version used `sticky-only`,
+       where the flag is not consulted, so the case passed with the bug still in place. */
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "terminal-only", failureNotificationDelayMs: 50 }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-hr" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-hr" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-hr", ir: HUMAN_REVIEW_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification } as never);
+    await service.start();
+
+    const failed = task({ id: "FN-1", status: "failed", column: "signoff" });
+    (store as { setTask: (t: unknown) => void }).setTask(failed);
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:updated", failed);
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(sendNotification).toHaveBeenCalledWith("failed", expect.anything());
+    await service.stop();
+    vi.useRealTimers();
+  });
+
   it("dispatches failed once when failure persists beyond grace window", async () => {
     vi.useFakeTimers();
     const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "sticky-only", failureNotificationDelayMs: 50 });
