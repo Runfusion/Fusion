@@ -84,6 +84,31 @@ MONOTONIC, which the #2723 review round argued about: a column carrying BOTH `hu
 `mergeOrchestration` is included. Adding a trait must never remove a lane from this set, or a card
 stops counting as in review because its column gained an unrelated capability.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:30 (a flaw in this helper as merged, found by trying to
+migrate its consumers onto it):
+THIS IS THE BROAD SET, AND IT IS THE WRONG ANSWER FOR STATE-CHANGING ADMISSION.
+
+Two different questions were being answered by one name:
+
+  BROAD   "is this card in a lane where review happens?"  -> every mergeOrchestration lane, plus every
+          mergeBlocker and humanReview lane. Safe when over-admission is harmless: notifications, badges,
+          read-only surfaces. This function.
+
+  NARROW  "is this card in THE review lane the engine acts on?" -> `resolveLifecycleColumns().review` is
+          `columnsWithFlag(ir, "mergeOrchestration")[0]`, ONE lane, and that is what the executor, the
+          scheduler and project-engine act on. A caller that ADMITS on the broad set and then MOVES the
+          card will move cards the engine does not consider in review.
+
+`register-task-workflow-routes.ts` keeps its own narrower resolver for exactly that reason (#2723): its
+re-engagement moves the card, so admitting a SECOND merge lane is a state change the engine will not
+agree with. That local copy is not drift from this helper — it is the other question, and migrating it
+onto this one would reintroduce the over-admission its review round reasoned away.
+
+Stated here because the name does not carry the distinction: a future consumer reaching for "the review
+columns" on a state-changing path wants the narrow form. The pair below is pinned in
+`workflow-lifecycle-traits.test.ts`.
+*/
 export function resolveReviewColumns(ir: WorkflowIr): string[] {
   return [...new Set([
     ...columnsWithFlag(ir, "mergeOrchestration"),

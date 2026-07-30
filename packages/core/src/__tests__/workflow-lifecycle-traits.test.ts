@@ -405,6 +405,32 @@ describe("resolveReviewColumns", () => {
     expect(resolveReviewColumns(ir([{ id: "building", traits: [{ trait: "wip" }] }]))).toEqual([]);
   });
 
+  it("is BROADER than `.review` on a board with two merge lanes — the distinction callers must choose between", () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-11:30:
+    Pinned because one NAME was answering two questions, and the difference only appears on a board that
+    declares `mergeOrchestration` twice — which no default lineage does.
+
+      BROAD  (this helper)                every merge lane, plus mergeBlocker/humanReview lanes.
+                                          Safe where over-admission is harmless: notifications, badges.
+      NARROW (`resolveLifecycleColumns`)  the FIRST merge lane only — what the executor, scheduler and
+                                          project-engine act on.
+
+    A caller that admits on the broad set and then MOVES the card moves cards the engine does not consider
+    in review. `register-task-workflow-routes.ts` keeps its own narrower resolver for that reason (#2723);
+    this test is what stops someone "consolidating" the two and silently re-admitting the second lane.
+    */
+    const twoMergeLanes = ir([
+      { id: "building", traits: [{ trait: "wip" }] },
+      { id: "merge-gate", traits: [{ trait: "merge" }] },
+      { id: "second-gate", traits: [{ trait: "merge" }] },
+    ]);
+
+    expect(resolveReviewColumns(twoMergeLanes)).toEqual(["merge-gate", "second-gate"]);
+    // The engine's answer is ONE lane, and it is the first.
+    expect(resolveLifecycleColumns(twoMergeLanes)?.review).toBe("merge-gate");
+  });
+
   it("agrees with the shipped coding workflow", () => {
     expect(resolveReviewColumns(BUILTIN_CODING_WORKFLOW_IR)).toContain("in-review");
   });
