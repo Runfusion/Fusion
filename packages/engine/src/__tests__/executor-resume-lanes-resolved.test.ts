@@ -115,6 +115,43 @@ describe("resume lanes come from the task's own workflow", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-15:30 (PR #2760 review — greptile P1):
+  The regression this nearly shipped. A v1 workflow upgraded in place synthesizes its columns with
+  `traits: []`, so `resolveLifecycleColumns` returns `{}` and NO lane is declared. A naive
+  `wipDeclared = lifecycle?.wip !== undefined` reads that as "this workflow has no implementation
+  lane" and the resume router declines — terminalizing every legacy custom workflow's graph-failure
+  recovery instead of resuming it.
+
+  Measured, not assumed: parsing a v1 IR yields
+  `[{id:"triage",traits:[]},{id:"todo",traits:[]},{id:"in-progress",traits:[]},...]`.
+
+  So `wipDeclared` is TRUE when the IR expresses no lifecycle intent at all, and false only when it
+  declares lanes and omits wip — the case in executor-execution-policy-renamed-columns.
+  */
+  it("treats an untraited (v1-upgraded) board as HAVING an implementation lane", async () => {
+    const untraited = {
+      version: "v2",
+      id: "WF-legacy",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "triage", name: "triage", traits: [] },
+        { id: "todo", name: "todo", traits: [] },
+        { id: "in-progress", name: "in-progress", traits: [] },
+        { id: "in-review", name: "in-review", traits: [] },
+      ],
+    } as unknown as WorkflowIr;
+    const h = harness(untraited);
+
+    await expect(h.lanes("FN-1")).resolves.toEqual({
+      hold: "todo",
+      wip: "in-progress",
+      review: "in-review",
+      wipDeclared: true,
+    });
+  });
+
   it("falls back to the legacy trio when no workflow resolves", async () => {
     // A v1 / column-less workflow has no vocabulary to read, so the legacy names ARE the answer
     // and the default lineage behaves exactly as before.

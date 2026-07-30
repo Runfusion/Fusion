@@ -10680,14 +10680,27 @@ export class TaskExecutor {
         wip: lifecycle?.wip ?? "in-progress",
         review: lifecycle?.review ?? "in-review",
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-30-14:20:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-15:30 (PR #2760 review — greptile P1):
         Whether the resolved IR actually DECLARES an implementation lane, which the `?? "in-progress"`
-        default above destroys. Two different states were collapsing into one: an IR that failed to
-        resolve (defaulting is right — see the catch below) and an IR that resolved and declares NO wip
-        column (defaulting invents a lane the workflow does not have). Callers that must not act
-        without a real implementation lane read this instead of comparing against the default.
+        default above destroys. Callers that must not act without a real implementation lane read this
+        instead of comparing against the default.
+
+        THREE states, not two, and conflating the last two is a regression:
+          a. wip declared                        -> true
+          b. lifecycle lanes declared, wip NOT   -> FALSE; the workflow genuinely has no implementation
+                                                   lane, so there is nowhere to resume TO
+          c. NO lifecycle lane declared at all   -> true; this is a v1 workflow upgraded in place. Its
+                                                   synthesized columns carry `traits: []`, so
+                                                   `resolveLifecycleColumns` returns `{}` — measured, not
+                                                   assumed — and treating that as "no wip lane" would
+                                                   terminalize every legacy custom workflow's
+                                                   graph-failure recovery instead of resuming it.
+
+        The discriminator is whether the IR expresses lifecycle intent AT ALL. An untraited legacy board
+        expresses none, so the legacy trio is the honest answer and today's behaviour is preserved.
         */
-        wipDeclared: lifecycle?.wip !== undefined,
+        wipDeclared: lifecycle?.wip !== undefined
+          || (lifecycle?.hold === undefined && lifecycle?.review === undefined),
       };
       if (memo) memo.lanes = lanes;
       return lanes;
