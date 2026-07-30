@@ -117,19 +117,89 @@ describe("a named selection that does not actually resolve is a default", () => 
     expect(resolved.workflowId).toBeUndefined();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:15 (#2815 review — greptile):
+  THE FOURTH DEGRADATION PATH — a BUILT-IN id that is not registered.
+
+  The three cases around this one all go through `store.getWorkflowDefinition`. A workflow id that
+  LOOKS built-in never does: `resolveWorkflowIrById` takes the `isBuiltinWorkflowId` branch, calls
+  `getBuiltinWorkflow`, and on a miss silently returns the default coding IR. That miss was the one
+  path that never got the fallback brand, so provenance reported `selection` for an IR that is a
+  guess — and a caller gated on that signal trusts default lanes as the board's own.
+
+  Reachable in production: a plugin-registered workflow whose plugin is no longer loaded, or an id
+  recorded by a newer build than the one reading it.
+  */
+  it("reports `default` when the selection names an UNREGISTERED built-in id", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      {
+        getTaskWorkflowSelectionAsync: async () => ({ workflowId: "builtin:no-such-workflow", stepIds: [] }),
+        getTaskWorkflowSelection: () => ({ workflowId: "builtin:no-such-workflow", stepIds: [] }),
+        getWorkflowDefinition: async () => undefined,
+      } as never,
+      "FN-1",
+    );
+
+    expect(resolved.source).toBe("default");
+    /* And it must not name a workflow it did not actually resolve. */
+    expect(resolved.workflowId).toBeUndefined();
+  });
+
   it("reports `default` when the definition lookup THROWS", async () => {
     const resolved = await resolveWorkflowIrForTaskWithProvenance(
       { ...base, getWorkflowDefinition: async () => { throw new Error("db down"); } } as never, "FN-1");
     expect(resolved.source).toBe("default");
   });
 
-  it("reports `default` when the stored definition resolves to a DIFFERENT workflow", async () => {
-    /* Identity, not hope: a returned IR whose id is not the selected one is a fallback however
-       it arose, so this catches degradation paths added later without touching this test. */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:50 (#2815 review — the brand must not leak between tasks):
+
+  A FALLBACK FOR ONE TASK MUST NOT MARK EVERY LATER RESOLUTION.
+
+  `resolveDefaultWorkflowIr()` returns a SHARED object, so branding it in place marked the singleton
+  itself: after any task anywhere hit a fallback, every subsequent resolution of `builtin:coding`
+  reported `default` — including a task that genuinely selected the default workflow. Process-wide,
+  permanent, and invisible, because the brand is non-enumerable and survives no dump or deep-equal.
+
+  It also made the unregistered-builtin case above unfalsifiable: the object under assertion had
+  already been branded by an earlier case in this file, so the mark could be deleted with the suite
+  still green. Ordering matters here — the fallback runs FIRST, deliberately.
+  */
+  it("does not leak the fallback brand onto a later legitimate default selection", async () => {
+    const selecting = (workflowId: string) => ({
+      getTaskWorkflowSelectionAsync: async () => ({ workflowId, stepIds: [] }),
+      getTaskWorkflowSelection: () => ({ workflowId, stepIds: [] }),
+      getWorkflowDefinition: async () => undefined,
+    });
+
+    const fellBack = await resolveWorkflowIrForTaskWithProvenance(selecting("custom:missing") as never, "FN-1");
+    expect(fellBack.source).toBe("default");
+
+    /* `builtin:coding` resolves for real, so it is a selection — not collateral from the line above. */
+    const legitimate = await resolveWorkflowIrForTaskWithProvenance(selecting("builtin:coding") as never, "FN-2");
+    expect(legitimate.source).toBe("selection");
+    expect(legitimate.workflowId).toBe("builtin:coding");
+  });
+
+  it("reports `selection` when the stored IR carries an id different from the selection", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (#2815 review — repointed at the shipped contract):
+
+    This asserted `default`, against the id cross-check this PR DELETES, and it was left red by that
+    deletion. The expectation is now inverted because the check was wrong in the direction that
+    matters: `createWorkflowDefinition` stores an authored IR VERBATIM, so `ir.id` keeps whatever the
+    author wrote while the store allocates its own `WF-NNN`. Those two are unequal for EVERY such
+    workflow, so the check reported a guess for every custom board — denying trust to exactly the
+    boards the provenance API exists to serve.
+
+    Provenance now comes from the resolver's own fallback brand, not from comparing ids after the
+    fact, so a genuinely-resolved definition is a selection regardless of what its IR calls itself.
+    */
     const resolved = await resolveWorkflowIrForTaskWithProvenance(
-      { ...base, getWorkflowDefinition: async () => ({ id: "other", ir: { version: "v2", id: "other", nodes: [], edges: [], columns: [] } }) } as never,
+      { ...base, getWorkflowDefinition: async () => ({ id: "other", ir: { version: "v2", id: "other", nodes: [], edges: [], columns: [{ id: "inbox", traits: [{ trait: "intake" }] }] } }) } as never,
       "FN-1");
-    expect(resolved.source).toBe("default");
+    expect(resolved.source).toBe("selection");
+    expect(resolved.workflowId).toBe(WF);
   });
 
   it("still reports `selection` when the definition genuinely resolves", async () => {
