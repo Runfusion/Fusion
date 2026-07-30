@@ -88,22 +88,22 @@ An omission earns an entry only when supplying the argument would be WRONG, not 
 const ALLOWED_OMISSIONS = new Map([
   [
     "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
-    "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
+    { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
-      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
+      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site." },
   ],
   [
     "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
-    "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
+    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
       + "wrapper; the two moves.ts callers supply. So the automatic handoff-to-review path resolves "
-      + "the review column and the manual re-enqueue path does not.",
+      + "the review column and the manual re-enqueue path does not." },
   ],
   [
     "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",
-    "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
+    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
       + "wireable — `clearNearDuplicateReferencesToImpl` is async and already holds `store` and "
       + "`canonicalId`, so the canonical's own flags are one await away. Its five sibling call sites "
-      + "already supply, so on a renamed board this is the single path that answers from legacy ids.",
+      + "already supply, so on a renamed board this is the single path that answers from legacy ids." },
   ],
 ]);
 
@@ -323,17 +323,45 @@ for (const [fn, { file, arity }] of declared) {
   A partially-supplied seam is the harder defect of the two. A wholly-unsupplied one is at least
   uniformly wrong; this one works on the board you tested and degrades on the column you did not.
   */
-  const omitting = sites
-    .filter((site) => site.args < arity)
-    .filter((site) => !ALLOWED_OMISSIONS.has(`${site.file}::${fn}`));
+  /*
+  FNXC:InertFlagSeams 2026-07-31-03:10 (#2822 review — greptile):
+  AN EXEMPTION IS BOUNDED BY COUNT, NOT OPEN-ENDED.
+
+  `<file>::<function>` previously exempted EVERY call to that function in that file, so a later call
+  added without the flags was silently covered and the gate stayed green — an exemption that grows to
+  fit whatever arrives is not an exemption, it is a hole. That is the same defect this gate exists to
+  catch (`isTaskStuck` shipped two of three sites unsupplied and the gate was green), one level up in
+  the gate itself.
+
+  Each entry now records HOW MANY omissions were reviewed. Extras beyond that count are reported like
+  any other unsupplied site, so adding a call site cannot inherit someone else's review.
+  */
+  const omittingAll = sites.filter((site) => site.args < arity);
+  const usedPerKey = new Map();
+  const omitting = [];
+  for (const site of omittingAll) {
+    const key = `${site.file}::${fn}`;
+    const entry = ALLOWED_OMISSIONS.get(key);
+    if (entry === undefined) { omitting.push(site); continue; }
+    const used = usedPerKey.get(key) ?? 0;
+    if (used < entry.count) { usedPerKey.set(key, used + 1); continue; }
+    omitting.push(site);
+  }
 
   /* Same staleness rule as the name-level list: an exemption whose site now supplies is dead. */
-  for (const [key, reason] of ALLOWED_OMISSIONS) {
+  for (const [key, entry] of ALLOWED_OMISSIONS) {
     const [siteFile, siteFn] = key.split("::");
     if (siteFn !== fn) continue;
-    const site = sites.find((candidate) => candidate.file === siteFile);
-    if (!site) stale.push(`  ${key} — no such call site; remove its ALLOWED_OMISSIONS entry`);
-    else if (site.args >= arity) stale.push(`  ${key} — now supplied; remove its entry (${reason.slice(0, 40)}...)`);
+    const omittingHere = sites.filter((candidate) => candidate.file === siteFile && candidate.args < arity).length;
+    if (omittingHere === 0) {
+      stale.push(`  ${key} — no unsupplied call site remains; remove its ALLOWED_OMISSIONS entry`);
+    } else if (omittingHere < entry.count) {
+      /*
+      A count that overshoots is the same hazard in miniature: it silently pre-authorises an omission
+      that has not been reviewed. Narrow it in the change that fixed the site.
+      */
+      stale.push(`  ${key} — count is ${entry.count} but only ${omittingHere} site(s) omit; lower it`);
+    }
   }
   if (ALLOWED.has(fn)) {
     /*
