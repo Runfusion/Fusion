@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-20:25 (live on main):
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:25 (live on main):
 
 THE INVARIANT: "is this card already finished?" is answered from the task's own workflow, so a completed
 card is never rebounded out of its complete or archived lane.
@@ -99,7 +99,7 @@ function harness(ir: WorkflowIr | undefined, column: string, gate?: Promise<void
 
 describe("the terminal guard covers the ARCHIVED role and refuses to guess", () => {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-01-00:20 (reduced after #2568's fix landed on main):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-08:40 (reduced after #2568's fix landed on main):
 
   MAIN'S FIX IS BETTER THAN MINE AND SHIPPED FIRST, so the implementation here is main's: it routes through
   core's shared `resolveTerminalColumns` (which owns the per-role fallback) and re-reads the task after the
