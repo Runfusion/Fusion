@@ -77,8 +77,6 @@
     "packages/core/src/task-store/merge-queue-ops-2.ts": 1,
     "packages/core/src/task-store/merge-queue-ops.ts": 1,
     "packages/core/src/task-timing.ts": 1,
-    "packages/dashboard/app/components/DevServerView.tsx": 1,
-    "packages/dashboard/app/components/PrPanel.tsx": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/hooks/useTasks.ts": 1,
     "packages/dashboard/app/utils/quickAddStart.ts": 1,

@@ -839,7 +839,7 @@ export function MainContent({
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <DevServerView tasks={tasks} addToast={addToast} projectId={currentProject?.id} />
+          <DevServerView tasks={tasks} addToast={addToast} projectId={currentProject?.id} columnFlagsByTaskId={columnFlagsByTaskId} />
         </Suspense>
       </PageErrorBoundary>
     );

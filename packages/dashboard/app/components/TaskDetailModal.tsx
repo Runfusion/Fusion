@@ -5639,6 +5639,7 @@ export function TaskDetailContent({
                       prInfos={task.prInfos}
                       automationStatus={task.status ?? null}
                       taskColumn={task.column}
+                      taskColumnFlags={detailColumnFlags}
                       autoMerge={effectiveAutoMerge}
                       isManualPrFlow={isManualPrFlow}
                       directMergeCommitStrategy={settings?.directMergeCommitStrategy}
