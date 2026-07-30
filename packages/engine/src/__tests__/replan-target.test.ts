@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask } from "@fusion/core";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
@@ -253,14 +254,22 @@ describe("planning-stage guard", () => {
 });
 
 describe("resolveReplanTargetColumn", () => {
-  it("targets triage for the default Coding workflow", async () => {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-15:25 (U11 — post-#2515 audit):
+#2515 removed `triage` from the DEFAULT lineage, so the default workflow's replan
+column is now its merged Planning column, `todo`. `resolveReplanTargetColumn`
+already reads the IR rather than a literal, so it self-healed to the right answer
+and these expectations were the stale half — they were left RED on main by #2515.
+Updated to the post-merge truth, not loosened: each still pins one exact column.
+*/
+  it("targets the merged Planning column for the default Coding workflow", async () => {
     const store = storeWithSelection("builtin:coding");
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("targets triage when the task has no workflow selection", async () => {
+  it("targets the merged Planning column when the task has no workflow selection", async () => {
     const store = storeWithSelection(undefined);
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
   it("targets todo for Coding (Ideas), which declares no triage column", async () => {
@@ -268,22 +277,66 @@ describe("resolveReplanTargetColumn", () => {
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("falls back to triage for workflows declaring neither triage nor todo (never a custom column)", async () => {
-    // builtin:marketing declares ideation/backlog/drafting/... — no triage, no todo.
-    // A custom entry column would strand the needs-replan card (triage only scans
-    // "triage" and "todo") and the legacy move path throws on custom targets.
+  it("targets a workflow's OWN hold column when it declares neither legacy id", async () => {
+    /*
+    FNXC:ReplanTargetR7 2026-07-29-23:50:
+    CONTRACT CHANGED — deliberately, and this expectation edit IS the change rather
+    than churn around it. This asserted `"triage"` for builtin:marketing, which
+    declares ideation/backlog/drafting/... and NO triage column: the engine moved the
+    card into a column the workflow does not declare, which is the R7 violation
+    `reconcileUndeclaredTaskColumns` then cleaned up after.
+
+    The old note gave two reasons for preferring a wrong-but-legacy column, and both
+    are now obsolete: "triage only scans triage and todo" (discovery resolves the
+    task's own lanes via `resolvePlannerLanes`) and "the legacy move path throws on
+    custom targets" (a move out of a non-legacy source column resolves targets from
+    the task's own workflow adjacency, FN-7591).
+
+    Asserted as "a column this workflow declares" as well as by id, because the id is
+    incidental and the INVARIANT is what matters.
+    */
     const store = storeWithSelection("builtin:marketing");
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    const target = await resolveReplanTargetColumn(store, "FN-1");
+
+    expect(target).toBe("backlog");
+    const ir = await resolveWorkflowIrForTask(store as never, "FN-1");
+    expect((ir as unknown as { columns: Array<{ id: string }> }).columns.map((c) => c.id))
+      .toContain(target);
   });
 
-  it("falls back to triage when workflow resolution throws", async () => {
+  it("returns UNDEFINED for a workflow that declares no planning lane at all", async () => {
+    // Plan U5: "skipped with a log rather than moved arbitrarily". Inventing a column
+    // is what this change removes.
+    const store = {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:wip-only", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({
+        ir: {
+          version: "v2", id: "custom:wip-only", name: "wip-only", nodes: [], edges: [],
+          columns: [
+            { id: "building", name: "Wip", traits: [{ trait: "wip" }] },
+            { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+          ],
+        },
+      })),
+    } as unknown as TaskStore;
+
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBeUndefined();
+  });
+
+    /* Resolution failure no longer reaches the `triage` catch: the resolver swallows
+     the error and hands back the default IR, whose planner lane is now `todo`. The
+     two literal `return "triage"` fallbacks survive only for workflows that declare
+     neither column (see the marketing case above) — a pre-existing wart, since that
+     names a column the default lineage no longer has. Left for the owner of the
+     replan-target column policy rather than widened here. */
+  it("falls back to the default lineage planner when workflow resolution throws", async () => {
     const store = {
       getTaskWorkflowSelection: vi.fn(() => {
         throw new Error("boom");
       }),
       getWorkflowDefinition: vi.fn().mockRejectedValue(new Error("boom")),
     } as unknown as TaskStore;
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 });
 
@@ -325,7 +378,7 @@ moves.
 describe("replan bounces preserve the task worktree (FN-8603)", () => {
   const REPLAN_BOUNCE_ORIGINS = ["in-progress", "in-review", "done"] as const;
   const REPLAN_COLUMN_SHAPES = [
-    { workflowId: undefined, expected: "triage", label: "default Coding (triage replan column)" },
+    { workflowId: undefined, expected: "todo", label: "default Coding (merged Planning replan column, post-#2515)" },
     { workflowId: "builtin:coding-ideas", expected: "todo", label: "Coding (Ideas) (plan-in-place todo)" },
   ] as const;
 
@@ -355,5 +408,59 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
       "triage",
       expect.objectContaining({ preserveWorktree: true }),
     );
+  });
+});
+
+/*
+FNXC:ReplanTargetR7 2026-07-30-01:20 (PR #2598 review — greptile P1):
+`resolveReplanTargetColumn` returning `undefined` is only half a contract — what the
+CALLERS do with it is the other half, and a silent return there is worse than the R7
+move it replaced: `requestPreMergeOptionalStepFix` returns `true` unconditionally, so
+an unchanged row is reported to the graph as "remediation scheduled", the retry budget
+is never consumed, and the same failure recurs with nothing to stop it.
+
+These pin the contract at the seam rather than at each caller, because it is the seam
+every caller shares.
+*/
+describe("the no-declared-lane contract", () => {
+  function storeFor(columns: Array<Record<string, unknown>>): TaskStore {
+    return {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:x", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({
+        ir: { version: "v2", id: "custom:x", name: "x", nodes: [], edges: [], columns },
+      })),
+      moveTask: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+  }
+
+  const WIP_ONLY = [
+    { id: "building", name: "Wip", traits: [{ trait: "wip" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ];
+
+  it("resolves to undefined rather than inventing a column", async () => {
+    await expect(resolveReplanTargetColumn(storeFor(WIP_ONLY), "FN-1")).resolves.toBeUndefined();
+  });
+
+  it("does not move the card, and reports that it did not", async () => {
+    // The return value is what callers use as "where the card now is", so a silent
+    // no-op would be a lie they cannot detect.
+    const store = storeFor(WIP_ONLY);
+    const moved = await moveTaskToReplanColumn(store, { id: "FN-1", column: "building" });
+
+    expect(moved).toBeUndefined();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still moves and reports the column when a lane IS declared", async () => {
+    // The other side, so "never moves" cannot pass for "correctly refuses".
+    const store = storeFor([
+      { id: "drafting", name: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      ...WIP_ONLY,
+    ]);
+    const moved = await moveTaskToReplanColumn(store, { id: "FN-1", column: "building" });
+
+    expect(moved).toBe("drafting");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveWorktree: true });
   });
 });

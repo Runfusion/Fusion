@@ -108,9 +108,6 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
   const persistedConcurrencyRef = useRef<ConcurrencyValues>(DEFAULT_CONCURRENCY_VALUES);
   const pendingConcurrencyKeyRef = useRef<keyof ConcurrencyValues | null>(null);
   const concurrencyConfirmOpenRef = useRef(false);
-  const [pendingGlobalConcurrencyValue, setPendingGlobalConcurrencyValue] = useState<number | null>(null);
-  const [globalConcurrencyDirty, setGlobalConcurrencyDirty] = useState(false);
-  const globalConcurrencyConfirmOpenRef = useRef(false);
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: No activeWhen — the card is mounted only while visible, so it fetches on mount and flushes pending writes on unmount via the shared hook.
   const gc = useGlobalConcurrency();
 
@@ -234,81 +231,17 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
     setConcurrencySaveState("idle");
   };
 
-  const updateGlobalConcurrencyValue = (rawValue: string) => {
-    const nextValue = clamp(Number(rawValue), gc.min, gc.sliderMax);
-    setPendingGlobalConcurrencyValue(nextValue);
-    setGlobalConcurrencyDirty(true);
-  };
-
-  /*
-  FNXC:CommandCenter 2026-06-26-00:00:
-  The Command Center global-cap slider shares useGlobalConcurrency with the footer EngineControlMenu, so confirmation is card-local: drag into pending state, confirm once after settle, then call gc.setValue exactly once so the hook's existing debounce and footer behavior remain unchanged.
-  */
-  useEffect(() => {
-    if (!globalConcurrencyDirty || pendingGlobalConcurrencyValue === null || !gc.interactive || globalConcurrencyConfirmOpenRef.current) return;
-    const nextValue = pendingGlobalConcurrencyValue;
-    const persistedValue = gc.value;
-    const timeoutId = setTimeout(() => {
-      if (nextValue === persistedValue) {
-        setPendingGlobalConcurrencyValue(null);
-        setGlobalConcurrencyDirty(false);
-        return;
-      }
-
-      globalConcurrencyConfirmOpenRef.current = true;
-      void confirm({
-        title: t("commandCenter.controls.concurrency.confirmTitle", "Confirm concurrency change"),
-        message: t(
-          "commandCenter.controls.concurrency.confirmMessage",
-          "Change {{setting}} from {{oldValue}} to {{newValue}}?",
-          {
-            setting: t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent"),
-            oldValue: persistedValue,
-            newValue: nextValue,
-          },
-        ),
-        confirmLabel: t("commandCenter.controls.concurrency.confirmSave", "Save change"),
-        cancelLabel: t("commandCenter.controls.concurrency.confirmCancel", "Cancel"),
-      }).then((confirmed) => {
-        globalConcurrencyConfirmOpenRef.current = false;
-        if (confirmed) {
-          gc.setValue(String(nextValue));
-        }
-        setPendingGlobalConcurrencyValue(null);
-        setGlobalConcurrencyDirty(false);
-      });
-    }, CONCURRENCY_SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timeoutId);
-  }, [confirm, gc.interactive, gc.setValue, gc.value, globalConcurrencyDirty, pendingGlobalConcurrencyValue, t]);
-
   const effectiveGlobalPaused = globalPaused;
   const concurrencyValues = concurrencyState.data ?? DEFAULT_CONCURRENCY_VALUES;
   const globalCountsLoaded = gc.status === "loaded";
   const projectActive = gc.projectActiveCount(projectId);
-  const globalSliderValue = pendingGlobalConcurrencyValue ?? gc.value;
-  const globalSliderMax = Math.max(gc.sliderMax, globalSliderValue);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
-  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, globalSliderValue, gc.min, globalSliderMax);
   const projectUseMarkerRatio = getUseMarkerRatio(
     projectActive,
     concurrencyValues.maxConcurrent,
     CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min,
     maxConcurrentSliderMax,
   );
-  // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap.
-  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Explicit load-error branch — a failed initial load leaves saveState "idle", so the label otherwise fell through to "Ready" while the slider was disabled and an error alert shown.
-  const globalSaveLabel = gc.status === "loading" || gc.status === "idle"
-    ? t("commandCenter.controls.status.loading", "Loading…")
-    : gc.status === "error"
-    ? t("commandCenter.controls.status.loadError", "Load failed")
-    : gc.saveState === "saving"
-      ? t("commandCenter.controls.status.saving", "Saving…")
-      : gc.saveState === "saved"
-        ? t("commandCenter.controls.status.saved", "Saved")
-        : gc.saveState === "error"
-          ? t("commandCenter.controls.status.saveError", "Save failed")
-          : t("commandCenter.controls.status.ready", "Ready");
-
   /*
   FNXC:CommandCenter 2026-06-20-00:20:
   The concurrency card must reflect actual persisted scheduler settings, including values above the usual slider ranges, instead of silently clamping the readout. The slider max expands to the current persisted value so the numeric readout and input value remain truthful; user edits are still clamped into that input's current valid bounds before saving.
@@ -404,59 +337,29 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
           </div>
           <div className="cc-controls-sliders">
             {/*
-            FNXC:GlobalConcurrencyControls 2026-06-25-14:10:
-            Operators need to adjust the global cross-project concurrency cap from the footer engine menu and the dashboard Concurrency card, not just the Settings modal; global cap is distinct from per-project maxConcurrent and persists via the central /api/global-concurrency endpoint.
+            FNXC:CapacityModel 2026-07-28-23:45 (drop the cross-project cap — settings half):
+            The Global Max Concurrent SLIDER is deleted: the machine-wide cap it wrote no
+            longer exists (capacity is two numbers PER PROJECT) and its PUT route is gone.
+            A slider that persists nothing is worse than no slider.
+
+            The live "N running (all projects)" READOUT is kept, moved onto the
+            per-project row below. It is telemetry, not a limit — "how busy is this
+            machine?" is still a real question once the cap that used to answer it is gone.
             */}
-            {/**
-              FNXC:GlobalConcurrencyControls 2026-06-26-00:00:
-              The Command Center Concurrency card mirrors the footer's read-only utilization readouts from the shared global-concurrency hook. These counts are display-only capacity context and must never write running-agent totals back to settings.
-            */}
-            <label className="cc-controls-slider cc-controls-slider--global" htmlFor="cc-global-max-concurrent">
-              <span className="cc-controls-slider-label">
-                {t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent")}
-                <strong>{globalSliderValue}</strong>
-              </span>
-              <small className="cc-controls-slider-caption">{t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects")}</small>
-              {globalCountsLoaded ? (
-                <small className="cc-controls-slider-caption" data-testid="cc-global-running">
-                  {t("commandCenter.controls.concurrency.runningGlobal", "{{count}} running (all projects)", { count: gc.currentlyActive })}
-                </small>
-              ) : null}
-              <span className="cc-controls-range-wrap">
-                <input
-                  id="cc-global-max-concurrent"
-                  className="cc-controls-touch-slider"
-                  type="range"
-                  min={gc.min}
-                  max={globalSliderMax}
-                  value={globalSliderValue}
-                  disabled={!gc.interactive}
-                  onChange={(event) => updateGlobalConcurrencyValue(event.target.value)}
-                />
-                {globalCountsLoaded ? (
-                  <span
-                    className="status-dot status-dot--online cc-controls-use-marker"
-                    style={getUseMarkerStyle(globalUseMarkerRatio)}
-                    data-testid="cc-global-use-marker"
-                    aria-hidden="true"
-                  />
-                ) : null}
-              </span>
-              {/* FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Surface the shared cap's save-state (and a fetch-error message that the card previously lacked) so operators see Saving…/Saved/Save failed and know when the slider is non-interactive due to a load failure. */}
-              <span className={`cc-controls-save-state cc-controls-save-state--${gc.saveState}`} aria-live="polite">
-                {globalSaveLabel}
-              </span>
-              {gc.status === "error" ? <small className="cc-controls-error" role="alert">{t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings")}</small> : null}
-            </label>
             <label className="cc-controls-slider" htmlFor="cc-max-concurrent">
               <span className="cc-controls-slider-label">
                 {t("commandCenter.controls.concurrency.maxConcurrent", "Max concurrent tasks")}
                 <strong>{concurrencyValues.maxConcurrent}</strong>
               </span>
               {globalCountsLoaded ? (
-                <small className="cc-controls-slider-caption" data-testid="cc-project-running">
-                  {t("commandCenter.controls.concurrency.runningProject", "{{count}} running (this project)", { count: projectActive })}
-                </small>
+                <>
+                  <small className="cc-controls-slider-caption" data-testid="cc-project-running">
+                    {t("commandCenter.controls.concurrency.runningProject", "{{count}} running (this project)", { count: projectActive })}
+                  </small>
+                  <small className="cc-controls-slider-caption" data-testid="cc-global-running">
+                    {t("commandCenter.controls.concurrency.runningGlobal", "{{count}} running (all projects)", { count: gc.currentlyActive })}
+                  </small>
+                </>
               ) : null}
               <span className="cc-controls-range-wrap">
                 <input

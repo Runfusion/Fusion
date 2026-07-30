@@ -5,9 +5,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, Archive } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, PrInfo, ThinkingLevel } from "@fusion/core";
-import { COLUMNS, DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
+import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { useColumnLabel } from "../i18n/labels";
+import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
@@ -32,6 +33,7 @@ import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
 import type { DetailTaskOpenOptions } from "../hooks/useModalManager";
 
@@ -306,24 +308,10 @@ interface ListViewProps {
   mergeStrategy?: string;
   onOpenWorkflowEditor?: (workflowId?: string) => void;
   onCreateWorkflow?: () => void;
-  workflowColumnsEnabled?: boolean;
-  settingsLoaded?: boolean;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
 }
 
-const LEGACY_LIST_COLUMNS: BoardWorkflowColumn[] = COLUMNS.map((column) => ({
-  id: column,
-  name: column,
-  flags: {
-    intake: column === "triage",
-    countsTowardWip: column === "in-progress",
-    mergeBlocker: column === "in-review",
-    complete: column === "done",
-    archived: column === "archived",
-    hold: column === "todo",
-  },
-}));
 
 function shouldShowTaskProgress(task: Task): boolean {
   return task.status === "executing" || task.column === "in-progress";
@@ -384,8 +372,6 @@ export function ListView({
   mergeStrategy = "direct",
   onOpenWorkflowEditor,
   onCreateWorkflow,
-  workflowColumnsEnabled,
-  settingsLoaded,
   workflowControlsInHeader = false,
 }: ListViewProps) {
   const { t } = useTranslation("app");
@@ -402,13 +388,12 @@ export function ListView({
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const suppressNextRowClickRef = useRef(false);
   /*
-  FNXC:BoardWorkflows 2026-06-20-09:07:
-  ListView shares the board-workflows first-paint invariant with Board: hydrate per-project workflow metadata from sessionStorage and gate legacy list columns while workflowColumns settings or uncached lane metadata are still unknown.
-
   FNXC:BoardWorkflowSelection 2026-06-29-12:35:
   ListView must use the same project-scoped durable workflow selection invariant as Board/Header/Graph so task refreshes, respecification route returns, and remounts do not reset operators from a custom workflow back to the default workflow. Keep this separate from list task-selection storage keys.
+
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  The `shouldHydrateCache` gate is DELETED alongside Board's. It read `workflowColumnsEnabled === true || settingsLoaded === false`, and MainContent passed `workflowColumnsEnabled` as a literal `true`, so it was unconditionally true — the hook's own default.
   */
-  const shouldHydrateBoardWorkflowsCache = workflowColumnsEnabled === true || settingsLoaded === false;
   const {
     boardWorkflows,
     workflowMode,
@@ -419,7 +404,7 @@ export function ListView({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,
-  } = useBoardWorkflows({ projectId, shouldHydrateCache: shouldHydrateBoardWorkflowsCache });
+  } = useBoardWorkflows({ projectId });
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
     return document.getElementById("header-workflow-slot");
@@ -670,7 +655,17 @@ export function ListView({
   }, [selectedWorkflowId]);
 
   const listColumns = useMemo<BoardWorkflowColumn[]>(() => {
-    if (!workflowMode || !selectedWorkflow) return LEGACY_LIST_COLUMNS;
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, R8):
+    `LEGACY_LIST_COLUMNS` is DELETED. It synthesised trait flags onto the six
+    hardcoded legacy column ids (synthesising `intake` onto the legacy intake id,
+    `hold` onto `todo`, …) — the same defect U10 removed from Board's aggregate lane union,
+    surviving in the ListView copy. It only ever fed this arm, which the skeleton
+    gate below makes unreachable: that gate returns unless a lane resolved, and a
+    resolved lane always yields a non-null `selectedWorkflow`. Empty columns render
+    nothing, matching what the skeleton already shows.
+    */
+    if (!workflowMode || !selectedWorkflow) return [];
     if (!isAllWorkflowsSelected || !boardWorkflows) {
       return selectedWorkflow.columns.filter((column) => !column.flags.hiddenFromBoard);
     }
@@ -694,6 +689,51 @@ export function ListView({
     return [...columnsById.values()];
   }, [boardWorkflows, isAllWorkflowsSelected, selectedWorkflow, workflowMode]);
 
+  /**
+   * FNXC:WorkflowResolvedColumns 2026-07-27-14:45 (U10 / R8):
+   * Display-only landing lane for a row whose stored column the resolved workflow does not
+   * declare. Prefers the intake lane (where an operator expects unplaced work), then the first
+   * non-complete/non-archived lane, then the first lane at all.
+   */
+  const pickFallbackColumnId = useCallback((columns: readonly BoardWorkflowColumn[]): ColumnId | undefined => {
+    const placeable = columns.filter((column) => !column.flags.archived && !column.flags.hiddenFromBoard);
+    return placeable.find((column) => column.flags.intake)?.id
+      ?? placeable.find((column) => !column.flags.complete)?.id
+      ?? placeable[0]?.id
+      ?? columns[0]?.id;
+  }, []);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-27-18:40 (U10 / R8 — greptile P1 on PR #2492):
+  Per-WORKFLOW landing lanes. In the All-workflows list, `listColumns` is a cross-workflow union
+  ordered default-workflow-first, so one global fallback filed every stranded row under the DEFAULT
+  workflow's intake — a card from another workflow rendered under a lifecycle it does not belong to.
+  Resolve the landing lane from the card's own workflow; the global fallback below is only the last
+  resort for a card whose workflow cannot be resolved at all.
+  */
+  const fallbackColumnIdByWorkflowId = useMemo(() => {
+    const map = new Map<string, ColumnId>();
+    for (const workflow of boardWorkflows?.workflows ?? []) {
+      const fallback = pickFallbackColumnId(workflow.columns);
+      if (fallback !== undefined) map.set(workflow.id, fallback);
+    }
+    return map;
+  }, [boardWorkflows, pickFallbackColumnId]);
+
+  const listFallbackColumnId = useMemo<ColumnId | undefined>(
+    () => pickFallbackColumnId(listColumns),
+    [listColumns, pickFallbackColumnId],
+  );
+
+  /** The workflow a rendered card belongs to, resolved the same way the lane filter resolves it. */
+  const resolveTaskWorkflowId = useCallback((taskId: string): string | undefined => {
+    if (!boardWorkflows) return undefined;
+    const raw = boardWorkflows.taskWorkflowIds[taskId];
+    return raw && boardWorkflows.workflows.some((workflow) => workflow.id === raw)
+      ? raw
+      : boardWorkflows.defaultWorkflowId;
+  }, [boardWorkflows]);
+
   const columnNameById = useMemo(() => {
     const map = new Map<ColumnId, string>();
     for (const column of listColumns) {
@@ -716,8 +756,96 @@ export function ListView({
 
   const listContextMenuColumns = useMemo<readonly TaskContextMenuColumnMetadata[] | undefined>(() => {
     if (!workflowMode) return undefined;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+    NO `moveTargets` on the shared list. In the "All workflows" view `listColumns` is a
+    UNION across workflows keyed by column id, so two workflows that reuse an id but
+    declare different edges collapse into one entry — and every task would be handed
+    the first workflow's adjacency. That offers moves the store rejects and hides legal
+    ones. Adjacency is per-workflow and must be resolved per TASK, which
+    `taskContextMenuColumnsByTaskId` below does; this shared list keeps labels and
+    flags only, where the union is harmless.
+    */
     return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags }));
   }, [listColumns, workflowMode]);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+  Per-task column metadata, mirroring Board's `taskContextMenuColumnsByTaskId`. Each
+  task gets ITS OWN workflow's columns — including that workflow's `moveTargets` — so
+  the aggregate view cannot serve one workflow's adjacency to another's card. Falls
+  back to the shared union when the task's workflow is unresolvable, which yields the
+  previous (neighbour-approximated) behaviour rather than a wrong answer.
+  */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+  SELF-HEAL, shared with Board. A task whose `taskWorkflowIds` entry is absent or
+  suspect resolves to no per-workflow metadata, so its move menu silently degrades to
+  the neighbour approximation and stays there until some unrelated refresh happens.
+  Board has forced one board-workflows refetch for this since FN-7591; List had none,
+  so the degraded state persisted longest exactly where it is most likely — a
+  just-created card, which is when a workflow was actually chosen.
+  */
+  useUnmappedWorkflowRefetch({ boardWorkflows, tasks, workflowMode, refreshBoardWorkflows, projectId });
+
+  const taskContextMenuColumnsByTaskId = useMemo(() => {
+    const map = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
+    if (!workflowMode || !boardWorkflows) return map;
+    const byWorkflowId = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
+    for (const workflow of boardWorkflows.workflows) {
+      byWorkflowId.set(
+        workflow.id,
+        workflow.columns
+          .filter((column) => column.flags?.hiddenFromBoard !== true)
+          .map((column) => ({
+            id: column.id,
+            label: column.name,
+            flags: column.flags,
+            ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}),
+          })),
+      );
+    }
+    for (const task of tasks) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2528 review — greptile):
+      VALIDATE the mapped id before trusting it. `taskWorkflowIds` can carry a STALE or
+      unknown entry — a workflow deleted since the payload was built, or an id the
+      client has not seen — and a bare `?? defaultWorkflowId` only covers the MISSING
+      case, not the invalid one. An unknown id then resolves to no columns, the task
+      silently drops back to the adjacency-free shared union, and the menu is wrong in
+      exactly the way this whole change exists to prevent.
+
+      Mirrors Board's `getEffectiveTaskWorkflowId`, which already validates against the
+      known-workflow set for the same reason.
+      */
+      const assigned = boardWorkflows.taskWorkflowIds[task.id];
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2525 review — greptile):
+      An UNMAPPED task is unknown, not default. `buildBoardWorkflowsPayload` writes an
+      entry for every task it is given (null selection included), so a MISSING entry
+      does not mean "no selection" — it means this task is NEWER than the payload,
+      which happens routinely because the SSE task list updates before board-workflows
+      does. Assuming the default workflow there would assert the default's adjacency on
+      a card that may belong to another workflow entirely — precisely the wrong answer,
+      confidently stated, for the cards most likely to be affected (freshly created
+      ones, which is exactly when a workflow was chosen).
+
+      Leave such a task without per-workflow metadata: it falls back to the shared
+      union and the neighbour approximation, which is the pre-existing behaviour and an
+      admitted guess rather than a false claim. Board additionally forces one
+      board-workflows refetch when it sees unmapped rendered tasks (FN-7591); porting
+      that self-heal to List is a real improvement and its own change.
+
+      A PRESENT but unknown id (stale/deleted workflow) still falls back to the default
+      — there the entry is a real answer that has simply gone out of date.
+      */
+      if (assigned === undefined) continue;
+      const workflowId = byWorkflowId.has(assigned) ? assigned : boardWorkflows.defaultWorkflowId;
+      const columns = workflowId ? byWorkflowId.get(workflowId) : undefined;
+      if (columns) map.set(task.id, columns);
+    }
+    return map;
+  }, [boardWorkflows, tasks, workflowMode]);
 
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
     const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
@@ -727,6 +855,19 @@ export function ListView({
     }
     return null;
   }, [boardWorkflows, workflowMode]);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The card's INTAKE role, from its own column's traits. Both grouped-list render paths
+  gated the transient Planning badge on the legacy intake id, which U11 deletes — the
+  badge would simply stop appearing on planning rows, with nothing failing.
+
+  The id fallback now lives once in `isIntakeColumnRole`, together with the reason it
+  cannot be deleted; see `utils/columnRoles.ts`.
+  */
+  const isIntakeColumnForTask = useCallback((task: Task): boolean => {
+    return isIntakeColumnRole(columnFlagsById.get(task.column), task.column);
+  }, [columnFlagsById]);
 
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
     return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
@@ -919,9 +1060,28 @@ export function ListView({
     const groups: Record<string, Task[]> = {};
     for (const column of listColumns) groups[column.id] = [];
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-27-14:45 (U10 / R8):
+    A row whose stored column the resolved workflow no longer declares must NOT vanish. The
+    previous `if (groups[column])` guard silently dropped it — no lane, no row, no error — which
+    is exactly what a removed column (U11 merging Todo into Planning) or a workflow edited to
+    drop a lane produces for cards already resting there. Re-home it for DISPLAY into the
+    workflow's intake/first visible lane, mirroring the safety nets Board already carries for its
+    selected-workflow and aggregate groupings. Display-only: the task's stored column is untouched,
+    so the move menu and any engine rebound still see the real column.
+    */
     columnFiltered.forEach((task) => {
       const column = workflowMode ? task.column : (isColumn(task.column) ? task.column : DEFAULT_COLUMN);
-      if (groups[column]) groups[column].push(task);
+      if (groups[column] !== undefined) {
+        groups[column].push(task);
+        return;
+      }
+      const ownWorkflowId = workflowMode ? resolveTaskWorkflowId(task.id) : undefined;
+      const ownFallback = ownWorkflowId ? fallbackColumnIdByWorkflowId.get(ownWorkflowId) : undefined;
+      const columnId = (ownFallback !== undefined && groups[ownFallback] !== undefined)
+        ? ownFallback
+        : listFallbackColumnId;
+      if (columnId !== undefined && groups[columnId] !== undefined) groups[columnId].push(task);
     });
 
     for (const column of listColumns) {
@@ -951,7 +1111,7 @@ export function ListView({
       });
     }
     return groups;
-  }, [tasks, searchQuery, selectedWorkflowTaskIds, listColumns, workflowMode, hideDoneTasks, selectedColumn, staleOnlyFilter, stalePausedReviewOnlyFilter, sortField, sortDirection]);
+  }, [tasks, searchQuery, selectedWorkflowTaskIds, listColumns, workflowMode, hideDoneTasks, selectedColumn, staleOnlyFilter, stalePausedReviewOnlyFilter, sortField, sortDirection, fallbackColumnIdByWorkflowId, listFallbackColumnId, resolveTaskWorkflowId]);
 
   // Calculate total filtered count from groups
   const filteredCount = useMemo(() => {
@@ -1757,9 +1917,16 @@ export function ListView({
     try {
       const hasStepProgress = task.steps.some((step) => step.status !== "pending");
       const targetFlags = columnFlagsById.get(column);
-      const shouldPrompt = hasStepProgress && (
-        column === "todo" || column === "triage" || Boolean(targetFlags?.intake || targetFlags?.hold)
-      );
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      Flags FIRST, ids only when the destination has no resolved metadata. The previous
+      form OR-ed the two, so a column merely NAMED `todo` or `triage` prompted regardless
+      of its traits — and post-U11 that is the merged column's id, meaning the legacy
+      disjunct would keep firing for reasons unrelated to what the column IS. Reading the
+      traits when they exist makes the rule mean "moving back into a pre-implementation
+      lane", which is the thing worth warning about.
+      */
+      const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(targetFlags, column);
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
@@ -1831,7 +1998,7 @@ export function ListView({
       t,
       columnLabel: getListColumnLabel,
       currentColumnFlags: columnFlagsById.get(task.column),
-      workflowMoveColumns: listContextMenuColumns,
+      workflowMoveColumns: taskContextMenuColumnsByTaskId.get(task.id) ?? listContextMenuColumns,
       canRetryTask,
       hasDuplicateHandler: Boolean(onDuplicateTask),
       hasRetryHandler: Boolean(onRetryTask),
@@ -1958,7 +2125,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2305,9 +2472,8 @@ export function ListView({
         const task = tasks.find((candidate) => candidate.id === taskId);
         const hasStepProgress = task?.steps.some((step) => step.status !== "pending") ?? false;
         const targetFlags = columnFlagsById.get(column);
-        const shouldPrompt = hasStepProgress && (
-          column === "todo" || column === "triage" || Boolean(targetFlags?.intake || targetFlags?.hold)
-        );
+        // Same rule as the context-menu move above, and now literally the same function.
+        const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(targetFlags, column);
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
         if (shouldPrompt) {
@@ -2601,12 +2767,15 @@ export function ListView({
     </>
   );
 
-  const shouldGateLegacyList = boardWorkflows === null
-    ? (workflowColumnsEnabled === true || settingsLoaded === false)
-    : boardWorkflows.flagEnabled === true && boardWorkflows.workflows.length === 0;
-
-  if (shouldGateLegacyList) {
-    return renderListWorkflowSkeleton(boardWorkflows?.flagEnabled === true);
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Behaviour-identical to the former `shouldGateLegacyList`, with the two retired
+  flag reads spelled out of it: the null arm was always true (literal prop), and
+  the loaded arm's `flagEnabled === true` conjunct is a server constant. The
+  argument distinguishes "loaded but no lane" from "still loading".
+  */
+  if (boardWorkflows === null || boardWorkflows.workflows.length === 0) {
+    return renderListWorkflowSkeleton(boardWorkflows !== null);
   }
 
   return (
@@ -2792,9 +2961,9 @@ export function ListView({
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
-                          const isTransientPlannerActive = task.column === "triage"
+                          const isTransientPlannerActive = isIntakeColumnForTask(task)
                             && !visualStatus
                             && Boolean(task.recentAgentActivityAt)
                             && isAgentActive;
@@ -3055,9 +3224,9 @@ export function ListView({
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                            const isTransientPlannerActive = task.column === "triage"
+                            const isTransientPlannerActive = isIntakeColumnForTask(task)
                               && !visualStatus
                               && Boolean(task.recentAgentActivityAt)
                               && isAgentActive;

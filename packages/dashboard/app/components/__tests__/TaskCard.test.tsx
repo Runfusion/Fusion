@@ -8001,7 +8001,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={vi.fn()}
@@ -8025,7 +8025,14 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     expect(screen.queryByTestId("card-start-FN-001")).toBeNull();
   });
 
-  it("omits the Start button for the triage column even when intake is flagged", () => {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Retitled and re-fixtured. The rule was never about the id `triage` — it was "an intake
+  lane that AUTO-triages needs no Start button, because the engine picks the card up on
+  its own". That is now expressed by the absence of `manualIntake` rather than by naming
+  a column, which is what makes it survive U11 deleting `triage`.
+  */
+  it("omits the Start button for an AUTO-triaging intake column", () => {
     render(
       <TaskCard
         task={makeTask({ column: "triage" })}
@@ -8043,7 +8050,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -8066,7 +8073,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         taskMoveColumns={taskMoveColumns}
         onOpenDetail={noop}
         addToast={addToast}
@@ -8084,7 +8091,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={onMoveTask}
@@ -8106,7 +8113,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8138,7 +8145,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8158,7 +8165,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8168,5 +8175,72 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     fireEvent.click(screen.getByTestId("card-start-FN-001"));
 
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("move blocked", "error"));
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — the affordance this file never covered):
+THE EDIT BUTTON ON A RENAMED BOARD.
+
+TaskDetailModal resolved field editability from column traits in U10/R8. TaskCard implemented the
+same affordance with a hardcoded `{triage, todo}` id set and NO trait path, even though
+`taskColumnFlags` was already in scope — so on a board whose pre-implementation column is renamed,
+the title was editable in the detail modal and the pencil was absent from the card.
+
+VERIFIED UNCOVERED rather than assumed: mutating `canEdit` back to the hardcoded set left
+`app/components/__tests__/TaskCard*` at exactly the same failure count as the unmutated run, so
+nothing caught it. These four assert the real `aria-label`, and that mutation now fails with
+"Unable to find an accessible element ... name 'Edit task'".
+*/
+describe("TaskCard field editability resolves column traits (U12 — R8)", () => {
+  const EDIT_LABEL = { name: "Edit task" };
+
+  it("renders the edit button for a RENAMED pre-implementation column", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ intake: true, hold: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    // Fails with the hardcoded id set: `backlog` is not in it.
+    expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does NOT render it for a resolved mid-flight column", () => {
+    // The narrowing guard: without it the case above passes for a card that always shows the pencil,
+    // letting an operator rewrite a description while a session executes against it.
+    render(
+      <TaskCard
+        task={makeTask({ column: "building" as any })}
+        taskColumnFlags={{ countsTowardWip: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+  });
+
+  it("vetoes editing when a hold column ALSO carries a review trait", () => {
+    // A legal shape a plain `intake || hold` check gets wrong.
+    render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ hold: true, mergeBlocker: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+  });
+
+  it("still renders it for a legacy `todo` card with no flags resolved", () => {
+    // The pre-load window, and what every board did before the conversion.
+    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
   });
 });

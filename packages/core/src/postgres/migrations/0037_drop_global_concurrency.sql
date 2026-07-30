@@ -1,0 +1,20 @@
+-- FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+-- Capacity is two numbers PER PROJECT (total agents + max worktrees). The
+-- machine-wide cap lived here, in a central singleton row that every runtime
+-- subscribed to and periodically re-reconciled against the per-project gates.
+--
+-- The enforcement and the settings/API/UI halves are already gone. Nothing reads
+-- this table: `global_max_concurrent` held the deleted cap, and
+-- `currently_active` / `queued_count` were maintained by acquireGlobalSlot /
+-- releaseGlobalSlot, which were MEASURED to have no production caller at all —
+-- the durable counters were fiction, which is why no operator ever saw the cap
+-- bind through them.
+--
+-- Live "N running (all projects)" telemetry is unaffected: it derives from
+-- CentralCore.getLiveRunningAgentCounts via the registered side-effect-safe
+-- source, never from this table.
+--
+-- Dropped rather than left in place: an unread table with plausible-looking
+-- counters invites a future reader to trust it, which is the same trap as a
+-- readable-but-ignored settings key.
+DROP TABLE IF EXISTS central.global_concurrency;

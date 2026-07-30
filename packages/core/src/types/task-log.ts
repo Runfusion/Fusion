@@ -90,6 +90,26 @@ export interface ActivityLogEntry {
 export type AgentRole = "triage" | "executor" | "reviewer" | "merger";
 
 /*
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:55 (Phase C convergence — vocabulary hygiene):
+
+A ROLE IS NOT A COLUMN, and the string `"triage"` names both. The planning LANE — the engine
+service, its prompt templates, its usage-limit accounting — is called `triage` in the
+AgentRole vocabulary, and that name is not going anywhere: U11 removed the `triage` COLUMN
+from the default lineage, not the planner lane.
+
+This constant exists so those comparisons stop reading as un-migrated column guards. The
+lifecycle-column census greps `=== "triage"`, and `role === "triage"` / `agentType ===
+"triage"` matched it — sending reviewers to sites that were never column guards while the
+pattern simultaneously MISSED real guards whose locals were named `from` or `originColumn`.
+Naming the role makes the two vocabularies distinguishable by grep, which is the only way a
+census over a shared string can be trusted.
+
+Use this at every role comparison. If you are comparing a task's COLUMN, you want a lifecycle
+role resolved from the workflow IR (`resolveLifecycleColumns`), not this.
+*/
+export const PLANNER_AGENT_ROLE: AgentRole = "triage";
+
+/*
 FNXC:AgentLog-EntryTypes 2026-07-15-11:20:
 `text` means a STREAMED DELTA FRAGMENT: renderers re-glue consecutive `text` rows with `join("")` and no separator, because that is the only way to reconstitute a streamed message (the FN-5787/5789/5803 streamed-spacing lineage). `AgentLogger` is the only producer of true deltas.
 

@@ -27,7 +27,6 @@ vi.mock("../../../hooks/useAppSettings", () => ({
 
 const defaultSettings = {
   maxConcurrent: 12,
-  maxTriageConcurrent: 1,
   maxWorktrees: 4,
 };
 
@@ -48,12 +47,10 @@ function renderControls(projectId = "proj_123") {
 }
 
 function mockGlobalConcurrency(overrides: Partial<{
-  globalMaxConcurrent: number;
   currentlyActive: number;
   projectsActive: Record<string, number>;
 }> = {}) {
   legacyMocks.fetchGlobalConcurrency.mockResolvedValue({
-    globalMaxConcurrent: 10,
     currentlyActive: 10,
     queuedCount: 0,
     projectsActive: { proj_123: 10 },
@@ -119,64 +116,9 @@ describe("CommandCenterControls concurrency markers", () => {
   });
 
   // FNXC:GlobalConcurrencyControls 2026-07-15-12:00: FN-8007 requires dashboard markers to use the exact native-thumb coordinate system when the expanded range max exceeds the persisted cap.
-  it("aligns dashboard global and project markers with their native thumbs", async () => {
-    renderControls();
 
-    await screen.findByTestId("cc-global-use-marker");
-    expectUseMarkerPct("cc-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
-    expectUseMarkerPct("cc-project-use-marker", `${((10 - 1) / (50 - 1)) * 100}%`);
-    expectCommandCenterUseOffset("cc-global-use-marker", (10 - 1) / (32 - 1));
-    expectCommandCenterUseOffset("cc-project-use-marker", (10 - 1) / (50 - 1));
-  });
 
-  it("pins dashboard over-cap markers at the cap thumb instead of the track end", async () => {
-    mockGlobalConcurrency({ currentlyActive: 40, projectsActive: { proj_123: 40 } });
-    renderControls();
 
-    await screen.findByTestId("cc-global-use-marker");
-    expectUseMarkerPct("cc-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
-    expectUseMarkerPct("cc-project-use-marker", `${((12 - 1) / (50 - 1)) * 100}%`);
-    expect(screen.getByTestId("cc-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
-    expect(screen.getByTestId("cc-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
-  });
-
-  it("maps one running agent to the visible dashboard slider start", async () => {
-    mockGlobalConcurrency({ currentlyActive: 1, projectsActive: { proj_123: 1 } });
-    renderControls();
-
-    await screen.findByTestId("cc-global-use-marker");
-    expectUseMarkerPct("cc-global-use-marker", "0%");
-    expectUseMarkerPct("cc-project-use-marker", "0%");
-    expectCommandCenterUseOffset("cc-global-use-marker", 0);
-    expectCommandCenterUseOffset("cc-project-use-marker", 0);
-  });
-
-  it("suppresses dashboard marker shells while global concurrency is loading or unavailable", async () => {
-    let resolveGlobalConcurrency!: (value: {
-      globalMaxConcurrent: number;
-      currentlyActive: number;
-      queuedCount: number;
-      projectsActive: Record<string, number>;
-    }) => void;
-    legacyMocks.fetchGlobalConcurrency.mockReturnValue(new Promise((resolve) => {
-      resolveGlobalConcurrency = resolve;
-    }));
-    renderControls();
-
-    expect(screen.queryByTestId("cc-global-use-marker")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("cc-project-use-marker")).not.toBeInTheDocument();
-
-    resolveGlobalConcurrency({ globalMaxConcurrent: 10, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
-    await screen.findByTestId("cc-global-use-marker");
-    cleanup();
-
-    legacyMocks.fetchGlobalConcurrency.mockRejectedValue(new Error("global concurrency unavailable"));
-    renderControls();
-
-    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-    expect(screen.queryByTestId("cc-global-use-marker")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("cc-project-use-marker")).not.toBeInTheDocument();
-  });
 
   it("matches the desktop and mobile native thumb-size CSS contract", () => {
     expect(commandCenterControlsCss).toContain(
@@ -194,4 +136,15 @@ describe("CommandCenterControls concurrency markers", () => {
     expect(commandCenterControlsCss).toContain("@media (max-width: 768px)");
     expect(commandCenterControlsCss).toContain("--cc-controls-range-thumb-size: var(--space-xl);");
   });
+
+  /*
+  FNXC:CapacityModel 2026-07-29-00:25 (drop the cross-project cap — settings half):
+  The Command Center global-cap marker tests are DELETED with the slider they
+  measured. They asserted thumb-alignment and over-cap pinning for a control that
+  wrote a machine-wide limit; the limit is gone (capacity is two numbers PER PROJECT)
+  and the PUT route with it. The equivalent PROJECT-slider marker cases are retained.
+
+  The live "N running (all projects)" readout survives and moved onto the project
+  row — it is telemetry, so it has no cap to align a marker against.
+  */
 });

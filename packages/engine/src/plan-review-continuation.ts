@@ -1,6 +1,7 @@
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computeWorkflowIrPin,
+  isTaskBlockedOnApproval,
   isUnplannedSeedPrompt,
   PLAN_REVIEW_GROUP_ID,
   type Task,
@@ -13,6 +14,7 @@ import { resolvePreReleasePlanReviewNode } from "./hold-release.js";
 export type StrandedHoldContinuationReason =
   | "not-hold-column" | "no-pre-release-review" | "active-continuation"
   | "plan-review-passed" | "seed-prompt" | "prompt-missing" | "triage-owned"
+  | "awaiting-approval"
   | "paused" | "engine-paused" | "live" | "too-fresh" | "auto-merge-off" | "ready";
 
 /**
@@ -27,9 +29,33 @@ export async function seedPreReleasePlanReviewContinuation(
   task: Task,
   ir: WorkflowIr,
   options: { atomic?: boolean } = {},
-): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
+): Promise<{
+  seeded: boolean;
+  reason?: "active-continuation" | "plan-review-passed" | "awaiting-approval" | "paused";
+  workItemId?: string;
+}> {
   const node = resolvePreReleasePlanReviewNode(ir);
   if (!node || node.column !== task.column) return { seeded: false };
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  Arming a runnable continuation is starting AI work on this card, so the parks
+  belong here at the seam rather than in each caller. Both callers already
+  pre-checked something — the runtime's `onSpecifyComplete` reaction checks the
+  pause flags, FN-8592's self-healing sweep checks its own fuller predicate — but
+  NEITHER checked the approval hold, and the seeder itself checked nothing.
+
+  Why that mattered: the manual plan-approval gate parks the card by RETURNING
+  EARLY from `finalizeApprovedTask` after writing `status: "awaiting-approval"`,
+  while `specifyTask` announces completion unconditionally afterwards. For a
+  plan-in-place card (`node.column === task.column` — Coding (Ideas), or a
+  `needs-replan` revision resting in the default workflow's `todo`) the guard
+  above passes, so a Plan Review run was armed for a plan the operator had not
+  approved yet. The pause check is added alongside it because a seam that starts
+  work must refuse every operator park, not the subset its callers happened to
+  filter.
+  */
+  if (isTaskBlockedOnApproval(task)) return { seeded: false, reason: "awaiting-approval" };
+  if (task.paused === true || task.userPaused === true) return { seeded: false, reason: "paused" };
   const items = await store.listWorkflowWorkItemsForTask(task.id);
   const active = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
   if (active.length > 0) return { seeded: false, reason: "active-continuation" };
@@ -65,7 +91,7 @@ export async function seedPreReleasePlanReviewContinuation(
  * tokens represent an audit-worthy race loss from the conditional store op.
  */
 export function evaluateStrandedHoldContinuation(input: {
-  task: Pick<Task, "id" | "title" | "description" | "column" | "status" | "paused" | "userPaused">;
+  task: Pick<Task, "id" | "title" | "description" | "column" | "status" | "paused" | "userPaused" | "pausedReason">;
   columnFlags: { hold?: boolean };
   ir: WorkflowIr;
   continuations: WorkflowWorkItem[];
@@ -85,6 +111,18 @@ export function evaluateStrandedHoldContinuation(input: {
   if (input.promptContent === null) return { stranded: false, candidate: false, reason: "prompt-missing" };
   if (isUnplannedSeedPrompt(input.promptContent, input.task.id, input.task.title, input.task.description)) return { stranded: false, candidate: false, reason: "seed-prompt" };
   if (input.task.status === "planning" || input.task.status === "needs-replan") return { stranded: false, candidate: false, reason: "triage-owned" };
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  An approval-held card is not stranded — it is exactly where the operator's
+  pending decision left it, so re-seeding would run Plan Review on an unapproved
+  plan. Reported as a CANDIDATE (like `paused`, unlike `triage-owned`) because the
+  block is an operator park that clears on its own: once the decision lands the
+  card becomes repairable again, and the audit distinction between "quiet
+  non-candidate" and "race loss" should still apply to it.
+  Placed before `paused` so the STATUS-only hold shape — the one the plan-approval
+  gate actually writes, with no pause flag — is matched at all.
+  */
+  if (isTaskBlockedOnApproval(input.task)) return { stranded: false, candidate: true, reason: "awaiting-approval" };
   if (input.task.paused || input.task.userPaused) return { stranded: false, candidate: true, reason: "paused" };
   if (input.enginePaused) return { stranded: false, candidate: true, reason: "engine-paused" };
   if (input.live) return { stranded: false, candidate: true, reason: "live" };

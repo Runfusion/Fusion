@@ -62,6 +62,13 @@ import { TodoView } from "../TodoView";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
 
 export interface MainContentProps {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: board-workflow column traits per task id, the
+  same map the footer's live-agent predicate uses. Optional: absent for remote rows and for
+  columns not on the current board, where the consumer degrades to the documented legacy names
+  rather than guessing.
+  */
+  columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; archived?: boolean; intake?: boolean; hold?: boolean }>;
   showBackendConnectionErrorPage: boolean;
   projectsError: string | null;
   t: TFunction;

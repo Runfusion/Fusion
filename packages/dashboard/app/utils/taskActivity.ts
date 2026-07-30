@@ -1,5 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getUnifiedTaskProgress } from "./taskProgress";
+import { isIntakeColumnRole, isPreImplementationColumnRole } from "./columnRoles";
 
 /** The shared status vocabulary for active task phases and lock/model policy. */
 export const ACTIVE_STATUSES = new Set([
@@ -20,6 +21,20 @@ export interface TaskAgentActivityOptions {
   globalPaused?: boolean;
   queued?: boolean;
   isStuck?: boolean;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The task's own column traits, when the caller has them. Fresh-planner-activity was
+  keyed on `column === "triage"`, so under U11 — merged planning column keeps the id
+  `todo`, `triage` deleted — a planning card with live planner logs stops reading as
+  agent-active. That is not one badge: this predicate drives the pulsing status badge,
+  the agent-active row border, and the column header's executing count, so the whole
+  board would quietly report planning work as idle.
+
+  Optional, and the legacy ids remain the fallback: callers without resolved metadata
+  (pre-load, or a card stranded in a vanished lane) must keep their current behaviour
+  rather than lose activity detection entirely.
+  */
+  columnFlags?: { intake?: boolean; hold?: boolean };
 }
 
 /*
@@ -64,7 +79,32 @@ export function isTaskAgentActive(
   const isReplanning = status === "needs-replan";
   const recentPlannerActivityAtMs = Date.parse(task.recentAgentActivityAt ?? "");
   const nowMs = Date.now();
-  const hasFreshPlannerActivity = (task.column === "triage" || (task.column === "todo" && isReplanning))
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Planner activity belongs to the PRE-IMPLEMENTATION lane. With traits the rule is
+  "intake lane, or a hold lane that is replanning"; without them it falls back to the
+  ids, which is the same shape the two lanes have today.
+  */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:15 (Phase B — one shared predicate):
+  The degraded arm now composes `utils/columnRoles`' predicates instead of naming ids, so the legacy
+  id list lives in exactly one place. Equivalent by construction rather than by inspection:
+
+    intake lane        isIntakeColumnRole(undefined, col)              -> `triage`
+    hold lane          preImplementation AND NOT intake                -> `todo`
+
+  which reproduces `col === "triage" || (col === "todo" && isReplanning)` exactly, because the
+  shared pre-implementation set is {todo, triage} and the shared intake id is `triage`.
+
+  Expressed as "not the intake lane" rather than a second id list, so if either shared set changes
+  this composition follows it instead of silently disagreeing with the file next door.
+  */
+  const isLegacyIntakeLane = isIntakeColumnRole(undefined, task.column);
+  const isLegacyHoldLane = isPreImplementationColumnRole(undefined, task.column) && !isLegacyIntakeLane;
+  const inPlannerLane = options.columnFlags
+    ? options.columnFlags.intake === true || (options.columnFlags.hold === true && isReplanning)
+    : isLegacyIntakeLane || (isLegacyHoldLane && isReplanning);
+  const hasFreshPlannerActivity = inPlannerLane
     && Number.isFinite(recentPlannerActivityAtMs)
     && nowMs - recentPlannerActivityAtMs >= 0
     && nowMs - recentPlannerActivityAtMs <= RECENT_PLANNER_ACTIVITY_WINDOW_MS;

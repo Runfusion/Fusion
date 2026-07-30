@@ -176,11 +176,18 @@ export class ProjectAdmissionCoordinator {
         */
         const releaseAttempt = () => {
           if (!hasReservableHostSlot) return;
+          /*
+          FNXC:CapacityModel 2026-07-29-13:20: the host-slot release is now
+          UNCONDITIONAL across both branches. The pre-held branch used to release the
+          caller's semaphore through dropPreHeldExecutorSlot's second parameter;
+          with that parameter deleted it would otherwise unwind the registration and
+          the reservation while LEAKING the host slot this attempt acquired.
+          */
           if (hasPreHeldExecutorSlot(winner.taskId)) {
-            dropPreHeldExecutorSlot(winner.taskId, params.semaphore);
-            return;
+            dropPreHeldExecutorSlot(winner.taskId);
+          } else {
+            this.releaseReservation(winner.taskId);
           }
-          this.releaseReservation(winner.taskId);
           params.semaphore?.release();
         };
         try {
@@ -295,14 +302,40 @@ export function takePreHeldExecutorSlot(taskId: string): boolean {
   return taken;
 }
 
-/** Drop a pre-held slot without transferring ownership (failed reserve / cancelled dispatch). Optionally releases the semaphore. */
-export function dropPreHeldExecutorSlot(taskId: string, semaphore?: { release(): void }): void {
-  if (!preHeldExecutorSlots.delete(taskId)) return;
-  // FNXC:ConcurrencyAdmission 2026-08-06-12:00: every rejection path funnels
-  // through this helper, so releasing the matching coordinator marker here
-  // prevents early scheduler/triage returns from permanently consuming a slot.
+/*
+FNXC:CapacityModel 2026-07-29-13:20 (drop the cross-project cap — pre-held slots):
+Drop a pre-held slot without transferring ownership (failed reserve / cancelled
+dispatch).
+
+The `semaphore` parameter is GONE. These slots are DUAL-PURPOSE — a cross-project
+semaphore slot AND the FN-8453 per-project coordinator reservation — and only the
+first half is deleted. All 16 production call sites passed `this.options.semaphore`,
+which nothing wires any more, so the release was a no-op on an always-undefined
+value: an optional parameter that reads as if it does something.
+
+The coordinator reservation is the half that MATTERS and stays: every rejection path
+funnels through this helper so an early scheduler/triage return cannot permanently
+consume a project slot (FNXC:ConcurrencyAdmission 2026-08-06-12:00).
+
+Sites that still hold a semaphore reference release it EXPLICITLY next to their
+drop, so behaviour is unchanged for any caller that supplies one.
+*/
+export function dropPreHeldExecutorSlot(taskId: string): boolean {
+  /*
+  FNXC:CapacityModel 2026-07-29-17:10 (PR #2574 review — greptile P1, double release):
+  RETURNS whether a registration was actually dropped, because callers that own a
+  semaphore reference must release it ONLY when this did something.
+
+  The original two-argument form released the semaphore INSIDE this guard, so a call
+  after a successful `takePreHeldExecutorSlot` was "intentionally a no-op" — the
+  transferred slot belongs to the lane, which releases it via `semaphore.run`.
+  Hoisting the release to the call site unconditionally broke that: it released a
+  slot this call never held, INFLATING capacity — the opposite of the leak the
+  cleanup was guarding against.
+  */
+  if (!preHeldExecutorSlots.delete(taskId)) return false;
   projectAdmissionCoordinator.releaseReservation(taskId);
-  semaphore?.release();
+  return true;
 }
 
 /** Test/helper: whether a task currently has an unclaimed pre-held executor slot. */

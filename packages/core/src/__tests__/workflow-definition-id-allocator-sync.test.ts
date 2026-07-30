@@ -51,10 +51,10 @@ describe("workflow definition id allocator (sync materialization path)", () => {
     const created = insertWorkflowDefinitionSyncImpl(store, {
       name: "fresh workflow",
       ir: BUILTIN_CODING_WORKFLOW_IR,
-    }, true);
+    });
 
     expect(created.id).toBe("WF-003");
-    const second = insertWorkflowDefinitionSyncImpl(store, { name: "second workflow", ir: BUILTIN_CODING_WORKFLOW_IR }, true);
+    const second = insertWorkflowDefinitionSyncImpl(store, { name: "second workflow", ir: BUILTIN_CODING_WORKFLOW_IR });
     expect(second.id).toBe("WF-004");
   });
 });

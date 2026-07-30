@@ -41,9 +41,37 @@ const LIVE_REFETCH_EVENTS = [
  * these canonical stage ids; any column that does not map to a known stage is
  * folded into an "other" bucket so custom workflow columns still contribute a
  * count rather than being silently dropped.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-12:30 DELIBERATE-LITERAL: this is an ALIAS TABLE of
+ * column NAMES, not a lifecycle guard — `triage` sits beside `signal` and `backlog` as one of
+ * several names operators give the same funnel stage. Command Center aggregates across
+ * PROJECTS, so there is no single workflow to resolve traits from here; the honest conversion
+ * needs per-project trait resolution feeding this panel, which is a data change rather than a
+ * predicate change. Until then the "other" bucket keeps unrecognised columns counted instead
+ * of dropped, which is what stops a renamed board from silently reading as empty.
+ *
+ * Recorded for the U12 literal ratchet's allowlist; grep DELIBERATE-LITERAL to enumerate.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:15 (U11 — assessed, deliberately NOT trait-converted):
+These are heuristic NAME ALIASES for a canonical SDLC funnel stage, not lifecycle
+guards. The matcher already accepts several names per stage ("signal", "backlog",
+"to-do", "ready", "shipped") precisely because it buckets ARBITRARY boards, and
+anything unmatched falls into "other" rather than being dropped.
+
+Post-#2515 a default board's planning cards sit in `todo` and are counted at the TODO
+stage, leaving Planning at zero for those boards. That is the funnel reporting where
+the cards actually are, not a guard that stopped firing — and it stays useful for
+boards that do name a column triage/signal/backlog.
+
+Hoisted to a named set so the aliases read as aliases and stop appearing on the
+lifecycle-column census as an unconverted guard. This is the DISPLAY-ALIAS class:
+receiver is a column id, purpose is presentation, not a lifecycle decision.
+*/
+const TRIAGE_STAGE_COLUMN_ALIASES: ReadonlySet<string> = new Set(["triage", "signal", "backlog"]);
+
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
-  { id: "triage", match: (c) => c === "triage" || c === "signal" || c === "backlog" },
+  { id: "triage", match: (c) => TRIAGE_STAGE_COLUMN_ALIASES.has(c) },
   { id: "todo", match: (c) => c === "todo" || c === "to-do" || c === "to do" || c === "ready" },
   { id: "in-progress", match: isInProgressColumn },
   { id: "in-review", match: (c) => c === "in-review" || c === "in review" || c === "review" },

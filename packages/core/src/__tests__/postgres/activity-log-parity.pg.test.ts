@@ -42,7 +42,7 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
       title: "Backend lifecycle activity",
       description: "Verify PostgreSQL lifecycle activity logging",
     });
-    await store.moveTask(task.id, "todo", { moveSource: "user" });
+    await store.moveTask(task.id, "in-progress", { moveSource: "user" });
 
     await vi.waitFor(async () => {
       const entries = await store.getActivityLog({ limit: 10 });
@@ -55,7 +55,9 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
         expect.objectContaining({
           type: "task:moved",
           taskId: task.id,
-          metadata: { from: "triage", to: "todo" },
+          // FNXC:MergedPlanningColumn 2026-07-29-15:25 (U11): the default lineage's first column
+          // is now `todo`, so the first recorded transition leaves it rather than `triage`.
+          metadata: { from: "todo", to: "in-progress" },
         }),
       ]));
     });

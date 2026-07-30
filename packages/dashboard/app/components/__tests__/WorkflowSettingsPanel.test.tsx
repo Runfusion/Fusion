@@ -214,7 +214,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(screen.getByLabelText("Plan Review revision cap")).toBeInTheDocument();
     expect(screen.getByText(/Leave empty for unbounded automatic Plan Review\/spec revision/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Code Review revision cap")).toBeInTheDocument();
-    expect(screen.getByText(/Leave empty for unbounded automatic Code Review remediation/i)).toBeInTheDocument();
+    expect(screen.getByText(/Leave empty to use this workflow's authored Code Review default/i)).toBeInTheDocument();
   });
 
   // FNXC:PlannerOversight 2026-07-04-00:00: the Values tab is the project/global default
@@ -537,7 +537,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
     expect(screen.getByTestId("wf-settings-tab-values")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/Leave empty for unbounded automatic Plan Review\/spec revision/i)).toBeInTheDocument();
-    expect(screen.getByText(/Leave empty for unbounded automatic Code Review remediation/i)).toBeInTheDocument();
+    expect(screen.getByText(/Leave empty to use this workflow's authored Code Review default/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Plan Review revision cap"), { target: { value: "2" } });
     fireEvent.change(screen.getByLabelText("Code Review revision cap"), { target: { value: "0" } });

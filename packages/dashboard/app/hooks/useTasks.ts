@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
-import { normalizeColumnId } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
 import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
@@ -82,7 +84,7 @@ function writeTaskCacheSnapshot(cacheKey: string, tasks: Task[]): boolean {
 FNXC:WorkflowColumns 2026-07-19-2b:05 (U12 / R2 / R11):
 Every task the dashboard ingests — initial list, SWR revalidation, and each SSE event — passes
 through here, so this one line decided whether custom columns exist in the UI at all. It used
-`normalizeColumn`, which keeps only the six legacy ids and rewrites everything else to `triage`:
+`normalizeColumn` (since DELETED in U12), which kept only the six legacy ids and rewrote everything else to `triage`:
 a card sitting in a user-authored `Merging` column rendered in Triage, and dragging it appeared to
 do nothing. The move handler below already worked around this for its own `to` id ("normalizeColumn
 alone would drop custom ids"), which fixed the symptom for one event and left the ingest path lossy.
@@ -136,11 +138,30 @@ function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityE
   };
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+This is the SOURCE of the planner-activity signal, and it was the narrowest gate of all:
+it only stamped `recentAgentActivityAt` for cards literally in `triage`. #2515 removed
+that column from the default lineage, so after that merge the stamp never happened for a
+default-workflow card — and every consumer downstream (the pulsing Planning badge, the
+agent-active row border, the column's executing count) had NO DATA to act on, however
+correctly they resolved their own column traits.
+
+Converting the consumers without this would have been cosmetic: they would ask the right
+question of a field nothing ever set.
+
+This hook processes SSE and has no resolved column metadata, so the lane is matched by id
+against BOTH shapes — pre-merge `triage` and post-merge `todo`. Over-stamping a legacy
+hold-lane card is harmless: every consumer additionally requires the column to be an
+INTAKE lane before showing anything, so the extra timestamps are filtered downstream.
+*/
+const PLANNER_ACTIVITY_COLUMN_IDS = new Set(["triage", "todo"]);
+
 function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
   if (
-    task.column !== "triage"
+    !PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)
     || task.status === "planning"
-    || entry.agent !== "triage"
+    || entry.agent !== PLANNER_AGENT_ROLE
     || !hasFreshAgentLog(task, entry)
   ) {
     return task;
@@ -817,7 +838,7 @@ export function useTasks(options?: UseTasksOptions) {
         return;
       }
       // Preserve a custom (non-legacy) target id verbatim; only coerce empty/garbage
-      // back to the task's current column. normalizeColumn alone would drop custom ids.
+      // back to the task's current column. The old normalizeColumn (deleted in U12) would drop custom ids.
       const nextColumn: ColumnId = typeof to === "string" && to ? to : normalizedTask.column;
       const movedTask = { ...normalizedTask, column: nextColumn };
       setTasks((prev) => {

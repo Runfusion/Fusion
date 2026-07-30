@@ -1,7 +1,8 @@
 ---
 title: "S07: completion handoff creates merge work"
 type: refactor
-status: draft-stack-handoff
+status: not-started
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S07
 milestone: "Runtime"
@@ -11,11 +12,18 @@ stack_base: feature/workflow-owned-merge-s06-git-merge-capabilities
 
 # S07: completion handoff creates merge work
 
+## Measured State (2026-07-28, U9 pre-flight)
+
+**Ordering constraint (corrected 2026-07-28 after PR #2504 review).** The writer already exists: `createCompletionHandoffWorkflowWork` writes `merge`/`manual-hold` items from the live handoff-to-review path, and nothing claims or reconciles them, so they accumulate non-terminal today. That is benign — the legacy `ProjectEngine.mergeQueue` still drives the actual merge. What this slice changes is making those items **authoritative**. Landing it before S03/S05 are driven converts a benign row leak into cards that reach the merge boundary and stop. S07 must not land before S03/S05 are driven, and the pre-existing unclaimed rows need a reconcile/backfill decision as part of this slice.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
+
 ## Stack Role
 
-This draft PR reserves the S07 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+Not started, and gated on S03/S05 actually being driven — see the corrected
+ordering constraint above. This slot remains the plan of record.
 
 ## Milestone
 

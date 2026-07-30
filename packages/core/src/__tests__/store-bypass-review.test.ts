@@ -81,6 +81,39 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     expect(logged).toBe(true);
   });
 
+  /*
+  FNXC:ReviewBypass 2026-07-29-09:30 (U9):
+  The case above asserts `verdict` is undefined against a fixture whose verdict is
+  ALREADY undefined, so the assertion is vacuous: deleting `delete bypassed.verdict`
+  from store.ts leaves it green. Measured by mutation — NEW-failures=0 across
+  store-bypass-review, task-merge-bypass, task-merge and legacy-adoption.
+
+  The invariant only has teeth when the failed step CARRIES a verdict. That is the
+  real risk: a reviewer said REVISE, an operator bypasses, and the verdict rides
+  forward onto a `skipped` step — so every downstream reader sees a reviewer verdict
+  attached to a step no reviewer passed. FN-7720 requires the bypass to clear it and
+  preserve the original only in the audit field.
+  */
+  it("clears a real verdict off the bypassed step and keeps it only as audit history", async () => {
+    await seedInReviewTask("FN-BYP-VERDICT", {
+      workflowStepResults: [failedStep({ verdict: "REVISE", output: "reviewer asked for changes" })],
+    });
+
+    const updated = await store().bypassFailedPreMergeReviewStep("FN-BYP-VERDICT", {
+      reason: "operator override after reviewer outage",
+      actor: "operator-2",
+    });
+
+    const result = updated.workflowStepResults?.[0];
+    expect(result?.status).toBe("skipped");
+    // The bypass must NOT carry the reviewer's verdict onto the skipped step.
+    expect(result?.verdict).toBeUndefined();
+    // ...but it must not lose it either: the audit field preserves what was bypassed.
+    expect(result?.bypassedFromVerdict).toBe("REVISE");
+    expect(result?.bypassedFromStatus).toBe("failed");
+    expect(result?.bypassedBy).toBe("operator-2");
+  });
+
   it("records a run-audit event for the bypass", async () => {
     await seedInReviewTask("FN-BYP-002", { workflowStepResults: [failedStep()] });
     await store().bypassFailedPreMergeReviewStep("FN-BYP-002", { reason: "infra failure", actor: "operator-2" });

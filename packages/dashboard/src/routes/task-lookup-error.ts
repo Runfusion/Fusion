@@ -22,7 +22,7 @@
  * signal so genuinely file-backed reads (attachments, session files, worktree
  * files) keep their 404 behavior.
  */
-import { isTaskNotFoundError } from "@fusion/core";
+import { isTaskNotFoundError, TaskDeletedError } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
 
 /**
@@ -32,7 +32,12 @@ import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
  * file-backed reads on the same handlers.
  */
 export function isTaskLookupMiss(error: unknown): boolean {
-  if (isTaskNotFoundError(error)) return true;
+  /*
+   * FNXC:TaskLookup404 2026-07-29-16:10:
+   * Soft-deleted tasks are absent from the live API even when a mutation reports the tombstone with TaskDeletedError. Preserve structural matching for duplicated bundled/workspace core instances.
+   */
+  if (isTaskNotFoundError(error) || error instanceof TaskDeletedError) return true;
+  if (error && typeof error === "object" && (error as { name?: unknown }).name === "TaskDeletedError") return true;
   return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
 

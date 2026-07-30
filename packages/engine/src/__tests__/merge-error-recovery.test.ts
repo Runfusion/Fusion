@@ -257,56 +257,6 @@ describe("ProjectEngine merge error recovery", () => {
     vi.useRealTimers();
   });
 
-  it("creates one recovery follow-up for live autostash orphans and dedupes by parent task", async () => {
-    const store = makeStore();
-    store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      { id: "FN-9000", column: "todo", sourceType: "recovery", sourceParentTaskId: "FN-7777" },
-    ]);
-
-    const engine = createEngine(store);
-    const privateEngine = engine as unknown as {
-      wireAutostashOrphanRecovery: (store: MockTaskStore) => void;
-      autostashOrphansHandler?: (data: { rootDir: string; records: Array<any> }) => Promise<void>;
-    };
-
-    privateEngine.wireAutostashOrphanRecovery(store);
-    await privateEngine.autostashOrphansHandler?.({
-      rootDir: "/tmp/project",
-      records: [
-        {
-          sha: "abcdef1234567",
-          ref: "stash@{0}",
-          label: "fusion-merger-autostash:FN-7777:finalize-reset:1",
-          sourceTaskId: "FN-7777",
-          createdAt: new Date().toISOString(),
-          changedPaths: ["a.ts"],
-          classification: "live",
-          sourcePhase: "finalize-reset",
-          detectedByTaskId: "FN-1234",
-          detectedAt: new Date().toISOString(),
-        },
-      ],
-    });
-    await privateEngine.autostashOrphansHandler?.({
-      rootDir: "/tmp/project",
-      records: [
-        {
-          sha: "abcdef1234567",
-          ref: "stash@{0}",
-          label: "fusion-merger-autostash:FN-7777:finalize-reset:1",
-          sourceTaskId: "FN-7777",
-          createdAt: new Date().toISOString(),
-          changedPaths: ["a.ts"],
-          classification: "live",
-          sourcePhase: "finalize-reset",
-          detectedByTaskId: "FN-1234",
-          detectedAt: new Date().toISOString(),
-        },
-      ],
-    });
-
-    expect(store.createTask).toHaveBeenCalledTimes(1);
-  });
 
   it("uses default retry interval when interval settings retrieval fails", async () => {
     vi.useFakeTimers();
@@ -424,213 +374,12 @@ describe("ProjectEngine merge error recovery", () => {
     expect(hasErrorLog(errorSpy, "db write failed")).toBe(true);
   });
 
-  it("parks task and creates follow-up when conflict bounce cap is exceeded", async () => {
-    // Already bounced twice (cap is 2) — next bounce would be 3, exceeding cap
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
 
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
 
-    expect(store.moveTask).not.toHaveBeenCalledWith(TASK_ID, "in-progress");
-    expect(store.updateTask).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.objectContaining({
-        status: "failed",
-        mergeRetries: 3,
-      }),
-    );
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ column: "triage", priority: "high" }),
-    );
-  });
 
-  it("skips duplicate conflict follow-up creation when active recovery task exists for same parent", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-7778", column: "triage", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
 
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
 
-    expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("follow-up already exists (FN-7778"),
-      "agent",
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("skipped duplicate follow-up (existing FN-7778"),
-      "MergeConflictGiveUp",
-    );
-  });
 
-  it("skips conflict follow-up creation when another active recovery owns the same branch", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-8888", column: "todo", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: "FN-1111",
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
-
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
-
-    expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("follow-up already exists (FN-8888)"),
-      "agent",
-    );
-  });
-
-  it("creates a new conflict follow-up when previous recovery tasks are done or archived", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-9001", column: "done", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        },
-        {
-          ...makeTask({ id: "FN-9002", column: "archived", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: "FN-1111",
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
-
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
-
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: expect.objectContaining({
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        }),
-      }),
-    );
-  });
-
-  it("skips duplicate conflict follow-up creation when active recovery exists for parent", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-7777", column: "triage", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
-
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
-
-    expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("Skipping duplicate follow-up creation"),
-      "agent",
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("skipped duplicate follow-up (existing FN-7777"),
-      "MergeConflictGiveUp",
-    );
-  });
-
-  it("skips conflict follow-up creation when active recovery already owns same branch", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-8888", column: "todo", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: "FN-OTHER",
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
-
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
-
-    expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("skipped duplicate follow-up (existing FN-8888)"),
-      "MergeConflictGiveUp",
-    );
-  });
-
-  it("creates new conflict follow-up when prior recovery is archived", async () => {
-    const store = makeStore({
-      tasks: [
-        makeTask({ mergeRetries: 2, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-      ],
-      listedTasks: [
-        makeTask({ mergeRetries: 3, mergeConflictBounceCount: 2, branch: "fusion/fn-2084" }),
-        {
-          ...makeTask({ id: "FN-6666", column: "archived", branch: "fusion/fn-2084" }),
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        },
-      ],
-    });
-    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("merge conflict detected"));
-
-    const engine = createEngine(store);
-    await runMergeCycle(engine);
-
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ column: "triage", priority: "high" }),
-    );
-  });
 
   it("re-enqueues direct merge on transient non-conflict errors", async () => {
     vi.useFakeTimers();
@@ -1046,75 +795,7 @@ describe("ProjectEngine merge error recovery", () => {
     expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "in-progress");
   });
 
-  it("caps verification-failure bounces and creates a follow-up task", async () => {
-    const verificationError = new Error("Deterministic test verification failed");
-    verificationError.name = "VerificationError";
-    vi.mocked(runAiMerge).mockRejectedValueOnce(verificationError);
 
-    // Task already bounced 2 times — this attempt would push it to 3 (the cap)
-    const store = makeStore({
-      tasks: [
-        makeTask({ verificationFailureCount: 2, title: "do the thing" }),
-      ],
-    });
-    const engine = createEngine(store);
-
-    await runMergeCycle(engine);
-
-    // Original task is failed (not bounced back)
-    expect(store.moveTask).not.toHaveBeenCalledWith(TASK_ID, "in-progress");
-    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
-      status: "failed",
-      verificationFailureCount: 3,
-    }));
-
-    // Follow-up triage task created with context
-    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
-      column: "triage",
-      priority: "high",
-      description: expect.stringContaining(TASK_ID),
-    }));
-
-    // Comment links the follow-up
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("FN-9999"),
-      "agent",
-    );
-  });
-
-  it("skips duplicate verification follow-up creation when active recovery task exists", async () => {
-    const verificationError = new Error("Deterministic test verification failed");
-    verificationError.name = "VerificationError";
-    vi.mocked(runAiMerge).mockRejectedValueOnce(verificationError);
-
-    const store = makeStore({
-      tasks: [makeTask({ verificationFailureCount: 2, title: "do the thing" })],
-      listedTasks: [
-        makeTask({ verificationFailureCount: 2, title: "do the thing" }),
-        {
-          ...makeTask({ id: "FN-7777", column: "triage" }),
-          sourceType: "recovery",
-          sourceParentTaskId: TASK_ID,
-        },
-      ],
-    });
-    const engine = createEngine(store);
-
-    await runMergeCycle(engine);
-
-    expect(store.createTask).not.toHaveBeenCalled();
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("Reusing existing follow-up FN-7777"),
-      "agent",
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.stringContaining("skipped creating duplicate follow-up (existing FN-7777)"),
-      "VerificationError",
-    );
-  });
 
   it("logs when verification-error recovery fails", async () => {
     const verificationError = new Error("Deterministic test verification failed");
@@ -1294,4 +975,76 @@ describe("ProjectEngine merge error recovery", () => {
     releasePr?.();
     await engine.stop();
   });
+  /*
+  FNXC:AutostashRecovery 2026-07-29-11:20 (U9):
+  Replaces the deleted "creates one recovery follow-up for live autostash orphans"
+  test. The follow-up-CARD engine is gone (project-engine.ts:4801); a `live`
+  autostash orphan is now surfaced by a durable log entry PLUS an operator comment
+  on the parent, because the parent may already be `done` and merged — if nothing
+  is said the stash becomes invisible and real uncommitted work is silently lost.
+
+  The production comment is explicit that `record.label` "must never be dropped
+  from the message or truncated" — it is the handle `git stash` recovery needs.
+  That is the invariant under test here, and it had NO working assertion: the file
+  was red, so every claim it made was inert.
+
+  Only `live` orphans notify: a subsumed/dead stash holds no unique work, and
+  commenting on those would train operators to ignore the notice.
+  */
+  it("surfaces a live autostash orphan as a log entry and parent comment that keep the stash label", async () => {
+    const store = makeStore();
+    const engine = createEngine(store);
+    await engine.start();
+
+    const handler = store.on.mock.calls.find(
+      (call: unknown[]) => call[0] === "merger:autostashOrphans",
+    )?.[1] as ((payload: { rootDir: string; records: unknown[] }) => Promise<void>) | undefined;
+    if (!handler) throw new Error("merger:autostashOrphans handler was not registered");
+
+    try {
+    await handler({
+      rootDir: "/tmp/proj_test",
+      records: [
+        {
+          classification: "live",
+          sha: "abcdef1234567890",
+          label: "fusion-autostash/FN-2084/pre-merge",
+          sourceTaskId: "FN-2084",
+          detectedByTaskId: "FN-9001",
+          sourcePhase: "pre-merge",
+        },
+        // A non-live orphan must stay silent.
+        {
+          classification: "subsumed",
+          sha: "999999999999",
+          label: "fusion-autostash/FN-2084/subsumed",
+          sourceTaskId: "FN-2084",
+        },
+      ],
+    });
+
+    // Exactly one notification pair — the subsumed record is not surfaced.
+    expect(store.addTaskComment).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    const [commentTaskId, commentBody] = store.addTaskComment.mock.calls[0] as [string, string];
+    expect(commentTaskId).toBe("FN-2084");
+    // The stash label is the recovery handle: it must survive verbatim, untruncated.
+    expect(commentBody).toContain("fusion-autostash/FN-2084/pre-merge");
+    expect(commentBody).toContain("abcdef1");
+    expect(commentBody).toContain("FN-9001");
+    expect(commentBody).toContain("pre-merge");
+
+    const [logTaskId, logMessage, logDetail] = store.logEntry.mock.calls[0] as [string, string, string];
+    expect(logTaskId).toBe("FN-2084");
+    expect(logMessage).toContain("fusion-autostash/FN-2084/pre-merge");
+    expect(logDetail).toContain("fusion-autostash/FN-2084/pre-merge");
+    } finally {
+      // Always stop: a thrown assertion that leaves the engine running kills the
+      // vitest worker, and a crashed run reports NO failures at all — which reads
+      // as "this guard is untested" instead of "this guard just failed".
+      await engine.stop();
+    }
+  });
+
 });

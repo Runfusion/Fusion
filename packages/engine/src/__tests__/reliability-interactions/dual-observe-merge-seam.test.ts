@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   computeShadowLeaseParityState,
   getUnmetSchedulingDependencies,
-  isRunnableQueuedOverlapCandidate,
 } from "../../scheduler.js";
 import { ProjectEngine } from "../../project-engine.js";
 import { classifyTransientMergeError } from "../../transient-merge-error-classifier.js";
@@ -138,23 +137,6 @@ describe("FN-5742 dual-observe merge seam", () => {
     expect(unmet).toEqual([]);
   });
 
-  it("does not block unrelated executor dispatch when merge lane is busy", () => {
-    const now = Date.now();
-    const activeScopes = new Map<string, string[]>([["FN-MERGE", ["packages/engine/src/merger.ts"]]]);
-    const todo = {
-      id: "FN-UNRELATED",
-      column: "todo",
-      status: "queued",
-      paused: false,
-      userPaused: false,
-      dependencies: [],
-      nextRecoveryAt: undefined,
-    } as any;
-
-    const runnable = isRunnableQueuedOverlapCandidate(todo, [todo], now, activeScopes, ["docs/architecture.md"]);
-    expect(runnable).toBe(true);
-  });
-
   it("classifies transient merge errors without changing scheduler runnable decisions", () => {
     const transient = classifyTransientMergeError(
       "lease-handoff-failed: target-not-queued while attempting merge handoff",
@@ -170,7 +152,6 @@ describe("FN-5742 dual-observe merge seam", () => {
       dependencies: [],
       nextRecoveryAt: undefined,
     } as any;
-    expect(isRunnableQueuedOverlapCandidate(todo, [todo], Date.now())).toBe(true);
   });
 
   it("shadow dequeue helpers do not touch limbo recovery counters", () => {

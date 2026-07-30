@@ -343,6 +343,88 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
   path becomes authoritative.
   */
 
+  /*
+  FNXC:MovePathConvergence 2026-07-30-22:10 (U2b — second measured divergence, and it is not a
+  message shape):
+
+  U11 removed `triage` from the default coding lineage, so rows left there sit in a column their own
+  workflow no longer declares. #2515 added an escape hatch to `resolveAllowedColumns` so such a card
+  has a legal move (its workflow's rebound target) instead of "Valid targets: none".
+
+  That hatch is INSIDE the `useWorkflow` block, so it only runs on the hooks path. Mutation-verified
+  in #2597: stubbing it back to `[]` left an operator-move test green, because the inline path
+  answers from the legacy VALID_TRANSITIONS map instead — whose `triage` row happens to permit the
+  move for unrelated reasons.
+
+  WHY THIS ONE MATTERS MORE THAN THE MESSAGE DIVERGENCE ABOVE. It is not a shape difference in a
+  rejection; it is a difference in WHICH MOVES ARE LEGAL, and it is workflow-dependent. Flipping
+  `useWorkflow` on changes move VALIDATION for every stranded card, not just side-effect routing —
+  so "make the flag always-on, then delete the flag-OFF branch" is not the mechanical cleanup it
+  looks like. Recorded here so the flip is an operator decision with the behaviour change visible,
+  which is what U2b exists to make possible.
+  */
+  it("DIVERGENCE: legal targets for a card in an UNDECLARED column come from different sources", async () => {
+    const store = h.store();
+
+    const targetsFor = async (path: "inline" | "hooks", id: string): Promise<string[]> => {
+      await setPath(path);
+      // Ask for a target NO workflow declares, and read the reported legal set out of the
+      // rejection. Both paths reject; the question is what each one considers legal.
+      const err = await store
+        .moveTask(id, "not-a-column-any-workflow-declares")
+        .then(() => null, (e: unknown) => e as Error);
+      const match = /Valid targets: (.*)$/.exec(err?.message ?? "");
+      return match ? match[1]!.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    };
+
+    await setPath("inline");
+    const inlineTask = await store.createTask({ description: "undeclared-source inline" });
+    const inlineTargets = await targetsFor("inline", inlineTask.id);
+
+    /*
+    FNXC:MovePathConvergence 2026-07-31-10:45 (PR #2638 review — greptile P2):
+    The HOOKS path with a card genuinely STRANDED, which the first version never exercised: it
+    created the card in a declared column and only ran the inline path, so a regression in the hooks
+    rebound resolution would not have failed anything.
+
+    Stranding needs a direct row write — `moveTask` refuses to take a card into an undeclared column,
+    which is the transition policy working. The corrupt post-upgrade state IS the fixture, and it is
+    the state U11 leaves behind for every row still sitting in `triage`.
+    */
+    await setPath("hooks");
+    const strandedTask = await store.createTask({ description: "undeclared-source hooks" });
+    await h.adminSql()`UPDATE project.tasks SET "column" = 'a-column-no-workflow-declares' WHERE id = ${strandedTask.id}`;
+    store.taskCache.delete(strandedTask.id);
+
+    const hooksErr = await store
+      .moveTask(strandedTask.id, "in-progress")
+      .then(() => null, (e: unknown) => e as Error);
+
+    /*
+    On the hooks path the SOURCE column is undeclared, so `resolveAllowedColumns` has no adjacency to
+    read and U11's escape hatch supplies the workflow's rebound target instead. Whatever the outcome,
+    it is reached through workflow resolution — asserted as "not the legacy VALID_TRANSITIONS answer",
+    because the legacy table is what the inline path consults and the two must be distinguishable.
+
+    Deliberately not asserting a specific message: the point is that the two paths answer from
+    DIFFERENT SOURCES for the same stranded card. Pinning hooks' exact wording here would duplicate
+    the rejection-shape divergence above and make this case fail for the wrong reason.
+    */
+    expect(hooksErr === null || !/Valid targets: in-progress, triage, archived/.test(hooksErr.message)).toBe(true);
+
+    /*
+    The inline path enumerates the LEGACY table, so it reports legacy ids regardless of what the
+    task's workflow declares. The hooks path does not report a target list at all for an unknown
+    column — it throws the typed unknown-column rejection first, asserted above.
+
+    Asserted as a POSITIVE about the inline path rather than a comparison of two lists, because the
+    two paths do not even reach the same rejection: that asymmetry IS the divergence, and a
+    comparison would hide it behind two empty arrays.
+    */
+    expect(inlineTargets.length).toBeGreaterThan(0);
+    expect(inlineTargets).toContain("in-progress");
+  });
+
   it("DIVERGENCE: rejection TYPE and MESSAGE differ — the legacy bare-Error contract is inline-only", async () => {
     const store = h.store();
 
@@ -370,34 +452,43 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     expect(hooksErr!.message).toContain("Unknown column for this workflow");
   });
 
-  it("UNPROVEN: in-transaction column capacity did NOT reject on EITHER path in this fixture", async () => {
+  it("CONVERGED: in-transaction capacity now rejects on BOTH paths", async () => {
     /*
-    HONEST NEGATIVE RESULT — recorded rather than dropped, because the code gate
-    is real and the practical impact is not what reading it suggests.
+    FNXC:WorkflowCapacity 2026-07-28-19:40 (pool-id sentinel fix):
+    WAS `UNPROVEN: … did NOT reject on EITHER path`. That test recorded an honest
+    negative result and left the cause open: "something further in
+    (`resolveColumnCapacity`'s limit resolution, or what
+    `countActiveInCapacitySlotAsync` counts as an occupant) keeps the check from
+    firing even when the flag is on. This suite does not establish which." It
+    also predicted its own obsolescence: "if a future change makes this reject,
+    that is the capacity gate coming alive."
 
-    STRUCTURALLY, `moves.ts` wraps the whole in-transaction capacity block in
-    `if (useWorkflow && workflowIr && fromColumn !== toColumn)`, so it cannot run
-    on the LIVE inline path at all. The obvious inference is "converging onto the
-    hooks path turns store-level capacity rejection ON for every project" — a
-    serious blast radius, since `capacity-exhausted` is a code the graph column
-    boundary parks on and the promote route surfaces to operators.
+    THE ANSWER, established by the sentinel fix: neither of those guesses. The
+    counter and the limit resolution were both fine. `moves.ts` asked the counter
+    for occupants of pool `"builtin:coding"` while the counter buckets
+    selection-less rows under `DEFAULT_WORKFLOW_POOL_ID`, so the count came back
+    0 for a pool nothing is ever placed in. Both sides now derive the pool
+    through `resolveCapacityPoolId`, and the hooks path rejects.
 
-    EMPIRICALLY that inference does not hold up: with `maxConcurrent: 1` and a
-    wip column already occupied, the second move was ACCEPTED on both paths. So
-    something further in (`resolveColumnCapacity`'s limit resolution, or what
-    `countActiveInCapacitySlotAsync` counts as an occupant — a task with no
-    session/agent may not count) keeps the check from firing even when the flag
-    is on. This suite does not establish which.
-
-    Consequence for the convergence decision: the capacity blast radius is
-    UNQUANTIFIED, not absent. It needs its own investigation before either path
-    is made authoritative — this test pins today's observed behavior so that
-    investigation starts from a fact instead of the code reading.
+    The blast-radius question this test was holding open is therefore ANSWERED for
+    the hooks path and STILL OPEN for the inline one: the inline path remains
+    structurally unable to run the block (`if (useWorkflow && …)`), so converging
+    the paths still turns store-level capacity rejection on for every project.
+    That convergence stays an operator decision — see the R2 note in
+    workflow-capacity-invariant.pg.test.ts.
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
 
+    /* Each phase starts from an EMPTY wip column. Before the gate bound, the two phases could share
+       one fixture because nothing ever counted occupants; now they cannot — the inline phase leaves
+       two cards in wip, and the hooks phase's own HOLDER move would trip the cap before the
+       contended move under test ever runs (observed: "column at capacity (2/1)"). Evacuating is
+       what keeps this a test of the contender's move rather than of fixture residue. */
     async function fillThenMoveSecond(): Promise<Error | null> {
+      for (const stale of await store.listTasks({ includeArchived: false })) {
+        if (stale.column === "in-progress") await store.deleteTask(stale.id);
+      }
       const first = await store.createTask({ description: "capacity holder" });
       await store.moveTask(first.id, "todo");
       await store.moveTask(first.id, "in-progress");
@@ -407,11 +498,21 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     }
 
     await setPath("inline");
-    expect(await fillThenMoveSecond()).toBeNull();
+    /* FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 fix): was `toBeNull()` — the block used
+       to be unreachable here. Un-gating the capacity check is what converged the two
+       paths on this behavior; the OTHER divergences in this file (rejection type and
+       message) are deliberately untouched, because only the capacity check was
+       un-gated, not transition validation. */
+    const inlineErr = await fillThenMoveSecond();
+    expect((inlineErr as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
 
     await setPath("hooks");
-    // If a future change makes this reject, that is the capacity gate coming
-    // alive — and this failure is the signal to re-open the blast-radius question.
-    expect(await fillThenMoveSecond()).toBeNull();
+    const hooksErr = await fillThenMoveSecond();
+    expect(hooksErr).toBeInstanceOf(Error);
+    expect((hooksErr as unknown as { rejection?: { code?: string } }).rejection?.code).toBe(
+      "capacity-exhausted",
+    );
   });
 });

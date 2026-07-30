@@ -2871,6 +2871,30 @@ export function createWorkflowSelectTool(store: TaskStore, currentTaskId: string
         };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+        TRANSLATE the switch re-home failure so the agent gets an actionable, retryable
+        result instead of an opaque message. `selectionCommitted` is the field that
+        matters: false means nothing was written and the task is intact (destination
+        column full, caught before any commit) so the agent can make room and retry;
+        true means the selection committed and the re-home then lost a race, so the
+        task is INCONSISTENT and the agent must not treat the switch as done.
+        */
+        if (err?.name === "WorkflowSwitchRehomeFailedError") {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${err.message}` }],
+            details: {
+              code: "workflow-switch-rehome-failed",
+              taskId: err.taskId,
+              workflowId: err.workflowId,
+              fromColumn: err.fromColumn,
+              intendedColumn: err.intendedColumn,
+              selectionCommitted: err.committed === true,
+              ...(err.reason !== undefined ? { reason: err.reason } : {}),
+            },
+            isError: true,
+          };
+        }
         return {
           content: [{ type: "text" as const, text: `ERROR: Failed to select workflow: ${err?.message ?? err}` }],
           details: {},

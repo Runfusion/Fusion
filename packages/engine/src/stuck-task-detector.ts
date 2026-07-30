@@ -1,3 +1,16 @@
+/*
+FNXC:CapacityModel 2026-07-29-15:00 (capacity-simplification audit — KEEP, with evidence):
+Audited alongside the gridlock detector while collapsing the capacity model. It is
+NOT a capacity component and nothing here changes with the limiters.
+
+This detects a STUCK AGENT — a live session repeating the same tool call, or emitting
+no activity signal — via tool fingerprints and inactivity windows. That is orthogonal
+to how many agents are permitted to run: a single agent on an unlimited board can
+still wedge.
+
+Measured, not assumed: zero references to maxConcurrent / maxWorktrees / semaphore /
+capacity / slot in this file. Live and wired (in-process-runtime.ts).
+*/
 /**
  * Stuck Task Detector — monitors in-progress tasks for agent session stagnation.
  *

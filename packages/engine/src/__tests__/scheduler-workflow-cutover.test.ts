@@ -460,6 +460,74 @@ describe("Scheduler workflow cutover", () => {
     expect(ready.column).toBe("todo");
   });
 
+  /*
+  FNXC:CapacityModel 2026-07-28-12:10:
+  WORKTREES OFF → "limit via total agents only". These three cases are the proof
+  that maxWorktrees is genuinely INERT rather than merely generous, and they use
+  the SAME fixture as the two maxWorktrees tests above (5 in-progress, limit 4)
+  which are proven to BLOCK — so a regression that quietly re-enables the worktree
+  gate flips these red while those stay green, and vice versa.
+
+  "Inert" is asserted three ways because "set very high" and "skipped by
+  convention" both pass a naive does-it-dispatch check:
+    1. the card actually releases where worktrees-on blocks it;
+    2. maxWorktrees is absent from everything the operator reads — with worktrees
+       on this same fixture logs "gate=maxWorktrees; ... used=5/4";
+    3. an ABSURD maxWorktrees (0 — the value that DEADLOCKS the board when
+       worktrees are on, because `used >= 0` holds on an empty board) changes
+       nothing, proving the value is never consulted rather than merely large.
+
+  Note on (2): a maxWorktrees-named queued reason is structurally UNREACHABLE in
+  OFF mode, so this asserts absence rather than a rewritten string. Measured, not
+  assumed — when maxConcurrent is the binding gate the sweep bails before the
+  per-task reason and logs nothing at all (the pre-existing "maxConcurrent is
+  full" test above likewise asserts no log line). Only maxWorktrees or the
+  semaphore binding produces that string, and OFF mode removes the first.
+  */
+  it("worktrees off: releases despite being far over maxWorktrees (agents-only capacity)", async () => {
+    const active = Array.from({ length: 5 }, (_, index) => task({ id: `FN-10${index}`, column: "in-progress" }));
+    const ready = task({ id: "FN-200", status: "queued" });
+    const store = storeWith([...active, ready], {
+      maxConcurrent: 10,
+      maxWorktrees: 4,
+      worktreeLimitEnabled: false,
+    });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    // 5 > 4 would have bound the worktree gate; with worktrees off only the agent
+    // count (5/10) is consulted, so the card releases.
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-200", "in-progress", expect.any(Function), expect.anything());
+    expect(onSchedule).toHaveBeenCalledTimes(1);
+    // ...and maxWorktrees is never named in anything the operator reads. With
+    // worktrees on, this exact fixture logs "gate=maxWorktrees; ... used=5/4".
+    const messages = vi.mocked(store.logEntry).mock.calls.map(([, m]) => String(m));
+    expect(messages.some((m) => m.includes("maxWorktrees"))).toBe(false);
+  });
+
+  it("worktrees off: maxWorktrees=0 does not deadlock dispatch (the value is never read)", async () => {
+    // 0 is the value that makes the ON path refuse every release (`used >= 0` is
+    // true on an empty board). If anything still consulted the limit, this would
+    // dispatch nothing.
+    const ready = task({ id: "FN-700", status: "queued" });
+    const store = storeWith([ready], {
+      maxConcurrent: 4,
+      maxWorktrees: 0,
+      worktreeLimitEnabled: false,
+    });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-700", "in-progress", expect.any(Function), expect.anything());
+    expect(onSchedule).toHaveBeenCalledTimes(1);
+  });
+
   it("releases one ready task when maxWorktrees has exactly one remaining slot and maxConcurrent is higher", async () => {
     const active = Array.from({ length: 3 }, (_, index) => task({ id: `FN-30${index}`, column: "in-progress" }));
     const first = task({ id: "FN-401", status: "queued" });

@@ -12,7 +12,6 @@ const commandCenterControlsCss = readAppFile("components/command-center/CommandC
 
 const defaultSettings = {
   maxConcurrent: 2,
-  maxTriageConcurrent: 1,
   maxWorktrees: 4,
   globalPause: false,
   enginePaused: false,
@@ -293,7 +292,6 @@ describe("EngineControlMenu", () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 60,
-      maxTriageConcurrent: 70,
       maxWorktrees: 80,
     });
     await openMenu();
@@ -335,7 +333,6 @@ describe("EngineControlMenu", () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 12,
-      maxTriageConcurrent: 3,
       maxWorktrees: 25,
     });
     await openMenu();
@@ -344,292 +341,17 @@ describe("EngineControlMenu", () => {
     expect(screen.getByLabelText(/max worktrees/i)).toHaveAttribute("max", "50");
   });
 
-  it("confirms footer global cap edits before writing through the shared hook", async () => {
-    await openMenu();
 
-    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    vi.useFakeTimers();
 
-    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
 
-    expect(globalMaxConcurrent).toHaveValue("9");
-    expect(globalMaxConcurrent.closest("label")).toHaveTextContent("9");
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
 
-    const dialog = screen.getByRole("dialog", { name: /confirm concurrency change/i });
-    expect(dialog).toHaveTextContent("Change Global Max Concurrent from 6 to 9?");
-    expect(screen.getByRole("button", { name: /save change/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-    expect(globalMaxConcurrent).toBeDisabled();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /save change/i }));
-      await Promise.resolve();
-    });
-    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.resolve();
-    });
-
-    expect(legacyMocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 9 });
-  });
-
-  it("prevents duplicate footer confirmation dialogs while a concurrency confirmation is open", async () => {
-    await openMenu();
-
-    const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
-    const globalMaxConcurrent = screen.getByLabelText(/maximum concurrent agents across all projects/i);
-    vi.useFakeTimers();
-
-    fireEvent.change(maxConcurrent, { target: { value: "7" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
-
-    fireEvent.change(maxConcurrent, { target: { value: "8" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
-    vi.useRealTimers();
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument());
-
-    vi.useFakeTimers();
-    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
-    fireEvent.change(globalMaxConcurrent, { target: { value: "10" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
-    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
-  });
-
-  it("flushes already-confirmed global cap saves when the footer closes", async () => {
-    await openMenu();
-
-    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    vi.useFakeTimers();
-
-    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /save change/i }));
-      await Promise.resolve();
-    });
-
-    fireEvent.click(screen.getByTestId("engine-control-menu-close"));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.resolve();
-    });
-
-    expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument();
-    expect(legacyMocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 9 });
-  });
-
-  it("cancels footer global cap edits without triggering a global write", async () => {
-    await openMenu();
-
-    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    vi.useFakeTimers();
-
-    fireEvent.change(globalMaxConcurrent, { target: { value: "8" } });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-
-    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Global Max Concurrent from 6 to 8");
-    vi.useRealTimers();
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument());
-    await waitFor(() => expect(globalMaxConcurrent).toHaveValue("6"));
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
-  });
-
-  it("does not prompt or write when a footer global cap edit matches the persisted value", async () => {
-    await openMenu();
-
-    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    vi.useFakeTimers();
-
-    fireEvent.change(globalMaxConcurrent, { target: { value: "6" } });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-
-    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
-  });
-
-  it("keeps loading and error global cap states disabled so they cannot prompt", async () => {
-    let resolveGlobalConcurrency!: (value: {
-      globalMaxConcurrent: number;
-      currentlyActive: number;
-      queuedCount: number;
-      projectsActive: Record<string, number>;
-    }) => void;
-    legacyMocks.fetchGlobalConcurrency.mockReturnValue(new Promise((resolve) => {
-      resolveGlobalConcurrency = resolve;
-    }));
-
-    await openMenu();
-
-    const loadingGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 restores native touch dragging only for enabled ranges; loading caps remain disabled no-ops.
-    expect(loadingGlobalMaxConcurrent).toHaveAttribute("disabled");
-    expect(loadingGlobalMaxConcurrent).toBeDisabled();
-
-    vi.useFakeTimers();
-    fireEvent.change(loadingGlobalMaxConcurrent, { target: { value: "7" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
-
-    await act(async () => {
-      resolveGlobalConcurrency({
-        globalMaxConcurrent: 6,
-        currentlyActive: 3,
-        queuedCount: 0,
-        projectsActive: { proj_123: 2 },
-      });
-    });
-
-    vi.useRealTimers();
-    cleanup();
-    legacyMocks.updateGlobalConcurrency.mockClear();
-    legacyMocks.fetchGlobalConcurrency.mockRejectedValue(new Error("global concurrency unavailable"));
-
-    await openMenu();
-
-    const errorGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    await screen.findByRole("alert");
-    expect(errorGlobalMaxConcurrent).toBeDisabled();
-
-    vi.useFakeTimers();
-    fireEvent.change(errorGlobalMaxConcurrent, { target: { value: "7" } });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
-    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
-  });
 
   // FNXC:GlobalConcurrencyControls 2026-07-15-12:00: FN-8007 replaces FN-7160/FN-7235's utilization ratio with native range-thumb coordinates so markers share the running value's min-relative track position.
-  it("aligns footer global and project markers with their native thumbs", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 10,
-      currentlyActive: 10,
-      projectsActive: { proj_123: 10 },
-    });
 
-    await openMenu();
 
-    await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", `${((10 - 1) / (50 - 1)) * 100}%`);
-    expectFooterUseOffset("engine-control-global-use-marker", (10 - 1) / (32 - 1));
-    expectFooterUseOffset("engine-control-project-use-marker", (10 - 1) / (50 - 1));
-  });
 
-  it("pins footer over-cap markers at the cap thumb instead of the track end", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 10,
-      currentlyActive: 40,
-      projectsActive: { proj_123: 40 },
-    });
 
-    await openMenu();
-
-    await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", `${((10 - 1) / (32 - 1)) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", `${((12 - 1) / (50 - 1)) * 100}%`);
-    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
-    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe("100%");
-  });
-
-  it("maps one running agent to the visible footer slider start", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, maxConcurrent: 12 });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 10,
-      currentlyActive: 1,
-      projectsActive: { proj_123: 1 },
-    });
-
-    await openMenu();
-
-    await screen.findByTestId("engine-control-global-use-marker");
-    expectUseMarkerPct("engine-control-global-use-marker", "0%");
-    expectUseMarkerPct("engine-control-project-use-marker", "0%");
-    expectFooterUseOffset("engine-control-global-use-marker", 0);
-    expectFooterUseOffset("engine-control-project-use-marker", 0);
-  });
-
-  it("positions zero running at the start of both footer markers", async () => {
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 6,
-      currentlyActive: 0,
-      projectsActive: {},
-    });
-
-    await openMenu(undefined);
-
-    expect(await screen.findByTestId("engine-control-global-running")).toHaveTextContent("0 running (all projects)");
-    expect(screen.getByTestId("engine-control-project-running")).toHaveTextContent("0 running (this project)");
-    expect(screen.getByTestId("engine-control-global-use-marker")).toHaveStyle({ "--use-pct": "0%" });
-    expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "0%" });
-    expectFooterUseOffset("engine-control-global-use-marker", 0);
-    expectFooterUseOffset("engine-control-project-use-marker", 0);
-  });
-
-  it("recomputes footer project marker positions from the visible pending cap", async () => {
-    legacyMocks.fetchSettings.mockResolvedValue({
-      ...defaultSettings,
-      maxConcurrent: 60,
-    });
-    mockGlobalConcurrency({
-      globalMaxConcurrent: 48,
-      currentlyActive: 16,
-      projectsActive: { proj_123: 30 },
-    });
-
-    await openMenu();
-
-    await screen.findByLabelText(/maximum concurrent agents across all projects/i);
-    const maxConcurrent = screen.getByLabelText(/max concurrent tasks/i);
-    vi.useFakeTimers();
-
-    expectUseMarkerPct("engine-control-global-use-marker", `${((16 - 1) / (48 - 1)) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", `${((30 - 1) / (60 - 1)) * 100}%`);
-
-    fireEvent.change(maxConcurrent, { target: { value: "50" } });
-
-    expectUseMarkerPct("engine-control-global-use-marker", `${((16 - 1) / (48 - 1)) * 100}%`);
-    expectUseMarkerPct("engine-control-project-use-marker", `${((30 - 1) / (50 - 1)) * 100}%`);
-    expectFooterUseOffset("engine-control-global-use-marker", (16 - 1) / (48 - 1));
-    expectFooterUseOffset("engine-control-project-use-marker", (30 - 1) / (50 - 1));
-  });
 
   it("suppresses footer running counts and markers while utilization is loading", async () => {
     let resolveGlobalConcurrency!: (value: {
@@ -659,17 +381,23 @@ describe("EngineControlMenu", () => {
     });
   });
 
-  it("suppresses footer running counts and markers when utilization fails", async () => {
-    legacyMocks.fetchGlobalConcurrency.mockRejectedValue(new Error("global concurrency unavailable"));
 
-    await openMenu();
+  /*
+  FNXC:CapacityModel 2026-07-29-00:25 (drop the cross-project cap — settings half):
+  The footer global-cap tests are DELETED with the slider they covered: confirm /
+  cancel / dedupe-dialog / flush-on-close / no-op-when-unchanged / disabled-while-
+  loading, and the global marker geometry cases.
 
-    await screen.findByRole("alert");
-    expect(screen.queryByTestId("engine-control-global-running")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("engine-control-project-running")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("engine-control-global-use-marker")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("engine-control-project-use-marker")).not.toBeInTheDocument();
-  });
+  All of them pinned the machinery that held an edit un-persisted until the operator
+  confirmed. That machinery existed because the slider WROTE a machine-wide cap; the
+  cap is gone (capacity is two numbers PER PROJECT) and so is the PUT route, so there
+  is no write left to guard. The PROJECT-side equivalents of every one of these cases
+  are retained above — they still guard a real write.
+
+  The surviving "suppresses footer running counts and markers while utilization is
+  loading" case still covers the live-telemetry readout, which is the only part of
+  this surface that remains.
+  */
 
   it("persists a slider value of 50 after confirmation", async () => {
     await openMenu();

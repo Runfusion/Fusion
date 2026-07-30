@@ -21,12 +21,12 @@ import { createLogger } from "../logger.js";
 // Mock the logger to suppress output during tests
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn(() => ({
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   })),
   executorLog: {
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },

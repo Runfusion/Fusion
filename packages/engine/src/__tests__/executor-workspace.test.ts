@@ -63,6 +63,20 @@ describeIfGit("workspace fixture", () => {
 
 describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () => {
   let fx: WorkspaceFixture;
+  /*
+  FNXC:TestInfrastructure 2026-07-29-22:05 (#2617 review — greptile P2):
+  `activeSessionRegistry` is PROCESS-GLOBAL and is itself a liveness signal
+  (hasLiveSessionSurface reads it), so a registration leaked by a failing assertion
+  makes the NEXT test see a phantom live session and refuse a clear it should permit.
+  Unregistering after the assertions only works on the happy path. Sweep in
+  guaranteed teardown instead — this suite is precisely the one that measures that
+  registry, so it must not be the one polluting it.
+  */
+  afterEach(() => {
+    for (const path of activeSessionRegistry.pathsForTask("FN-WS-1")) {
+      activeSessionRegistry.unregisterPath(path);
+    }
+  });
   afterEach(() => fx?.cleanup());
 
   function workspaceExecutor() {
@@ -146,7 +160,34 @@ describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () 
     expect(removeSpy).not.toHaveBeenCalled();
   });
 
-  it("clearPhantomExecutorBinding (FN-6736) unregisters every held path, not one", async () => {
+  /*
+  FNXC:NodeWorktreeIsolation 2026-07-29-18:20 (U9 re-green; consequence of PR #2531):
+  These two cases used to assert that `clearPhantomExecutorBinding` SUCCEEDS while
+  session-registry paths are held, and swept (or preserved) them. FN-6756 inverted
+  that: `hasLiveSessionSurface` now includes
+  `activeSessionRegistry.pathsForTask(taskId).length > 0`, and that guard runs
+  BEFORE both branches — so any registered path refuses the clear outright. The old
+  expectations describe the pre-#2531 contract.
+
+  Rewritten to assert the CURRENT contract, which is the P0 fix's actual promise and
+  had no direct coverage: a registered surface of any kind means someone is working
+  in that worktree, so the reclaim refuses rather than reaping it.
+
+  ⚠️ FLAG FOR THE #2531 OWNER — not fixed here, because it is a product decision:
+  the guard appears to make BOTH of the branches it precedes unreachable for their
+  stated purpose.
+    - the default branch exists to unregister every held registry path (FN-6736);
+    - `preserveWorktrees: true` exists to KEEP those registry paths so a
+      `moveTask(preserveWorktree:true)` re-dispatch reattaches to the same worktree
+      (FN-7249), and its ONLY production caller is the self-healing reclaim at
+      self-healing.ts:3565.
+  Both require registered paths to do anything, and the guard rejects exactly that
+  case. With no registered paths, one sweeps nothing and the other preserves
+  nothing. The third case below pins this so the conflict is executable rather than
+  prose. Resolving it — e.g. exempting the non-destructive `preserveWorktrees` path,
+  or narrowing the guard by kind — belongs to whoever owns FN-6756.
+  */
+  it("clearPhantomExecutorBinding refuses while a session-registry path is held (FN-6756)", async () => {
     fx = await createWorkspaceFixture();
     const executor = workspaceExecutor();
     const pA = repoAPath(fx);
@@ -156,34 +197,40 @@ describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () 
     activeSessionRegistry.registerPath(pA, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:a" });
     activeSessionRegistry.registerPath(pB, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:b" });
 
-    const ok = (executor as any).clearPhantomExecutorBinding("FN-WS-1");
-    expect(ok).toBe(true);
+    expect((executor as any).clearPhantomExecutorBinding("FN-WS-1")).toBe(false);
+    // Nothing may be torn down on a refusal — that is the whole point of the guard.
+    expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(true);
+    expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual(expect.arrayContaining([pA, pB]));
+    // Cleanup is in afterEach, so a failure above cannot leak these registrations.
+  });
+
+  it("clearPhantomExecutorBinding (FN-6736) clears every held path once no session surface remains", async () => {
+    fx = await createWorkspaceFixture();
+    const executor = workspaceExecutor();
+    const pA = repoAPath(fx);
+    const pB = repoBPath(fx);
+    (executor as any).addActiveWorktree("FN-WS-1", pA);
+    (executor as any).addActiveWorktree("FN-WS-1", pB);
+
+    // No registry paths held, so the guard permits the clear. KTD2: a workspace task
+    // holds N worktrees and ALL of them must leave the binding, not just the first.
+    expect((executor as any).clearPhantomExecutorBinding("FN-WS-1")).toBe(true);
     expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(false);
-    // Default path must sweep the session-registry entries (inverse of the preserveWorktrees branch).
+    expect((executor as any).executing.has("FN-WS-1")).toBe(false);
     expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual([]);
   });
 
-  it("clearPhantomExecutorBinding (FN-7249) preserveWorktrees keeps session-registry paths for re-dispatch", async () => {
+  it("FN-7249 preserveWorktrees cannot run while the paths it exists to preserve are registered", async () => {
     fx = await createWorkspaceFixture();
     const executor = workspaceExecutor();
     const pA = repoAPath(fx);
-    const pB = repoBPath(fx);
     (executor as any).addActiveWorktree("FN-WS-1", pA);
-    (executor as any).addActiveWorktree("FN-WS-1", pB);
     activeSessionRegistry.registerPath(pA, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:a" });
-    activeSessionRegistry.registerPath(pB, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:b" });
 
-    const ok = (executor as any).clearPhantomExecutorBinding("FN-WS-1", { preserveWorktrees: true });
-    expect(ok).toBe(true);
-    // In-memory executor/lock bookkeeping is cleared so the scheduler can re-dispatch.
-    expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(false);
-    expect((executor as any).executing.has("FN-WS-1")).toBe(false);
-    // The held worktree session-registry entries are preserved so re-dispatch
-    // reattaches to the same worktree instead of acquiring a new one.
-    expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual(expect.arrayContaining([pA, pB]));
-
-    activeSessionRegistry.unregisterPath(pA);
-    activeSessionRegistry.unregisterPath(pB);
+    // The guard precedes the preserveWorktrees branch, so the one scenario that
+    // branch was written for is the one it can never reach.
+    expect((executor as any).clearPhantomExecutorBinding("FN-WS-1", { preserveWorktrees: true })).toBe(false);
+    expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(true);
   });
 });
 

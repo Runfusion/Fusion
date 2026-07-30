@@ -24,6 +24,7 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
+import { isFieldEditableColumnRole } from "../utils/columnRoles";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
@@ -512,8 +513,15 @@ interface TaskWorkflowMetadata {
   currentColumnFlags?: TaskContextMenuColumnFlags;
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The `payload.flagEnabled !== true` early return is DELETED. The server hardcodes
+that field to `true`, so the guard could only ever suppress this modal's workflow
+section on a malformed payload — a retired kill switch, not a real precondition.
+The `!workflow || !name` guard below is the one that actually handles a payload
+without resolvable workflow metadata.
+*/
 function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<Task, "id" | "column">): TaskWorkflowMetadata | null {
-  if (payload.flagEnabled !== true) return null;
   const workflowId = payload.taskWorkflowIds[task.id] ?? payload.defaultWorkflowId;
   const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
   const name = workflow?.name?.trim();
@@ -521,7 +529,7 @@ function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<
 
   const moveColumns = workflow.columns
     .filter((column) => column.flags.hiddenFromBoard !== true)
-    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags }));
+    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) }));
   const currentColumnFlags = moveColumns.find((column) => column.id === task.column)?.flags;
   return { id: workflow.id, name, icon: workflow.icon, fields: workflow.fields ?? null, moveColumns, currentColumnFlags };
 }
@@ -530,13 +538,30 @@ function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "sta
   return executionMode === "fast" ? "fast" : "standard";
 }
 
-function requiresExecutionModeReplan(column: Task["column"]): boolean {
+function requiresExecutionModeReplan(column: Task["column"], flags?: TaskContextMenuColumnFlags): boolean {
   /*
    FNXC:ExecutionModeReplan 2026-06-30-00:00:
    Todo and in-progress tasks can already hold a generated plan or active execution context. Changing Standard/Fast mode invalidates that plan, so the dashboard must confirm the change and send the task back through the existing replanning path instead of silently patching executionMode in place.
+
+   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+   The rule is "this card may already hold a plan or a live execution context", which the
+   traits state directly: a HOLD lane (planned, waiting for capacity) or a WIP lane
+   (executing). Naming `todo` and `in-progress` was the Default workflow's spelling of
+   that, and it silently narrows to nothing useful on a renamed workflow. Legacy ids
+   remain the fallback for callers without resolved column metadata.
    */
+  if (flags) return flags.hold === true || flags.countsTowardWip === true;
   return column === "todo" || column === "in-progress";
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+Test seam. The rule is a pure function of (column id, column flags), and asserting it
+through the full modal means booting async detail loading to observe one boolean — an
+earlier DOM-level attempt at this class of assertion in ListView passed with the
+conversion reverted, because the text it matched also appears in a column header.
+*/
+export const requiresExecutionModeReplanForTest = requiresExecutionModeReplan;
 
 interface ProvenanceDisplay {
   label: string;
@@ -638,7 +663,26 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
 
 // #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (non-members correctly resolve to false → not editable).
-const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8):
+Title/description editing belongs to PRE-IMPLEMENTATION lanes — the card has no session, no
+worktree, and no plan being executed against the text. That was encoded as the legacy id pair
+{triage, todo}, so a workflow that renames its planning lane (or U11's Todo→Planning merge)
+silently lost the Edit affordance with nothing on screen to explain it. Resolve it from the
+card's own column traits instead, and keep the legacy id set as the fallback for the window
+before the board-workflows payload resolves and for a column the workflow does not declare —
+where the traits are unknown rather than known-false.
+*/
+function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12): body moved UNCHANGED to
+  `isFieldEditableColumnRole`, so this and TaskCard cannot drift apart again. TaskCard implemented the
+  same affordance with the raw id set and no trait path, which is how a renamed board lost inline
+  editing on the card while this surface kept it.
+  */
+  return isFieldEditableColumnRole(flags, column);
+}
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
 const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
@@ -1678,7 +1722,9 @@ export function TaskDetailContent({
   // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
-  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const canEdit = isTaskFieldEditableColumn(task.column, workflowMoveMetadata?.currentColumnFlags) && !isSaving;
+  /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
+  const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
@@ -1996,7 +2042,7 @@ export function TaskDetailContent({
       }
       return false;
     }
-    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column);
+    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column, workflowMoveMetadata?.currentColumnFlags);
     if (replanAfterExecutionModeChange && !includeDescription) {
       delete updates.executionMode;
     }
@@ -2134,7 +2180,7 @@ export function TaskDetailContent({
     const currentMode = normalizeExecutionModeValue(task.executionMode);
     const nextMode = currentMode === "fast" ? "standard" : "fast";
     const previousMode = inlineExecutionMode;
-    const shouldReplan = requiresExecutionModeReplan(task.column);
+    const shouldReplan = requiresExecutionModeReplan(task.column, workflowMoveMetadata?.currentColumnFlags);
 
     if (shouldReplan) {
       const shouldChangeMode = await confirm({
@@ -2483,7 +2529,23 @@ export function TaskDetailContent({
     async (column: Column) => {
       try {
         const hasStepProgress = task.steps.some((step) => step.status !== "pending");
-        const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+        The TARGET column's role, not this card's — moving BACK into a pre-implementation
+        lane is what risks discarding step progress. (The same site in TaskCard is where I
+        first got this backwards; its regression test caught it.) Falls back to the legacy
+        ids when the destination has no resolved metadata.
+        */
+        const targetFlags = workflowMoveMetadata?.moveColumns?.find((candidate) => candidate.id === column)?.flags;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only. Same reasoning as
+        the TaskCard site: a wrong guess skips the preserve-progress prompt and discards steps with
+        no way back. Reason in full above.
+        */
+        const targetIsPreImplementation = targetFlags
+          ? targetFlags.intake === true || targetFlags.hold === true
+          : column === "todo" || column === "triage";
+        const shouldPrompt = targetIsPreImplementation && hasStepProgress;
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
         if (shouldPrompt) {
@@ -2979,7 +3041,20 @@ export function TaskDetailContent({
   plan-review-replan-cap, explain that Plan Review exhausted automatic REVISE replans
   without converging so the operator is not guessing why the task is parked.
   */
-  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The INTAKE lane's approval hold. `task.column === "triage"` is deleted by U11, which
+  would silently drop the Approve/Reject controls from a parked planning card — the
+  operator sees a task stuck "awaiting approval" with no way to answer it.
+
+  FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only.
+  Reachable only with no resolved flags; guessing "not intake" hides Approve/Reject from a parked
+  planning card, which is an operator dead end. Retires with the pre-load window.
+  */
+  const isIntakeColumn = workflowMoveMetadata?.currentColumnFlags
+    ? workflowMoveMetadata.currentColumnFlags.intake === true
+    : task.column === "triage";
+  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 
   const handleTogglePause = useCallback(async () => {
@@ -4075,8 +4150,17 @@ export function TaskDetailContent({
       <div className="modal-header">
           <div className="detail-title-row">
             <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
+            {/*
+            FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
+            The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
+            is the shared lifecycle translator keyed on legacy ids, so a workflow-declared column
+            it does not know fell through to the raw stored id ("staging") beside properly named
+            lanes elsewhere in the UI. Prefer the workflow's declared column name; keep
+            `columnLabel` for the column a workflow does not declare and for the window before the
+            board-workflows payload resolves.
+            */}
             <span className={`detail-column-badge badge-${task.column}`}>
-              {columnLabel(task.column)}
+              {workflowColumnDisplayName ?? columnLabel(task.column)}
             </span>
           </div>
           <div className="modal-header-actions">
@@ -6354,10 +6438,11 @@ export function TaskDetailContent({
                 </>
               )}
 
-              {/* Standalone Delete button for triage-column tasks — triage tasks
-                  hide the Actions dropdown (see condition below) so the user has
-                  no quick way to delete a freshly-created task otherwise. */}
-              {task.column === "triage" && !isAwaitingApproval && !canRetryTask && (
+              {/* Standalone Delete button for INTAKE-lane tasks — they hide the Actions
+                  dropdown (see condition below) so the user has no quick way to delete a
+                  freshly-created task otherwise. Keyed on the intake trait rather than the
+                  `triage` id, which U11 deletes. */}
+              {isIntakeColumn && !isAwaitingApproval && !canRetryTask && (
                 <button
                   className="btn btn-sm btn-danger"
                   onClick={handleDelete}

@@ -285,11 +285,6 @@ export function resolveTaskCustomFieldDefsSyncImpl(store: TaskStore, taskId: str
     return ir.version === "v2" ? (ir.fields ?? []) : [];
 }
 
-export function resolveEffectiveWorkflowIdSyncImpl(store: TaskStore, taskId: string): string {
-    const selection = store.getTaskWorkflowSelection(taskId);
-    return selection?.workflowId ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
-}
-
 export async function clearTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
     await store.withTaskLock(taskId, async () => {
       await store.removeMaterializedSelection(taskId);

@@ -10,7 +10,9 @@
  */
 
 import { TaskStore } from "../store.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
+import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflow-reconciliation.js";
+import {resolveColumnCapacity, resolveCapacityPoolId} from "../workflow-capacity.js";
+import {readTaskRow as readTaskRowAsync} from "./async-persistence.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
 import { type DistributedTaskIdAllocator } from "../distributed-task-id.js";
@@ -33,6 +35,7 @@ import { type TaskRow } from "./persistence.js";
 import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
@@ -353,7 +356,6 @@ export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
 
 export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
     input: WorkflowDefinitionInput,
-    flagOn: boolean,
   ): WorkflowDefinition {
     const name = input.name?.trim();
     if (!name) throw new Error("Workflow name is required");
@@ -384,7 +386,7 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
             definition.name,
             definition.description,
             definition.icon ?? null,
-            serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+            serializeWorkflowIr(downgradeIrToV1IfPure(definition.ir)),
             JSON.stringify(definition.layout),
             definition.kind,
             definition.createdAt,
@@ -503,7 +505,7 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
 export function getTaskWorkflowSelectionImpl(_store: TaskStore, _taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     /*
     FNXC:PostgresCutover 2026-07-04-00:00:
-    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
+    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync reader (resolveTaskWorkflowIrSync) fall back to its default. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
     */
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync selection reader is incomplete-PG; use getTaskWorkflowSelectionAsync. */
     return undefined;
@@ -549,16 +551,35 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
     Selection upsert must include projectId — PK is (projectId, taskId) and the authoritative read pins projectId.
     */
     const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
-    await layer.db
-      .insert(schema.project.taskWorkflowSelection)
-      .values({ projectId, taskId, workflowId, stepIds, updatedAt })
-      .onConflictDoUpdate({
-        target: [
-          schema.project.taskWorkflowSelection.projectId,
-          schema.project.taskWorkflowSelection.taskId,
-        ],
-        set: { workflowId, stepIds, updatedAt },
-      });
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process race):
+    The selection write now runs in a transaction that first takes the per-task
+    advisory lock, because the in-transaction capacity gate in `moves.ts` reads this
+    row and enforces a limit against it. Without a lock BOTH sides take, the gate
+    could read the selection, this write could land, and the move would commit the
+    task under a workflow whose pool was never the one checked.
+
+    `selectTaskWorkflow` already wraps this call in `store.withTaskLock`, which is
+    an IN-PROCESS mutex — it serializes one TaskStore instance and gives nothing
+    across nodes. Multi-node is several nodes against one central PostgreSQL
+    database, so the cross-process window is a supported deployment shape.
+
+    Acquisition order is advisory-lock-then-row-write on both sides, so the two
+    paths cannot deadlock against each other.
+    */
+    await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+      await tx
+        .insert(schema.project.taskWorkflowSelection)
+        .values({ projectId, taskId, workflowId, stepIds, updatedAt })
+        .onConflictDoUpdate({
+          target: [
+            schema.project.taskWorkflowSelection.projectId,
+            schema.project.taskWorkflowSelection.taskId,
+          ],
+          set: { workflowId, stepIds, updatedAt },
+        });
+    });
     return;
 }
 
@@ -696,26 +717,187 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     enabledWorkflowSteps: string[];
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
-    const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
-    if (!(await store.workflowColumnsFlagOn())) {
-      return { enabledWorkflowSteps };
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    PRE-FLIGHT BEFORE COMMITTING. The ordering, not the message, is the fix.
+
+    `selectTaskWorkflow` COMMITS the new selection. If the re-home that follows is then
+    rejected, the card's selection says one thing and its column says another, and
+    self-healing later has to GUESS which is authoritative. So the deterministic
+    rejection cause — the destination column being at its WIP limit — is checked HERE,
+    before anything is written. On that path nothing commits: the task keeps its old
+    workflow AND its old column, which is a consistent card, and the operator gets a
+    typed error naming the full column.
+
+    The target IR is resolved straight from `workflowId` rather than through the task's
+    selection, which is precisely what let this move ahead of the commit.
+    */
+    const preRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (preRow) {
+      const fromColumnPre = String(preRow.column);
+      const targetDef = await store.getWorkflowDefinition(workflowId);
+      if (targetDef) {
+        const targetIr = parseWorkflowIr(targetDef.ir);
+        const pre = resolveSwitchReconciliation(targetIr, fromColumnPre);
+        if (!pre.preserved && pre.targetColumn !== fromColumnPre) {
+          const settingsForCapacity = await store.getSettingsFast();
+          const capacity = resolveColumnCapacity(targetIr, pre.targetColumn, settingsForCapacity);
+          if (capacity.limit !== undefined && Number.isFinite(capacity.limit)) {
+            const occupied = await store.asyncLayer!.transactionImmediate(async (tx) =>
+              store.countActiveInCapacitySlotAsync({
+                tx,
+                targetColumn: pre.targetColumn,
+                workflowId: resolveCapacityPoolId(workflowId),
+                countPending: capacity.countPending === true,
+                excludeTaskId: taskId,
+              }),
+            );
+            if (occupied >= capacity.limit) {
+              throw new WorkflowSwitchRehomeFailedError({
+                taskId,
+                workflowId,
+                fromColumn: fromColumnPre,
+                intendedColumn: pre.targetColumn,
+                reason: `target column is at its limit (${occupied}/${capacity.limit})`,
+                committed: false,
+              });
+            }
+          }
+        }
+      }
     }
+
+    const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The early return on the raw `workflowColumns` flag is DELETED. It read a key no
+    production writer sets, so switching a task's workflow NEVER reconciled its
+    column: the card kept sitting in its old column even when the new workflow does
+    not declare that column, and the `reconciliation` field this function promises in
+    its return type was never populated for a real project.
+
+    Operator-visible consequence, deliberate: switching a task to a workflow that does
+    not declare its current column now moves the card into that workflow's resolved
+    target column (`resolveSwitchReconciliation`), and API/dashboard callers start
+    receiving the `reconciliation` summary they already have handling for. A card whose
+    column IS declared by the new workflow is preserved in place, unchanged.
+    */
     const newIr = await resolveWorkflowIrForTask(store, taskId);
-    const current = store.readTaskFromDb(taskId, { includeDeleted: false });
-    if (!current) return { enabledWorkflowSteps };
-    const fromColumn = current.column;
+    /*
+    FNXC:PostgresCutover 2026-07-28-00:00 (U12):
+    ASYNC read, not `store.readTaskFromDb`. The synchronous reader resolves through
+    `TaskStore.db`, which THROWS under the PostgreSQL runtime ("SQLite Database is not
+    available in backend mode"). The old flag gate returned before ever reaching this
+    line, so un-gating the switch reconciliation surfaced a path that could not run at
+    all in the production backend — the flag was hiding an unported read, not just a
+    disabled feature. Caught by the production-shape tests in
+    `__tests__/postgres/workflow-reconciliation-production-shape.pg.test.ts`.
+
+    NOT a missing SQLite fallback (PR #2513 review — CodeRabbit). `backendMode` is
+    defined as "the mandatory production AsyncDataLayer was injected", this module
+    already dereferences `store.asyncLayer!` in 15 other places, and the sibling
+    workflow-definition operations carry FNXC:SqliteDualPathCleanup notes stating they
+    require an AsyncDataLayer. Re-adding the synchronous reader as a fallback would
+    reintroduce exactly the throw this line fixes.
+    */
+    const currentRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (!currentRow) return { enabledWorkflowSteps };
+    const fromColumn = String(currentRow.column);
     const decision = resolveSwitchReconciliation(newIr, fromColumn);
     if (!decision.preserved && decision.targetColumn !== fromColumn) {
-      await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      const outcome = await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      /*
+      FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2513 review):
+      FAIL LOUDLY. `rehomeOccupant` swallows a rejected move by design, which is right
+      for the best-effort sweep callers but wrong here: the new selection has ALREADY
+      committed, so a swallowed rejection is a torn write — selection and column
+      disagree and nobody is told. Throw instead, leaving the recoverable state in
+      place (the R7 startup sweep re-homes an undeclared column) rather than rolling
+      back a committed selection.
+      */
+      if (!outcome.moved) {
+        /*
+        RESIDUAL RACE ONLY. The capacity pre-flight above already rejects the
+        deterministic case before any commit, so reaching here means the destination
+        filled up (or the move was otherwise rejected) between the pre-flight and the
+        move. The selection IS committed at this point, so this IS a torn card — and it
+        is RECORDED, not merely thrown, so self-healing and an operator both find the
+        divergence in run-audit instead of having to infer it from a card in a lane the
+        board cannot draw. Metadata stays ids/columns/outcomes-only.
+        */
+        /*
+        AWAITED, not fire-and-forget (PR #2512 review — CodeRabbit). The whole claim of
+        this branch is that the divergence is a fact on disk; `void`-ing the write and
+        throwing on the next line meant the one artifact self-healing is meant to find
+        could silently be absent. The write is awaited and its own failure is swallowed
+        so it can never mask the rejection the caller actually needs to see.
+
+        NO ERROR PROSE (PR #2512 review — CodeRabbit). `outcome.error` is a propagated
+        `err.message`; persisting it would contradict this file's own "ids/columns/
+        outcomes-only" claim and the project rule that run-audit never stores error
+        prose. The bounded outcome code goes here; the human-readable reason travels on
+        the thrown error, which is not persisted.
+        */
+        try {
+          await store.recordRunAuditEvent({
+            taskId,
+            agentId: "system",
+            runId: `workflow-switch-torn-${taskId}`,
+            domain: "database",
+            mutationType: "task:workflow-switch-torn",
+            target: taskId,
+            metadata: {
+              workflowId,
+              fromColumn,
+              intendedColumn: decision.targetColumn,
+              selectionCommitted: true,
+              outcome: "rehome-rejected",
+            },
+          });
+        } catch {
+          // An audit-write failure must not replace the rejection being reported.
+        }
+        throw new WorkflowSwitchRehomeFailedError({
+          taskId,
+          workflowId,
+          fromColumn,
+          intendedColumn: decision.targetColumn,
+          committed: true,
+          ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
+        });
+      }
     }
-    return {
-      enabledWorkflowSteps,
-      reconciliation: {
-        preserved: decision.preserved,
-        fromColumn,
-        toColumn: decision.targetColumn,
-      },
-    };
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    Report the column the task ACTUALLY has, not the one we asked for.
+    `rehomeOccupant` deliberately swallows a rejected move — "a full target column
+    rejects, which we audit and skip" — and returns void, so reporting
+    `decision.targetColumn` claimed a move that may never have happened. A caller
+    (dashboard switch, `fn_task_set_workflow`) would then show the card in a column it
+    is not in.
+
+    Re-reading also makes the reported result honest under the concurrency windows
+    raised in the same review: this call resolves the IR and re-homes AFTER
+    `selectTaskWorkflow` released its task lock, so a racing move can land in between.
+    Re-reading cannot close that window — it makes the response describe the outcome
+    rather than the intention, so a caller is never told a move succeeded when the
+    card sits elsewhere. Closing the window itself needs the switch to hold the task
+    lock across selection + reconciliation, which changes the locking contract and is
+    left as a separate, testable change rather than smuggled into a flag flip.
+    */
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    ABSENT IS ABSENT, decided by the pure `buildSwitchReconciliation` seam. An earlier
+    version fell back to `fromColumn`, so a task SOFT-DELETED between the first read
+    and this one was reported as having its old column PRESERVED — a live column
+    fabricated for a row that is gone.
+    */
+    const afterRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    const reconciliation = buildSwitchReconciliation(
+      fromColumn,
+      afterRow ? String(afterRow.column) : undefined,
+    );
+    return { enabledWorkflowSteps, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 export function pruneAgentLogFilesImpl(store: TaskStore, retentionDays: number): { prunedFiles: number; prunedEntries: number; freedBytes: number } {

@@ -16,22 +16,26 @@ import type {
   CliSession,
   NotificationPayload,
   WorkflowWorkItem,
+  WorkflowWorkItemState,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
   ChatStore,
   isEphemeralAgent,
+  isTaskBlockedOnApproval,
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
+import type { PlanningHandoffOutcome } from "../triage.js";
 import { buildPrNodeDeps } from "../pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
 import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree-pool.js";
-import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency.js";
+
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { AutoClaimSnapshotManager } from "../auto-claim-snapshot.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
@@ -125,7 +129,7 @@ export function isPlanningContinuationTaskDispatchable(
 /** Outcome of resolving one due work item for the planning-continuation drain. */
 export type PlanningContinuationResolution =
   | { kind: "actionable"; item: WorkflowWorkItem; task: Task }
-  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" }
+  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" | "awaiting-approval" }
   | {
       kind: "orphan";
       item: WorkflowWorkItem;
@@ -152,6 +156,21 @@ export function resolvePlanningContinuationCandidate(
   if (item.waitReason !== "planning") {
     return { kind: "skip", item, reason: "not-planning" };
   }
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  Dispatching a planning continuation starts a Plan Review run, so a card blocked
+  on a pending human approval decision must not be dispatched. The status-only
+  hold shape the plan-approval gate writes (`status: "awaiting-approval"`, no
+  pause flag) fell straight through the pause check below and was dispatched.
+
+  SKIP, never `orphan`: an orphan is cancelled and terminalized, so an approval
+  landing a minute later would find nothing left to resume and would need a second
+  repair (FN-8592's sweep) to come back. Skipping leaves the item due and
+  claimable, which is what "the operator has not decided yet" actually means.
+  */
+  if (isTaskBlockedOnApproval(task)) {
+    return { kind: "skip", item, reason: "awaiting-approval" };
+  }
   if (task.paused === true || task.userPaused === true) {
     return { kind: "skip", item, reason: "paused" };
   }
@@ -159,6 +178,197 @@ export function resolvePlanningContinuationCandidate(
     return { kind: "skip", item, reason: "paused" };
   }
   return { kind: "actionable", item, task };
+}
+
+/**
+ * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+ * How long a park-skipped continuation leaves the due window for.
+ *
+ * The due poll is a FIFO batch (`limit: 20`) and a skipped item stays `runnable`
+ * and due, so it re-fills a batch slot on every pass. Before the approval guard
+ * an approval-held item was DISPATCHED, so it never accumulated; now that it is
+ * correctly skipped, 20 cards parked on approval would starve every newer
+ * plan-review continuation until enough humans decided. That is a real
+ * consequence of the guard, not a pre-existing one.
+ *
+ * Deferral, not a state change: the item stays `runnable`, so every "is the graph
+ * idle?" predicate that reasons over ACTIVE_WORKFLOW_WORK_ITEM_STATES behaves
+ * exactly as before — moving it to `held` would remove it from the due set too,
+ * but nothing requeues a `held` planning item, which trades starvation for a
+ * permanent strand. `retryAfter` is a pure due-window filter, so the worst case
+ * is bounded latency instead.
+ *
+ * 60s is chosen against HUMAN latency: the park it defers is waiting on a person,
+ * who has already taken minutes or hours, so an extra minute after the decision
+ * is invisible — while occupancy of the shared batch drops from every poll (~2s)
+ * to at most one slot per minute per parked card.
+ */
+export const PARKED_CONTINUATION_DEFER_MS = 60_000;
+
+/**
+ * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+ * Decide whether a skipped due item should be pushed out of the due window.
+ *
+ * Only the OPERATOR-PARK skips qualify (`awaiting-approval`, `paused`): those are
+ * open-ended waits on a human, which is what makes them able to accumulate.
+ * `not-planning` is deliberately excluded — that item belongs to a different
+ * drain, and deferring another owner's work would be this drain reaching outside
+ * its own lane.
+ *
+ * Pure and separately exported so the deferral is testable without constructing a
+ * runtime, matching why `resolvePlanningContinuationCandidate` is exported.
+ */
+export function resolveParkedContinuationDeferral(
+  resolution: PlanningContinuationResolution,
+  nowMs: number,
+  deferMs: number = PARKED_CONTINUATION_DEFER_MS,
+): { itemId: string; expectedState: WorkflowWorkItemState; retryAfter: string } | null {
+  if (resolution.kind !== "skip") return null;
+  if (resolution.reason !== "awaiting-approval" && resolution.reason !== "paused") return null;
+  return {
+    itemId: resolution.item.id,
+    /*
+    FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+    The state as the due poll SAW it, carried so the write is a compare-and-set.
+    A blind write would reset a claim another node took between the poll and here:
+    the store's terminal-state check refuses cancelled/succeeded/failed, but
+    `running` is not terminal, so `running -> runnable` would have succeeded and
+    let the item be claimed twice. Deferral is a fairness optimization — it must
+    never be able to disturb live work to achieve it.
+    */
+    expectedState: resolution.item.state,
+    retryAfter: new Date(nowMs + deferMs).toISOString(),
+  };
+}
+
+/** The FIFO due-poll batch size. Named because the starvation the deferral above
+ *  prevents is a property of this bound, so the two belong in one place. */
+export const DUE_PLANNING_CONTINUATION_BATCH_LIMIT = 20;
+
+/** Everything the specification-complete reaction touches, injected so the
+ *  reaction is exercisable without constructing a runtime. */
+export interface SpecificationCompleteReactionDeps {
+  taskId: string;
+  outcome: PlanningHandoffOutcome;
+  getTask: (taskId: string) => Promise<Task | undefined>;
+  resolveIr: (taskId: string) => Promise<WorkflowIr>;
+  seed: (task: Task, ir: WorkflowIr) => Promise<{ seeded: boolean; reason?: string }>;
+  kick: () => void;
+  log: (message: string) => void;
+}
+
+/**
+ * FNXC:PlanningHandoffOutcome 2026-07-28-10:05 (U7 / R4, R5 — workflow-owned lifecycle):
+ * The engine's reaction to a finished specification: arm the graph's pre-release
+ * Plan Review run for a card that was actually handed off.
+ *
+ * WHAT WAS WRONG: this fired on every finished specification, because the seam that
+ * announces it fired unconditionally. So a card parked at the manual plan-approval
+ * gate — finalize writes `status: "awaiting-approval"` and RETURNS EARLY, before the
+ * release move — was logged as "Specified X → todo" and had a Plan Review run armed
+ * for a plan the operator had not approved. PR #2491 stopped the seeder from acting
+ * on that, defensively, at the seeder. This removes the reason it was ever asked.
+ *
+ * `released` is the ONLY outcome that licenses arming a run: it is the only one that
+ * means the card crossed into the hold column (or was already resting there) and is
+ * the graph's now. `parked` belongs to a human, `withheld` belongs to the caller's
+ * retry budget — arming a run for either is doing work nobody asked for.
+ *
+ * The log line reports the real outcome rather than asserting a move that may not
+ * have happened; an operator reading "Specified → todo" for a card sitting in the
+ * planner column is being told something false about their own board.
+ *
+ * EXTRACTED from the inline `onSpecifyComplete` callback for the same reason the
+ * continuation drain was in PR #2491: the callback is constructed inside
+ * `InProcessRuntime`, whose construction attaches to the real project registry, so
+ * no test could tell "the reaction respects the outcome" from "the reaction ignores
+ * it". A guard that cannot be shown to fail is not a guard.
+ */
+export async function reactToSpecificationComplete(
+  deps: SpecificationCompleteReactionDeps,
+): Promise<void> {
+  if (deps.outcome !== "released") {
+    deps.log(
+      `Specification finished for ${deps.taskId} without a handoff (${deps.outcome}) — no plan review armed`,
+    );
+    return;
+  }
+  deps.log(`Specified ${deps.taskId} → todo`);
+  const live = await deps.getTask(deps.taskId);
+  if (!live || live.paused || live.userPaused) return;
+  const ir = await deps.resolveIr(live.id);
+  await deps.seed(live, ir);
+  deps.kick();
+}
+
+/** Everything the drain pass touches, injected so the pass is exercisable without
+ *  constructing a runtime (which would attach to the real project registry). */
+export interface DuePlanningContinuationDrainDeps {
+  listDue: () => Promise<WorkflowWorkItem[]>;
+  getTask: (taskId: string) => Promise<Task | undefined>;
+  cancelOrphan: (
+    item: WorkflowWorkItem,
+    reason: "task-not-found" | "task-terminal",
+  ) => Promise<void>;
+  defer: (
+    deferral: { itemId: string; expectedState: WorkflowWorkItemState; retryAfter: string },
+  ) => Promise<void>;
+  /** `item` is passed only so the caller's failure log can keep naming the work
+   *  item verbatim; the extraction is otherwise a byte-for-byte body move. */
+  dispatch: (task: Task, item: WorkflowWorkItem) => void;
+  nowMs: () => number;
+  warn: (message: string) => void;
+}
+
+/**
+ * FNXC:WorkflowScheduling 2026-07-21-12:20:
+ * A single runtime drain owns selection at a time. Concurrent wakeups collapse
+ * behind the caller's guard and the recurring processor supplies the next pass.
+ *
+ * FNXC:WorkflowScheduling 2026-07-21-22:31:
+ * Per-item task loads must not abort the pass. getTask throws for soft-deleted
+ * rows without an archive snapshot; one orphan earlier in created_at FIFO used
+ * to prevent every later planning continuation from dispatching (FN-8470 → FN-8471).
+ * Cancel orphaned work items so they leave the due set and free the batch window.
+ *
+ * FNXC:PlanApprovalHold 2026-07-27-22:10 (U7, PR #2491 review — CodeRabbit):
+ * EXTRACTED verbatim from `InProcessRuntime.drainWorkflowContinuations` with no
+ * behavior change, because the deferral wiring was unprovable where it lived: the
+ * method is private on a class whose construction attaches to the real project
+ * registry, so no test could tell "the drain applies the deferral" from "the drain
+ * ignores it". The re-entry guard and `status === "active"` check stay with the
+ * caller — those are runtime lifecycle, not pass logic.
+ */
+export async function drainDuePlanningContinuations(
+  deps: DuePlanningContinuationDrainDeps,
+): Promise<void> {
+  const items = await deps.listDue();
+  for (const item of items) {
+    let task: Task | undefined;
+    let taskLookupFailed = false;
+    try {
+      task = await deps.getTask(item.taskId);
+    } catch (error) {
+      taskLookupFailed = true;
+      deps.warn(
+        `Workflow continuation ${item.id}: getTask(${item.taskId}) failed — treating as orphan: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed });
+    if (resolved.kind === "orphan") {
+      await deps.cancelOrphan(resolved.item, resolved.reason);
+      continue;
+    }
+    // FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+    // push an operator-parked item out of the FIFO due window so it cannot starve
+    // newer actionable continuations while a human decides.
+    const deferral = resolveParkedContinuationDeferral(resolved, deps.nowMs());
+    if (deferral) await deps.defer(deferral);
+    if (resolved.kind !== "actionable") continue;
+    deps.dispatch(resolved.task, resolved.item);
+  }
 }
 
 /**
@@ -314,8 +524,14 @@ export class InProcessRuntime
   private scheduler!: Scheduler;
   private executor!: TaskExecutor;
   private worktreePool!: WorktreePool;
-  private globalSemaphore?: AgentSemaphore;
-  private projectSemaphore?: ScopedAgentSemaphore;
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The global and project-scoped semaphores are DELETED. Capacity is two numbers
+  per project; the machine-wide cap was a third limiter with a separate authority
+  (a central-DB singleton row) that the per-project gates then had to be reconciled
+  against. The scheduler/triage semaphore gate is now simply ABSENT rather than
+  holding an infinite limit — absence cannot start binding again by accident.
+  */
   private stuckTaskDetector?: StuckTaskDetector;
   /**
    * Per-project CLI Agent Executor runtime bundle (PTY manager + telemetry hub +
@@ -356,7 +572,6 @@ export class InProcessRuntime
   private unregisterTaskDeleteNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
-  private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
    * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
@@ -601,28 +816,6 @@ export class InProcessRuntime
 
       await yieldEventLoop();
 
-      // 4. Initialize global semaphore — use shared one from ProjectManager if provided,
-      // otherwise create a local one from CentralCore (single-project mode).
-      if (this.config.globalSemaphore) {
-        this.globalSemaphore = this.config.globalSemaphore;
-      } else {
-        // Dynamic getter that re-reads from CentralCore on each semaphore acquire.
-        // This ensures changes via PUT /api/global-concurrency take effect immediately.
-        let cachedLimit = await this.getGlobalConcurrencyLimit();
-        this.globalSemaphore = new AgentSemaphore(() => cachedLimit);
-
-        // Listen for concurrency changes from CentralCore (if it supports events)
-        if (typeof this.centralCore.on === "function") {
-          this.concurrencyChangedListener = (state: { globalMaxConcurrent: number }) => {
-            cachedLimit = state.globalMaxConcurrent;
-            runtimeLog.log(`Global concurrency limit updated to ${cachedLimit}`);
-          };
-          this.centralCore.on("concurrency:changed", this.concurrencyChangedListener);
-        }
-      }
-
-      this.projectSemaphore = new ScopedAgentSemaphore(this.globalSemaphore);
-
       await yieldEventLoop();
 
       // 5a. Initialize AgentStore (required for scheduler assignment, reflection service, and heartbeat monitoring)
@@ -752,7 +945,6 @@ export class InProcessRuntime
       this.scheduler = new Scheduler(this.taskStore, {
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
-        semaphore: this.projectSemaphore,
         // FNXC:GlobalConcurrencyControls 2026-07-17-00:00: Feed the triage service's
         // live pre-planning in-flight count into the scheduler's stale-semaphore
         // recovery so a triage session holding a slot before it writes
@@ -889,7 +1081,6 @@ export class InProcessRuntime
         attribution. Reading it lazily at runner-construction time picks up the resolved id.
         */
         getLocalNodeId: () => this.localNodeId,
-        semaphore: this.projectSemaphore,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
         stuckTaskDetector: this.stuckTaskDetector,
@@ -1142,7 +1333,6 @@ export class InProcessRuntime
         this.taskStore,
         this.config.workingDirectory,
         {
-          semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
           usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
@@ -1154,16 +1344,19 @@ export class InProcessRuntime
             this.recordActivity();
             runtimeLog.log(`Specifying ${t.id}...`);
           },
-          onSpecifyComplete: (t) => {
+          onSpecifyComplete: (t, report) => {
+            // Activity is recorded for EVERY outcome: a planning session ran either
+            // way, and idle detection must not depend on whether it released.
             this.recordActivity();
-            runtimeLog.log(`Specified ${t.id} → todo`);
-            void (async () => {
-              const live = await this.taskStore.getTask(t.id);
-              if (!live || live.paused || live.userPaused) return;
-              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
-              await seedPreReleasePlanReviewContinuation(this.taskStore, live, ir);
-              this.kickWorkflowContinuationProcessor();
-            })().catch((error) => {
+            void reactToSpecificationComplete({
+              taskId: t.id,
+              outcome: report.outcome,
+              getTask: (id) => Promise.resolve(this.taskStore.getTask(id)),
+              resolveIr: (id) => resolveWorkflowIrForTask(this.taskStore, id),
+              seed: (task, ir) => seedPreReleasePlanReviewContinuation(this.taskStore, task, ir),
+              kick: () => this.kickWorkflowContinuationProcessor(),
+              log: (message) => runtimeLog.log(message),
+            }).catch((error) => {
               runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
             });
           },
@@ -1251,6 +1444,15 @@ export class InProcessRuntime
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
+        /*
+        FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756):
+        Wire the read-only liveness probe. self-healing.ts's own comment records that
+        `releaseExecutorWorktreeOwnership` was a declared-but-never-wired option that
+        silently no-opped; an unwired probe here would be worse — `?.() === true` is
+        false when unwired, so every sweep gating on it would silently stop deferring
+        for live sessions and the FN-6756 fix would evaporate without a test failing.
+        */
+        hasLiveSessionSurface: (taskId: string) => this.executor?.hasLiveSessionSurface(taskId) ?? false,
         listWorktreeHolders: () => this.executor?.listWorktreeHolders() ?? [],
         // FNXC:PlanningEvacuation 2026-07-25-23:00: the executor owns the release safety conditions.
         releasePreExecutionWorktree: (taskId, reason) =>
@@ -1494,12 +1696,6 @@ export class InProcessRuntime
         clearInterval(this.workflowContinuationTimer);
         this.workflowContinuationTimer = undefined;
       }
-      // 1. Remove concurrency change listener (if we registered one)
-      if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
-        this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
-        this.concurrencyChangedListener = undefined;
-      }
-
       // 2. Stop self-healing manager
       if (this.selfHealingManager) {
         this.selfHealingManager.stop();
@@ -1645,16 +1841,15 @@ export class InProcessRuntime
         );
       }
 
-      /**
-       * FNXC:Scheduler-Concurrency 2026-06-27-20:05:
-       * After stop aborts a project's agents and waits the bounded drain window, any slots still attributed to this runtime are residual leaks from sessions that did not settle their normal finally path. Return only this project's scoped slots so pauseProject/stopAll promptly free shared global capacity without clobbering other projects' active slots.
-       */
-      const returnedResidualSlots = this.projectSemaphore?.returnAllHeldSlots() ?? 0;
-      if (returnedResidualSlots > 0) {
-        runtimeLog.warn(
-          `Returned ${returnedResidualSlots} residual global concurrency slot(s) after project stop drain`,
-        );
-      }
+      /*
+      FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+      The residual-slot return on stop is GONE with the scoped semaphore it drained.
+      There is no shared cross-project pool left to leak INTO, so a session that
+      skips its finally path can no longer strand capacity belonging to another
+      project. Per-project capacity is derived from live task rows by the hold/
+      release sweep, which recomputes occupancy every pass rather than tracking a
+      counter that can drift.
+      */
 
       // 8. Shutdown plugin runner
       if (this.pluginRunner) {
@@ -1884,8 +2079,13 @@ export class InProcessRuntime
       ? (this.executor as unknown as { activeWorktrees?: Map<string, string> }).activeWorktrees?.size ?? 0
       : 0;
 
-    // Get active agent count from the semaphore
-    const activeAgents = this.globalSemaphore?.activeCount ?? 0;
+    /*
+    FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+    Active-agent load now comes from the executor's live worktree map rather than a
+    semaphore counter. The counter was a second bookkeeping of the same fact and
+    needed its own leak reaper when the two drifted.
+    */
+    const activeAgents = inFlightTasks;
 
     // Get memory usage if available
     const memoryBytes = process.memoryUsage?.().heapUsed;
@@ -2028,51 +2228,69 @@ export class InProcessRuntime
     });
   }
 
+  /**
+   * FNXC:WorkflowScheduling 2026-07-21-12:20:
+   * A single runtime drain owns selection at a time. Concurrent wakeups collapse
+   * behind this guard and the recurring processor supplies the next bounded pass.
+   *
+   * The pass itself lives in `drainDuePlanningContinuations` (see its header for
+   * the FN-8470/FN-8471 orphan rationale and the deferral); this method is the
+   * runtime-lifecycle wrapper — re-entry guard, active-status check, and the
+   * adapters that bind the pass to this runtime's store and executor.
+   */
   private async drainWorkflowContinuations(): Promise<void> {
-    /*
-    FNXC:WorkflowScheduling 2026-07-21-12:20:
-    A single runtime drain owns selection at a time. Concurrent wakeups collapse
-    behind this guard and the recurring processor supplies the next bounded pass.
-
-    FNXC:WorkflowScheduling 2026-07-21-22:31:
-    Per-item task loads must not abort the pass. getTask throws for soft-deleted
-    rows without an archive snapshot; one orphan earlier in created_at FIFO used
-    to prevent every later planning continuation from dispatching (FN-8470 → FN-8471).
-    Cancel orphaned work items so they leave the due set and free the limit:20 window.
-    */
     if (this.workflowContinuationDrainActive || this.status !== "active") return;
     this.workflowContinuationDrainActive = true;
     try {
-      const items = await this.taskStore.listDueWorkflowWorkItems({
-        kinds: ["task"],
-        states: ["runnable", "retrying"],
-        limit: 20,
+      await drainDuePlanningContinuations({
+        listDue: () => this.taskStore.listDueWorkflowWorkItems({
+          kinds: ["task"],
+          states: ["runnable", "retrying"],
+          limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
+        }),
+        getTask: (taskId) => Promise.resolve(this.taskStore.getTask(taskId)),
+        cancelOrphan: (item, reason) => this.cancelOrphanedWorkflowWorkItem(item, reason),
+        defer: (deferral) => this.deferParkedWorkflowWorkItem(deferral),
+        dispatch: (task, item) => {
+          void this.executor.execute(task).catch((error) => {
+            runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
+          });
+        },
+        nowMs: () => Date.now(),
+        warn: (message) => runtimeLog.warn(message),
       });
-      for (const item of items) {
-        let task: Task | undefined;
-        let taskLookupFailed = false;
-        try {
-          task = await this.taskStore.getTask(item.taskId);
-        } catch (error) {
-          taskLookupFailed = true;
-          runtimeLog.warn(
-            `Workflow continuation ${item.id}: getTask(${item.taskId}) failed — treating as orphan: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-        const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed });
-        if (resolved.kind === "orphan") {
-          await this.cancelOrphanedWorkflowWorkItem(resolved.item, resolved.reason);
-          continue;
-        }
-        if (resolved.kind !== "actionable") continue;
-        void this.executor.execute(resolved.task).catch((error) => {
-          runtimeLog.error(`Workflow continuation ${resolved.item.id} failed:`, error);
-        });
-      }
     } finally {
       this.workflowContinuationDrainActive = false;
+    }
+  }
+
+  /**
+   * FNXC:PlanApprovalHold 2026-07-27-21:30 (U7, PR #2491 review — greptile P1):
+   * Push an operator-parked item's `retryAfter` forward so it leaves the due
+   * window. State stays `runnable` on purpose (see
+   * `PARKED_CONTINUATION_DEFER_MS`).
+   *
+   * Fail-soft: if the write loses, the item simply stays due and is re-skipped
+   * next pass — exactly the pre-deferral behavior — so a store hiccup degrades to
+   * the old starvation risk rather than dropping the card's continuation.
+   */
+  private async deferParkedWorkflowWorkItem(
+    deferral: { itemId: string; expectedState: WorkflowWorkItemState; retryAfter: string },
+  ): Promise<void> {
+    if (typeof this.taskStore.transitionWorkflowWorkItem !== "function") return;
+    try {
+      // `expectedState` makes this a compare-and-set: if another node claimed or
+      // terminalized the item since the due poll, the store returns it untouched.
+      await this.taskStore.transitionWorkflowWorkItem(deferral.itemId, deferral.expectedState, {
+        expectedState: deferral.expectedState,
+        retryAfter: deferral.retryAfter,
+      });
+    } catch (error) {
+      runtimeLog.warn(
+        `Failed to defer parked workflow work item ${deferral.itemId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 
@@ -2211,20 +2429,12 @@ export class InProcessRuntime
     this.lastActivityAt = new Date().toISOString();
   }
 
-  /**
-   * Get global concurrency limit from CentralCore.
-   */
-  private async getGlobalConcurrencyLimit(): Promise<number> {
-    try {
-      const state = await this.centralCore.getGlobalConcurrencyState();
-      return state.globalMaxConcurrent;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      runtimeLog.warn(`Failed to fetch global concurrency from CentralCore, falling back to default (4): ${msg}`);
-      // Fallback to default if CentralCore is unavailable
-      return 4;
-    }
-  }
+  /*
+  FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+  `getGlobalConcurrencyLimit` is DELETED. Its only caller was the global semaphore
+  construction removed in the enforcement half, so it has been reading a limit
+  nothing consults. Capacity is two numbers per project.
+  */
 
   /**
    * Record task completion in CentralCore.

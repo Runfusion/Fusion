@@ -202,19 +202,20 @@ export interface WorkflowLoopConfig {
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-11:00:
-An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs ONCE when the group is enabled for the task and passes through (skips) when disabled.
+An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs once per enabled graph attempt and passes through (skips) when disabled.
 Enable state reuses the per-task `enabledWorkflowSteps` facet keyed by the group node id, seeded from `defaultOn` at task creation — this replaces the execution-inert declaration-based optional-steps model (`WorkflowOptionalStep`/`optionalSteps`).
-Single pass only: no iteration, no rework budget. Rework edges are forbidden inside the template so the single-pass guarantee is unambiguous (validated in `validateOptionalGroup`).
+The template itself contains no iteration or internal rework edges (validated in `validateOptionalGroup`). The outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
 FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
 Optional-group remediation still runs the template once per graph pass, but workflow authors can set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its own review-attempt partition, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior for generic optional gates.
 
 FNXC:WorkflowRevisionBudget 2026-06-30-20:34:
-Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, those two built-in review paths default to unbounded remediation.
+Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, the authored node config applies. Plan Review and most Code Review groups remain unbounded, while Compound Engineering authors a two-pass Code Review cap.
 */
 /** Config for an `optional-group` container node. `defaultOn` seeds the per-task
- *  enable set at creation; the `template` is the subgraph run once when enabled.
- *  Unlike `foreach`/`loop`, there is no iteration or rework — a single pass. */
+ *  enable set at creation; the `template` is the subgraph run once per enabled
+ *  graph attempt. Unlike `foreach`/`loop`, the template has no internal iteration;
+ *  an outer remediation edge may re-enter it subject to `maxRevisions`. */
 export interface WorkflowOptionalGroupConfig {
   /** Workflow-author default for whether new tasks enable this group. */
   defaultOn?: boolean;

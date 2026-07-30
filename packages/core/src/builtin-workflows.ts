@@ -79,9 +79,9 @@ function ceCodeReviewOptionalGroupNode(column: string): WorkflowIrNode {
       maxReworkCycles: 3,
       /*
        * FNXC:WorkflowRemediationBudget 2026-06-29-17:55:
-       * The CE Code Review group is custom because it invokes the CE skill, but Code Review REVISE is still ordinary repair feedback. Default CE review remediation to unbounded so CE tasks do not terminal-fail after repeated reviewer feedback unless a workflow author sets a numeric cap.
+       * The CE Code Review group is custom because it invokes the CE skill, but Code Review REVISE is still ordinary repair feedback. Bound the built-in to two remediation attempts: a reviewer that keeps returning blocking findings must park the task instead of creating an unbounded Execute/Review loop. Workflow authors can still opt into a different numeric cap or unbounded behavior explicitly.
        */
-      maxRevisions: "unbounded",
+      maxRevisions: 2,
       template: {
         nodes: [
           {
@@ -192,29 +192,69 @@ column of the node before it, so it stays wherever the pipeline already is. The
 one exception is a node that follows intake — planning happens in the hold column
 (plan-in-place), which is what `builtin:compound-engineering`'s `plan` node needs.
 */
-function columnForLinearNode(node: WorkflowIrNode, previousColumn: string): string {
+/*
+FNXC:MergedPlanningColumn 2026-07-28-16:05 (U11):
+Every linear built-in takes its columns from `canonicalBuiltinWorkflowColumns()` — i.e. from
+BUILTIN_CODING_WORKFLOW_IR — so merging Todo into Planning there removes `triage` from all of them
+at once. These lifecycle homes were hardcoded ids and became dangling column references the moment
+that happened (`Workflow node 'start' references undefined column 'triage'` — IR validation caught
+it, which is the entry contract working).
+
+Resolved by TRAIT against the same canonical set the columns come from, so the two can no longer
+disagree. Literals remain only as fallbacks for a canonical set that somehow declares no such role.
+*/
+interface LinearLifecycleColumns {
+  intake: string;
+  hold: string;
+  wip: string;
+  review: string;
+  complete: string;
+}
+
+function linearLifecycleColumns(columns: WorkflowIrColumn[]): LinearLifecycleColumns {
+  const first = (trait: string): string | undefined =>
+    columns.find((column) => column.traits.some((t) => t.trait === trait))?.id;
+  const intake = first("intake") ?? "triage";
+  return {
+    intake,
+    // A merged Planning column carries BOTH intake and hold, so these coincide — which is exactly
+    // what retires the "node after intake jumps to the hold column" exception below: it becomes a
+    // no-op rather than a rule that has to be deleted.
+    hold: first("hold") ?? intake,
+    wip: first("wip") ?? "in-progress",
+    review: first("merge-blocker") ?? "in-review",
+    complete: first("complete") ?? "done",
+  };
+}
+
+function columnForLinearNode(
+  node: WorkflowIrNode,
+  previousColumn: string,
+  lifecycle: LinearLifecycleColumns,
+): string {
   // `start`/`end` are graph terminals, not column destinations (the boundary
   // never enters them), but they must still name a sane column: intake for the
   // creation column and the complete column for the terminal.
-  if (node.kind === "start") return "triage";
-  if (node.kind === "end") return "done";
+  if (node.kind === "start") return lifecycle.intake;
+  if (node.kind === "end") return lifecycle.complete;
   const seam = node.config?.seam;
-  if (seam === "execute") return "in-progress";
-  if (seam === "review") return "in-review";
-  if (seam === "merge") return "in-review";
-  return previousColumn === "triage" ? "todo" : previousColumn;
+  if (seam === "execute") return lifecycle.wip;
+  if (seam === "review") return lifecycle.review;
+  if (seam === "merge") return lifecycle.review;
+  return previousColumn === lifecycle.intake ? lifecycle.hold : previousColumn;
 }
 
 /** Resolve every linear-spec node's column in graph order, threading the
  *  previously-resolved column so unseamed nodes inherit it. */
-function assignLinearNodeColumns(nodes: WorkflowIrNode[]): WorkflowIrNode[] {
-  let previousColumn = "triage";
+function assignLinearNodeColumns(nodes: WorkflowIrNode[], columns: WorkflowIrColumn[]): WorkflowIrNode[] {
+  const lifecycle = linearLifecycleColumns(columns);
+  let previousColumn = lifecycle.intake;
   return nodes.map((node) => {
     if (node.column) {
       previousColumn = node.column;
       return node;
     }
-    const column = columnForLinearNode(node, previousColumn);
+    const column = columnForLinearNode(node, previousColumn, lifecycle);
     // `end` names the complete column but must not drag the inheritance chain
     // there — nothing follows it, so this is only defensive.
     if (node.kind !== "end") previousColumn = column;
@@ -308,11 +348,12 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
    * FNXC:Workflows 2026-06-28-00:00:
    * Linear built-ins must mirror BUILTIN_CODING_WORKFLOW_IR column traits because the post-cutover hold/release sweep is the only hold→in-progress dispatcher. Both formerly-v1 linear graphs (quick-fix, review-heavy, design) and v2-only compound-engineering need a hold(capacity) column, in-progress wip, and in-review merge traits or their cards strand before implementation.
    */
+  const linearColumns = canonicalBuiltinWorkflowColumns();
   const ir = parseWorkflowIr({
     version: "v2",
     name: spec.name,
-    columns: canonicalBuiltinWorkflowColumns(),
-    nodes: assignLinearNodeColumns(nodes),
+    columns: linearColumns,
+    nodes: assignLinearNodeColumns(nodes, linearColumns),
     edges,
   });
   /*
@@ -414,6 +455,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "plan-replan": { x: 400, y: 320 },
       parse: { x: 570, y: 160 },
       steps: { x: 740, y: 160 },
+      /* U8: the pending-review park is an exit, not a stage — placed off the main line. */
+      "review-pending-handoff": { x: 740, y: 320 },
       "browser-verification": { x: 910, y: 160 },
       "browser-verification-remediation": { x: 910, y: 320 },
       "code-review": { x: 1080, y: 160 },
@@ -450,6 +493,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "plan-replan": { x: 400, y: 320 },
       parse: { x: 570, y: 160 },
       steps: { x: 740, y: 160 },
+      /* U8: the pending-review park is an exit, not a stage — placed off the main line. */
+      "review-pending-handoff": { x: 740, y: 320 },
       "browser-verification": { x: 910, y: 160 },
       "browser-verification-remediation": { x: 910, y: 320 },
       "code-review": { x: 1080, y: 160 },
@@ -490,6 +535,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "code-review-remediation": { x: 910, y: 320 },
       "completion-summary": { x: 1080, y: 160 },
       review: { x: 1250, y: 160 },
+      /* U8: the pending-review park sits off the main line — it is an exit, not a stage. */
+      "review-pending-handoff": { x: 570, y: 320 },
       "merge-gate": { x: 1420, y: 160 },
       "branch-group-member-integration": { x: 1590, y: 80 },
       "branch-group-promotion": { x: 1760, y: 80 },
@@ -674,6 +721,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "plan-replan": { x: 400, y: 320 },
       parse: { x: 570, y: 160 },
       steps: { x: 740, y: 160 },
+      /* U8: the pending-review park is an exit, not a stage — placed off the main line. */
+      "review-pending-handoff": { x: 740, y: 320 },
       "rework-hold": { x: 740, y: 320 },
       "browser-verification": { x: 910, y: 160 },
       "browser-verification-remediation": { x: 910, y: 320 },
@@ -812,6 +861,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "plan-replan": { x: 910, y: 320 },
       parse: { x: 1080, y: 160 },
       steps: { x: 1250, y: 160 },
+      /* U8: the pending-review park is an exit, not a stage — placed off the main line. */
+      "review-pending-handoff": { x: 1250, y: 320 },
       "browser-verification": { x: 1420, y: 160 },
       "browser-verification-remediation": { x: 1420, y: 320 },
       "code-review": { x: 1590, y: 160 },

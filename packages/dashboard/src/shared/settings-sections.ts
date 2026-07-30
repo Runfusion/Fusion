@@ -198,10 +198,13 @@ const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
   { id: "__automation_header", label: "Automation", labelKey: "settings.nav.automationHeader", scope: undefined, isGroupHeader: true },
   /*
   FNXC:SettingsNavigation 2026-07-15-18:52:
-  Scheduling is split into a Global/Project pair rather than one section holding both authority levels behind in-section subheadings. The machine-wide concurrency cap and a project's scheduling posture are different questions, and a search result landing mid-section showed no subheading to disambiguate them.
+  FNXC:CapacityModel 2026-07-29-00:10 (drop the cross-project cap — settings half):
+  The Global/Project scheduling PAIR is now a single "Scheduling" section. The
+  global half existed to host exactly one control, the machine-wide concurrency
+  cap, which is deleted — capacity is two numbers PER PROJECT. An empty section in
+  the nav is a promise of settings that are not there.
   */
-  { id: "scheduling-global", label: "Scheduling · Global", labelKey: "settings.nav.schedulingGlobal", scope: "global", searchableText: ["global max concurrent", "concurrency cap", "all projects", "machine wide", "parallel agents", "scheduler"] },
-  { id: "scheduling", label: "Scheduling · Project", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
+  { id: "scheduling", label: "Scheduling", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
   { id: "scheduled-evals", label: "Scheduled Evals", labelKey: "settings.nav.scheduledEvals", scope: "project", searchableText: ["scheduled evals", "evaluation schedule", "eval runs", "quality jobs"] },
 
   { id: "__integrations_header", label: "Integrations", labelKey: "settings.nav.integrationsHeader", scope: undefined, isGroupHeader: true },

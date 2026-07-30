@@ -1444,6 +1444,30 @@ export default function kbExtension(pi: ExtensionAPI) {
               await store.selectTaskWorkflowAndReconcile(task.id, workflowId);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
+              /*
+              FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+              TRANSLATE the switch re-home failure here too. `fn_task_update` is a
+              second switch consumer alongside `fn_task_set_workflow`, and a bare
+              message string gives the caller no way to tell "nothing changed, retry
+              after making room" from "the selection committed and the task is now
+              INCONSISTENT" — which is exactly the distinction that decides whether it
+              may treat the switch as done.
+              */
+              const typed = error as { name?: string; committed?: boolean; taskId?: string; workflowId?: string; fromColumn?: string; intendedColumn?: string };
+              if (typed?.name === "WorkflowSwitchRehomeFailedError") {
+                return {
+                  content: [{ type: "text", text: `ERROR: ${message}` }],
+                  isError: true,
+                  details: {
+                    code: "workflow-switch-rehome-failed",
+                    taskId: typed.taskId,
+                    workflowId: typed.workflowId,
+                    fromColumn: typed.fromColumn,
+                    intendedColumn: typed.intendedColumn,
+                    selectionCommitted: typed.committed === true,
+                  },
+                };
+              }
               return {
                 content: [{ type: "text", text: `ERROR: ${message}` }],
                 isError: true,
@@ -1775,7 +1799,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
-      const task = await store.pauseTask(params.id, true);
+      const task = await store.pauseTask(params.id, true, undefined, { userPaused: true });
 
       return {
         content: [{ type: "text", text: `Paused ${task.id}` }],
@@ -2274,7 +2298,10 @@ export default function kbExtension(pi: ExtensionAPI) {
         const task = await store.createTask({
           title: title || undefined,
           description,
-          column: "triage",
+          /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+             `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+             override it. Hard-coding `"triage"` created the card in a column the default
+             lineage no longer declares (#2515), i.e. straight into the stranded state. */
           dependencies: [],
           sourceIssue: source.sourceIssue,
           source: {
@@ -2369,7 +2396,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       const task = await store.createTask({
         title: title || undefined,
         description,
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [],
         sourceIssue: source.sourceIssue,
         source: {
@@ -2506,7 +2536,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const provenance = dashboard.buildGitLabTaskProvenance({ auth: client.auth, resourceType, item, projectInput: resourceType !== "group_issue" ? target : undefined, groupInput: resourceType === "group_issue" ? target : undefined });
       if (existingTasks.some((task) => dashboard.isGitLabAlreadyImported(task, provenance))) continue;
       const title = resourceType === "merge_request" ? `Review MR !${item.iid}: ${item.title.slice(0, 180)}` : item.title.slice(0, 200);
-      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), column: "triage", dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } });
+      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } });
       await store.logEntry(task.id, resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl);
       existingTasks.push(task);
       createdTasks.push({ id: task.id, title: task.title || item.title });

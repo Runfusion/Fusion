@@ -1360,6 +1360,10 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         makeCtx(tmpDir),
       );
       expect(pauseResult.content[0].text).toContain("Paused FN-001");
+      await expect(h.store().getTask("FN-001")).resolves.toMatchObject({
+        paused: true,
+        userPaused: true,
+      });
 
       // Verify it's paused
       const showTool = api.tools.get("fn_task_show")!;

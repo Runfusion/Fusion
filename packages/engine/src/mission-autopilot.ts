@@ -19,7 +19,7 @@
  * - `completing` → `inactive`: Mission complete
  */
 
-import { AsyncMissionStore } from "@fusion/core";
+import { AsyncMissionStore, resolveTaskLifecycleColumns } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
@@ -50,6 +50,7 @@ import type {
 type AutopilotMissionStore = MissionStore | AsyncMissionStore;
 import { autopilotLog } from "./logger.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
+import { resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
 import { isOperatorActionableAgentError } from "./transient-error-detector.js";
 
 /** Maximum retry attempts for slice activation failures. */
@@ -376,9 +377,41 @@ export class MissionAutopilot {
         { taskId, featureId: feature.id, retryCount, maxRetries },
       );
 
+      /*
+      FNXC:UnownedHoldColumnGates 2026-07-29-13:20 (U7 / R3):
+      Retry returns the card to its workflow's HOLD column. Keyed on the literal
+      `todo`, a renamed workflow answered "not there" on every retry AND moved the
+      card to `todo` — a column it may not declare (R7), on every single retry.
+
+      No resolvable hold column: leave the card where it is rather than relocating
+      it somewhere nothing renders. The error/status clear below still runs, so the
+      retry is not lost — the card simply stays put for the scheduler to pick up
+      from its own lane.
+      */
       const task = await this.taskStore.getTask(taskId);
-      if (task?.column !== "todo") {
-        await this.taskStore.moveTask(taskId, "todo");
+      const holdColumn = (await resolveTaskLifecycleColumns(this.taskStore, taskId))?.hold;
+      if (!holdColumn) {
+        /*
+        FNXC:UnownedHoldColumnGates 2026-07-29-20:10 (PR #2561 review — greptile P1):
+        No hold column means there is NOWHERE to retry from: the hold-release sweep
+        only dispatches out of hold columns, so a card left in WIP is never picked up
+        again. Clearing its failure state here would therefore convert a visible
+        failure into a SILENT STALL — the mission would show a task that is not
+        failed, not running, and never will be.
+
+        So leave the failure state intact and say why. A card that stays visibly
+        failed is one an operator can act on; that is strictly better than a clean-
+        looking row nothing will ever touch. The feature keeps its own status, which
+        the retry-count path above already manages.
+        */
+        autopilotLog.warn(
+          `Mission retry for ${taskId} NOT scheduled — its workflow declares no hold column to retry from, `
+          + `so nothing would dispatch it. Leaving the task visibly failed in ${task?.column ?? "its current column"} for a human.`,
+        );
+        return;
+      }
+      if (task?.column !== holdColumn) {
+        await this.taskStore.moveTask(taskId, holdColumn);
       }
 
       await this.taskStore.updateTask(taskId, { error: null, status: null, paused: false });
@@ -937,6 +970,7 @@ export class MissionAutopilot {
           : false;
         const reconciliation = await reconcileMissionFeatureState(this.taskStore, task, feature, {
           hasLinkedAssertions,
+          plannerColumns: await resolvePlannerLanesForTask(this.taskStore as never, task.id),
         });
 
         if (reconciliation.kind === "failure") {

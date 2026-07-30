@@ -296,6 +296,80 @@ describe("WorktreesSection", () => {
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:CapacityModel 2026-07-28-13:45:
+  Capacity is two configurable numbers per project; `worktreeLimitEnabled` decides
+  whether the SECOND one applies. These pin the UI half of the "inert means
+  incapable, not ignored" rule: with worktrees off the Max Worktrees control is
+  DISABLED, so an operator cannot set a number the engine will not consult. A live
+  control feeding a dead limiter is exactly the confusion this change removes.
+  */
+  const worktreeCapacityProps = {
+    gitRemotes: [],
+    worktrunkInstall,
+    worktrunkInstallVerified: true,
+    onOpenWorktreesDirPicker: vi.fn(),
+    onWorktreeCopyFileChange: vi.fn(),
+    onRemoveWorktreeCopyFile: vi.fn(),
+    onAddWorktreeCopyFile: vi.fn(),
+    onOpenWorktreeCopyFilePicker: vi.fn(),
+  } as never;
+
+  it("enables the Max Worktrees control while worktrees are on", () => {
+    render(
+      <WorktreesSection
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
+        setForm={vi.fn()}
+        {...worktreeCapacityProps}
+      />,
+    );
+    expect(screen.getByLabelText("Max Worktrees")).not.toBeDisabled();
+  });
+
+  it("disables the Max Worktrees control while worktrees are off", () => {
+    render(
+      <WorktreesSection
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: false } as SettingsFormState}
+        setForm={vi.fn()}
+        {...worktreeCapacityProps}
+      />,
+    );
+    expect(screen.getByLabelText("Max Worktrees")).toBeDisabled();
+  });
+
+  it("treats an absent worktreeLimitEnabled as on, so existing projects keep their worktree cap", () => {
+    // Every project row predating this setting has no `worktreeLimitEnabled` key. If
+    // absence read as OFF, an upgrade would silently drop a limiter operators rely
+    // on — and the control would grey out with no one having asked for it.
+    render(
+      <WorktreesSection
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4 } as SettingsFormState}
+        setForm={vi.fn()}
+        {...worktreeCapacityProps}
+      />,
+    );
+    expect(screen.getByLabelText("Limit concurrent worktrees")).toBeChecked();
+    expect(screen.getByLabelText("Max Worktrees")).not.toBeDisabled();
+  });
+
+  it("toggling the worktree limit off writes worktreeLimitEnabled false", () => {
+    const setForm = vi.fn((updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState)) =>
+      typeof updater === "function"
+        ? updater({ recycleWorktrees: false, worktreeLimitEnabled: true } as SettingsFormState)
+        : updater,
+    );
+    render(
+      <WorktreesSection
+        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
+        setForm={setForm}
+        {...worktreeCapacityProps}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Limit concurrent worktrees"));
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(setForm.mock.results[0]?.value).toMatchObject({ worktreeLimitEnabled: false });
+  });
+
   it("renders and toggles the board worktree grouping checkbox", () => {
     const setForm = vi.fn((updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState)) => {
       if (typeof updater === "function") {

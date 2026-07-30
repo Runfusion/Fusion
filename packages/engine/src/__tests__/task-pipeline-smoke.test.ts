@@ -123,11 +123,26 @@ describe("task pipeline smoke", () => {
     expect(result.context[WORKFLOW_ID_CONTEXT_KEY]).toBe("builtin-stepwise-final-review-coding");
     /*
     FNXC:WorkflowGraphEntry 2026-07-26-17:10:
-    No `start`: this card is in `todo`, and a run with no continuation now resumes at the card's own
-    column instead of replaying the pipeline from the first column. `start` lives in `triage`, a
-    column this card has already left, so the trace begins at the first planning-lane node.
+    A run with no continuation resumes at the card's OWN column instead of replaying the pipeline
+    from the first column.
+
+    FNXC:MergedPlanningColumn 2026-07-28-18:45 (U11):
+    `start` IS now expected, and the sequence legitimately changed rather than regressing. This
+    previously read "No `start`" because `start` lived in `triage` — a column this `todo` card had
+    already left, so resuming there would have dragged it backward. U11 merges Todo into Planning,
+    so `start` and the specification node share the card's own column: resuming at `start` moves
+    the card nowhere and the trace simply begins one node earlier.
+
+    Entering at `start` is exactly what dragged cards backward in the three earlier, reverted
+    attempts at this merge, so the no-move property is PROVEN before this array was touched, not
+    assumed from it — see `merged-planning-start-node-no-move.test.ts`, which asserts against the
+    real boundary controller and the real default IR that entering `start` performs no move,
+    reaches no hold->wip capacity seam, and still moves on a genuine crossing (so the no-op is
+    same-column, not a disabled boundary). Removing the controller's same-column short-circuit
+    turns two of those tests red, so they bind to the mechanism rather than restating the outcome.
     */
     expect(result.visitedNodeIds).toEqual([
+      "start",
       "plan",
       "plan-review",
       "plan-review::plan-review-step",

@@ -68,10 +68,53 @@ export interface NodeEnteredEvent extends WorkflowLifecycleEventBase {
 }
 
 /** A node finished with a routing outcome ("success" / "failure" / …). */
+/*
+FNXC:WorkflowEvents 2026-07-28-22:10 (U8 / R4, R5, PR #2507 review — greptile):
+THE CLOSED EXIT VOCABULARY, AND WHY IT LIVES HERE.
+
+It was first declared in `@fusion/engine` with the public event field typed `exit?: string`, so
+the contract permitted values no consumer handles. That is a small typing gap today, with one
+producer — and an expensive one later, because this bus is becoming the lifecycle backbone
+("node transitions should emit events and event subscribers handle moving things through the
+lifecycle"). A producer emitting an exit nobody routes fails SILENTLY: the card simply does not
+advance, and nothing anywhere reports a problem. Close it while there is one producer.
+
+The union therefore lives with the contract, in core, not with its first producer in the engine
+— core cannot import from the engine, and more to the point a public contract that defers its
+vocabulary to a consumer is not a contract. `engine/executor/implementation-exit.ts` re-exports
+it and keeps the engine-side POLICY (which exits are executor-performed) where policy belongs.
+
+Adding a value means editing this list, which is the same deliberate act the key allow-list
+demands — and `IMPLEMENTATION_EXITS` is checked at the EMIT BOUNDARY too, so a JS producer or a
+plugin cannot slip an unrouted id past the type system.
+*/
+export const IMPLEMENTATION_EXITS = [
+  /** fn_task_done (or implicit completion): handed back to the graph, which owns what follows. */
+  "complete",
+  /** Completion reached on a retry session after the agent first failed to signal done. */
+  "complete-after-retry",
+  /** Completion proven from live modified files when the session ended without a done signal. */
+  "complete-from-live-files",
+  /** OUT OF BAND: paused after the work was complete; the executor finalized to review itself. */
+  "review-handoff-paused-after-completion",
+  /** OUT OF BAND: stopped on a pending-review block; the executor parked it in review itself. */
+  "review-handoff-pending-review",
+] as const;
+
+/** How a node's work actually ended, when the routing outcome is coarser than the endings. */
+export type ImplementationExit = (typeof IMPLEMENTATION_EXITS)[number];
+
 export interface NodeCompletedEvent extends WorkflowLifecycleEventBase {
   type: "NodeCompleted";
   nodeId: string;
   outcome: string;
+  /*
+  FNXC:WorkflowEvents 2026-07-28-20:20 (U8 / R4, R5):
+  Optional finer-grained ending, for nodes whose routing outcome is coarser than the ways they
+  can actually end. The execute seam is the motivating case: `success | failure` cannot express
+  "the executor finalized this card to review itself", so that ending was invisible.
+  */
+  exit?: ImplementationExit;
 }
 
 /** A run parked at a seam it cannot cross yet (capacity, manual hold). */
@@ -146,7 +189,7 @@ const COMMON_REQUIRED_EVENT_KEYS = ["type", "taskId", "at"] as const;
 const ALLOWED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]> = {
   TaskTransitioned: [...COMMON_EVENT_KEYS, "from", "to", "nodeId", "moveSource"],
   NodeEntered: [...COMMON_EVENT_KEYS, "nodeId", "column"],
-  NodeCompleted: [...COMMON_EVENT_KEYS, "nodeId", "outcome"],
+  NodeCompleted: [...COMMON_EVENT_KEYS, "nodeId", "outcome", "exit"],
   RunSuspended: [...COMMON_EVENT_KEYS, "nodeId", "reason", "fromColumn", "toColumn"],
   RunResumed: [...COMMON_EVENT_KEYS, "nodeId", "releasedBy"],
 };
@@ -166,6 +209,11 @@ const REQUIRED_EVENT_KEYS: Record<WorkflowLifecycleEventType, readonly string[]>
   RunResumed: [...COMMON_REQUIRED_EVENT_KEYS, "nodeId"],
 };
 
+/** Keys whose values are a closed vocabulary rather than a free id. */
+const CLOSED_VALUE_SETS: Record<string, readonly string[] | undefined> = {
+  exit: IMPLEMENTATION_EXITS,
+};
+
 /** A single ids-only rule violation. `path` locates it for the failure message. */
 export interface WorkflowEventShapeViolation {
   path: string;
@@ -175,7 +223,8 @@ export interface WorkflowEventShapeViolation {
     | "unsupported-type"
     | "unknown-key"
     | "unknown-type"
-    | "missing-required-key";
+    | "missing-required-key"
+    | "unknown-enum-value";
 }
 
 function checkScalar(path: string, value: unknown, out: WorkflowEventShapeViolation[]): void {
@@ -220,6 +269,18 @@ export function findWorkflowEventShapeViolations(event: unknown): WorkflowEventS
     }
     if (Array.isArray(value)) {
       value.forEach((entry, i) => checkScalar(`${key}[${i}]`, entry, violations));
+      continue;
+    }
+    /*
+    FNXC:WorkflowEvents 2026-07-28-22:15 (U8, PR #2507 review — greptile):
+    The closed-set keys are checked for MEMBERSHIP, not merely scalar-ness. The type alone
+    protects TypeScript producers; this protects the ones that matter — a JS caller, a plugin,
+    and a future seam emitting an id nobody routes. Refusing it here turns a silent
+    card-does-not-advance into a logged drop at the boundary.
+    */
+    const closedSet = CLOSED_VALUE_SETS[key];
+    if (closedSet && value !== undefined && !closedSet.includes(value as never)) {
+      violations.push({ path: key, reason: "unknown-enum-value" });
       continue;
     }
     checkScalar(key, value, violations);

@@ -1217,7 +1217,7 @@ describe("project-aware task command behavior", () => {
     await runTaskPause("FN-123", "demo-project");
     await runTaskUnpause("FN-123", "demo-project");
 
-    expect(pauseTask).toHaveBeenNthCalledWith(1, "FN-123", true);
+    expect(pauseTask).toHaveBeenNthCalledWith(1, "FN-123", true, undefined, { userPaused: true });
     expect(pauseTask).toHaveBeenNthCalledWith(2, "FN-123", false);
   });
 

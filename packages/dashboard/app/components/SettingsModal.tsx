@@ -8,7 +8,7 @@ import {
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { resolveScopedMcpSettings, splitSettingsSave, type McpSettingsScope } from "./settings/save-split";
 import {
@@ -46,7 +46,6 @@ import { PromptsSection } from "./settings/sections/PromptsSection";
 import { GeneralSection } from "./settings/sections/GeneralSection";
 import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
-import { SchedulingGlobalSection } from "./settings/sections/SchedulingGlobalSection";
 import { CliBinarySection } from "./settings/sections/CliBinarySection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
 import { NodeRoutingSection } from "./settings/sections/NodeRoutingSection";
@@ -973,6 +972,9 @@ export function SettingsModal({
     maxConcurrent: 2,
     maxConcurrentVerifications: 1,
     maxWorktrees: 4,
+    // FNXC:CapacityModel 2026-07-28-13:20: worktrees are a capacity dimension by
+    // default; off means capacity is total agents only.
+    worktreeLimitEnabled: true,
     pollIntervalMs: 15000,
     heartbeatMultiplier: 1,
     groupOverlappingFiles: true,
@@ -1502,11 +1504,12 @@ export function SettingsModal({
   const skipNextMemoryReloadRef = useRef(false);
 
   // Global concurrency state
-  const [globalMaxConcurrent, setGlobalMaxConcurrent] = useState<number | undefined>(4);
-  const initialGlobalMaxConcurrentRef = useRef<number | undefined>(4);
-  const hasFetchedGlobalConcurrencyRef = useRef(false);
-  const globalConcurrencyDirtyRef = useRef(false);
-  const [globalConcurrencyLoaded, setGlobalConcurrencyLoaded] = useState(false);
+  /*
+  FNXC:CapacityModel 2026-07-29-00:10 (drop the cross-project cap — settings half):
+  The machine-wide cap's state, its dedicated fetch, its save branch and its dirty
+  tracking are DELETED along with the Scheduling · Global section that hosted it.
+  Capacity is two numbers PER PROJECT, both of which live in the settings form.
+  */
 
   // Import/Export state
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -1699,38 +1702,6 @@ export function SettingsModal({
     void refreshSettingsForm(true);
   }, [addToast, projectId]);
 
-  /*
-  FNXC:SettingsConcurrency 2026-07-15-18:52:
-  Fetches for EITHER scheduling section. `scheduling-global` renders the cap itself, and `scheduling` (project) gates its own concurrency inputs on this load — the FN-era invariant that a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback.
-  Gating on `"scheduling"` alone (the id before the Global/Project split) would leave the global cap's own section waiting on a fetch that never fires, disabling the only control it renders.
-  */
-  useEffect(() => {
-    if ((activeSection !== "scheduling" && activeSection !== "scheduling-global") || hasFetchedGlobalConcurrencyRef.current) {
-      return;
-    }
-
-    let cancelled = false;
-    fetchGlobalConcurrency()
-      .then((state) => {
-        if (cancelled) {
-          return;
-        }
-        if (!globalConcurrencyDirtyRef.current) {
-          setGlobalMaxConcurrent(state.globalMaxConcurrent);
-        }
-        initialGlobalMaxConcurrentRef.current = state.globalMaxConcurrent;
-        hasFetchedGlobalConcurrencyRef.current = true;
-        setGlobalConcurrencyLoaded(true);
-      })
-      .catch(() => {
-        // Silently fail — global concurrency may not be available
-        setGlobalConcurrencyLoaded(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3368,7 +3339,6 @@ export function SettingsModal({
     const scopedSettingsSnapshot = scopedSettings;
     const initialValuesSnapshot = initialValues;
     const initialScopedValuesSnapshot = initialScopedValues;
-    const globalMaxConcurrentSnapshot = globalMaxConcurrent;
     const activeSectionSnapshot = activeSection;
     const globalGitlabSettingsSnapshot = globalGitlabSettings;
     const workflowLaneRevisionSnapshot = workflowLaneRevisionRef.current;
@@ -3520,9 +3490,6 @@ export function SettingsModal({
       await Promise.all([
         Object.keys(globalPatch).length > 0 ? updateGlobalSettings(globalPatch) : Promise.resolve(),
         Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch, projectId) : Promise.resolve(),
-        globalMaxConcurrentSnapshot !== initialGlobalMaxConcurrentRef.current
-          ? updateGlobalConcurrency({ globalMaxConcurrent: globalMaxConcurrentSnapshot ?? 4 })
-          : Promise.resolve(),
       ]);
 
       await workflowLaneSaverRef.current?.();
@@ -3551,9 +3518,6 @@ export function SettingsModal({
           project: mergePatch(current.project, projectPatch as Record<string, unknown>) as Partial<Settings>,
         };
       });
-      if (globalMaxConcurrentSnapshot !== initialGlobalMaxConcurrentRef.current) {
-        initialGlobalMaxConcurrentRef.current = globalMaxConcurrentSnapshot;
-      }
       /*
       FNXC:SettingsAutoSave 2026-08-02-21:45:
       A successful snapshot becomes the next autosave comparison point. If the
@@ -3564,7 +3528,6 @@ export function SettingsModal({
         form: formSnapshot,
         scopedSettings: scopedSettingsSnapshot,
         globalGitlabSettings: globalGitlabSettingsSnapshot,
-        globalMaxConcurrent: globalMaxConcurrentSnapshot,
       });
       lastPersistSucceededRef.current = true;
       return true;
@@ -3582,7 +3545,7 @@ export function SettingsModal({
         void persistSettingsRef.current?.();
       }
     }
-  }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, scopedSettings, addToast, projectId, activeSection, t]);
+  }, [form, globalGitlabSettings, prefixError, presetDraft, initialValues, initialScopedValues, scopedSettings, addToast, projectId, activeSection, t]);
 
   persistSettingsRef.current = persistSettings;
   const settingsDirty = useMemo(() => {
@@ -3600,11 +3563,10 @@ export function SettingsModal({
       } : undefined,
     });
     return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0
-      || globalMaxConcurrent !== initialGlobalMaxConcurrentRef.current
       || workflowLanesDirty;
-  }, [form, globalGitlabSettings, globalMaxConcurrent, initialScopedValues, initialValues, scopedSettings, activeSection, workflowLanesDirty]);
+  }, [form, globalGitlabSettings, initialScopedValues, initialValues, scopedSettings, activeSection, workflowLanesDirty]);
 
-  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings, globalMaxConcurrent, workflowLaneRevision: workflowLaneRevisionRef.current }), [form, globalGitlabSettings, globalMaxConcurrent, scopedSettings, workflowLanesDirty]);
+  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings, workflowLaneRevision: workflowLaneRevisionRef.current }), [form, globalGitlabSettings, scopedSettings, workflowLanesDirty]);
   const hasAutoSaveChange = autoSaveActivationSnapshotRef.current !== null
     && autoSaveActivationSnapshotRef.current !== autoSaveSnapshot;
   latestAutoSaveStateRef.current = { dirty: settingsDirty, changed: hasAutoSaveChange };
@@ -3637,7 +3599,7 @@ export function SettingsModal({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, globalMaxConcurrent, workflowLanesDirty, activeSection]);
+  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, workflowLanesDirty, activeSection]);
 
   const requestClose = useCallback(async () => {
     if (autoSaveTimerRef.current) {
@@ -4147,23 +4109,21 @@ export function SettingsModal({
             setSessionBannersHidden={setSessionBannersHidden}
           />
         );
-      case "scheduling-global":
-        return (
-          <SchedulingGlobalSection
-            globalMaxConcurrent={globalMaxConcurrent}
-            concurrencyLoading={activeSection === "scheduling-global" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
-            onGlobalMaxConcurrentChange={(value) => {
-              globalConcurrencyDirtyRef.current = true;
-              setGlobalMaxConcurrent(value);
-            }}
-          />
-        );
       case "scheduling":
         return (
+          /*
+          FNXC:CapacityModel 2026-07-29-00:10 (drop the cross-project cap — settings half):
+          `concurrencyLoading` gated the PROJECT concurrency inputs on the GLOBAL
+          concurrency fetch, which was never the right source — maxConcurrent and
+          maxWorktrees come from the settings form. With the global cap deleted the gate
+          is repointed at the form's own load, preserving the invariant it existed for:
+          a concurrency input stays disabled until its live value has arrived, so an
+          operator cannot overwrite a resolved limit with a blank fallback.
+          */
           <SchedulingSection
             form={form}
             setForm={setForm}
-            concurrencyLoading={activeSection === "scheduling" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
+            concurrencyLoading={loading}
             onOverlapIgnorePathChange={handleOverlapIgnorePathChange}
             onOpenOverlapPathPicker={openOverlapPathPicker}
             onRemoveOverlapIgnorePath={handleRemoveOverlapIgnorePath}

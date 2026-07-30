@@ -265,3 +265,71 @@ describe("UsageLimitPauser", () => {
     expect(store.pauseTask).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:MergedPlanningColumn 2026-07-29-19:30 (U11 — SUPERSEDED, reduced to the surviving contribution):
+
+This block originally carried a production fix of my own: pairing the planning lane's `triage`
+literal with `todo`. Main landed a BETTER fix first (PR #2572) — a per-task, trait-resolved
+`preImplementationColumns` set keyed on the INTAKE trait, with an explicit argument for excluding
+`hold` because a hold column can be a mid-pipeline wait rather than a planning queue. My paired
+literal is strictly worse and is dropped rather than defended.
+
+Two of my original tests went with it, and one of them was asserting the WRONG thing: it expected a
+`triage` bystander to be parked on a default-workflow board. Under the trait-resolved design that is
+correct behavior to REFUSE — the default workflow's intake is `todo`, so a card in `triage` is not
+in its planning lane at all. Keeping that assertion would have pinned my own narrower reading over
+main's.
+
+What survives is the round trip, which greptile asked for and which main's own tests do not cover:
+parking without resuming would leave a card parked FOREVER — parked correctly, never resumed —
+which reads to an operator as deliberately held rather than stuck. `onProviderAvailable` filters on
+`pausedReason` and consults no column, so it is column-independent and was never broken; that is
+exactly why it needs pinning, since nothing stops someone adding a lane check to recovery to
+"match" the parking side.
+*/
+describe("usage-limit parking and recovery round trip (U11)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("parks a bystander on the rate-limited provider AND resumes it when the provider returns", async () => {
+    const store = createMockStore([
+      { id: "FN-103", column: "in-progress", modelProvider: "anthropic", modelId: "claude-sonnet" },
+      { id: "FN-104", column: "in-progress", modelProvider: "anthropic", modelId: "claude-sonnet" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await pauser.onUsageLimitHit("executor", "FN-103", "rate limit", "anthropic");
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-104", true, undefined, {
+      pausedReason: "provider-rate-limit:anthropic",
+    });
+
+    // Reflect the park into the rows recovery will read, then recover.
+    store.listTasks.mockResolvedValue([
+      { id: "FN-103", column: "in-progress", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+      { id: "FN-104", column: "in-progress", paused: true, pausedReason: "provider-rate-limit:anthropic" },
+    ]);
+
+    await expect(pauser.onProviderAvailable("anthropic")).resolves.toBe(2);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-104", false);
+  });
+
+  it("does not resume a card parked for an unrelated reason", async () => {
+    /*
+    Regression direction: recovery keys on the exact `pausedReason`, so a provider coming back must
+    not clear an operator park or another provider's outage. Without this, widening recovery to
+    "resume anything paused" would satisfy the round trip above.
+    */
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      { id: "FN-105", column: "in-progress", paused: true, pausedReason: "provider-rate-limit:openai-codex" },
+      { id: "FN-106", column: "in-progress", paused: true, userPaused: true, pausedReason: "operator" },
+    ]);
+    const pauser = new UsageLimitPauser(store);
+
+    await expect(pauser.onProviderAvailable("anthropic")).resolves.toBe(0);
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-105", false);
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-106", false);
+  });
+});

@@ -9,6 +9,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX, WORKFLOW_MOVE_POLICY_TIMEOUT_MS} from "../store.js";
+import { resolveCapacityPoolId } from "../workflow-capacity.js";
 import {TransitionRejectionError} from "./errors.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, eq, isNull, ne, or, sql} from "drizzle-orm";
@@ -31,7 +32,7 @@ import {CentralCore} from "../central-core.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
-import {type TaskRow} from "../task-store/persistence.js";
+import {preserveResolvedTaskWedgeEpisode, type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
@@ -135,6 +136,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
       */
       if (row) {
         const existing = store.pgRowToTaskRow(row);
+        preserveResolvedTaskWedgeEpisode(existing, task);
         const changedColumns = store.getChangedTaskColumns(existing, task);
         if (changedColumns.size > 0) {
           const context = store.createTaskPersistSerializationContext(task, existing);
@@ -681,9 +683,24 @@ export function __setWorkflowDefinitionBeforeInsertForTesting(
 }
 
 export async function createWorkflowDefinitionImpl(store: TaskStore, input: WorkflowDefinitionInput,): Promise<WorkflowDefinition> {
-    // Rollback compat (#1405): with the flag OFF, persist a pure-v1-equivalent
-    // graph in the v1 shape so a binary downgrade can still load the row.
-    const flagOnForCreate = await store.workflowColumnsFlagOn();
+    /*
+    Rollback compat (#1405): persist a pure-v1-equivalent graph in the v1 shape so a
+    binary downgrade can still load the row.
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+    The `flagOnForCreate` read is DELETED and the downgrade is now unconditional —
+    which is what it already was. The ternary was `flagOn ? ir : downgrade(ir)`, and
+    `flagOn` reads the retired raw `experimentalFeatures.workflowColumns` key that no
+    production writer sets, so every real project has ALWAYS taken the downgrade arm.
+    Removing the branch changes no persisted byte; it deletes a flag read.
+
+    The downgrade itself is KEPT deliberately. It is a compatibility affordance, not
+    cutover machinery: it only fires for a graph that is exactly equivalent to pure v1
+    (default columns, default placements, no v2-only features), and `upgradeV1ToV2`
+    re-reads it into an identical v2 graph. Retiring it would break a binary downgrade
+    for no benefit, and stale binaries opening these databases is an observed event in
+    this project, not a hypothetical.
+    */
     return store.withConfigLock(async () => {
       const name = input.name?.trim();
       if (!name) throw new Error("Workflow name is required");
@@ -723,7 +740,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
             name: definition.name,
             description: definition.description,
             icon: definition.icon ?? null,
-            ir: (flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)) as unknown as object,
+            ir: downgradeIrToV1IfPure(definition.ir) as unknown as object,
             layout: definition.layout as unknown as object,
             kind: definition.kind,
             createdAt: definition.createdAt,
@@ -764,7 +781,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
 
     let count = 0;
     for (const row of rows) {
-      const effectiveWorkflowId = row.wid ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== workflowId) continue;
 
       if (row.col === targetColumn) {
@@ -816,7 +833,7 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
 
     let count = 0;
     for (const row of rows) {
-      const effectiveWorkflowId = row.wid ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== workflowId) continue;
 
       if (row.col === targetColumn) {

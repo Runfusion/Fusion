@@ -41,15 +41,44 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
     const worktreeCopyFileRows = (form.worktreeCopyFiles?.length ?? 0) > 0 ? form.worktreeCopyFiles ?? [] : [""];
     return (<>
       <h4 className="settings-section-heading">{t("settings.worktrees.worktrees", "Worktrees")}</h4>
+      {/*
+      FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review — coderabbit + greptile):
+      RENAMED from "Run tasks in worktrees", which was a lie.
+
+      This setting is CAPACITY SEMANTICS ONLY: it decides whether Max Worktrees
+      gates dispatch. It does NOT change where work executes — both scheduler
+      dispatch paths still allocate a worktree per task with it off, and planning
+      still runs in the task's own worktree. Two reviewers independently read the
+      old label as "turn off worktree execution", which is exactly the wrong
+      inference and worse than having no switch: an operator would flip it,
+      still get worktrees, and conclude the product is broken.
+
+      The label now names the limit rather than the mechanism, and the help says
+      outright that tasks run in a worktree either way. The setting KEY was renamed
+      with it (`worktreesEnabled` -> `worktreeLimitEnabled`) — a key persisted in
+      every settings blob misleads every future reader of the schema, not just the
+      operator reading the UI once.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "worktreeLimitEnabled",
+          label: t("settings.worktrees.worktreeLimitEnabled", "Limit concurrent worktrees"),
+          help: t("settings.worktrees.worktreeLimitEnabledHelp", "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on."),
+          scope: "project",
+        }}
+        value={form.worktreeLimitEnabled !== false}
+        onChange={(value) => setForm((f) => ({ ...f, worktreeLimitEnabled: value !== false } as SettingsFormState))}
+      />
       {/* FNXC:Worktrees 2026-07-15-17:35: An emptied Max Worktrees stores `undefined`, not 0 or "", so the key is absent from the settings blob and the scheduler falls back to the schema default of 4 rather than capping concurrency at nothing. */}
       <SettingsNumberRow
         descriptor={{
           key: "maxWorktrees",
           label: t("settings.worktrees.maxWorktrees", "Max Worktrees"),
-          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks. Default: 4."),
+          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks. Ignored while \u201cLimit concurrent worktrees\u201d is off. Default: 4."),
           scope: "project",
           min: 1,
           max: 20,
+          disabled: form.worktreeLimitEnabled === false,
         }}
         value={form.maxWorktrees ?? null}
         onChange={(v) => setForm((f) => ({ ...f, maxWorktrees: v ?? undefined } as SettingsFormState))}

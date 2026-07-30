@@ -1,0 +1,243 @@
+// @vitest-environment node
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:20 (Phase C convergence — default-workflow-hooks.ts):
+
+THE INVARIANT: a reopen is "live work (wip/review/complete) back into a planning lane
+(intake/hold)", decided from the moving task's OWN workflow — not from the default
+lineage's column names.
+
+WHY THIS IS A SAFETY TEST AND NOT A TIDYING TEST. `default-workflow-hooks.ts` is named
+for the default workflow but the store runs it on the flag-ON path for EVERY workflow
+(the trait registry resolves each hook by trait id, not by workflow). Its reopen
+predicates were lists of the default lineage's names, so on a renamed board every reopen
+effect silently did nothing. One of those effects clears `workflowStepResults`, and
+`getTaskMergeBlocker` reads exactly that: a card bounced out of review kept its OLD
+review results, and a `passed` result satisfies the merge gate. So a renamed workflow
+could merge with its re-review never run — the same regression the graph-owned-crossing
+carve-out in `applyReopenFieldClears` exists to prevent, arriving through the other door.
+
+The `todo`/`triage` names are the thing being removed here, which is why this file is
+part of the triage-guard convergence and not a separate refactor: `default-workflow-hooks.ts`
+held 4 of them and `moves.ts`'s flag-ON mirror held 1 more.
+
+WHAT IS DELIBERATELY NOT CONVERTED: the flag-OFF inline block in `moves.ts` (~line 867).
+That branch IS the legacy path and is kept verbatim on purpose so the two paths can be
+parity-checked; converting it would erase the reference implementation.
+*/
+import { describe, it, expect, beforeEach } from "vitest";
+
+import { __resetTraitRegistryForTests } from "../trait-registry.js";
+import { registerBuiltinTraits } from "../builtin-traits.js";
+import {
+  __resetDefaultWorkflowHooksForTests,
+  applyDefaultWorkflowMoveEffects,
+  isReopenIntoPlanning,
+  registerDefaultWorkflowHooks,
+  type DefaultWorkflowMoveContext,
+} from "../default-workflow-hooks.js";
+import { resolveLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { Task } from "../types.js";
+
+/** A board whose columns carry the SAME traits under DIFFERENT names. */
+const RENAMED_IR = {
+  version: "v2",
+  id: "wf-renamed",
+  name: "renamed",
+  nodes: [],
+  edges: [],
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+    { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "Checking", traits: [{ trait: "merge" }, { trait: "merge-blocker" }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+  ],
+} as unknown as WorkflowIr;
+
+/** The post-U11 default lineage: `todo` is intake AND hold; `triage` is gone (#2515). */
+const DEFAULT_IR = {
+  version: "v2",
+  id: "wf-default",
+  name: "default",
+  nodes: [],
+  edges: [],
+  columns: [
+    { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "in-progress", name: "In Progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "in-review", name: "In Review", traits: [{ trait: "merge" }, { trait: "merge-blocker" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+} as unknown as WorkflowIr;
+
+function makeCtx(
+  ir: WorkflowIr | undefined,
+  fromColumn: string,
+  toColumn: string,
+  overrides: Partial<DefaultWorkflowMoveContext> = {},
+): DefaultWorkflowMoveContext {
+  const task = {
+    id: "FN-1",
+    column: toColumn,
+    columnMovedAt: "2026-07-30T00:00:00.000Z",
+    steps: [],
+    dependencies: [],
+    status: "failed",
+    error: "boom",
+    branch: "fusion/FN-1",
+    summary: "old summary",
+    workflowStepResults: [{ workflowStepId: "review", status: "passed" }],
+  } as unknown as Task;
+  return {
+    task,
+    fromColumn,
+    toColumn,
+    moveSource: "engine",
+    bypassGuards: false,
+    movedAt: "2026-07-30T00:00:01.000Z",
+    settings: undefined,
+    options: {},
+    lifecycleColumns: ir ? resolveLifecycleColumns(ir) : undefined,
+    resetSteps: () => {},
+    ...overrides,
+  };
+}
+
+function applyOn(ir: WorkflowIr | undefined, fromColumn: string, toColumn: string, overrides = {}) {
+  const ctx = makeCtx(ir, fromColumn, toColumn, overrides);
+  applyDefaultWorkflowMoveEffects(ctx);
+  return ctx.task;
+}
+
+describe("a reopen is decided by lifecycle ROLE, not by the default lineage's names", () => {
+  beforeEach(() => {
+    __resetTraitRegistryForTests();
+    __resetDefaultWorkflowHooksForTests();
+    registerBuiltinTraits();
+    registerDefaultWorkflowHooks();
+  });
+
+  it("clears stale review results when a RENAMED board bounces review -> hold", () => {
+    // THE SAFETY CASE. Pre-fix: `checking`/`queued` matched none of the hard-coded
+    // names, so the `passed` review result survived the bounce and `getTaskMergeBlocker`
+    // would have let the card merge with its re-review never run.
+    const task = applyOn(RENAMED_IR, "checking", "queued");
+
+    expect(task.workflowStepResults).toBeUndefined();
+    expect(task.branch).toBeUndefined();
+    expect(task.summary).toBeUndefined();
+  });
+
+  it("clears the failure state when a RENAMED board bounces wip -> intake", () => {
+    const task = applyOn(RENAMED_IR, "building", "backlog");
+
+    expect(task.status).toBeUndefined();
+    expect(task.error).toBeUndefined();
+  });
+
+  it("parks a user-source rebound into the renamed HOLD lane", () => {
+    // Pre-fix the park never happened off the default lineage, so the scheduler
+    // re-dispatched the card the operator had just pulled back.
+    const task = applyOn(RENAMED_IR, "building", "queued", { moveSource: "user" as const });
+
+    expect(task.userPaused).toBe(true);
+  });
+
+  it("still does the same on the DEFAULT lineage (the conversion is not a rename)", () => {
+    const task = applyOn(DEFAULT_IR, "in-review", "todo");
+
+    expect(task.workflowStepResults).toBeUndefined();
+    expect(task.branch).toBeUndefined();
+    expect(task.status).toBeUndefined();
+  });
+
+  it("does NOT treat a forward move into wip as a reopen on a renamed board", () => {
+    // The paired negative: "clears everything always" must not be able to pass for
+    // "reads the roles". A backlog -> building move keeps the card's own state.
+    const task = applyOn(RENAMED_IR, "backlog", "building");
+
+    expect(task.status).toBe("failed");
+    expect(task.workflowStepResults).toHaveLength(1);
+  });
+
+  it("does NOT clear results on the graph's own review -> wip crossing (carve-out survives)", () => {
+    const task = applyOn(RENAMED_IR, "checking", "building", {
+      workflowMoveSource: "workflow-graph",
+    });
+
+    expect(task.workflowStepResults).toHaveLength(1);
+  });
+
+  it("DOES clear results on an operator-dragged review -> wip crossing", () => {
+    const task = applyOn(RENAMED_IR, "checking", "building");
+
+    expect(task.workflowStepResults).toBeUndefined();
+  });
+});
+
+describe("no column vocabulary is the only case a legacy name is legitimate", () => {
+  beforeEach(() => {
+    __resetTraitRegistryForTests();
+    __resetDefaultWorkflowHooksForTests();
+    registerBuiltinTraits();
+    registerDefaultWorkflowHooks();
+  });
+
+  it("falls back to the legacy names for a v1 / column-less IR", () => {
+    // `resolveLifecycleColumns` returns undefined for the WHOLE struct here, which means
+    // "no basis to decide" — not "declares no hold column". The legacy names are all
+    // there is, and a pre-v2 row really does live in `in-review`/`todo`.
+    const task = applyOn(undefined, "in-review", "todo");
+
+    expect(task.workflowStepResults).toBeUndefined();
+    expect(task.status).toBeUndefined();
+  });
+
+  it("does NOT substitute a legacy name for a role the workflow genuinely lacks", () => {
+    // A workflow with intake but NO hold: `queued` is not a lane on this board, so a move
+    // there is not a reopen. Substituting `todo` would invent a lane the operator removed.
+    const holdlessIr = {
+      version: "v2", id: "wf-no-hold", name: "no-hold", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      ],
+    } as unknown as WorkflowIr;
+
+    const lifecycle = resolveLifecycleColumns(holdlessIr);
+
+    expect(isReopenIntoPlanning(lifecycle, "building", "todo")).toBe(false);
+    expect(isReopenIntoPlanning(lifecycle, "building", "backlog")).toBe(true);
+  });
+});
+
+describe("the store's reopen check and the hooks' cannot disagree", () => {
+  beforeEach(() => {
+    __resetTraitRegistryForTests();
+    registerBuiltinTraits();
+  });
+
+  it("answers identically for every from/to pair on a renamed board", () => {
+    /*
+    `moves.ts` used to carry its own hand-written copy of this predicate, annotated
+    "parity mirror". Two copies of one rule diverge on whichever the next edit misses;
+    it now calls this function. This pins that there is ONE answer per pair, which is the
+    property the mirror was trying to have.
+    */
+    const lifecycle = resolveLifecycleColumns(RENAMED_IR);
+    const columns = ["backlog", "queued", "building", "checking", "shipped"];
+
+    const reopens = columns.flatMap((from) =>
+      columns.filter((to) => isReopenIntoPlanning(lifecycle, from, to)).map((to) => `${from}->${to}`),
+    );
+
+    expect(reopens.sort()).toEqual([
+      "building->backlog",
+      "building->queued",
+      "checking->backlog",
+      "checking->queued",
+      "shipped->backlog",
+      "shipped->queued",
+    ]);
+  });
+});

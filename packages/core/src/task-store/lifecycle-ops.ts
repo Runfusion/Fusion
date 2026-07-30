@@ -1112,11 +1112,15 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
   }
 
 export async function migrateLegacyWorkflowStepsImpl(store: TaskStore): Promise<{ migrated: number; skipped: number; combinedWorkflowId?: string; }> {
-    // Resolve async prerequisites BEFORE the synchronous transaction: the
-    // workflow-columns flag (for flag-aware persistence). The project default is
-    // re-read AFTER the transaction (compare-and-set) so a concurrently-set
-    // default is never clobbered.
-    const flagOn = await store.workflowColumnsFlagOn();
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+    The workflow-columns flag read is DELETED. It was resolved here only to thread
+    "flag-aware persistence" into `insertWorkflowDefinitionSync`, where it chose
+    between the v2 shape and the pure-v1 downgrade. The flag is retired and always
+    false, so the downgrade arm was always taken; it is now unconditional inside the
+    insert and the parameter is gone. The project default is still re-read AFTER the
+    transaction (compare-and-set) so a concurrently-set default is never clobbered.
+    */
 
     const result = store.db.transactionImmediate(() => {
       // Write lock is now held. Read the raw step rows directly (the cached,
@@ -1152,7 +1156,6 @@ export async function migrateLegacyWorkflowStepsImpl(store: TaskStore): Promise<
             ir: fragmentIr,
             layout: layoutForIr(fragmentIr),
           },
-          flagOn,
         );
         store.db
           .prepare("UPDATE workflow_steps SET migrated_fragment_id = ?, updatedAt = ? WHERE id = ?")
@@ -1174,7 +1177,6 @@ export async function migrateLegacyWorkflowStepsImpl(store: TaskStore): Promise<
             ir,
             layout: layoutForIr(ir),
           },
-          flagOn,
         );
         combinedWorkflowId = combined.id;
       }

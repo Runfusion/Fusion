@@ -471,7 +471,24 @@ describe("Workflow Steps Execution", () => {
         undefined,
         expect.objectContaining({ agentId: "executor" }),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-5436-B", "in-review");
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-29-19:10 (U8 / R4):
+      FN-5436's invariant is unchanged — a pending-review block still parks the card in review,
+      never `failed`. What changed is the OWNER. The executor no longer hands off inline; the
+      graph routes the ending to its `review-pending-handoff` node, which moves the card with
+      workflow provenance. So this asserts the same outcome plus proof of who produced it, which
+      is strictly stronger than the old two-argument `moveTask(id, "in-review")` — that shape
+      could not distinguish a graph-owned park from an out-of-band one, and telling those apart
+      is the entire point of the unit.
+      */
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-5436-B",
+        "in-review",
+        expect.objectContaining({
+          workflowMoveSource: "workflow-graph",
+          workflowMoveMetadata: expect.objectContaining({ nodeId: "review-pending-handoff" }),
+        }),
+      );
     });
 
     it("keeps existing retry loop when no pending review block is present", async () => {

@@ -14,11 +14,13 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
+import { emitWorkflowLifecycleEvent } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
+import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
@@ -104,6 +106,7 @@ import {
   createResolvedAgentSession,
   extractRuntimeHint,
   resolveExecutorSessionModel,
+  resolveValidatorSessionModel,
   resolveExecutorThinkingLevel,
   resolveExecutorFallbackThinkingLevel,
   resolveValidatorThinkingLevel,
@@ -118,6 +121,7 @@ import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   PRIORITY_EXECUTE,
+  computeTopLevelConcurrencyClaimedFromStore,
   dropPreHeldExecutorSlot,
   takePreHeldExecutorSlot,
   type AgentSemaphore,
@@ -235,6 +239,7 @@ import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/conta
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
+import { resolveDedicatedPlannerColumnsForTask } from "./planner-lane-resolution.js";
 import {
   createAgentCreateTool,
   createAgentDeleteTool,
@@ -2696,12 +2701,71 @@ export class TaskExecutor {
    * FNXC:ExecutorBinding 2026-06-30-00:00:
    * `preserveWorktrees: true` is the FN-6736 self-healing path. When the caller has already committed to `moveTask(..., { preserveWorktree: true })`, unregistering the held worktree path from `activeSessionRegistry` defeats the preserve: re-dispatch then sees the path as free and re-acquires a brand-new worktree (observed on FN-7249: gentle-peach orphaned, rosy-thorn rebuilt ~20s after reclaim). The preserve variant clears only the in-memory executor/lock bookkeeping and leaves the session-registry path entry intact so the re-dispatch reattaches to the same worktree. Non-self-healing callers (leaked-slot reaper, pause-abort recovery) keep the default full-clear behavior.
    */
-  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
-    const hasLiveSessionSurface = this.activeSessions.has(taskId)
+  /*
+  FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756 — one liveness predicate, PR #2531 review):
+  READ-ONLY liveness probe, extracted so callers can ASK before they mutate.
+
+  `clearPhantomExecutorBinding` both answers "is this live?" and performs a
+  destructive release, which forced every caller into a false choice: check first
+  and release ownership before their own fallible writes (a torn write — ownership
+  gone, task un-repaired, nobody owning the repair), or write first and discover the
+  refusal too late. Splitting the question from the act lets a caller gate on
+  liveness with no side effect and release only after its writes have committed.
+
+  Deliberately the SAME expression the destructive path uses, not a copy: a probe
+  that could disagree with the guard it stands in for is worse than no probe, and
+  independent re-derivation of "liveness" at each call site is precisely how this
+  bug reached users three times (reclaim sweep -> leaked-slot reaper -> pause-abort).
+
+  Registry paths count. A triage PLANNING session is owned by TriageProcessor and
+  appears in NONE of the four executor-owned maps; it registers here instead.
+  */
+  hasLiveSessionSurface(taskId: string): boolean {
+    return this.activeSessions.has(taskId)
       || this.activeStepExecutors.has(taskId)
       || this.activeWorkflowStepSessions.has(taskId)
-      || this.activeCliTaskSessions.has(taskId);
-    if (hasLiveSessionSurface) {
+      || this.activeCliTaskSessions.has(taskId)
+      || activeSessionRegistry.pathsForTask(taskId).length > 0;
+  }
+
+  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
+    /*
+    FNXC:NodeWorktreeIsolation 2026-07-29-02:10 (FN-6756 — planner worktrees reaped from under live planners):
+    THE REGISTRY IS PART OF THE LIVENESS SIGNAL, not just something this method
+    tears down.
+
+    This is documented as "the last line of defense against pulling a worktree out
+    from under a running agent" (see `reapLeakedConcurrencySlots`). It was blind to
+    an entire class of agent. The four sets below are all TaskExecutor-owned; a
+    triage PLANNING session is owned by `TriageProcessor` and lives in ITS OWN
+    `activeSessions` map, so a live planner matched none of them.
+
+    The consequence was not theoretical — it is FN-8600 recurring through a second
+    door. Under plan-in-place a card is specified while it sits in `todo`/`triage`,
+    both of which `reapLeakedConcurrencySlots` treats as reapable, and planning
+    routinely outlives that sweep's 60s grace. Every earlier gate passes for a
+    planner (not in the executor's `executing` set, reapable column, past grace), so
+    this method decided alone — and returned true, releasing the slot and then
+    UNREGISTERING the planner's own registry paths below. It destroyed the very
+    evidence that proves the planner alive.
+
+    FN-8600 fixed the self-owned-branch reclaim sweep by registering planning paths
+    here (`triage.ts` acquireActiveSessionPath, and see the "planning" kind note in
+    active-session-registry.ts). That fix landed at ONE surface. This is the second,
+    which is what the AGENTS.md Surface Enumeration rule exists to prevent.
+
+    Deliberately keyed on ANY registered path for the task, not on kind: the point
+    is that a registered session surface of any kind means someone is working in
+    that worktree. A leaked entry now blocks THIS sweep rather than a live planner
+    losing its worktree — the strictly safer failure, and the one the "last line of
+    defense" wording already promises. The registry is process-local and in-memory,
+    so a leak cannot outlive the process; stale entries have their own reconciler
+    (`reconcileStaleSelfOwned`) and the reclaim-aware `acquireActiveSessionPath`.
+
+    NOT fixed by raising the grace period: a longer timeout only makes this rarer
+    and harder to reproduce. The liveness gate is the bug.
+    */
+    if (this.hasLiveSessionSurface(taskId)) {
       executorLog.warn(`${taskId}: refusing to clear phantom executor binding because a live session surface is still registered`);
       return false;
     }
@@ -2808,6 +2872,60 @@ export class TaskExecutor {
       }
     }
     this.activeSubagentSessions.delete(taskId);
+  }
+
+  /**
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-09:40 (Phase C convergence):
+   * Is `column` one of THIS task's planner lanes (intake or hold)?
+   *
+   * Used by the planning-evacuation branch of the `task:moved` handler, which is why it is
+   * synchronous: that handler runs off a synchronous emitter, and an `await` here would
+   * reorder it against the other listeners.
+   *
+   * WHAT THE GUARD IS FOR, checked rather than assumed: the branch asks "was this card
+   * pulled BACKWARD out of a lane where pre-execution graph work is running?" — Plan Review
+   * and the planning session both run while the card sits there. Named literals answered that
+   * only on the default lineage, so on a renamed board a withdrawn card kept its reviewer
+   * streaming and its pre-execution worktree on disk.
+   */
+  private isPlannerColumnFor(taskId: string, column: string): boolean {
+    const lanes = resolvePlannerLanes(this.store, taskId);
+    return column === lanes.hold || column === lanes.intake;
+  }
+
+  /**
+   * Was this card pulled BACKWARD out of a planner lane — as opposed to advancing forward
+   * out of it?
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-16:55 (PR #2628 review, greptile P1):
+   * THE FORWARD EXCLUSIONS MUST RESOLVE TOO, and leaving them literal made this branch WORSE
+   * than before I touched it. With a role-aware source check and name-matched destinations, a
+   * renamed board's ordinary FORWARD move (planning -> building) passed the source test and
+   * matched none of the exclusions, so the evacuation fired on a card that was simply
+   * advancing: it aborted live planning work and deleted the valid pre-execution worktree.
+   * Before the conversion the source check failed and nothing happened; a half-conversion
+   * turned a missed rescue into active damage. Third time this program has produced that
+   * shape — gates converted, destinations left literal.
+   *
+   * Forward means the workflow's own wip, review, or complete lane. When a role is not
+   * declared it cannot be a forward target, so it is simply not excluded; when the workflow
+   * has no column vocabulary at all, `resolvePlannerLanes` returns the legacy names and this
+   * reads exactly as it did before.
+   */
+  private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string): boolean {
+    const lanes = resolvePlannerLanes(this.store, taskId);
+    if (from !== lanes.hold && from !== lanes.intake) return false;
+    const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter(
+      (column): column is string => typeof column === "string",
+    );
+    /*
+    DELIBERATELY NOT ALSO EXCLUDING planner-to-planner moves. The literal version fired the
+    evacuation on `todo -> triage` (a replan rebound), and whether that is right is a separate
+    question from this review fix — the replan path is engine-initiated, so aborting the planning
+    session there may be exactly wrong, but changing it is a behavior change with its own
+    surfaces to enumerate. This conversion keeps that case behaving as it does today.
+    */
+    return !forwardTargets.includes(to);
   }
 
   /**
@@ -3344,7 +3462,7 @@ export class TaskExecutor {
             }
           }),
         );
-      } else if ((from === "todo" || from === "triage") && to !== "in-progress" && to !== "in-review" && to !== "done") {
+      } else if (this.isBackwardMoveOutOfPlanning(task.id, from, to)) {
         /*
         FNXC:PlanningEvacuation 2026-07-25-23:00:
         A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all
@@ -4886,7 +5004,37 @@ export class TaskExecutor {
       }
       await this.persistTokenUsage(task.id);
       const originColumn = task.column;
-      const promotedFromPlannerColumn = originColumn === "todo" || originColumn === "triage";
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (Phase C convergence):
+      Resolved from the task's OWN workflow. On a renamed board the literals matched nothing,
+      so completed work stranded in the planning lane was NOT recognised as needing promotion:
+      the code fell through to `handoffTaskToReview` directly from the planning column, and
+      role adjacency has no planning -> review edge, so the handoff move was rejected and the
+      card stayed stranded with its work finished and nothing left to rescue it. This is the
+      recovery of last resort — a literal here means the last resort does not exist off the
+      default lineage.
+      */
+      const plannerLanes = resolvePlannerLanes(this.store, task.id);
+      const promotedFromPlannerColumn = originColumn === plannerLanes.hold || originColumn === plannerLanes.intake;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2628 review, greptile P1):
+      REFUSE BEFORE THE FIRST MOVE when the workflow declares no WIP lane. The previous version
+      let `resolvePlannerLanes` substitute the legacy `in-progress`, so the promotion targeted a
+      column that board does not declare: `moveTask` rejects it, recovery reports failure — and
+      because the intake -> hold re-home happens FIRST, the card could be left half-moved, which
+      is worse than the stranding this recovery exists to fix.
+
+      Checked here rather than at the move so no partial hop is issued. A workflow with planning
+      lanes and no WIP lane has nowhere to promote completed work TO; that is an operator
+      configuration question, not something to guess past. Logged so the card is not silently
+      skipped — the whole point of this recovery is that nothing else owns this state.
+      */
+      if (promotedFromPlannerColumn && plannerLanes.wip === undefined) {
+        const message = `Auto-recovery withheld: completed work is in '${originColumn}' but this workflow declares no WIP column to promote it to`;
+        executorLog.warn(`${task.id}: ${message}`);
+        await this.store.logEntry(task.id, message).catch(() => undefined);
+        return false;
+      }
       let completionTask = task;
       if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
@@ -4898,8 +5046,15 @@ export class TaskExecutor {
         triage -> todo -> in-progress path while the recovery ownership set prevents
         scheduler/executor dispatch. Todo callers retain their existing single hop.
         */
-        if (originColumn === "triage") {
-          completionTask = await this.store.moveTask(task.id, "todo", {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-09:30: the two-hop is needed whenever the
+        card sits in a DISTINCT intake lane, because role adjacency gives intake only
+        hold/archived — never wip. Post-U11 the default lineage merges the two roles onto one
+        column, so `hold === intake` and the hop correctly collapses to the single move below;
+        a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
+        */
+        if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
+          completionTask = await this.store.moveTask(task.id, plannerLanes.hold, {
             moveSource: "engine",
             recoveryRehome: true,
             bypassGuards: true,
@@ -4908,7 +5063,8 @@ export class TaskExecutor {
             preserveResumeState: true,
           });
         }
-        completionTask = await this.store.moveTask(task.id, "in-progress");
+        // Non-undefined: the guard above returned early when this workflow declares no WIP lane.
+        completionTask = await this.store.moveTask(task.id, plannerLanes.wip as string);
       }
       await this.handoffTaskToReview(completionTask, "completed-task-recovered");
       if (promotedFromPlannerColumn) {
@@ -5697,7 +5853,7 @@ export class TaskExecutor {
    *  the (step-session) implementation exactly once per run and lets later step
    *  instances observe the projection rather than re-running execute() per step.
    *  Keyed by task id; cleared alongside the pin. */
-  private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[] }>>();
+  private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
 
   /** Step-inversion (KTD-4): the foreach instance the step-execute seam is
    *  currently driving for a graph-owned task, so `runGraphTaskStep` can honor
@@ -6916,10 +7072,14 @@ export class TaskExecutor {
   private async runImplementationPhase(
     task: Task,
     prepared?: PreparedWorktree,
-  ): Promise<{ taskDone: boolean; modifiedFiles: string[] }> {
-    let captured: { taskDone: boolean; modifiedFiles: string[] } = { taskDone: false, modifiedFiles: [] };
+  ): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> {
+    let captured: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit } = { taskDone: false, modifiedFiles: [] };
     const graphCompletion: GraphCompletionCallback = (info) => {
-      captured = { taskDone: true, modifiedFiles: info.modifiedFiles };
+      captured = { ...captured, taskDone: true, modifiedFiles: info.modifiedFiles };
+    };
+    /* Recorded independently of `graphCompletion`: the out-of-band exits never call it. */
+    const reportExit: ImplementationExitReporter = (exit) => {
+      captured = { ...captured, exit };
     };
     const executionTask = prepared
       ? {
@@ -6928,7 +7088,7 @@ export class TaskExecutor {
           branch: prepared.branchName || task.branch,
         }
       : task;
-    await this.runImplementation(executionTask, graphCompletion);
+    await this.runImplementation(executionTask, graphCompletion, reportExit);
     return captured;
   }
 
@@ -6961,7 +7121,7 @@ export class TaskExecutor {
     governingNodeId?: string,
     thinkingLevel?: ThinkingLevel,
     skillName?: string,
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; exit?: ImplementationExit }> {
     const active = this.foreachActiveForTask(task.id, instanceId);
     /*
     FNXC:WorkflowStepSessions 2026-06-30-00:00:
@@ -7015,8 +7175,16 @@ export class TaskExecutor {
           }
         });
     }
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-11:20 (U8 / R4):
+    The memoized pass's result was awaited and DISCARDED here — which is exactly where the
+    implementation exit died. One pass serves every foreach instance, so the exit is a property
+    of the pass, not of a step: each instance reports the same ending, which is correct because
+    the ending is what stopped the whole session.
+    */
+    let phaseResult: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit } | undefined;
     try {
-      await phase;
+      phaseResult = await phase;
     } catch (err) {
       // Clear the poisoned memo so a rework cycle can retry the implementation
       // (only if it is still the same rejected promise — do not clobber a fresh
@@ -7055,15 +7223,27 @@ export class TaskExecutor {
         };
       }
       const status = live.steps[stepIndex]?.status;
-      if (status === "done" || status === "skipped") return { success: true };
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-29-14:10 (U8 / R4, PR #2546 review — greptile P2):
+      Carry the pass's ending on the SUCCESS returns too. One pass serves every foreach instance,
+      so "this step completed" and "the pass stopped on a pending-review block" are independent
+      facts and both can hold. Reporting only on failure made the exit branch-dependent: with
+      `deferDoneToReview` every instance returns success, so the ending would never reach the seam
+      and the graph-owned park would be unreachable for that shape.
+
+      The seam still routes it only on FAILURE — a genuinely completed step must not be diverted
+      to the park — so this is inert today and correct once the seam flip lands.
+      */
+      if (status === "done" || status === "skipped") return { success: true, exit: phaseResult?.exit };
       // Step not terminal after the pass: when a review will author done-ness
       // (deferDoneToReview), the pass having RUN is the success signal — the review
       // gates the projection write. Otherwise the implementation pass failed to
       // complete this step, so report failure rather than masking it (FIX 3: the
       // prior code returned success on both branches, hiding step-session failures).
-      if (active?.deferDoneToReview === true) return { success: true };
+      if (active?.deferDoneToReview === true) return { success: true, exit: phaseResult?.exit };
       return {
         success: false,
+        exit: phaseResult?.exit,
         error: `step ${stepIndex} not completed by implementation pass (status: ${status ?? "unknown"})`,
       };
     } catch (err) {
@@ -7136,6 +7316,7 @@ export class TaskExecutor {
         outcome: result.success ? "success" : "failure",
         baselineSha: refreshed.baseCommitSha,
         checkpointId: undefined,
+        exit: result.exit,
       };
     }
 
@@ -7211,12 +7392,34 @@ export class TaskExecutor {
         if (typeof governingNodeId === "string") {
           this.graphSeamGoverningNodeId.set(task.id, governingNodeId);
         }
-        let result: { taskDone: boolean; modifiedFiles: string[] };
+        let result: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit };
         try {
           result = await this.runImplementationPhase(task, prepared);
         } finally {
           this.graphSeamGoverningNodeId.delete(task.id);
         }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-16:20 (U8 / R4, R5):
+        THIS is the live implementation node, not the identically-shaped `execute` entry in
+        `createAuthoritativeWorkflowSeams`. `createDefaultNodeHandlers` prefers the PRIMITIVES
+        handler whenever `deps.primitives` is set, and `executeWorkflowGraph` always sets it — so
+        the legacy-seams prompt handler is unreachable for prompt nodes and anything wired only
+        there never runs. The exit announcement was wired only there; it is announced here now.
+
+        Measured, not assumed: instrumenting the seam and `createPromptLikeHandler` produced no
+        output for a graph run that demonstrably visited `steps#0:step-execute`, while a
+        module-load write from the same file appeared — so the negative was real and not swallowed
+        output.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "NodeCompleted",
+          taskId: task.id,
+          at: new Date().toISOString(),
+          runId: this.getRunContextFor(task.id)?.runId,
+          nodeId: typeof governingNodeId === "string" ? governingNodeId : ctx.node.node.id,
+          outcome: result.taskDone ? "success" : "failure",
+          ...(result.exit ? { exit: result.exit } : {}),
+        });
         if (result.taskDone) {
           return { outcome: "success", value: "implemented", data: result };
         }
@@ -7227,6 +7430,18 @@ export class TaskExecutor {
           } catch {
             // Best-effort pause probe; fall through to the failure value.
           }
+        }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-18:45 (U8 / R4):
+        THE PENDING-REVIEW ENDING IS A ROUTED OUTCOME, not a transition this phase performs. The
+        implementation phase used to call `handoffTaskToReview` itself and let the graph discover
+        the move afterwards; it now reports and stops, and this value routes the run to the
+        workflow's `review-pending-handoff` node, which performs the handoff and ends the run —
+        the same two effects in the same order, with the graph as the owner. Checked before the
+        pause probe because a pending-review stop is not a pause.
+        */
+        if (result.exit === "review-handoff-pending-review") {
+          return { outcome: "failure", value: "review-pending", data: result };
         }
         return {
           outcome: "failure",
@@ -7753,13 +7968,56 @@ export class TaskExecutor {
         if (typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)) {
           this.graphSeamThinkingLevel.set(seamTask.id, seamThinkingLevel as ThinkingLevel);
         }
-        let result: { taskDone: boolean; modifiedFiles: string[] };
+        let result: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit };
         try {
           result = await this.runImplementationPhase(seamTask);
         } finally {
           this.graphSeamGoverningNodeId.delete(seamTask.id);
           this.graphSeamThinkingLevel.delete(seamTask.id);
         }
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-27-16:25 (U8 / R4):
+        THIS BOOLEAN IS THE OWNERSHIP BOUNDARY, and it is too narrow. `runImplementation` has
+        28 measured ways of disposing of a task (16 column moves, 3 review handoffs, 9 terminal
+        parks — counted by `executor-lifecycle-ownership-ledger.test.ts`) and exactly 3 ways of
+        telling the graph anything, all of which collapse to `taskDone: true` here.
+
+        The consequence is not a missing feature, it is a second lifecycle owner. Because the
+        seam has no value for "the agent stopped because a step is blocked on a pending review"
+        or "the session was paused after the work was already complete", the implementation
+        phase performs those transitions ITSELF (`executor-exit-while-review-pending`,
+        `paused-after-completion`) and the graph learns about them afterwards — which is why
+        `handleGraphFailure` carries `alreadyFinalizedToReview` / `completionFinalized`
+        classifiers whose whole job is to recognise a move the graph did not make.
+
+        U8's direction: widen this vocabulary so a disposition is REPORTED here and the graph
+        routes it, rather than performed upstream and compensated for downstream. The
+        compensating classifiers are the acceptance test — they become unreachable, and then
+        deletable, exactly when the last out-of-band transition is gone.
+        */
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-28-20:25 (U8 / R4, R5):
+        Announce the exit on the U3 lifecycle bus. Until this, the two out-of-band review
+        handoffs left NO trace anywhere that the executor — not the graph — moved the card;
+        they surfaced as an ordinary `implementation-incomplete` failure that
+        `handleGraphFailure` then quietly compensated for. An operator could not tell the two
+        apart, and neither could a test.
+
+        Emission is deliberately AFTER the phase and BEFORE the return, and it changes nothing:
+        the outcome/value below are byte-identical to what this seam returned before, for every
+        exit, which `executor-implementation-exit-events.test.ts` pins by driving each exit and
+        asserting the seam's return. Per R5 an exit id is a REACTION — dropping every subscriber
+        must change no execution outcome, and that is asserted too.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "NodeCompleted",
+          taskId: seamTask.id,
+          at: new Date().toISOString(),
+          runId: this.getRunContextFor(seamTask.id)?.runId,
+          nodeId: typeof governingNodeId === "string" ? governingNodeId : "execute",
+          outcome: result.taskDone ? "success" : "failure",
+          ...(result.exit ? { exit: result.exit } : {}),
+        });
         if (result.taskDone) {
           return { outcome: "success", value: "implemented" };
         }
@@ -7912,9 +8170,20 @@ export class TaskExecutor {
         // foreach sub-walk threads them to later template nodes (step-review/reset).
         active.baselineSha = result.baselineSha;
         active.checkpointId = result.checkpointId;
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-29-11:30 (U8 / R4):
+        `step-done` / `step-failed` was a two-value flattening of every possible ending, and it
+        is why the pending-review ending could never reach an edge on the stepwise shape. A
+        blocked-on-pending-review pass is a WAIT, not a step defect: the outcome stays `failure`
+        (the step genuinely did not complete) while the VALUE names the ending, which is what the
+        foreach propagates upward — `runForeach` returns a failing instance's value as its own —
+        so the `steps` node can carry an `outcome:review-pending` edge to the park node.
+        Every other ending keeps `step-failed` exactly as before.
+        */
+        const failureValue = result.exit === "review-handoff-pending-review" ? "review-pending" : "step-failed";
         return {
           outcome: result.outcome,
-          value: result.outcome === "success" ? "step-done" : "step-failed",
+          value: result.outcome === "success" ? "step-done" : failureValue,
           contextPatch: {
             [FOREACH_ACTIVE_CONTEXT_KEY]: active,
           },
@@ -9447,6 +9716,74 @@ export class TaskExecutor {
     setTimeout(scheduleRetry, delayMs).unref?.();
   }
 
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-20:10 (U8 / R4, PR #2590 review — greptile):
+  The compat classifier keyed on `graphFailureValue`, which reads only the LAST visited node's
+  value. That is correct when the generic `failure` edge goes straight to `end` — the built-in
+  shape — but a user-authored graph may route its generic failure THROUGH another node, and that
+  node's value then becomes the terminal one. The classifier would miss the pending-review ending
+  entirely and the card would fall to the terminal park: `status: failed` on work that was only
+  WAITING for a reviewer, which is the deadlock the inline handoff existed to avoid. A guard that
+  cannot fire for the exact shape it was written for.
+
+  The ending is durable in the run context — the graph publishes `node:<id>:value` for every node
+  it runs — so detect it there rather than trusting whichever node happened to end the walk.
+  */
+  private graphRunReportedPendingReview(
+    result: WorkflowGraphTaskRunResult,
+    failureValue: string | undefined,
+  ): boolean {
+    if (failureValue === "review-pending") return true;
+    const context = result.context;
+    if (!context) return false;
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-21:40 (U8 / R4, PR #2590 review — greptile, 2nd):
+    Scanning EVERY `node:*:value` was too broad in the opposite direction. The run context is
+    shared for the whole walk, so a graph that continues past a pending-review node and then dies
+    on a genuine downstream failure still carries the earlier value — and a blanket scan would
+    park that card in review, hiding a real failure behind a wait. Trading a guard that misses for
+    one that over-claims is not a fix.
+
+    The narrow rule: the pending-review ending counts only when nothing AFTER it produced its own
+    verdict. Walk the visited nodes backwards and take the first recorded value — that is the
+    run's actual last word. If it is `review-pending`, the ending stands; if a later node spoke,
+    that node's outcome is the run's, and this classifier stays out of the way.
+    */
+    for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
+      const value = this.recordedNodeValue(context, result.visitedNodeIds[i]);
+      if (typeof value === "string") return value === "review-pending";
+    }
+    return false;
+  }
+
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-30-10:10 (U8, PR #2599 review — coderabbit, major):
+  A visited node id does NOT always name the context key its value is stored under, and the two
+  shapes that differ are the ones this unit cares about most. A foreach instance
+  (`steps#0:step-execute`) records under the CONTAINER key `node:steps:value`; an optional-group
+  template (`group::template`) records under the group key, then the template key. Reading
+  `node:<visitedId>:value` directly therefore misses a foreach ending and walks on to some
+  earlier node's value — and the default coding workflow IS a foreach, so the backward walk
+  would have misread precisely the shape it was written for.
+
+  Extracted from `graphFailureValue`, which already knew this, so the two cannot drift apart.
+  */
+  private recordedNodeValue(context: Record<string, unknown>, nodeId: string): string | undefined {
+    const direct = context[`node:${nodeId}:value`];
+    if (typeof direct === "string") return direct;
+    const groupDelimiter = nodeId.indexOf("::");
+    if (groupDelimiter !== -1) {
+      const groupValue = context[`node:${nodeId.slice(0, groupDelimiter)}:value`];
+      if (typeof groupValue === "string") return groupValue;
+      const templateValue = context[`node:${nodeId.slice(groupDelimiter + 2)}:value`];
+      return typeof templateValue === "string" ? templateValue : undefined;
+    }
+    const foreachDelimiter = nodeId.indexOf("#");
+    if (foreachDelimiter === -1) return undefined;
+    const containerValue = context[`node:${nodeId.slice(0, foreachDelimiter)}:value`];
+    return typeof containerValue === "string" ? containerValue : undefined;
+  }
+
   private graphFailureValue(result: WorkflowGraphTaskRunResult): string | undefined {
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (!failedNode || !result.context) return undefined;
@@ -10757,8 +11094,78 @@ export class TaskExecutor {
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = this.isMergeGraphFailure(failedNode);
       const failureValue = this.graphFailureValue(result);
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-28-09:40 (U8 / R3):
+      The execution-policy ladder below — the FN-7863/FN-7926 dispatch-loop gate, the FN-7996
+      tool-failure retry, and the FN-7998 escalation — decided the task's own lifecycle by
+      naming `"todo"` and `"in-progress"` literally. Under any workflow that renames those
+      columns the whole ladder was unreachable and its failure was SILENT in the worst
+      direction: the `live.column !== wip` guard below classified a card sitting in its own
+      implementation column as "already advanced — no further action needed", so the graph
+      failure was swallowed, no status was written, and the scheduler re-dispatched the same
+      doomed run. Nothing failed; the retry budgets, the escalation, and the bounded
+      terminalization simply never ran.
+
+      Resolve ONCE per failure and thread the pair through the ladder. One IR read per graph
+      failure: this is a terminal recovery path, not an enumeration loop.
+
+      FNXC:WorkflowExecutionOwnership 2026-07-28-14:05 (U8 / R3, PR #2497 review — greptile P1):
+      THE FALLBACK IS PER-WORKFLOW, NEVER PER-ROLE. The first cut wrote `columns?.hold ?? "todo"`,
+      which conflates two different situations: "no workflow could be resolved" and "this
+      workflow resolved fine and simply declares no hold column". Only the first justifies the
+      legacy literal. For the second, substituting `todo` invents a column the workflow does not
+      declare — and node-target escalation then PERSISTS it, stranding the card somewhere the
+      board cannot route and defeating the scheduler node re-resolution the escalation exists
+      for. U1 returns `undefined` per missing role precisely so a caller cannot borrow an
+      unrelated column; `?? "todo"` threw that guarantee away one line after asking for it.
+
+      So:
+        - IR unresolvable          -> the legacy literals, i.e. exactly pre-conversion behavior.
+        - IR resolved              -> `resolveReboundTarget` (KTD-10: hold -> intake -> first
+                                      column), which can only ever name a DECLARED column, and
+                                      `undefined` for wip when the workflow declares none.
+
+      A `wipColumn` of `undefined` is not a wildcard — every gate below treats "I cannot prove
+      where the wip column is" as "do not take the shortcut", so an unprovable card terminalizes
+      VISIBLY rather than being swallowed by the already-advanced branch. Fail closed toward the
+      operator seeing the failure.
+
+      The two literals that remain are ONLY the unresolvable-workflow fallback, and they are the
+      same pre-conversion values `resolveReboundColumnFor` already falls back to at its ~16
+      executor call sites — this adds no new rule and no new reachable-by-a-valid-workflow
+      literal. They are legacy-compat for a task whose workflow cannot be read at all, and they
+      belong to the same sweep that retires `resolveReboundColumnFor`'s own `?? "todo"` when U11
+      removes the column; they are deliberately NOT a per-role default, which is what made the
+      first cut wrong.
+      */
+      let lifecycleIr: WorkflowIr | undefined;
+      try {
+        lifecycleIr = await resolveWorkflowIrForTask(this.store, task.id);
+      } catch {
+        lifecycleIr = undefined;
+      }
+      const wipColumn = lifecycleIr ? resolveLifecycleColumns(lifecycleIr)?.wip : "in-progress";
+      const holdColumn = lifecycleIr ? resolveReboundTarget(lifecycleIr) : "todo";
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-29-18:55 (U8 / R4):
+      COMPAT PATH for user-authored graphs, deliberately named. Every BUILT-IN shape declares the
+      `outcome:review-pending` edge, so a built-in run never reaches here — it routed to its park
+      node and ended. A custom workflow without the edge falls through to its generic `failure`
+      edge and lands here, where the handoff the implementation phase used to perform inline
+      happens instead. For those graphs this is a relocation, not an elimination: the transition is
+      still executor-performed. What changes is that it is one named classifier in the failure
+      ladder rather than a call buried two thousand lines into a session loop.
+      */
+      if (this.graphRunReportedPendingReview(result, failureValue)) {
+        const compatMessage = "Implementation stopped on a pending review — parking in review (this workflow does not route the review-pending outcome)";
+        executorLog.log(`${task.id}: ${compatMessage}`);
+        await this.store.logEntry(task.id, compatMessage, undefined, this.getRunContextFor(task.id));
+        await this.handoffTaskToReview(live, "executor-exit-while-review-pending");
+        await this.persistTokenUsage(task.id);
+        return;
+      }
       const executeNodeSelfRequeued = failedNode === "execute" && this.graphExecuteSelfRequeued.has(task.id);
-      if (failedNode === "execute" && (live.column === "todo" || executeNodeSelfRequeued)) {
+      if (failedNode === "execute" && ((holdColumn !== undefined && live.column === holdColumn) || executeNodeSelfRequeued)) {
         /*
         FNXC:WorkflowLifecycle 2026-06-23-12:03:
         The graph execute node delegates to the authoritative executor. If that inner executor requeues the task to todo for self-heal/retry, the outer graph failure must not override it by parking the task in review.
@@ -10857,7 +11264,14 @@ export class TaskExecutor {
       if (await this.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue)) {
         return;
       }
-      if (live.column !== "in-progress") {
+      /*
+      FNXC:WorkflowExecutionOwnership 2026-07-28-14:10 (U8 / R3, PR #2497 review):
+      `wipColumn === undefined` means the workflow declares no implementation column, so there
+      is no evidence the card "already advanced" past one. Swallowing the failure on a guess is
+      the exact silent-loss this conversion exists to remove — require a KNOWN wip column before
+      taking the benign shortcut.
+      */
+      if (wipColumn !== undefined && live.column !== wipColumn) {
         const benignMessage = `Workflow graph run ended after task already advanced to '${live.column}' — no further action needed`;
         executorLog.log(`${task.id}: ${benignMessage}`);
         await this.store.logEntry(task.id, benignMessage, undefined, this.getRunContextFor(task.id));
@@ -10927,7 +11341,7 @@ export class TaskExecutor {
       const message = `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
       const settings = await this.store.getSettings();
       const maxToolFailureRetries = resolveMaxConsecutiveToolFailureRetries(settings);
-      if (maxToolFailureRetries > 0 && isExecuteFamilyNode && !live.paused && !live.userPaused && !live.deletedAt && live.column === "in-progress") {
+      if (maxToolFailureRetries > 0 && isExecuteFamilyNode && !live.paused && !live.userPaused && !live.deletedAt && live.column === wipColumn) {
         // Prefer the execution-local boundary; recovery paths refetch durable state rather than use the stale failure snapshot.
         const cursor = this.graphToolFailureRunCursors.get(task.id) ?? (await this.store.getTask(task.id))?.toolFailureDetectorLogCursor;
         const threshold = resolveConsecutiveToolFailureThreshold(settings);
@@ -10937,7 +11351,7 @@ export class TaskExecutor {
             await this.store.updateTask(task.id, { status: null, error: null }, this.getRunContextFor(task.id));
             await this.store.logEntry(task.id, `Consecutive tool-call failures — auto-retrying same model (${claim.attempt}/${maxToolFailureRetries}) instead of parking`, undefined, this.getRunContextFor(task.id));
             await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempt: claim.attempt, maxAttempts: maxToolFailureRetries, consecutiveToolFailures: threshold, mode: "same-model" } });
-            const schedule = () => { void (async () => { const resume = await this.store.getTask(task.id); if (resume && !resume.deletedAt && !resume.paused && !resume.userPaused && resume.column === "in-progress") await this.execute(resume); })().catch((error) => executorLog.error(`${task.id}: tool-failure retry failed`, error)); };
+            const schedule = () => { void (async () => { const resume = await this.store.getTask(task.id); if (resume && !resume.deletedAt && !resume.paused && !resume.userPaused && resume.column === wipColumn) await this.execute(resume); })().catch((error) => executorLog.error(`${task.id}: tool-failure retry failed`, error)); };
             const delay = resolveConsecutiveToolFailureRetryBackoffMs(settings);
             setTimeout(schedule, delay).unref?.();
             return;
@@ -10949,7 +11363,21 @@ export class TaskExecutor {
           */
           const escalationTarget = resolveExecutorEscalationTarget(settings);
           const hasModelTarget = escalationTarget.provider !== undefined && escalationTarget.modelId !== undefined;
-          const hasNodeTarget = escalationTarget.nodeId !== undefined;
+          /*
+          FNXC:WorkflowExecutionOwnership 2026-07-28-14:15 (U8 / R3, PR #2497 review — greptile P1):
+          A node escalation is a REQUEUE: it parks the card back in the hold lane so the
+          scheduler re-resolves the effective node. Without a declared requeue target there is
+          nowhere legal to put it, and persisting an invented column is worse than not
+          escalating — the card lands where the board cannot route it and the node is never
+          dispatched. Degrade to the no-node-target shape (in-place retry, which is already how
+          an enabled escalation with no usable target behaves) rather than writing an
+          undeclared column.
+          */
+          const nodeTargetRequeueColumn = escalationTarget.nodeId !== undefined ? holdColumn : undefined;
+          const hasNodeTarget = escalationTarget.nodeId !== undefined && nodeTargetRequeueColumn !== undefined;
+          if (escalationTarget.nodeId !== undefined && nodeTargetRequeueColumn === undefined) {
+            await this.store.logEntry(task.id, "Node escalation downgraded to an in-place retry — this task's workflow declares no column to requeue into", undefined, this.getRunContextFor(task.id));
+          }
           let claimedEscalation = false;
           let priorEscalationRetryCount = 0;
           /*
@@ -10960,7 +11388,7 @@ export class TaskExecutor {
           */
           await this.store.updateTaskAtomic(task.id, (current) => {
             const ownsFailureRun = current.toolFailureDetectorLogCursor === cursor
-              && current.column === "in-progress"
+              && current.column === wipColumn
               && !current.paused
               && !current.userPaused
               && !current.deletedAt;
@@ -10969,7 +11397,7 @@ export class TaskExecutor {
             priorEscalationRetryCount = current.consecutiveToolFailureRetryCount ?? 0;
             return {
               ...(hasModelTarget ? { modelProvider: escalationTarget.provider, modelId: escalationTarget.modelId } : {}),
-              ...(hasNodeTarget ? { nodeId: escalationTarget.nodeId, column: "todo" as const } : {}),
+              ...(hasNodeTarget ? { nodeId: escalationTarget.nodeId, column: nodeTargetRequeueColumn } : {}),
               executorEscalationAttempted: true,
               /* FNXC:ExecutorEscalation 2026-07-16-22:40: Invalidate the exhausted run cursor before releasing the claim so concurrent stale handlers cannot park or audit the alternate execution; the alternate captures its own cursor at startup. */
               toolFailureDetectorLogCursor: null,
@@ -10981,7 +11409,7 @@ export class TaskExecutor {
             await this.store.logEntry(task.id, "Same-model retries exhausted — escalating to alternate model/node (one attempt) instead of parking", undefined, this.getRunContextFor(task.id));
             await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-retry", task.id), domain: "database", mutationType: "task:execution-escalation-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hasModelTarget, hasNodeTarget, priorConsecutiveToolFailureRetryCount: priorEscalationRetryCount } });
             if (!hasNodeTarget) {
-              const scheduleEscalation = () => { void (async () => { const resumeTask = await this.store.getTask(task.id); if (resumeTask && !resumeTask.deletedAt && !resumeTask.paused && !resumeTask.userPaused && resumeTask.column === "in-progress") await this.execute(resumeTask); })().catch((error) => executorLog.error(`${task.id}: escalation retry failed`, error)); };
+              const scheduleEscalation = () => { void (async () => { const resumeTask = await this.store.getTask(task.id); if (resumeTask && !resumeTask.deletedAt && !resumeTask.paused && !resumeTask.userPaused && resumeTask.column === wipColumn) await this.execute(resumeTask); })().catch((error) => executorLog.error(`${task.id}: escalation retry failed`, error)); };
               const handle = setTimeout(scheduleEscalation, resolveConsecutiveToolFailureRetryBackoffMs(settings));
               handle.unref?.();
             }
@@ -11003,7 +11431,7 @@ export class TaskExecutor {
           await this.store.updateTaskAtomic(task.id, (current) => {
             if (
               current.toolFailureDetectorLogCursor !== cursor
-              || current.column !== "in-progress"
+              || current.column !== wipColumn
               || current.paused
               || current.userPaused
               || current.deletedAt
@@ -11045,7 +11473,7 @@ export class TaskExecutor {
         await this.store.updateTaskAtomic(task.id, (current) => {
           if (
             current.toolFailureDetectorLogCursor !== failureCursor
-            || current.column !== "in-progress"
+            || current.column !== wipColumn
             || current.paused
             || current.userPaused
             || current.deletedAt
@@ -11398,7 +11826,7 @@ export class TaskExecutor {
     try {
       await this.executeCore(task);
     } finally {
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
     }
   }
 
@@ -11426,7 +11854,7 @@ export class TaskExecutor {
     */
     if (task.deletedAt) {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
     /*
@@ -11448,14 +11876,14 @@ export class TaskExecutor {
       await this.clearStalePauseAbortBeforeDispatch(task);
       if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
         // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
         return;
       }
       // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
       // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
       // them can claim the task, so the single check covers all three entry points.
       if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
         return;
       }
       /*
@@ -11509,6 +11937,16 @@ export class TaskExecutor {
     an implementation pass whose completion nothing owns can no longer be constructed.
     */
     graphCompletion: GraphCompletionCallback,
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-28-20:15 (U8 / R4, R5):
+    Optional exit reporter. `graphCompletion` can only say "done"; the endings it cannot express
+    are the ones the executor transitions itself (see `executor/implementation-exit.ts`). This
+    names them so they are OBSERVABLE before they are moved — it changes no routing and nothing
+    branches on it, by R5: an exit id is a reaction, and a dropped reaction must never cost a
+    state change. Optional so the ~22 uninstrumented dispositions stay silent rather than
+    forcing a 3k-line diff; the ownership ledger is the record of that gap, not this callback.
+    */
+    reportImplementationExit?: ImplementationExitReporter,
   ): Promise<void> {
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
@@ -11525,7 +11963,7 @@ export class TaskExecutor {
     executorLog.debug(`execute() called for ${task.id} (claimed=${claimed}, perInstanceExecuting=${this.executing.has(task.id)})`);
     if (!claimed) {
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: graph fallback may have re-registered a pre-held slot; drop it when this process cannot claim the executor lock.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
 
@@ -11539,7 +11977,7 @@ export class TaskExecutor {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
 
@@ -11548,7 +11986,7 @@ export class TaskExecutor {
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: work-engine ownership never take()s the legacy handoff registration — release the reserved global slot.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
 
@@ -11567,7 +12005,7 @@ export class TaskExecutor {
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
       // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: heartbeat defer must free any re-registered pre-held global slot so capacity is not stranded until the next dispatch.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
 
@@ -11624,7 +12062,14 @@ export class TaskExecutor {
     if (!isActiveTask) {
       const tasksDir = join(this.store.getFusionDir(), "tasks");
       const promptPath = getPromptPath(tasksDir, task.id);
-      const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
+      const staleness = await evaluateSpecStaleness({
+        settings,
+        promptPath,
+        task,
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-12:40 (U11): one-line pass-through
+           so the guard is driven rather than defaulted. Touches no executor logic. */
+        plannerColumns: await resolveDedicatedPlannerColumnsForTask(this.store, task.id),
+      });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
         // Move to the workflow-aware replan column first, then set status so the task
@@ -11633,7 +12078,7 @@ export class TaskExecutor {
         await this.store.updateTask(task.id, { status: "needs-replan" });
         await this.store.logEntry(task.id, staleness.reason, undefined, this.getRunContextFor(task.id));
         // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: replan handoff never starts agent work — free any re-registered pre-held slot before leaving execute().
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
         return;
       }
     }
@@ -11650,7 +12095,7 @@ export class TaskExecutor {
       if (await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "execute-preflight")) {
         this.executing.delete(task.id);
         executingTaskLock.release(task.id);
-        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
         return;
       }
     }
@@ -12459,6 +12904,7 @@ export class TaskExecutor {
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
             const liveModified = (await this.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
+            reportImplementationExit?.("complete-from-live-files");
             graphCompletion({ modifiedFiles: liveModified });
             return;
           } else {
@@ -13312,6 +13758,7 @@ export class TaskExecutor {
               FN-6644/FN-6641: the graceful-session-exit handoff must also record durable completed-finalize state because a later teardown can re-mark the abort as `hard-cancel`. The classifier uses that durable handoff marker, not the volatile provenance alone, to keep completed no-commit tasks from being re-parked failed.
               */
               this.markCompletionFinalized(task.id);
+              reportImplementationExit?.("review-handoff-paused-after-completion");
               await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
               this.signalTaskComplete(task);
@@ -13379,6 +13826,7 @@ export class TaskExecutor {
             // at the implementation-complete boundary and hand control back.
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            reportImplementationExit?.("complete");
             graphCompletion({ modifiedFiles });
             return;
           } else {
@@ -13443,7 +13891,16 @@ export class TaskExecutor {
                 // the task in review without setting status=failed; otherwise the
                 // merge/review queue deadlocks on a task that is both in-review and
                 // failed.
-                await this.handoffTaskToReview(task, "executor-exit-while-review-pending");
+                /*
+                FNXC:WorkflowExecutionOwnership 2026-07-29-18:50 (U8 / R4):
+                The `handoffTaskToReview` call that stood here is GONE — the graph performs it via
+                the `review-pending-handoff` node the live primitive now routes to. What remains is
+                a report and a stop, which is all an implementation phase should do. Why review and
+                not `failed` (a pending-review block is a wait; status=failed on an in-review row
+                deadlocks the merge queue) now lives with the node in the IR, where the routing
+                decision is.
+                */
+                reportImplementationExit?.("review-handoff-pending-review");
                 pendingReviewParked = true;
                 break;
               }
@@ -13661,6 +14118,7 @@ export class TaskExecutor {
               // executeWorkflowGraph, KTD-5) — nothing to gate before handoff.
               this.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
+              reportImplementationExit?.("complete-after-retry");
               graphCompletion({ modifiedFiles });
               return;
             } else if (terminallyParked) {
@@ -13894,7 +14352,8 @@ export class TaskExecutor {
           FN-6644/FN-6641: the finally-block handoff must record durable completed-finalize state because a later teardown can overwrite provenance to `hard-cancel`. The classifier must still resolve that completed no-commit tail failure benignly without weakening genuine pause or active hard-cancel behavior.
           */
           this.markCompletionFinalized(task.id);
-          await this.handoffTaskToReview(task, "paused-after-completion");
+          reportImplementationExit?.("review-handoff-paused-after-completion");
+              await this.handoffTaskToReview(task, "paused-after-completion");
           this.signalTaskComplete(task);
         } else if (finalizationDecision === "blocked") {
           await this.persistTokenUsage(task.id);
@@ -14495,7 +14954,7 @@ export class TaskExecutor {
       release any still-registered slot before lock/executing cleanup. execute()'s outer
       finally also drops (no-op once take/drop already cleared the registration).
       */
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
 
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
@@ -16194,8 +16653,21 @@ export class TaskExecutor {
 
     // Update task: clear worktree and status, move to triage
     await this.store.updateTask(taskId, { worktree: null, status: null });
-    await this.store.moveTask(taskId, "triage");
-    await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-planning");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:10 (P0 audit after the Planning-column merge):
+    This wrote the LITERAL `triage`. The default coding lineage no longer declares that column —
+    it has one pre-implementation column, id `todo` — so a card that gained a dependency
+    mid-execution had its work discarded and was then parked in a column its own workflow does
+    not define. Nothing in the graph routes a card out of an undeclared column, and the only
+    rescue is `reconcileUndeclaredTaskColumns` on the NEXT ENGINE START, so between the abort and
+    a restart the card is stalled with no automatic recovery. It does not throw, which is why it
+    would have surfaced as a user report rather than a red test.
+
+    Resolve the rebound target from the task's own workflow (hold -> intake -> first declared
+    column), the same helper the other ~16 executor rebounds already use.
+    */
+    await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId));
+    await this.store.logEntry(taskId, "Execution stopped — work discarded, requeued for re-planning");
   }
 
   /**
@@ -17397,29 +17869,42 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       },
     });
 
-    // Determine primary model and an explicit fallback. The workflow step's
-    // own override takes precedence; otherwise use the canonical executor
-    // hierarchy: task override → project execution lane → global execution lane
-    // → project default override → global default. The fallback is the per-step
-    // override's missing-counterpart settings, then the executor fallback lane,
-    // which itself falls through to the shared global fallback pair.
-    // FNXC:ModelResolution 2026-06-25-12:00: FN-7039 requires workflow steps to inherit project execution-lane model settings before default settings so configured Execution models reach step sessions unless the step itself overrides them.
+    // Determine primary model and an explicit fallback. Review-type workflow
+    // steps use the validator lane; ordinary workflow prompts use the executor
+    // lane. A complete per-step override remains authoritative for either lane.
+    // FNXC:ModelResolution 2026-06-25-12:00: FN-7039 requires ordinary workflow
+    // steps to inherit project execution-lane model settings before defaults.
+    // Review gates are independent validation surfaces and must not silently use
+    // the same implementation model merely because they execute in this method.
     const assignedRuntimeConfig = await this.getAssignedAgentRuntimeConfig(task.assignedAgentId);
-    const executorModel = resolveExecutorSessionModel(
-      task.modelProvider,
-      task.modelId,
-      settings,
-      assignedRuntimeConfig,
-    );
-    const primaryProvider = workflowStep.modelProvider || executorModel.provider;
-    const primaryModelId = workflowStep.modelId || executorModel.modelId;
+    const laneModel = isReviewTypeWorkflowStep
+      ? resolveValidatorSessionModel(
+          task.validatorModelProvider,
+          task.validatorModelId,
+          settings,
+          assignedRuntimeConfig,
+        )
+      : resolveExecutorSessionModel(
+          task.modelProvider,
+          task.modelId,
+          settings,
+          assignedRuntimeConfig,
+        );
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
+    const primaryProvider = useOverride ? workflowStep.modelProvider : laneModel.provider;
+    const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
 
-    const executorFallback = resolveExecutorFallbackModel(settings);
-    const fallback = executorFallback.provider && executorFallback.modelId
-      && (executorFallback.provider !== primaryProvider || executorFallback.modelId !== primaryModelId)
-      ? executorFallback
+    const workflowFallback = isReviewTypeWorkflowStep
+      ? resolveValidatorFallbackModel(settings)
+      : resolveExecutorFallbackModel(settings);
+    const fallback = workflowFallback.provider && workflowFallback.modelId
+      && (workflowFallback.provider !== primaryProvider || workflowFallback.modelId !== primaryModelId)
+      ? workflowFallback
       : undefined;
+    const fallbackSettingsHint = isReviewTypeWorkflowStep
+      ? "settings.validatorFallbackProvider/validatorFallbackModelId or fallbackProvider/fallbackModelId"
+      : "settings.executionFallbackProvider/executionFallbackModelId or fallbackProvider/fallbackModelId";
+    const fallbackLaneLabel = isReviewTypeWorkflowStep ? "validator" : "executor";
 
     const timeoutMs = Math.max(60_000, settings.workflowStepTimeoutMs ?? 900_000);
 
@@ -17428,7 +17913,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       modelId: string | undefined,
       attemptLabel: string,
     ): Promise<WorkflowStepOutcome> => {
-      // Workflow step agents inherit executor instructions
       const stepInstructions = await this.resolveInstructionsForRole("executor", settings);
       const stepSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, stepInstructions);
 
@@ -17562,16 +18046,23 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
       /*
        * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then task override, then settings defaults/lane fallbacks.
+       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then the task override for their selected model lane, then settings defaults/lane fallbacks.
        *
        * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
        * The step's own `fallback` attempt already swaps to a distinct model (validator fallback OR global fallback pair) — it must honor THAT model's fallback thinking level, not silently reuse the primary lane's thinking level. Route by which candidate `fallback.label` actually matched instead of only special-casing `validatorFallback`.
        */
-      const workflowStepThinkingSource = workflowStep.thinkingLevel ?? task.thinkingLevel;
+      const workflowStepThinkingSource = workflowStep.thinkingLevel
+        ?? (isReviewTypeWorkflowStep ? task.validatorThinkingLevel ?? task.thinkingLevel : task.thinkingLevel);
       const workflowStepThinkingLevel = attemptLabel === "fallback"
-        ? resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings)
-        : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
-      const workflowStepFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
+        ? isReviewTypeWorkflowStep
+          ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
+          : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings)
+        : isReviewTypeWorkflowStep
+          ? resolveValidatorThinkingLevel(workflowStepThinkingSource, settings)
+          : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
+      const workflowStepFallbackThinkingLevel = isReviewTypeWorkflowStep
+        ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
+        : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
         runtimeHint: workflowRuntimeHint,
@@ -17581,8 +18072,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         tools: toolMode,
         defaultProvider: provider,
         defaultModelId: modelId,
-        fallbackProvider: executorFallback.provider,
-        fallbackModelId: executorFallback.modelId,
+        fallbackProvider: workflowFallback.provider,
+        fallbackModelId: workflowFallback.modelId,
         fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
         defaultThinkingLevel: workflowStepThinkingLevel,
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
@@ -17832,7 +18323,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         if (!retryMalformed) return retryOutcome;
         await this.store.logEntry(
           task.id,
-          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set settings.executionFallbackProvider/Id or fallbackProvider/Id)`,
+          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set ${fallbackSettingsHint})`,
         );
         return retryOutcome;
       }
@@ -17840,12 +18331,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' ${reason} and no fallback model is configured`);
       await this.store.logEntry(
         task.id,
-        `Workflow step '${workflowStep.name}' ${reason} — no fallback model configured (set settings.executionFallbackProvider/Id or fallbackProvider/Id)`,
+        `Workflow step '${workflowStep.name}' ${reason} — no fallback model configured (set ${fallbackSettingsHint})`,
       );
       return primaryOutcome;
     }
 
-    executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with executor fallback ${fallback.provider}/${fallback.modelId} after primary ${primaryOutcome.timedOut ? "timeout" : "malformed output"}`);
+    executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with ${fallbackLaneLabel} fallback ${fallback.provider}/${fallback.modelId} after primary ${primaryOutcome.timedOut ? "timeout" : "malformed output"}`);
     return runOnce(fallback.provider, fallback.modelId, "fallback");
   }
 
@@ -20499,26 +20990,60 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           };
         }
 
-        // Read spawn limits from settings
-        const maxPerParent = settings.maxSpawnedAgentsPerParent ?? 5;
-        const maxGlobal = settings.maxSpawnedAgentsGlobal ?? 20;
+        /*
+        FNXC:CapacityModel 2026-07-29-14:10 (two numbers — spawned agents count):
+        `maxSpawnedAgentsPerParent` (5) and `maxSpawnedAgentsGlobal` (20) are DELETED.
+        They were a THIRD and FOURTH limiter with their own private budgets, invisible
+        to the two the operator configures — and they measured the wrong thing: a
+        child that finished still counted against `totalSpawnedCount` until its parent
+        task ended, so the cap throttled cumulative spawns rather than concurrent ones.
 
-        // Check per-parent limit
-        const currentPerParent = this.spawnedAgents.get(taskId)?.size ?? 0;
-        if (currentPerParent >= maxPerParent) {
+        A spawned child IS an agent and runs in its own git worktree (branched from the
+        parent's), so it consumes both configured dimensions. It now checks the SAME
+        project agent count every other lane checks, via the shared live-claim helper —
+        one number, one answer, no private budget that can disagree with the board.
+
+        This closes a real hole rather than only deleting knobs: children were counted
+        by NEITHER capacity gate, so a fan-out could put up to 20 extra worktrees on
+        disk while the scheduler believed the project was at its limit.
+        */
+        const spawnClaimed = await computeTopLevelConcurrencyClaimedFromStore({
+          store: this.store,
+          tasks: await this.store.listTasks({ slim: true, includeArchived: false }),
+        });
+        const spawnCap = settings.maxConcurrent ?? 2;
+        const liveChildren = this.totalSpawnedCount;
+        if (spawnClaimed + liveChildren >= spawnCap) {
           return {
-            content: [{ type: "text" as const, text: `Per-parent spawn limit reached (${currentPerParent}/${maxPerParent}). Wait for children to finish or reduce parallelism.` }],
+            content: [{
+              type: "text" as const,
+              text: `Agent capacity reached (${spawnClaimed + liveChildren}/${spawnCap} running, including ${liveChildren} spawned child agent(s)). Wait for work to finish, or raise Max Concurrent Tasks.`,
+            }],
             details: { agentId: "", state: "error" },
           };
         }
+        /*
+        FNXC:CapacityModel 2026-07-29-19:20 (PR #2579 review — greptile P1, TOCTOU):
+        RESERVE THE SLOT SYNCHRONOUSLY, before the first await.
 
-        // Check global limit
-        if (this.totalSpawnedCount >= maxGlobal) {
-          return {
-            content: [{ type: "text" as const, text: `Global spawn limit reached (${this.totalSpawnedCount}/${maxGlobal}). Cannot spawn more agents.` }],
-            details: { agentId: "", state: "error" },
-          };
-        }
+        The check above reads capacity, then several awaits follow (createAgent,
+        createWorktree, updateAgentState) before `totalSpawnedCount` was incremented.
+        Two parents calling fn_spawn_agent with one slot left both passed the check
+        and both spawned — more agents and more worktrees than Max Concurrent Tasks
+        permits, which is the very hole this change set out to close.
+
+        JS is single-threaded, so incrementing here — with NO await between the read
+        and the increment — makes check-and-reserve atomic against every other spawn
+        call. The reservation is rolled back on any failure below, and the success
+        path no longer double-counts.
+        */
+        this.totalSpawnedCount++;
+        let spawnReservationHeld = true;
+        const releaseSpawnReservation = () => {
+          if (!spawnReservationHeld) return;
+          spawnReservationHeld = false;
+          this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
+        };
 
         try {
           // Create agent in AgentStore with reportsTo = parent task ID
@@ -20632,7 +21157,9 @@ Child agent: ${agent.id} (${name})`;
             this.spawnedAgents.set(taskId, new Set());
           }
           this.spawnedAgents.get(taskId)!.add(agent.id);
-          this.totalSpawnedCount++;
+          // The slot was already reserved before the awaits above; converting the
+          // reservation into the live count is a no-op rather than a second increment.
+          spawnReservationHeld = false;
 
           // Run child asynchronously (don't await — parent continues working)
           this.runSpawnedChild(agent.id, childSession, taskPrompt).catch((err: unknown) => {
@@ -20653,6 +21180,10 @@ Child agent: ${agent.id} (${name})`;
             details: result,
           };
         } catch (err: unknown) {
+          // FNXC:CapacityModel 2026-07-29-19:20: a failed spawn must return the slot
+          // it reserved, or a project permanently loses capacity to a spawn that
+          // never happened.
+          releaseSpawnReservation();
           const errorMessage = err instanceof Error ? err.message : String(err);
           return {
             content: [{ type: "text" as const, text: `Failed to spawn agent: ${errorMessage}` }],

@@ -283,6 +283,30 @@ describe("executor tool step numbering is 0-based", () => {
       undefined,
       expect.objectContaining({ agentId: "executor" }),
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-6607-P", "in-review");
+    /*
+    FNXC:ReviewHandoff 2026-07-30-11:00 (#2646 review — greptile P2):
+    ISOLATE the handoff call instead of matching any of them. This flow records TWO
+    moveTask calls, so `toHaveBeenCalledWith(id, "in-review", expect.anything())` is
+    satisfied by the workflow-boundary move even if the review handoff itself regresses —
+    the review was right, and it is the same objection I had already raised against my own
+    first attempt without then fixing it properly.
+
+    The handoff call is identifiable by its own provenance marker
+    (`workflowMoveMetadata.reason === "workflow-review-handoff"`, set at
+    workflow-node-handlers.ts's `review-handoff` seam), so select THAT call and assert its
+    target column. Now a regression has nowhere to hide: drop the handoff and no such call
+    exists; retarget it and the column assertion fails.
+
+    Attribution verified by mutation, which the previous version could not manage —
+    changing the seam's `reason` and changing its target column each fail this test.
+    */
+    const handoffCalls = (store.moveTask as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) =>
+        (call[2] as { workflowMoveMetadata?: { reason?: string } } | undefined)
+          ?.workflowMoveMetadata?.reason === "workflow-review-handoff",
+    );
+    expect(handoffCalls).toHaveLength(1);
+    expect(handoffCalls[0]?.[0]).toBe("FN-6607-P");
+    expect(handoffCalls[0]?.[1]).toBe("in-review");
   });
 });

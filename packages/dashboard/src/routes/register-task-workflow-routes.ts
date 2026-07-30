@@ -27,6 +27,7 @@ import type {
   RunAuditEvent,
   ArtifactType,
   PrInfo,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   COLUMNS,
@@ -55,6 +56,9 @@ import {
   parseExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
   workflowHasColumn,
+  workflowPlansInColumn,
+  workflowDeclaresColumnModel,
+  resolveLifecycleColumns,
   columnHasFlag,
   columnsWithFlag,
   resolveReboundTarget,
@@ -167,6 +171,53 @@ async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Pro
   } catch {
     return "triage";
   }
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8):
+Lifecycle POSITION — "is this move backward?" — resolved through `COLUMNS.indexOf(...)`, the
+legacy enum. A workflow that renames its lanes returns -1 for both endpoints, and
+`isBackwardMoveBlockedByOpenPr` treats a negative index as "cannot tell → allow", so the open-PR
+guard silently stopped existing on every custom board rather than rejecting anything. A guard that
+never fires does not fail a test.
+
+`ir.columns` is ordered and that order IS the lifecycle order (see the graph entry contract), so
+the workflow is the authority. The legacy enum stays as the fallback for an unresolvable or v1
+(column-less) IR, which keeps `builtin:coding` — whose column order equals the enum — unchanged.
+*/
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-18:20 (U10 / R8 — greptile P1 on PR #2492):
+The workflow is authoritative ONLY when it can place BOTH endpoints. Using its ordering
+unconditionally reopened the same hole from the other side: a row still stored in a column the
+workflow removed or renamed scores -1, and a negative index means "allow" — so exactly the rows
+U11 leaves behind in `todo` could be dragged backward past an open PR.
+
+Two orderings, never mixed. Mixing them would misjudge a workflow that REORDERS legacy ids (its
+own order says forward while the enum says backward), so the enum is a fallback for the whole
+comparison, not a per-column patch.
+
+Residual, deliberately not papered over: when the source is undeclared AND the target is a
+workflow-only id, neither ordering places both and the guard cannot fire. That is NOT a
+regression — the previous `COLUMNS.indexOf` scored the custom target -1 and was equally absent.
+Closing it needs the guard restated in terms of column TRAITS rather than position, which belongs
+with the merge lane's conversion (U9), not with a rendering unit.
+*/
+function resolveMoveOrderIndices(
+  ir: WorkflowIr | undefined,
+  fromColumn: string,
+  toColumn: string,
+): { fromIndex: number; toIndex: number } {
+  const declared = (ir as { columns?: Array<{ id: string }> } | undefined)?.columns;
+  if (Array.isArray(declared) && declared.length > 0) {
+    const order = new Map(declared.map((column, index) => [column.id, index]));
+    const fromIndex = order.get(fromColumn) ?? -1;
+    const toIndex = order.get(toColumn) ?? -1;
+    if (fromIndex >= 0 && toIndex >= 0) return { fromIndex, toIndex };
+  }
+  return {
+    fromIndex: COLUMNS.indexOf(fromColumn as Column),
+    toIndex: COLUMNS.indexOf(toColumn as Column),
+  };
 }
 
 async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promise<string> {
@@ -488,8 +539,18 @@ const RESET_TASK_FIELDS = {
   sessionFile: null,
 } as const;
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2582 review, greptile):
+COLUMN REMOVED from the shared constant. It hardcoded `todo`, so drift correction forced
+the card there regardless of the workflow's actual rebound column — and then the final
+verification (which now compares against `resetColumn`) saw the mismatch and raised the
+very 409 "limbo" conflict this change exists to remove. Fixing the check without fixing
+the writer just moved the bug.
+
+The column is supplied per call from the resolved rebound column; everything else here is
+genuinely column-independent cleanup.
+*/
 const RESET_DRIFT_CORRECTION_FIELDS = {
-  column: "todo" as const,
   worktree: null,
   branch: null,
   status: null,
@@ -748,6 +809,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       (task.branchContext?.groupId
         ? await scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
         : null);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-27-16:20 (U10 / R8):
+    Deliberately still on the legacy enum, unlike the move route's copy of this guard. This whole
+    function is gated on the literal `task.column !== "in-review"` above and re-engages to the
+    literal `"in-progress"`, so both endpoints are legacy ids by construction and the enum resolves
+    them correctly. Swapping in the task's workflow order here would make the guard WEAKER, not
+    stronger: a workflow declaring `in-review` but not `in-progress` would score -1 for the target
+    and disable the guard entirely. Convert this site when its surrounding literals are converted
+    (U5 owns the re-engage lane), not before.
+    */
     if (
       isBackwardMoveBlockedByOpenPr({
         fromIndex: COLUMNS.indexOf(task.column as Column),
@@ -1060,6 +1131,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       the heuristic instead of turning a board load into thousands of reads.
       */
       try {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8, DELIBERATELY NOT CONVERTED):
+        This filter names `todo`, so a workflow whose waiting lane is called something else
+        gets no enrichment and silently falls back to the heuristic. I converted it and then
+        REVERTED: resolving each task's hold column needs a per-task workflow read, and this
+        is the board-load path whose own comment above exists because unbounded reads here
+        "turn a board load into thousands of reads". My version did those reads for every
+        task BEFORE the enrich limit applied — trading a silent degradation for a load-time
+        regression on every board.
+
+        Converting it properly needs the hold column resolved per WORKFLOW from data the
+        board payload already carries, not per task from the store. That is a real change
+        with a measurable cost, not a rename, so it is left for one — with the cost stated
+        rather than the conversion quietly skipped.
+        */
         const todoRows = tasks.filter((task) => task.column === "todo");
         const enrichable = todoRows.slice(0, AWAITING_PLANNING_ENRICH_LIMIT);
         if (todoRows.length > enrichable.length) {
@@ -1763,13 +1849,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           (guardTask.branchContext?.groupId
             ? await scopedStore.getActivePrEntityBySource?.("branch-group", guardTask.branchContext.groupId)
             : null);
-        if (
-          isBackwardMoveBlockedByOpenPr({
-            fromIndex: COLUMNS.indexOf(guardTask.column as Column),
-            toIndex: COLUMNS.indexOf(moveTarget),
-            activePrEntity,
-          })
-        ) {
+        // FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8): position comes from the
+        // task's own workflow column order (already resolved above as `moveTargetIr`), falling
+        // back to the legacy enum when the workflow cannot place both endpoints.
+        const { fromIndex, toIndex } = resolveMoveOrderIndices(moveTargetIr, guardTask.column, moveTarget);
+        if (isBackwardMoveBlockedByOpenPr({ fromIndex, toIndex, activePrEntity })) {
           throw new ApiError(409, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE, {
             code: "pr-open-blocks-move-back",
             messageKey: "board.rejection.prOpenBlocksMoveBack",
@@ -2538,19 +2622,73 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         task.status === "planning" ||
         task.status === "needs-replan" ||
         (task.stuckKillCount ?? 0) > 0;
-      let retrySpecification = task.column === "triage" && retrySpecificationStatus;
       /*
-      FNXC:ManualRetry 2026-07-13-12:20:
-      Plan-in-place workflows (Coding (Ideas): no "triage" column) keep planning/replanning
-      cards in "todo", so the manual Retry button — which the cards already show for
-      needs-replan/planning/failed states — must offer the planning retry there too instead
-      of 400ing with "not in a retryable state". Gated on the task's OWN workflow declaring
-      no "triage" column, so default-workflow todo cards (where todo failures are execution
-      failures) keep the existing generic-retry semantics.
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      The INTAKE column, resolved from the task's workflow. `=== "triage"` stopped matching
+      for default-workflow cards once the merged lineage dropped that id, so a spec retry on
+      a planning card fell through to the generic-retry path below. That path still catches
+      it for the merged shape (it keys on `todo` when the workflow declares no `triage`), so
+      this was not a stall — but it worked by accident of the two conditions overlapping,
+      not because either was right.
       */
-      if (!retrySpecification && task.column === "todo" && retrySpecificationStatus) {
-        const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
-        retrySpecification = !workflowHasColumn(workflowIr, "triage");
+      /*
+      FNXC:ManualRetry 2026-07-30-02:10 (supersedes the 2026-07-13 gate and #2614's intake resolve):
+      The question this branch must answer is "does this card sit where its workflow PLANS?", because
+      the yes-branch is DESTRUCTIVE: it stamps needs-replan AND deletes PROMPT.md.
+
+      Two predicates stood in for it and neither answered it. #2614 resolved the INTAKE column, which
+      is right for the merged lineage but wrong wherever intake and the planning column differ. The
+      older arm asked `!workflowHasColumn(ir, "triage")`, and MEASURED across all 12 builtins: NOT ONE
+      plans in `triage`, while SEVEN still declare that column. So for the five that declare `triage`
+      AND run every plan node in `todo` — quick-fix, review-heavy, compound-engineering, design,
+      legacy-coding — the predicate was FALSE and a planning/needs-replan card sitting in its own
+      planning column was refused outright:
+        400 "Task is not in a retryable state (current status: needs-replan)"
+      The operator had no button at all on a card parked mid-planning. Verified still live on main
+      after #2614: 9 of this file's 14 retry tests fail without the change below.
+
+      The mirror-image fault is destructive rather than obstructive: a workflow that plans anywhere
+      other than `todo` had a `todo` card's PROMPT.md deleted for a re-plan nobody asked for.
+
+      Ask the graph directly. `workflowPlansInColumn` recognises planning nodes by the semantic markers
+      the builtins carry (`config.seam`, an exact `workflowAction` set) with node ids as a backstop.
+      */
+      const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
+      const retrySpecification = retrySpecificationStatus && workflowPlansInColumn(workflowIr, task.column);
+      /*
+      Narrowing the DESTRUCTIVE branch must not narrow RETRYABILITY — those were one boolean and are
+      two concerns. A planning-status card parked outside its planning column would otherwise fail the
+      gate below and answer "not in a retryable state", leaving the operator NO button: that trades a
+      card which loses its spec for a card nothing can rescue. Such a card stays retryable and takes
+      the ordinary, non-destructive execution retry.
+
+      A v1 IR declares neither columns nor nodes, so the placement question is UNANSWERABLE rather than
+      answered "no"; treating that silence as "past planning" is what produced a 400 for a v1 planning
+      card. Scoped to pre-WIP columns otherwise, so no in-progress/in-review status gains a retry path
+      it did not have.
+      */
+      let strandedSpecificationRetry = false;
+      if (retrySpecificationStatus && !retrySpecification) {
+        if (!workflowDeclaresColumnModel(workflowIr)) {
+          /*
+          FNXC:ManualRetry 2026-07-30-03:10 (greptile #2621):
+          Still PRE-WIP ONLY. Admitting every column here was a real regression: a v1 workflow with a
+          planning/needs-replan status on an `in-progress` or `in-review` card would be admitted, and
+          the generic branch then clears worktree/branch/retry counters and rebounds the card — losing
+          live execution or review state that was never in question. A v1 IR yields no roles, so the
+          legacy pre-implementation ids are the only pre-WIP signal available.
+
+          FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the v1-IR arm only.
+          A v1 workflow declares no roles, so there is no trait to read — this is not an unconverted
+          guard, it is the answer for IRs that cannot express the question. The v2 branch below
+          resolves it properly. Retires when v1 IRs do.
+          */
+          strandedSpecificationRetry = task.column === "triage" || task.column === "todo";
+        } else {
+          const lifecycle = resolveLifecycleColumns(workflowIr);
+          strandedSpecificationRetry = lifecycle !== undefined
+            && (task.column === lifecycle.intake || task.column === lifecycle.hold);
+        }
       }
       const isInReviewStatusNone =
         task.column === "in-review" && (task.status === null || task.status === undefined);
@@ -2603,7 +2741,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
       */
       const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
-      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
+      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
 
@@ -2828,7 +2966,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw notFound(`Task ${req.params.id} not found after reset`);
       }
 
-      const needsDriftCorrection = updated.column !== "todo"
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      Verify against the column the reset actually TARGETED. The mover two lines up already
+      resolves `resetColumn` from the task's workflow, but both post-reset checks compared
+      against the literal `todo` — so on any workflow whose rebound column is not `todo`
+      (Coding (Ideas), any custom or renamed lineage) a reset that SUCCEEDED was reported
+      as a "limbo state" conflict. The mover and its own verification disagreed about
+      where the card was supposed to land.
+      */
+      const needsDriftCorrection = updated.column !== resetColumn
         || (updated.worktree ?? null) !== null
         || (updated.branch ?? null) !== null
         || (updated.checkedOutBy ?? null) !== null
@@ -2845,10 +2992,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           worktreeSessionRetryCount: updated.worktreeSessionRetryCount ?? null,
           sessionFile: updated.sessionFile ?? null,
         };
-        await scopedStore.updateTask(req.params.id, RESET_DRIFT_CORRECTION_FIELDS);
+        /*
+        Built as a named const, not an inline literal: `updateTask`'s patch type does not
+        declare `column`, and the original code only compiled because a variable reference
+        skips excess-property checking. Keeping that shape preserves the existing runtime
+        behaviour exactly while making the column follow the resolved rebound target.
+        */
+        const driftCorrection = { ...RESET_DRIFT_CORRECTION_FIELDS, column: resetColumn };
+        await scopedStore.updateTask(req.params.id, driftCorrection);
         await scopedStore.logEntry(
           req.params.id,
-          "Auto-corrected reset drift after moveTask — normalized task back to todo with cleared worktree/branch bindings",
+          `Auto-corrected reset drift after moveTask — normalized task back to ${resetColumn} with cleared worktree/branch bindings`,
           JSON.stringify(offendingSnapshot),
         );
         await emitResetDriftAudit(scopedStore, req.params.id, offendingSnapshot);
@@ -2858,7 +3012,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      if (updated.column !== "todo" || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
+      // Same target as the drift check above: the resolved rebound column, not `todo`.
+      if (updated.column !== resetColumn || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
         throw conflict(
           `Reset refused to return task ${req.params.id} in limbo state (${updated.column}, branch=${updated.branch ?? "null"}, worktree=${updated.worktree ?? "null"})`,
         );
@@ -3493,7 +3648,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.getTask(req.params.id);
-      const updated = await scopedStore.pauseTask(req.params.id, true);
+      const updated = await scopedStore.pauseTask(req.params.id, true, undefined, { userPaused: true });
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -3643,9 +3798,29 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to approve plan");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — P0, post-#2515):
+      Resolve the workflow's INTAKE column; do not name `triage`. #2515 removed `triage`
+      from the default lineage — the single pre-implementation column is now id `todo`
+      displayed as "Planning" — so comparing the card's column against the legacy
+      `triage` id became TRUE for every
+      default-workflow card and this route rejected all of them. A card parked
+      `awaiting-approval` could not be approved OR rejected (same guard below), i.e. it
+      was STUCK with no operator action able to release it. The guard did not stop
+      firing; it started firing on everything.
+      */
+      const approveIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      /*
+      The resolved column ONLY — the legacy-`triage` disjunct this comment
+      used to justify is gone (PR #2614 review — greptile: the comment outlived the code).
+      It was a belt-and-braces widening added with the P0 fix, on the theory that a card
+      might still be sitting in `triage`. Nothing shipped declares that column since
+      #2515, so the disjunct only widened what the guard accepts, and re-adding it changed
+      no test in either direction. A guard that accepts a column no workflow declares is
+      not caution, it is an unreachable branch that reads like a requirement.
+      */
+      if (task.column !== approveIntakeColumn) {
+        throw badRequest(`Task must be in the '${approveIntakeColumn}' column to approve plan`);
       }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to approve plan");
@@ -3704,9 +3879,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to reject plan");
+      // Same P0 as approve-plan above: resolve the intake column rather than naming
+      // `triage`, which #2515 removed from the default lineage.
+      const rejectIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== rejectIntakeColumn) {
+        throw badRequest(`Task must be in the '${rejectIntakeColumn}' column to reject plan`);
       }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to reject plan");
@@ -3762,8 +3939,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.sourceType !== "task_refine") {
         throw badRequest("Task must have sourceType 'task_refine'");
       }
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column");
+      // Intake column, resolved from the task's workflow (#2515 removed `triage` from
+      // the default lineage, so the literal rejected every default-workflow card).
+      const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== refineIntakeColumn) {
+        throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
 
       const stranded = await scopedStore.listStrandedRefinements();
@@ -3813,8 +3993,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.sourceType !== "task_refine") {
         throw badRequest("Task must have sourceType 'task_refine'");
       }
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column");
+      // Intake column, resolved from the task's workflow (#2515 removed `triage` from
+      // the default lineage, so the literal rejected every default-workflow card).
+      const refineIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
+      if (task.column !== refineIntakeColumn) {
+        throw badRequest(`Task must be in the '${refineIntakeColumn}' column`);
       }
       if (task.paused) {
         throw badRequest("Paused refinements cannot be expedited");
@@ -4525,7 +4708,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       // If task is already at its workflow's intake column, skip the transition
       // check and moveTask. Just reset for replanning in place.
-      if (task.column === "triage" || task.column === respecifyTarget) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      `respecifyTarget` IS the resolved intake column (`resolveIntakeColumnForTask`), so the
+      `=== "triage"` disjunct only ever fired for a workflow whose intake is literally
+      triage — which that same call already returns. Redundant before the merge, dead after.
+      */
+      if (task.column === respecifyTarget) {
         // Log the revision request
         await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
@@ -4703,6 +4892,62 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw err;
       }
       throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /**
+   * FNXC:TaskStateReconciliation 2026-07-29-11:40:
+   * Checklist repair must use the live project-scoped store, map missing tasks to 404, reject out-of-range indices, and report 409 when lifecycle ordering rejects the requested transition instead of returning a false-success 200.
+   */
+  router.patch("/tasks/:id/steps/:stepIndex", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const stepIndex = Number(req.params.stepIndex);
+      const validStatuses = ["pending", "in-progress", "done", "skipped"] as const;
+      const status = req.body?.status;
+
+      if (!Number.isInteger(stepIndex) || stepIndex < 0) {
+        throw badRequest("stepIndex must be a non-negative integer");
+      }
+      if (!validStatuses.includes(status)) {
+        throw badRequest(`status must be one of: ${validStatuses.join(", ")}`);
+      }
+
+      const task = await scopedStore.getTask(req.params.id);
+      if (stepIndex >= (task.steps?.length ?? 0)) {
+        throw badRequest(`stepIndex ${stepIndex} is out of range`);
+      }
+
+      const updated = await scopedStore.updateStep(req.params.id, stepIndex, status);
+      if (updated.steps?.[stepIndex]?.status !== status) {
+        throw conflict(`Step ${stepIndex} transition to ${status} was rejected`);
+      }
+      res.json(updated);
+    } catch (err: unknown) {
+      rethrowTaskApiError(err, req.params.id);
+    }
+  });
+
+  /**
+   * FNXC:TaskStateReconciliation 2026-07-29-11:40:
+   * Wedge resolution is compare-and-set against the episode the operator observed. A concurrent replacement episode must remain active rather than being cleared by a stale request from another dashboard process.
+   */
+  router.post("/tasks/:id/wedge/resolve", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { id } = req.params;
+      const episodeId = req.body?.episodeId;
+      if (typeof episodeId !== "string" || episodeId.length === 0) {
+        throw badRequest("episodeId must be a non-empty string");
+      }
+
+      const result = await scopedStore.resolveTaskWedgeNotificationEpisode(id, episodeId);
+      if (!result.resolved) {
+        throw conflict(`Wedge episode ${episodeId} is no longer active`);
+      }
+      res.json(result.task);
+    } catch (err: unknown) {
+      rethrowTaskApiError(err, req.params.id);
     }
   });
 

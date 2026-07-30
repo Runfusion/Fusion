@@ -3704,7 +3704,7 @@ describe("Pause/Unpause endpoints", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/pause");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "FN-001", paused: true });
-    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", true);
+    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", true, undefined, { userPaused: true });
   });
 
   it("POST /tasks/:id/unpause — unpauses a task", async () => {

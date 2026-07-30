@@ -30,6 +30,7 @@ import { existsSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
 import type { TaskStore } from "@fusion/core";
+import type { ImplementationExit } from "@fusion/core";
 
 const execAsync = promisify(exec);
 
@@ -56,7 +57,7 @@ export interface SessionRef {
  * for a single step (graph-owned runs force step-session physics, KTD-2/KTD-8);
  * tests inject a fake. Returns whether the step's session completed successfully.
  */
-export type RunSingleStep = (stepIndex: number) => Promise<{ success: boolean; error?: string }>;
+export type RunSingleStep = (stepIndex: number) => Promise<{ success: boolean; error?: string; exit?: ImplementationExit }>;
 
 // ── runTaskStep ─────────────────────────────────────────────────────────
 
@@ -109,6 +110,17 @@ export interface RunTaskStepResult {
   outcome: "success" | "failure";
   baselineSha?: string;
   checkpointId?: string;
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-11:10 (U8 / R4 — workflow-owned lifecycle):
+  How the shared implementation pass ENDED, when that is finer than this step's outcome.
+  A pass can stop because a step is blocked on a pending review: every instance then reports
+  `failure`, but the ending is a WAIT, not a step defect, and the graph routes the two
+  differently. Without carrying it here the distinction dies at the `stepExecute` seam, which
+  flattens every ending to `step-done` / `step-failed` — so no edge can ever see it and the
+  transition has to be performed out of band instead.
+  Absent for every ordinary step outcome; the value space is `@fusion/core`'s ImplementationExit.
+  */
+  exit?: ImplementationExit;
 }
 
 /**
@@ -199,7 +211,15 @@ export async function runTaskStep(
     return { outcome: "success", baselineSha, checkpointId };
   }
 
-  return { outcome: "failure", baselineSha, checkpointId };
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-12:40 (U8 / R4):
+  Carry the pass's ending outward. `runStep` is the graph's step driver, and a failure here can
+  mean two different things — the step did not complete, or the whole implementation pass stopped
+  on a WAIT (blocked on a pending review). The `stepExecute` seam routes those differently, so
+  dropping the exit at this boundary is what previously forced the wait to be transitioned out of
+  band. Absent for every ordinary step failure.
+  */
+  return { outcome: "failure", baselineSha, checkpointId, exit: result.exit };
 }
 
 // ── resetStepToBaseline ──────────────────────────────────────────────────

@@ -29,10 +29,73 @@ import { getTraitRegistry } from "./trait-registry.js";
  *  `settings.maxConcurrent` (the legacy "N agents in-progress" gate). */
 const DEFAULT_WIP_COLUMN_ID = "in-progress";
 
+/** Fallback when `maxWorktrees` is unset. Matches `DEFAULT_SETTINGS.maxWorktrees`. */
+const DEFAULT_MAX_WORKTREES = 4;
+
+/*
+FNXC:CapacityModel 2026-07-28-11:20:
+THE one place "are worktrees a capacity dimension for this project?" is answered.
+
+The capacity model is two configurable numbers per project:
+  1. total agents  (`maxConcurrent`)  — always binds
+  2. `maxWorktrees`                   — binds ONLY when worktrees are enabled
+
+When `worktreeLimitEnabled === false` the operator asked for "limit via total agents
+only". This returns `null` for that case, and callers construct NO worktree gate
+at all — rather than a gate with a very high or infinite limit. That distinction
+is the whole point: a limiter that still exists and merely happens not to bind is
+the bug class this program keeps excavating (the pool-id sentinel that never
+matched a real pool; the approval gate three surfaces re-derived; the always-true
+flag whose "disabled" branch was the live one). An absent gate cannot silently
+start binding again; a gate holding `Infinity` can, the moment someone "fixes" a
+comparison. `ConcurrencyGateDiagnostic.maxWorktreesGate` is therefore OPTIONAL,
+so consulting a worktree limit in OFF mode does not type-check.
+
+Deliberately NOT expressed as `maxWorktrees === 0`. Zero is a legible number that
+already means something to the gate (`used >= 0` is true on an empty board, so a
+0 limit deadlocks dispatch rather than disabling it) and the Command Center
+slider clamps it to a 1..50 range. Overloading a value as a mode is how sentinels
+become defects; the boolean says what it means.
+*/
+export function resolveWorktreeCapacityLimit(
+  settings: Pick<Settings, "maxWorktrees" | "worktreeLimitEnabled"> | undefined,
+): number | null {
+  if (settings?.worktreeLimitEnabled === false) return null;
+  const limit = settings?.maxWorktrees;
+  return typeof limit === "number" && Number.isFinite(limit) ? limit : DEFAULT_MAX_WORKTREES;
+}
+
 /** U6 (KTD-10): sentinel effective-workflow id for default-workflow
  *  (null-selection) tasks, so they all share one per-column capacity pool. It
  *  is not a real workflow row id (no `builtin:`/custom collision possible). */
 export const DEFAULT_WORKFLOW_POOL_ID = "__default-workflow__";
+
+/*
+FNXC:WorkflowCapacity 2026-07-28-19:05 (pool-id sentinel fix):
+THE one place the "no selection → which pool?" convention is expressed.
+
+It exists because the convention was previously restated at each end of the
+comparison, and the two restatements disagreed: the COUNTER bucketed
+selection-less rows under `DEFAULT_WORKFLOW_POOL_ID` while `moves.ts` asked the
+counter for pool `"builtin:coding"`. Nothing ever landed in the pool being asked
+about, so the count came back 0 and a finite limit could never bind — the
+in-transaction capacity gate was structurally dead for every default-workflow
+task (Phase A3, R1).
+
+A shared constant alone would NOT have prevented that: both sides had the
+constant available and one of them still wrote a literal. Both sides now call
+THIS function, so "what pool does a selection-less task belong to" has exactly
+one answer and no call site is in a position to disagree with it.
+
+NOT to be confused with `DEFAULT_WORKFLOW_ID` ("builtin:coding"). That is a real,
+resolvable workflow row id and is the correct fallback when the value is used to
+RESOLVE AN IR (as `scheduler.ts` does). This is a bucketing key that deliberately
+cannot collide with any workflow id. Using either one in the other's role is the
+bug this function exists to make unspellable.
+*/
+export function resolveCapacityPoolId(selectionWorkflowId: string | null | undefined): string {
+  return selectionWorkflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+}
 
 /** Resolved capacity configuration for a single column. */
 export interface ColumnCapacity {

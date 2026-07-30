@@ -361,6 +361,18 @@ export async function transitionWorkflowWorkItem(
     if (!existing) throw new Error(`Workflow work item ${id} not found`);
 
     const fromState = normalizeWorkflowWorkItemState(existing.state);
+    /*
+    FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+    Compare-and-set no-op. The state is re-read inside this transaction, so an
+    `expectedState` mismatch means another writer moved the row after the caller's
+    snapshot. Return it untouched rather than overwriting: a blind write here would
+    reset a `running` claim to `runnable` and let the item be claimed twice.
+    Not an error — losing this race is an ordinary outcome for a snapshot-driven
+    caller, and the correct response is to leave the newer state alone.
+    */
+    if (patch.expectedState !== undefined && fromState !== patch.expectedState) {
+      return rowToWorkflowWorkItem(existing);
+    }
     if (isTerminalWorkflowWorkItemState(fromState) && fromState !== state) {
       throw new Error(
         `Workflow work item ${id} is terminal (${fromState}) and cannot transition to ${state}`,

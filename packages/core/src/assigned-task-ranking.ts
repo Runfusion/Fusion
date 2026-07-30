@@ -65,10 +65,32 @@ Map known default columns for rank quality; treat all other non-terminal open
 columns (including custom workflow columns) as titled `other` so inventory stays
 visible. Paused stays count-only to avoid re-chase noise.
 */
-function tierForTask(task: AssignedTaskLike): AssignedTaskRankTier | "not_actionable" {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-13:35 (U11):
+The two ACTIONABLE lifecycle roles. `todo`/`in-progress` are only what the builtin
+coding workflow calls them. The comment above already records that unrecognised
+columns fall to `other` so assigned work stays visible — but that is a floor, not
+a fix: a renamed HOLD column loses `ready_todo` and `partial_blocked` entirely, so
+work that is genuinely ready to start ranks below everything already in progress.
+Nothing errors and nothing disappears; the ordering is just wrong, which is how it
+survived.
+
+Defaults to the legacy ids so every unconverted caller is byte-identical.
+*/
+export interface AssignedTaskRankRoles {
+  hold: string;
+  wip: string;
+}
+
+const LEGACY_RANK_ROLES: AssignedTaskRankRoles = { hold: "todo", wip: "in-progress" };
+
+function tierForTask(
+  task: AssignedTaskLike,
+  roles: AssignedTaskRankRoles = LEGACY_RANK_ROLES,
+): AssignedTaskRankTier | "not_actionable" {
   if (task.paused) return "not_actionable";
-  if (task.column === "in-progress") return "in_progress";
-  if (task.column === "todo") {
+  if (task.column === roles.wip) return "in_progress";
+  if (task.column === roles.hold) {
     const deps = task.dependencies ?? [];
     if (deps.length === 0) return "ready_todo";
     // Coarse v1: non-empty deps ⇒ partial_blocked visibility (full dep hydrate deferred).
@@ -96,6 +118,8 @@ export function rankAssignedTasksForWakeDelta(
     agentId: string;
     boundTaskId?: string | null;
     cap?: number;
+    /** Resolved lifecycle roles; omitted keeps the legacy builtin ids. */
+    roles?: AssignedTaskRankRoles;
   },
 ): RankAssignedTasksForWakeDeltaResult {
   const cap = options.cap ?? WAKE_DELTA_ASSIGNED_TASKS_CAP;
@@ -105,7 +129,7 @@ export function rankAssignedTasksForWakeDelta(
   let notActionableCount = 0;
 
   for (const task of open) {
-    const tierOrNa = tierForTask(task);
+    const tierOrNa = tierForTask(task, options.roles);
     if (tierOrNa === "not_actionable") {
       notActionableCount += 1;
       continue;

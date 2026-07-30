@@ -12,6 +12,9 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
 import type { ToastType } from "../hooks/useToast";
 import { getErrorMessage } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
@@ -79,7 +82,7 @@ function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
 
 function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
   if (entry.type !== "status" && entry.type !== "text") return null;
-  const role = entry.agent === "triage" ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
+  const role = entry.agent === PLANNER_AGENT_ROLE ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
   if (!role) return null;
   return parseRuntimeModelMarker(entry.text, role);
 }
@@ -90,7 +93,7 @@ function makeModelInfo(provider: string | undefined, modelId: string | undefined
 }
 
 function getExplicitModelForRole(task: Task | TaskDetail, role: AgentLogRole): TaskChatModelInfo | null {
-  if (role === "triage" && task.planningModelProvider) {
+  if (role === PLANNER_AGENT_ROLE && task.planningModelProvider) {
     return makeModelInfo(task.planningModelProvider, task.planningModelId);
   }
   if (role === "executor" && task.modelProvider) {

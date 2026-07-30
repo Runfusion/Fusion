@@ -120,7 +120,7 @@ export function createVoiceModelManager(options: VoiceModelManagerOptions = {}):
         if (!current(g, signal)) return state;
         const total = Number(response.headers.get("content-length")) || undefined;
         const hash = createHash("sha256"); let bytes = 0;
-        for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
           if (!current(g, signal)) return state;
           const buffer = Buffer.from(chunk); hash.update(buffer); await file.write(buffer);
           if (!current(g, signal)) return state;

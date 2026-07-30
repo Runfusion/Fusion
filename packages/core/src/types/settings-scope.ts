@@ -1139,15 +1139,31 @@ export interface ProjectSettings {
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
    */
   maxConcurrentVerifications?: number;
-  /** Maximum number of concurrent triage/specification agents. When undefined,
-   *  falls back to maxConcurrent. */
-  maxTriageConcurrent?: number;
-  /** System-wide maximum concurrent agents across ALL projects.
-   *  When multiple projects are active, the sum of their in-flight agents
-   *  will not exceed this limit. Applies to triage, execution, and merge.
-   *  Default: 4. When undefined, falls back to CentralCore default (4). */
-  globalMaxConcurrent?: number;
   maxWorktrees: number;
+  /**
+   * FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review):
+   * Whether Max Worktrees GATES DISPATCH for this project. Default true.
+   *
+   * Renamed from `worktreesEnabled`, which two reviewers read as "run tasks
+   * without worktrees" — it never meant that. Tasks always execute in their own
+   * git worktree; this only decides whether the worktree COUNT is a second limit
+   * alongside the agent count.
+   *
+   * When false the operator asked to "limit via total agents only": `maxWorktrees`
+   * stops gating dispatch entirely — not raised, not skipped by convention, but
+   * structurally absent (`resolveWorktreeCapacityLimit` returns null and no
+   * worktree gate object is constructed, so `bindingGates` can never contain
+   * "maxWorktrees"). See `resolveWorktreeCapacityLimit` in workflow-capacity.ts
+   * for why this is a boolean rather than `maxWorktrees: 0`.
+   *
+   * SCOPE: this is a statement about COUNTING, not about isolation or execution.
+   * Both scheduler dispatch paths still allocate a worktree per task with this
+   * off, and planning still runs in the task's own worktree. It does not make
+   * concurrent agents safe to share one checkout — the non-worktree paths that
+   * exist today are fallbacks to the operator's own tree, one of which caused
+   * FN-8600. Turning this off does not grant shared-checkout concurrency.
+   */
+  worktreeLimitEnabled?: boolean;
   pollIntervalMs: number;
   /** Global multiplier applied to all agent heartbeat intervals.
    *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).
@@ -1892,14 +1908,6 @@ export interface ProjectSettings {
    *  steps, and sends the task back through the normal todo → in-progress flow. Set
    *  to 0 to disable. Default: 3. */
   maxPostReviewFixes?: number;
-  /** Maximum number of child agents a single parent agent can spawn.
-   *  Limits the fan-out per executor task to prevent resource exhaustion.
-   *  Default: 5. */
-  maxSpawnedAgentsPerParent?: number;
-  /** Maximum total spawned agents across all parent agents in a single executor instance.
-   *  Provides a global safety cap regardless of how many parent agents are running.
-   *  Default: 20. */
-  maxSpawnedAgentsGlobal?: number;
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;

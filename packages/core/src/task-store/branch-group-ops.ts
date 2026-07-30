@@ -172,7 +172,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     return null;
   }
 
-export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string },): Promise<Task> {
+export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean },): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
@@ -184,6 +184,9 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
 
       const previousPausedByAgentId = task.pausedByAgentId;
       task.paused = paused || undefined;
+      if (paused && agentOptions?.userPaused) {
+        task.userPaused = true;
+      }
       if (paused && agentOptions?.pausedByAgentId) {
         task.pausedByAgentId = agentOptions.pausedByAgentId;
       }
@@ -279,7 +282,23 @@ export async function listArtifactsImpl(store: TaskStore, options?: { type?: Art
         return listArtifactsAsync(store.asyncLayer!.db, options);
 }
 
-export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>,): Promise<void> {
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2513 review):
+Returns the OUTCOME instead of `void`. This function deliberately swallows a rejected
+move ("a full target column rejects, which we audit and skip"), which is correct for
+the sweep-style callers that re-home many cards best-effort — but for the workflow
+SWITCH it produced a torn write with no alarm: the new selection had already
+committed, so the selection said one thing and the card's column said another and
+nothing reported it. Callers that need to know now can; the audit event is unchanged.
+*/
+export interface RehomeOccupantResult {
+  /** True when the card actually landed in `targetColumn`. */
+  readonly moved: boolean;
+  /** Why the move was rejected, when it was. */
+  readonly error?: string;
+}
+
+export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>,): Promise<RehomeOccupantResult> {
     /*
     FNXC:PostgresWorkflowEvacuation 2026-07-14-17:49:
     Re-homing is an async workflow mutation and must read its current task through the authoritative PostgreSQL path; otherwise ON→OFF evacuation discovers custom-column cards but the SQLite-only read prevents every move.
@@ -292,7 +311,7 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
     } catch {
       current = undefined;
     }
-    if (!current) return;
+    if (!current) return { moved: false, error: "task not readable" };
     const fromColumn = current.column;
     if (fromColumn === targetColumn) {
       // Already in the target column — nothing to move, but still record the
@@ -306,7 +325,8 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
         target: taskId,
         metadata: { ...metadata, reason, fromColumn, toColumn: targetColumn, moved: false },
       });
-      return;
+      // Already in the target column: nothing to move, and nothing failed.
+      return { moved: true };
     }
     const abortRan = await runReconciliationAbort({ taskId, fromColumn, reason });
     let moved = false;
@@ -337,4 +357,5 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
       target: taskId,
       metadata: { ...metadata, reason, fromColumn, toColumn: targetColumn, abortRan, moved, error },
     });
+    return { moved, ...(error !== undefined ? { error } : {}) };
   }

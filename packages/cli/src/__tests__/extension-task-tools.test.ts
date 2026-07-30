@@ -163,4 +163,19 @@ pgTest("extension task tools resolve repo root from worktrees", () => {
     expect(Array.isArray(show.content)).toBe(true);
     expect(show.content[0]?.text).toContain(created.id);
   });
+
+  it("persists manual pause intent through fn_task_pause", async () => {
+    const store = h.store();
+    const created = await store.createTask({ description: "Operator-paused task" });
+    const api = createMockApi();
+    registerExtension(api);
+
+    const pauseTool = requireTool(api, "fn_task_pause");
+    await pauseTool.execute("pause", { id: created.id }, undefined, undefined, { cwd: h.rootDir() });
+
+    await expect(store.getTask(created.id)).resolves.toMatchObject({
+      paused: true,
+      userPaused: true,
+    });
+  });
 });

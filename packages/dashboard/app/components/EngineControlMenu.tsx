@@ -113,11 +113,13 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   const pendingProjectConcurrencySaveRef = useRef<ConcurrencyValues | null>(null);
   const projectConcurrencyConfirmOpenRef = useRef(false);
   const projectConcurrencyConfirmTokenRef = useRef(0);
-  const [pendingGlobalConcurrencyValue, setPendingGlobalConcurrencyValue] = useState<number | null>(null);
-  const [globalConcurrencyDirty, setGlobalConcurrencyDirty] = useState(false);
-  const [globalConcurrencyConfirmOpen, setGlobalConcurrencyConfirmOpen] = useState(false);
-  const globalConcurrencyConfirmOpenRef = useRef(false);
-  const globalConcurrencyConfirmTokenRef = useRef(0);
+  /*
+  FNXC:CapacityModel 2026-07-29-00:10 (drop the cross-project cap — settings half):
+  The footer's pending/dirty/confirm-token state for the global cap is DELETED with
+  the slider it guarded. Its whole purpose was to hold an edit un-persisted until the
+  operator confirmed, so a close/Escape/outside-click could not commit a drag; with
+  nothing to persist there is nothing to guard.
+  */
   // FNXC:EngineControls 2026-06-29-00:00: Footer per-project concurrency sliders affect live scheduler capacity, so settled edits must be confirmed before persisting; close, Escape, outside-click, backdrop, and cancel revert to the last loaded values instead of silently saving.
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Fetch is gated on the menu being open; the hook flushes any pending debounced write when `open` flips false.
   const gc = useGlobalConcurrency({ activeWhen: open });
@@ -143,33 +145,20 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     setConcurrencySaveState("idle");
   }, [clearProjectConcurrencySaveTimeout]);
 
-  const revertPendingGlobalConcurrencyEdit = useCallback(() => {
-    globalConcurrencyConfirmOpenRef.current = false;
-    globalConcurrencyConfirmTokenRef.current += 1;
-    setGlobalConcurrencyConfirmOpen(false);
-    setPendingGlobalConcurrencyValue(null);
-    setGlobalConcurrencyDirty(false);
-  }, []);
 
   const closeMenu = useCallback(() => {
     if (concurrencyDirty || pendingProjectConcurrencySaveRef.current || projectConcurrencyConfirmOpenRef.current) {
       revertPendingProjectConcurrencyEdit();
     }
-    if (globalConcurrencyDirty || pendingGlobalConcurrencyValue !== null || globalConcurrencyConfirmOpenRef.current) {
-      revertPendingGlobalConcurrencyEdit();
-    }
     setOpen(false);
-  }, [concurrencyDirty, globalConcurrencyDirty, pendingGlobalConcurrencyValue, revertPendingGlobalConcurrencyEdit, revertPendingProjectConcurrencyEdit]);
+  }, [concurrencyDirty, revertPendingProjectConcurrencyEdit]);
   const openMenu = useCallback(() => setOpen(true), []);
   const toggleMenu = useCallback(() => {
     if (open && (concurrencyDirty || pendingProjectConcurrencySaveRef.current || projectConcurrencyConfirmOpenRef.current)) {
       revertPendingProjectConcurrencyEdit();
     }
-    if (open && (globalConcurrencyDirty || pendingGlobalConcurrencyValue !== null || globalConcurrencyConfirmOpenRef.current)) {
-      revertPendingGlobalConcurrencyEdit();
-    }
     setOpen((current) => !current);
-  }, [concurrencyDirty, globalConcurrencyDirty, open, pendingGlobalConcurrencyValue, revertPendingGlobalConcurrencyEdit, revertPendingProjectConcurrencyEdit]);
+  }, [concurrencyDirty, open, revertPendingProjectConcurrencyEdit]);
 
   useImperativeHandle(ref, () => ({
     open: openMenu,
@@ -182,7 +171,7 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
 
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target;
-      if ((projectConcurrencyConfirmOpenRef.current || globalConcurrencyConfirmOpenRef.current) && target instanceof Element && target.closest(".confirm-dialog-overlay, .confirm-dialog")) {
+      if (projectConcurrencyConfirmOpenRef.current && target instanceof Element && target.closest(".confirm-dialog-overlay, .confirm-dialog")) {
         return;
       }
       if (menuRef.current && target instanceof Node && !menuRef.current.contains(target)) {
@@ -309,60 +298,6 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     };
   }, [clearProjectConcurrencySaveTimeout, concurrencyDirty, concurrencyState.data, confirm, open, projectId, refresh, t]);
 
-  /*
-  FNXC:GlobalConcurrencyControls 2026-06-29-00:00:
-  The footer keeps global-cap edits in local pending state until the operator confirms. Calling useGlobalConcurrency.setValue() immediately would enter the shared hook's debounce and close/unmount flush path, which can persist a footer drag from close, Escape, outside-click, backdrop, or cancel before consent.
-  */
-  useEffect(() => {
-    if (!globalConcurrencyDirty || pendingGlobalConcurrencyValue === null || !gc.interactive || globalConcurrencyConfirmOpenRef.current) return;
-    const nextValue = pendingGlobalConcurrencyValue;
-    const persistedValue = gc.value;
-    const confirmToken = globalConcurrencyConfirmTokenRef.current;
-    const timeoutId = setTimeout(() => {
-      if (nextValue === persistedValue) {
-        setPendingGlobalConcurrencyValue(null);
-        setGlobalConcurrencyDirty(false);
-        return;
-      }
-
-      globalConcurrencyConfirmOpenRef.current = true;
-      setGlobalConcurrencyConfirmOpen(true);
-      const changeSummary = getConcurrencyChangeSummary(
-        t,
-        t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent"),
-        persistedValue,
-        nextValue,
-      );
-      void confirm({
-        title: t("commandCenter.controls.concurrency.confirmTitle", "Confirm concurrency change"),
-        message: t(
-          "commandCenter.controls.concurrency.confirmMessage",
-          "Change {{setting}}?",
-          { setting: changeSummary },
-        ),
-        confirmLabel: t("commandCenter.controls.concurrency.confirmSave", "Save change"),
-        cancelLabel: t("commandCenter.controls.concurrency.confirmCancel", "Cancel"),
-      }).then((confirmed) => {
-        globalConcurrencyConfirmOpenRef.current = false;
-        setGlobalConcurrencyConfirmOpen(false);
-        if (globalConcurrencyConfirmTokenRef.current !== confirmToken || !open) return;
-        if (confirmed) {
-          gc.setValue(String(nextValue));
-        }
-        setPendingGlobalConcurrencyValue(null);
-        setGlobalConcurrencyDirty(false);
-      });
-    }, CONCURRENCY_SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timeoutId);
-  }, [confirm, gc.interactive, gc.setValue, gc.value, globalConcurrencyDirty, open, pendingGlobalConcurrencyValue, t]);
-
-  const updateGlobalConcurrencyValue = (rawValue: string) => {
-    if (!gc.interactive || globalConcurrencyConfirmOpenRef.current) return;
-    const nextValue = clamp(Number(rawValue), gc.min, Math.max(gc.sliderMax, gc.value));
-    setPendingGlobalConcurrencyValue(nextValue);
-    setGlobalConcurrencyDirty(true);
-  };
-
   const updateConcurrencyValue = (key: keyof ConcurrencyValues, rawValue: string, min: number, max: number) => {
     const nextValue = clamp(Number(rawValue), min, max);
     setConcurrencyState((current) => ({
@@ -375,19 +310,6 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   };
 
   const concurrencyValues = concurrencyState.data ?? DEFAULT_CONCURRENCY_VALUES;
-  // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap (Loading…/Load failed/Saving…/Saved/Save failed/Ready).
-  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: A failed initial load leaves saveState "idle", so without an explicit error branch the label fell through to "Ready" while the slider was disabled and an error alert was shown. Surface the load error instead.
-  const globalSaveLabel = gc.status === "loading" || gc.status === "idle"
-    ? t("commandCenter.controls.status.loading", "Loading…")
-    : gc.status === "error"
-    ? t("commandCenter.controls.status.loadError", "Load failed")
-    : gc.saveState === "saving"
-      ? t("commandCenter.controls.status.saving", "Saving…")
-      : gc.saveState === "saved"
-        ? t("commandCenter.controls.status.saved", "Saved")
-        : gc.saveState === "error"
-          ? t("commandCenter.controls.status.saveError", "Save failed")
-          : t("commandCenter.controls.status.ready", "Ready");
   const saveLabel = concurrencyState.status === "loading"
     ? t("commandCenter.controls.status.loading", "Loading…")
     : concurrencySaveState === "saving"
@@ -399,10 +321,7 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
           : t("commandCenter.controls.status.ready", "Ready");
   const globalCountsLoaded = gc.status === "loaded";
   const projectActive = gc.projectActiveCount(projectId);
-  const globalSliderValue = pendingGlobalConcurrencyValue ?? gc.value;
-  const globalSliderMax = Math.max(gc.sliderMax, globalSliderValue);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
-  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, globalSliderValue, gc.min, globalSliderMax);
   const projectUseMarkerRatio = getUseMarkerRatio(
     projectActive,
     concurrencyValues.maxConcurrent,
@@ -465,55 +384,21 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
             </button>
           </div>
 
-          {/*
-          FNXC:GlobalConcurrencyControls 2026-06-25-14:10:
-          Operators need to adjust the global cross-project concurrency cap from the footer engine menu and the dashboard Concurrency card, not just the Settings modal; global cap is distinct from per-project maxConcurrent and persists via the central /api/global-concurrency endpoint.
-          */}
-          <div className="engine-control-menu__section engine-control-menu__section--sliders engine-control-menu__section--global">
-            <div className="engine-control-menu__section-header">
-              <span>{t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent")}</span>
-              <span className="engine-control-menu__scope-caption">{t("commandCenter.controls.scope.allProjects", "All projects")}</span>
-              <span className={`engine-control-menu__save-state engine-control-menu__save-state--${gc.saveState}`} aria-live="polite">
-                {globalSaveLabel}
-              </span>
-            </div>
-            <label className="engine-control-menu__slider" htmlFor="engine-control-global-max-concurrent">
-              <span className="engine-control-menu__slider-label">
-                {t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects")}
-                <strong>{globalSliderValue}</strong>
-              </span>
-              {globalCountsLoaded ? (
-                <span className="engine-control-menu__slider-meta" data-testid="engine-control-global-running">
-                  {t("commandCenter.controls.concurrency.runningGlobal", "{{count}} running (all projects)", { count: gc.currentlyActive })}
-                </span>
-              ) : null}
-              <span className="engine-control-menu__range-wrap">
-                <input
-                  id="engine-control-global-max-concurrent"
-                  className="engine-control-menu__range input"
-                  type="range"
-                  min={gc.min}
-                  max={globalSliderMax}
-                  value={globalSliderValue}
-                  disabled={!gc.interactive || globalConcurrencyConfirmOpen}
-                  onChange={(event) => updateGlobalConcurrencyValue(event.target.value)}
-                />
-                {globalCountsLoaded ? (
-                  <span
-                    className="status-dot status-dot--online engine-control-menu__use-marker"
-                    style={getUseMarkerStyle(globalUseMarkerRatio)}
-                    data-testid="engine-control-global-use-marker"
-                    aria-hidden="true"
-                  />
-                ) : null}
-              </span>
-            </label>
-            {gc.status === "error" ? <p className="engine-control-menu__error" role="alert">{t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings")}</p> : null}
-          </div>
-
           <div className="engine-control-menu__section engine-control-menu__section--sliders">
             <div className="engine-control-menu__section-header">
               <span>{t("commandCenter.controls.concurrency.title", "Concurrency")}</span>
+              {/*
+              FNXC:CapacityModel 2026-07-28-23:45 (drop the cross-project cap — settings half):
+              The Global Max Concurrent SECTION above this one is deleted: the machine-wide
+              cap it wrote no longer exists (capacity is two numbers PER PROJECT) and its PUT
+              route is gone. The live "N running (all projects)" readout moves here —
+              telemetry, never a limit.
+              */}
+              {globalCountsLoaded ? (
+                <span className="engine-control-menu__scope-caption" data-testid="engine-control-global-running">
+                  {t("commandCenter.controls.concurrency.runningGlobal", "{{count}} running (all projects)", { count: gc.currentlyActive })}
+                </span>
+              ) : null}
               <span className={`engine-control-menu__save-state engine-control-menu__save-state--${concurrencySaveState}`} aria-live="polite">
                 {saveLabel}
               </span>

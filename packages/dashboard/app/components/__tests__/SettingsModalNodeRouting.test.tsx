@@ -269,7 +269,7 @@ describe("SettingsModal Node Routing section", () => {
   it("removes routing controls from scheduling section", async () => {
     renderModal();
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Scheduling" })).toBeInTheDocument();
     });

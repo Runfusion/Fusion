@@ -199,6 +199,33 @@ export async function softDeleteTaskRow(
 }
 
 /**
+ * FNXC:TaskStateReconciliation 2026-07-29-16:10:
+ * Resolve only the active wedge episode the caller observed. The PostgreSQL predicate is the cross-process compare-and-set authority, so an update waiting behind a replacement episode rechecks the durable row and cannot clear the replacement.
+ */
+export async function resolveActiveTaskWedgeEpisodeRow(
+  layer: AsyncDataLayer,
+  id: string,
+  episodeId: string,
+  transitionedAt: string,
+): Promise<Record<string, unknown> | undefined> {
+  const rows = await layer.db
+    .update(schema.project.tasks)
+    .set({
+      wedgeNotification: sql`(${schema.project.tasks.wedgeNotification}::jsonb || jsonb_build_object('status', 'resolved', 'transitionedAt', ${transitionedAt}))::text`,
+      updatedAt: transitionedAt,
+    })
+    .where(and(
+      taskProjectScope(layer),
+      eq(schema.project.tasks.id, id),
+      isNull(schema.project.tasks.deletedAt),
+      sql`${schema.project.tasks.wedgeNotification}::jsonb ->> 'episodeId' = ${episodeId}`,
+      sql`${schema.project.tasks.wedgeNotification}::jsonb ->> 'status' = 'active'`,
+    ))
+    .returning();
+  return rows[0] as Record<string, unknown> | undefined;
+}
+
+/**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-15:00:
  * Soft-delete a task INSIDE a shared transaction handle. This is the
  * transaction-aware variant of {@link softDeleteTaskRow} for composite

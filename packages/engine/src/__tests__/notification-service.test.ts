@@ -7,7 +7,7 @@ import { DEFAULT_NTFY_EVENTS } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 
 vi.mock("../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 type Listener = (...args: any[]) => void | Promise<void>;
 
@@ -492,11 +492,21 @@ describe("NotificationService", () => {
       );
     });
 
+    /*
+    FNXC:NotificationLogging 2026-07-29-15:05:
+    This message is emitted at DEBUG level (notification-service.ts:580), not log.
+    The secrecy assertion is checked against BOTH channels on purpose: moving the
+    positive assertion to `debug` while leaving the negative on `log` alone would
+    let a token leak through the very channel the message now uses, and the test
+    would still pass.
+    */
     await vi.waitFor(() => {
-      expect(schedulerLog.log).toHaveBeenCalledWith("NotificationService ntfy access token updated");
+      expect(schedulerLog.debug).toHaveBeenCalledWith("NotificationService ntfy access token updated");
     });
-    expect(schedulerLog.log).not.toHaveBeenCalledWith(expect.stringContaining("new-token"));
-    expect(schedulerLog.log).not.toHaveBeenCalledWith(expect.stringContaining("old-token"));
+    for (const channel of [schedulerLog.log, schedulerLog.debug, schedulerLog.warn, schedulerLog.error]) {
+      expect(channel).not.toHaveBeenCalledWith(expect.stringContaining("new-token"));
+      expect(channel).not.toHaveBeenCalledWith(expect.stringContaining("old-token"));
+    }
     initSpy.mockRestore();
   });
 
@@ -784,7 +794,7 @@ describe("NotificationService", () => {
         expect.objectContaining({ event: "message:agent-to-user" }),
       );
     });
-    expect(schedulerLog.log).toHaveBeenCalledWith(
+    expect(schedulerLog.debug).toHaveBeenCalledWith(
       expect.stringContaining("NotificationService refreshed notification state reason=message:sent enabled=true"),
     );
   });
@@ -1097,7 +1107,7 @@ describe("NotificationService", () => {
           expect.objectContaining({ taskId: "FN-104", event: "merged" }),
         );
       });
-      expect(schedulerLog.log).toHaveBeenCalledWith(
+      expect(schedulerLog.debug).toHaveBeenCalledWith(
         expect.stringContaining("NotificationService refreshed notification state reason=task:moved:done enabled=true"),
       );
     });

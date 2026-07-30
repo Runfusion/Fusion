@@ -29,6 +29,7 @@ import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 
 export function MainContent({
+  columnFlagsByTaskId,
   showBackendConnectionErrorPage,
   projectsError,
   t,
@@ -555,6 +556,7 @@ export function MainContent({
         <Suspense fallback={null}>
           <DocumentsView
             projectId={currentProject?.id}
+            columnFlagsByTaskId={columnFlagsByTaskId}
             addToast={addToast}
             onOpenDetail={openDetailTask}
             onOpenArtifactTaskDetail={popOutTaskDetail}
@@ -907,8 +909,6 @@ export function MainContent({
             prAuthAvailable={prAuthAvailable}
             onOpenWorkflowEditor={openWorkflowEditorWithNav}
             onCreateWorkflow={openCreateWorkflowWithNav}
-            workflowColumnsEnabled
-            settingsLoaded={settingsLoaded}
             workflowControlsInHeader={sidebarActive || isMobile}
           />
         </PageErrorBoundary>
@@ -1024,8 +1024,6 @@ export function MainContent({
           prAuthAvailable={prAuthAvailable}
           onOpenWorkflowEditor={openWorkflowEditorWithNav}
           onCreateWorkflow={openCreateWorkflowWithNav}
-          workflowColumnsEnabled
-          settingsLoaded={settingsLoaded}
           workflowControlsInHeader={sidebarActive || isMobile}
         />
       </PageErrorBoundary>
@@ -1071,8 +1069,6 @@ export function MainContent({
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowColumnsEnabled
-        settingsLoaded={settingsLoaded}
         workflowControlsInHeader={sidebarActive || isMobile}
       />
     </PageErrorBoundary>
