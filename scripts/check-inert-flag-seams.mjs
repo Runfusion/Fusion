@@ -67,17 +67,29 @@ function* walk(dir) {
 const declared = new Map();
 const maxArgs = new Map();
 
+/*
+CALL SITES ARE COLLECTED FROM EVERY FILE, DECLARATIONS ONLY FROM CANDIDATES.
+
+The prefilter must NOT gate call-site collection, and that was a real hole rather than a tidy-up: a
+caller that OMITS the flags argument mentions no flag name, so a prefiltered scan skipped exactly the
+files containing the omissions it exists to find. It saw only the callers that already pass the
+argument, concluded "supplied", and stayed green. That is why this gate did not catch `isTaskStuck`'s
+missing suppliers in ListView and Column — review did.
+
+Declarations still use the prefilter: a file DECLARING a flags parameter necessarily contains the
+name, so that half is safe and keeps the scan quick.
+*/
 for (const file of walk(PACKAGES)) {
   const source = readFileSync(file, "utf8");
-  /* Cheap pre-filter. NOT `TRAILING_FLAG_PARAM` — that is `$`-anchored for parameter NAMES and never
-     matches whole file text, which silently emptied the scan on the first run. The completeness
-     check at the bottom is what caught it. */
-  if (!PREFILTER.test(source)) continue;
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declares = PREFILTER.test(source);
   const visit = (node) => {
-    if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+    if (declares && ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+      /* `exported` matches this file's stated contract; a module-private helper is not a seam
+         other packages can under-supply. */
+      const exported = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true;
       const last = node.parameters[node.parameters.length - 1];
-      if (last.questionToken && ts.isIdentifier(last.name) && TRAILING_FLAG_PARAM.test(last.name.text)) {
+      if (exported && last.questionToken && ts.isIdentifier(last.name) && TRAILING_FLAG_PARAM.test(last.name.text)) {
         declared.set(node.name.text, { file: relative(REPO, file), arity: node.parameters.length });
       }
     }

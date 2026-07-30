@@ -382,7 +382,7 @@ function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
+FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
 Module-scope, takes only a `Task`, and has no flags to consult. Converting it means either threading
 resolved flags through a pure duration helper or resolving a workflow inside it — the same shape flagged
 at `project-engine.ts:2555` and `github-tracking-comments.ts:165`. Left counted so the census keeps
@@ -1032,7 +1032,7 @@ function TaskCardComponent({
     : task.column === "todo";
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase):
   THE OTHER FOUR ROLES, resolved once here rather than re-asked 39 times below.
 
   `taskColumnFlags` was already threaded into this component and already consumed by `canEdit` and
@@ -2716,7 +2716,7 @@ function TaskCardComponent({
       The retired in-review Move dropdown offered Done (no merge) and Triage in addition to the shared menu model's Todo/In Progress defaults. Fold those targets into this TaskCard-only menu so card consolidation retains every move capability without changing ListView or TaskDetail menus.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (CORRECTION of the note this replaced):
+      FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (CORRECTION of the note this replaced):
       The previous version of this comment claimed `triage` was a column U11/#2515 had DELETED, making
       this a live stale-target bug. THAT WAS WRONG, and it shipped. `triage` is a real, present column:
 

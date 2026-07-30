@@ -949,7 +949,7 @@ export function TaskDetailContent({
   }, [initialTab]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-02:30 (PR #2698 review — greptile P1, fourth form):
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:30 (PR #2698 review — greptile P1, fourth form):
   CARRIES THE TASK IT DESCRIBES. The fetch effect resets this to null on a task change, but it is
   declared BELOW the reconciliation effects, so on the render where the modal switches tasks those
   run first and still see the PREVIOUS task's flags. Non-null is therefore not the same as
@@ -999,7 +999,7 @@ export function TaskDetailContent({
 
   useEffect(() => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-00:30 (PR #2698 review — greptile P1):
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:30 (PR #2698 review — greptile P1):
     Must use the ROLE, because tab VISIBILITY already does. Leaving this on the literal while the
     tab's visibility check resolved traits made the two disagree on a custom board: the PR tab
     appeared (the column carries the review role) and this effect immediately bounced the operator
@@ -1010,7 +1010,7 @@ export function TaskDetailContent({
     these effects for exactly this reason — see the note at its declaration.
     */
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (PR #2698 review — greptile P1, third form):
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:30 (PR #2698 review — greptile P1, third form):
     DO NOT REDIRECT ON AN UNRESOLVED ROLE. `workflowMoveMetadata` is null until the workflow fetch
     lands, so on first paint `isReviewColumn` is the legacy-id fallback — false for a custom review
     column. Without this guard the modal opens, immediately bounces the operator off the PR tab they
@@ -1152,7 +1152,7 @@ export function TaskDetailContent({
         }
         setTaskWorkflowBadge(metadata ? { id: metadata.id, name: metadata.name, icon: metadata.icon } : null);
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-06:00 (PR #2698 review — greptile P1, fifth form):
+        FNXC:WorkflowResolvedColumns 2026-07-30-06:00 (PR #2698 review — greptile P1, fifth form):
         SETTLED-EMPTY IS STILL SETTLED. Writing `null` when the lookup returns no metadata is
         indistinguishable from "has not resolved yet", so the reconciliation effects returned
         forever and an invalid tab stayed active indefinitely — the exact failure the identity guard
@@ -5533,7 +5533,7 @@ export function TaskDetailContent({
           ) : activeTab === "review" ? (
             <TaskReviewTab
               /*
-              FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (#2744 review — greptile P1):
+              FNXC:WorkflowResolvedColumns 2026-07-30-11:10 (#2744 review — greptile P1):
               `detailColumnFlags`, NOT the raw payload. That local applies `detailFlagsAreForThisTask`
               (`workflowMoveMetadata?.taskId === task.id`), and on the render where the modal switches
               tasks the state still holds the PREVIOUS card's payload. Passing the raw flags would resolve

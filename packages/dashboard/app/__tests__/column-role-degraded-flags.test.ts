@@ -10,7 +10,7 @@ import {
 } from "../utils/columnRoles";
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — board surfaces):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:10 (fleet — board surfaces):
 
 THE BUG THIS CLOSES, and it is a real divergence rather than a rename.
 
@@ -100,7 +100,7 @@ describe("board surfaces resolve column roles per column, not per board", () => 
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-02:20 (PR #2738 review — greptile P1):
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:20 (PR #2738 review — greptile P1):
   A PER-TASK role question must not be answered from the cross-workflow UNION.
 
   `columnFlagsById` in ListView is built from `listColumns`, which is a union across workflows keyed
@@ -176,7 +176,7 @@ describe("board surfaces resolve column roles per column, not per board", () => 
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (PR #2738 review — greptile P1):
+  FNXC:WorkflowResolvedColumns 2026-07-30-03:30 (PR #2738 review — greptile P1):
   The stranded-card case, pinned as source because it is a resolution-precedence rule.
 
   `getTaskColumnFlags` has three states and they are NOT two:

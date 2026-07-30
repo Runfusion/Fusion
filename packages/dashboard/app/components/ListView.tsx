@@ -314,7 +314,7 @@ interface ListViewProps {
 
 
 /**
- * FNXC:WorkflowResolvedColumns 2026-07-31-00:10:
+ * FNXC:WorkflowResolvedColumns 2026-07-30-00:10:
  * The progress bar shows for an EXECUTING card or one resting in a wip lane.
  *
  * `flags` is threaded from the caller's per-column map. Keyed on the literal, a renamed wip column
@@ -859,7 +859,7 @@ export function ListView({
   }, [boardWorkflows, tasks, workflowMode]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-02:20 (PR #2738 review — greptile P1):
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:20 (PR #2738 review — greptile P1):
   PER-TASK column flags. `columnFlagsById` is a UNION across workflows keyed by column id, which the
   note above already calls out for `moveTargets` — two workflows reusing an id collapse to one entry.
 
@@ -880,7 +880,7 @@ export function ListView({
     const own = taskContextMenuColumnsByTaskId.get(task.id);
     const fromOwnWorkflow = own?.find((column) => column.id === task.column)?.flags;
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (PR #2738 review — greptile P1):
+    FNXC:WorkflowResolvedColumns 2026-07-30-03:30 (PR #2738 review — greptile P1):
     KNOWING the task's workflow and finding no such column is an ANSWER, not a miss.
 
     The first version fell through to the union in both cases, which put back the bug one level down:
@@ -921,7 +921,7 @@ export function ListView({
   }, [getTaskColumnFlags]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — same change as Column.tsx):
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:10 (fleet — same change as Column.tsx):
   `workflowMode` is a BOARD-level boolean answering a PER-COLUMN question. In workflow mode with a
   column that has no resolved traits, the old form returned false for every role rather than falling
   back to the id — so the archive and revert affordances silently vanished for a card sitting in a
@@ -934,7 +934,7 @@ export function ListView({
   }, [columnFlagsById]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-14:00 (PR #2738 review — greptile P1):
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:00 (PR #2738 review — greptile P1):
   PER-TASK twins of the two column-level predicates above.
 
   The column-level pair answers "is this whole list SECTION the archive?", where the cross-workflow

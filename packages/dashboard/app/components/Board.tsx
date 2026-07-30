@@ -632,7 +632,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       */
       const isWorkflowDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase):
+      FNXC:WorkflowResolvedColumns 2026-07-30-07:10 (fleet phase):
       No more synthetic "done" column id. This branch forced done-sorting by passing the LITERAL "done"
       as the column argument, so a custom complete lane sorted correctly only because its caller lied
       about its name. `sortTasksForDisplayColumn` now takes the trait directly, so the real column id goes
@@ -829,7 +829,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     for (const column of aggregateBoardColumns) {
       const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase):
+      FNXC:WorkflowResolvedColumns 2026-07-30-07:10 (fleet phase):
       No more synthetic "done" column id. This branch forced done-sorting by passing the LITERAL "done"
       as the column argument, so a custom complete lane sorted correctly only because its caller lied
       about its name. `sortTasksForDisplayColumn` now takes the trait directly, so the real column id goes

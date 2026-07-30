@@ -87,7 +87,7 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     if (isRunningAgentTask(enriched)) {
       runningTaskCount++;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (PR #2772 review):
+      FNXC:WorkflowResolvedColumns 2026-07-30-00:20 (PR #2772 review):
       Per-task WIP flags, same precedence as line ~86. `isTaskStuck` gained this parameter and
       TaskCard supplies it, so the repo-wide seam gate was satisfied by that ONE caller — this path
       was still passing three arguments and counting zero stuck tasks on a renamed board.

@@ -283,7 +283,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       return undefined;
     }
     const canonical = allTasks.find((candidate) => candidate.id === nearDuplicateOf);
-    /* FNXC:WorkflowResolvedColumns 2026-07-31-01:10: the canonical's own flags. Declared above
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-01:10: the canonical's own flags. Declared above
        `getTaskColumnFlags` in source order, but this body only runs during render, so the const is
        initialised by then — tsc and the suite both confirm it. */
     return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
@@ -319,7 +319,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   }, [isMenuOpen]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — one role question, one answer):
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:10 (fleet — one role question, one answer):
   The shared role helpers replace the `workflowMode ? trait : literal` ternaries.
 
   They are NOT identical, and the difference is the point. `workflowMode` is a BOARD-level boolean
