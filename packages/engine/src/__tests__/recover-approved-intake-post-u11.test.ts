@@ -173,3 +173,68 @@ describe("approved-plan recovery resolves the intake column (U11 #2515)", () => 
     await expect(new TriageProcessor(store, rootDir).recoverApprovedTask(task)).resolves.toBe(false);
   });
 });
+
+/*
+FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:50 (PR #2593 review — greptile P1):
+The legacy acceptance is SCOPED to an ORPHANED `triage` row. A custom workflow may
+legitimately name a NON-intake lane `triage`, and accepting a planning-status card
+from there would finalize its plan and move it to the hold lane — bypassing whatever
+transition that column represents.
+
+The migration case is precisely "the row sits in a column its workflow no longer
+has", which is also what `reconcileUndeclaredTaskColumns` is about to re-home. When
+the workflow DOES declare `triage`, its declared role governs.
+*/
+describe("legacy `triage` acceptance is scoped to orphaned rows", () => {
+  let rootDir = "";
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    rootDir = await mkdtemp(join(tmpdir(), "fusion-recovery-scope-"));
+    await mkdir(join(rootDir, ".fusion", "tasks", "FN-001"), { recursive: true });
+    await writeFile(join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"), REAL_SPEC);
+    vi.spyOn(planLog, "log").mockImplementation(() => {});
+    vi.spyOn(planLog, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  /** A workflow that names its REVIEW lane `triage` — legal, and not a planner lane. */
+  function triageIsReviewIr(): WorkflowIr {
+    return {
+      version: "v2", id: WF, name: WF, nodes: [], edges: [],
+      columns: [
+        { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        // Deliberately named `triage`, but it is the REVIEW lane.
+        { id: "triage", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+  }
+
+  it("REFUSES a card in a `triage` column the workflow declares as a non-planner lane", async () => {
+    const task = {
+      id: "FN-001", title: "t", description: "d", column: "triage", status: "planning",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const store = createStore(task, triageIsReviewIr());
+
+    await expect(new TriageProcessor(store, rootDir).recoverApprovedTask(task)).resolves.toBe(false);
+  });
+
+  it("still ACCEPTS a card in `triage` when the workflow declares no such column (migration window)", async () => {
+    const task = {
+      id: "FN-001", title: "t", description: "d", column: "triage", status: "planning",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const store = createStore(task, ir(MERGED));
+
+    await expect(new TriageProcessor(store, rootDir).recoverApprovedTask(task)).resolves.toBe(true);
+  });
+});

@@ -35,6 +35,8 @@ import {
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
   resolveLifecycleColumns,
+  resolveTaskLifecycleColumns,
+  workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
@@ -1172,8 +1174,29 @@ export class TriageProcessor {
     is compatibility, not a second source of truth — once a row is re-homed the
     resolved lane is what matches.
     */
-    const inPlannerColumn = task.column === resolvePlannerLanes(this.store, task.id).intake
-      || task.column === "triage";
+    const lanes = resolvePlannerLanes(this.store, task.id);
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:50 (PR #2593 review — greptile P1):
+    The legacy acceptance is SCOPED to an ORPHANED `triage` row — one whose workflow
+    does not declare a `triage` column at all. A custom workflow is free to name a
+    non-intake lane `triage` (its review or wip column), and accepting a
+    planning-status card from there would finalize its plan and move it to the hold
+    lane, bypassing whatever transition that custom column represents.
+
+    Unqualified `|| task.column === "triage"` could not tell those two apart. This
+    can: the migration case is precisely "the row sits in a column its workflow no
+    longer has", which is also exactly what `reconcileUndeclaredTaskColumns` is about
+    to re-home. If the workflow DOES declare `triage`, its declared role governs and
+    only the resolved intake lane is accepted.
+    */
+    const workflowIr = (this.store as unknown as {
+      resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr | undefined;
+    }).resolveTaskWorkflowIrSync?.(task.id);
+    const declaresLegacyTriage = workflowIr
+      ? workflowHasColumn(workflowIr, "triage")
+      : true; // Unresolvable: assume it declares `triage`, i.e. do not widen.
+    const inPlannerColumn = task.column === lanes.intake
+      || (task.column === "triage" && !declaresLegacyTriage);
     if (!inPlannerColumn || !recoverableStatus) {
       return false;
     }
