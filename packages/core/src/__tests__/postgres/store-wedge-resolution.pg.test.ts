@@ -1,6 +1,12 @@
 /**
  * FNXC:TaskStateReconciliation 2026-07-29-16:10:
  * Wedge resolution is a PostgreSQL compare-and-set across dashboard processes. A resolver that waits behind a replacement write must preserve the replacement episode, while an exact active episode resolves normally.
+ *
+ * FNXC:TaskStateReconciliation 2026-07-29-22:01:
+ * Resolution projection must hold the task row lock through task JSON, cache, and event publication so a cross-process replacement cannot commit and publish before an older resolved snapshot.
+ *
+ * FNXC:TaskStateReconciliation 2026-07-29-22:17:
+ * A deletion that commits after the compare-and-set but before projection must retain deleted-task semantics instead of returning a stale successful resolution.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -71,6 +77,126 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
       episodeId: "episode-projection-failure",
       status: "resolved",
     });
+  });
+
+  it("maps deletion between resolution and projection to a deleted-task failure", async () => {
+    const store = h.store();
+    const layer = h.layer();
+    const task = await h.createTestTask();
+    const projectId = layer.projectId ?? "__legacy_unscoped__";
+    await store.updateTask(task.id, {
+      wedgeNotification: {
+        reasonKey: "failed:stale",
+        episodeId: "episode-deleted-before-projection",
+        status: "active",
+        transitionedAt: "2026-07-29T00:00:00.000Z",
+      },
+    });
+
+    const originalTransactionImmediate = layer.transactionImmediate.bind(layer);
+    let reportProjectionPending!: () => void;
+    const projectionPending = new Promise<void>((resolve) => {
+      reportProjectionPending = resolve;
+    });
+    let releaseProjection!: () => void;
+    const projectionMayStart = new Promise<void>((resolve) => {
+      releaseProjection = resolve;
+    });
+    vi.spyOn(layer, "transactionImmediate").mockImplementationOnce(async (callback) => {
+      reportProjectionPending();
+      await projectionMayStart;
+      return originalTransactionImmediate(callback);
+    });
+
+    const resolution = store.resolveTaskWedgeNotificationEpisode(task.id, "episode-deleted-before-projection");
+    await projectionPending;
+    const deletedAt = "2026-07-29T00:02:00.000Z";
+    await h.adminSql()`
+      UPDATE project.tasks
+      SET deleted_at = ${deletedAt}, updated_at = ${deletedAt}
+      WHERE project_id = ${projectId} AND id = ${task.id}
+    `;
+    releaseProjection();
+
+    await expect(resolution).rejects.toMatchObject({
+      name: "TaskDeletedError",
+      deletedAt,
+    });
+  });
+
+  it("does not let resolved publication hide a replacement episode", async () => {
+    const store = h.store();
+    const task = await h.createTestTask();
+    const projectId = h.layer().projectId ?? "__legacy_unscoped__";
+    await store.updateTask(task.id, {
+      wedgeNotification: {
+        reasonKey: "failed:stale",
+        episodeId: "episode-publication-observed",
+        status: "active",
+        transitionedAt: "2026-07-29T00:00:00.000Z",
+      },
+    });
+
+    const publishedEpisodes: string[] = [];
+    store.on("task:updated", (updated) => {
+      if (updated.wedgeNotification?.episodeId) publishedEpisodes.push(updated.wedgeNotification.episodeId);
+    });
+    const originalWriteTaskJsonFile = store.writeTaskJsonFile.bind(store);
+    let reportResolutionProjection!: () => void;
+    const resolutionProjectionStarted = new Promise<void>((resolve) => {
+      reportResolutionProjection = resolve;
+    });
+    let releaseResolutionProjection!: () => void;
+    const resolutionProjectionMayFinish = new Promise<void>((resolve) => {
+      releaseResolutionProjection = resolve;
+    });
+    vi.spyOn(store, "writeTaskJsonFile").mockImplementationOnce(async (...args) => {
+      reportResolutionProjection();
+      await resolutionProjectionMayFinish;
+      await originalWriteTaskJsonFile(...args);
+    });
+
+    const resolution = store.resolveTaskWedgeNotificationEpisode(task.id, "episode-publication-observed");
+    await resolutionProjectionStarted;
+
+    let reportReplacementAttempt!: () => void;
+    const replacementAttempted = new Promise<void>((resolve) => {
+      reportReplacementAttempt = resolve;
+    });
+    const replacement = (async () => {
+      reportReplacementAttempt();
+      await h.adminSql()`
+        UPDATE project.tasks
+        SET wedge_notification = ${JSON.stringify({
+          reasonKey: "failed:new",
+          episodeId: "episode-publication-replacement",
+          status: "active",
+          transitionedAt: "2026-07-29T00:01:00.000Z",
+        })}, updated_at = ${"2026-07-29T00:01:00.000Z"}
+        WHERE project_id = ${projectId} AND id = ${task.id}
+      `;
+      const replacementTask = await store.getTask(task.id);
+      await originalWriteTaskJsonFile(store.taskDir(task.id), replacementTask);
+      store.emitTaskLifecycleEventSafely("task:updated", [replacementTask]);
+      return replacementTask;
+    })();
+    await replacementAttempted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseResolutionProjection();
+
+    const [resolutionResult, replacementTask] = await Promise.all([resolution, replacement]);
+    const projectedTask = await store.readTaskJson(store.taskDir(task.id));
+
+    expect(resolutionResult.resolved).toBe(true);
+    expect(replacementTask.wedgeNotification).toMatchObject({
+      episodeId: "episode-publication-replacement",
+      status: "active",
+    });
+    expect(projectedTask.wedgeNotification).toMatchObject({
+      episodeId: "episode-publication-replacement",
+      status: "active",
+    });
+    expect(publishedEpisodes.at(-1)).toBe("episode-publication-replacement");
   });
 
   it("preserves a replacement episode committed while the resolver waits on the row lock", async () => {
