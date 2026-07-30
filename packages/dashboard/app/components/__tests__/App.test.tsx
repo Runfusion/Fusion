@@ -663,47 +663,8 @@ import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, f
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
+import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
 
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-06:10 (why these tests went red):
-
-ListView early-returns a workflow SKELETON when the board has no workflows:
-
-    if (boardWorkflows === null || boardWorkflows.workflows.length === 0) {
-      return renderListWorkflowSkeleton(boardWorkflows !== null);
-    }
-
-That skeleton carries the SAME `list-view` class as the real body, so every test that waits on
-`.list-view` and then reaches for a control inside it passed its `waitFor` and failed on the control,
-with a DOM that looks like the list rendered fine. Probe on the failing case:
-
-    cluster: false | listview: true | buttons: []
-
-The mock returned `workflows: []` with `flagEnabled: false`, which used to be fine: the flag-off path
-rendered legacy columns and needed no workflow. U12 deleted that path, so an empty `workflows` array
-now means "this board has no lanes" and there is nothing to render. The fixture, not the product,
-is what went stale.
-
-Mirrors the builtin coding lanes with the trait flags the board actually reads.
-*/
-const DEFAULT_BOARD_WORKFLOWS = {
-  flagEnabled: true,
-  defaultWorkflowId: "builtin:coding",
-  workflows: [
-    {
-      id: "builtin:coding",
-      name: "Coding",
-      columns: [
-        { id: "todo", name: "Todo", flags: { hold: true, intake: true } },
-        { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
-        { id: "in-review", name: "In Review", flags: { countsTowardWip: true, mergeBlocker: true, mergeOrchestration: true, humanReview: true } },
-        { id: "done", name: "Done", flags: { complete: true } },
-        { id: "archived", name: "Archived", flags: { archived: true, hiddenFromBoard: true } },
-      ],
-    },
-  ],
-  taskWorkflowIds: {},
-};
 
 
 async function waitForAppShell(): Promise<void> {
@@ -2490,7 +2451,7 @@ describe("App view switching", () => {
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Cleanup
@@ -2511,7 +2472,7 @@ describe("App view switching", () => {
     // Switch to list view
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Switch back to board view
@@ -2537,7 +2498,7 @@ describe("App view switching", () => {
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("+ New Task"));
@@ -2586,7 +2547,7 @@ describe("App view switching", () => {
 
     // Wait for the app to render
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // List view should be active
@@ -2788,7 +2749,7 @@ describe("App view switching", () => {
 
     // Should NOT show board or list view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
   });
 
   it("persists agents view preference to localStorage", async () => {
@@ -2855,7 +2816,7 @@ describe("App view switching", () => {
 
     // Should NOT show board, list, or agents view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
   });
 
@@ -3583,7 +3544,9 @@ describe("App footer-safe project layout", () => {
     await waitFor(() => {
       const wrapper = document.querySelector(".project-content--with-footer");
       expect(wrapper).toBeTruthy();
-      expect(wrapper?.querySelector(".list-view")).toBeTruthy();
+      /* Containment is the point here, so this stays a scoped query — but on the body marker, not
+         the `.list-view` class the workflow skeleton also carries. */
+      expect(wrapper?.querySelector('[data-testid="list-view-body"]')).toBeTruthy();
     });
   });
 
