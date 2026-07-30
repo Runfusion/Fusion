@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
@@ -241,6 +243,28 @@ export async function deleteTaskIfBackendImpl(
   });
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+The archived lanes for one task, resolved from its own workflow. Shared by the archive and unarchive
+guards below so the two cannot disagree about what "archived" means — one refusing a card the other
+would accept is the half-converted-pair shape.
+
+A workflow expressing NO trait on any column is a v1 upgrade (`synthesizeDefaultColumns` emits
+`traits: []` everywhere) rather than a board without an archive lane, so it keeps the legacy id — as
+does a workflow that cannot be read.
+*/
+async function archivedLanesForTask(store: TaskStore, taskId: string): Promise<ReadonlySet<string>> {
+  const lanes = new Set<string>(["archived"]);
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir && declaresAnyLifecycleTrait(ir)) {
+      for (const id of columnsWithFlag(ir, "archived")) lanes.add(id);
+    }
+  } catch { /* degraded: the legacy id */ }
+  return lanes;
+}
+
 export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean },): Promise<Task> {
     const layer = store.asyncLayer!;
     const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
@@ -251,7 +275,12 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     if (!task) {
       throw new Error(`Task ${id} not found`);
     }
-    if (task.column === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+    Keyed on the literal, a renamed board let an ALREADY-archived card be archived again — a second
+    archive pass over a row the archive already owns.
+    */
+    if ((await archivedLanesForTask(store, id)).has(task.column)) {
       throw new Error(`Cannot archive ${id}: task is already archived`);
     }
 
@@ -392,6 +421,19 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
       throw new Error(`Cannot unarchive ${id}: task is missing from active storage and not found in archive`);
     }
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:50 DELIBERATE-LITERAL: the value is literally "archived" by construction.
+
+    I converted this and then proved the conversion INERT, which is worth recording so it is not
+    attempted a third time. `task` here comes from the archive entry, and `archiveEntryToTask`
+    (serialization.ts:353) hardcodes `column: "archived"` on every task it reconstructs. So this
+    comparison can only ever see the literal, on every board, renamed or not — resolving lanes here
+    changes no outcome and only makes the guard look converted.
+
+    The board's own archive lane is not involved: a card in cold storage has left the board entirely.
+    If archived rows ever start carrying their originating board's lane id, this becomes a real guard
+    and should be converted then.
+    */
     if (task.column !== "archived") {
       throw new Error(`Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`);
     }

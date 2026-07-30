@@ -22,6 +22,45 @@ pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
   afterEach(h.afterEach);
   afterAll(h.afterAll);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:50 (batch-core):
+
+  A CARD SITTING IN THE BOARD'S OWN ARCHIVE LANE IS ALREADY ARCHIVED.
+
+  `archiveTask` refuses a card that is already archived. Keyed on the literal, a board whose archive
+  lane is named `attic` did not refuse — the card was archived a second time, from a lane the board
+  itself calls archived.
+
+  THE FIXTURE MATTERS, and my first version of this test was vacuous because of it. Calling
+  `archiveTask` first does NOT produce a renamed-lane card: the archive path stamps `column:
+  "archived"` (`archiveEntryToTask`, serialization.ts:353), so the guard only ever sees the literal
+  and both the literal and resolved forms pass. The card has to be MOVED into `attic` by an ordinary
+  move for the renamed lane to reach the guard at all.
+
+  The unarchive side is deliberately not covered here: its input always carries the literal by
+  construction, which is recorded at that guard.
+  */
+  it("refuses to archive a card already sitting in the board's renamed archive lane", async () => {
+    const store = h.store();
+    const definition = await store.createWorkflowDefinition({
+      name: "renamed-archive",
+      ir: {
+        version: "v2",
+        name: "renamed-archive",
+        columns: [
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "building" }, { id: "end", kind: "end", column: "attic" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+    const task = await store.createTask({ description: "already in the attic", workflowId: definition.id } as never);
+    await store.moveTask(task.id, "attic" as never, { bypassGuards: true } as never);
+
+    await expect(store.archiveTask(task.id, { cleanup: false } as never)).rejects.toThrow(/already archived/);
+  });
+
   it("composes archived snapshots into list, search, and detail reads", async () => {
     const store = h.store();
     const first = await store.createTaskWithReservedId(
