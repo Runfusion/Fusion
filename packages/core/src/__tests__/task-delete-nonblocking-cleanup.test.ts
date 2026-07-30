@@ -22,8 +22,9 @@ the delegation rather than a mock.
 */
 
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../types.js";
+import { softDeleteTaskRowInTransaction } from "../task-store/async-persistence.js";
 
 let pgRow: Task | null = null;
 let lineageChildIds: string[] = [];
@@ -108,6 +109,16 @@ function makeDeleteStore(task: Task, children: string[] = []) {
 }
 
 describe("deleteTask gates that survived the PostgreSQL cutover", () => {
+  /*
+  FNXC:TaskDeletion 2026-07-30-20:15 (PR #2697 review — greptile):
+  The module mock is shared across this file and the config clears nothing, so a call-count
+  assertion would otherwise depend on which tests ran before it. Cleared per test so the count
+  means "this test", not "the file so far".
+  */
+  beforeEach(() => {
+    vi.mocked(softDeleteTaskRowInTransaction).mockClear();
+  });
+
   it("is idempotent: re-deleting an already soft-deleted task is a no-op with no audit row", async () => {
     const task = createTask({ id: "FN-DELETED", deletedAt: "2026-07-15T09:01:00.000Z", column: "archived" });
     const store = makeDeleteStore(task);
@@ -140,6 +151,16 @@ describe("deleteTask gates that survived the PostgreSQL cutover", () => {
     const deleted = await deleteTaskImpl(store as never, task.id);
 
     expect(deleted).toMatchObject({ id: task.id });
+    /*
+    FNXC:TaskDeletion 2026-07-30-20:15 (PR #2697 review — greptile):
+    THE PERSISTENCE CALL IS THE DELETION; the audit row and the event are only its announcements.
+    Asserted first and by name because without it, removing the soft-delete write while leaving the
+    two side effects in place still passed — the suite would have reported a task deleted that was
+    still in the table, which is the one outcome this file exists to prevent.
+    */
+    expect(softDeleteTaskRowInTransaction).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(softDeleteTaskRowInTransaction).mock.calls[0]?.[1]).toBe(task.id);
+
     expect(store.getAuditEvents().filter((event) => event.mutationType === "task:deleted")).toHaveLength(1);
     expect(emitted).toEqual([task.id]);
     /*
