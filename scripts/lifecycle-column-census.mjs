@@ -132,21 +132,55 @@ if (compare) {
   What must NEVER happen is the other direction: a site the REGEX found and the parser missed means
   the parser has a hole, and then its number cannot be the bar. That is the failure this checks.
   */
-  const text = summarizeText(censusFilesText(files));
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-11:30:
+  COMPARE SITES, NOT BUCKET TOTALS. This check used to compare the per-bucket counts and fail when
+  the regex's `column` total exceeded the parser's. That conflates the two things it most needs to
+  tell apart:
+
+    - the parser MISSED a site entirely            -> a real blind spot, the failure worth having;
+    - the parser saw it and classified it better   -> role, status, or deliberate instead of column.
+
+  The second is the parser's entire reason for existing, so the old form fired MORE the better the
+  parser got. It had been failing on `main` while reporting "the parser has a blind spot; its count
+  cannot be the bar" — and that message was false. MEASURED at the time of this change: 13 sites
+  diverged, and all 13 were seen by the parser (4 deliberate, 5 role, 4 status). Zero were missed.
+
+  The check now fails only on a site the regex found and the parser did not, which is what the note
+  above it always said the contract was.
+  */
+  const textFindings = censusFilesText(files);
+  const text = summarizeText(textFindings);
   console.log(`\n  text classifier:  ${JSON.stringify(text.totals)}`);
   console.log(`  AST classifier:   ${JSON.stringify(summary.totals)}`);
-  const regressions = ["column", "role", "status", "deliberate"].filter(
-    (kind) => text.totals[kind] > summary.totals[kind],
-  );
-if (regressions.length > 0) {
+
+  const siteKey = (f) => `${f.file}:${f.line}:${f.columnId}`;
+  const astSites = new Map(findings.map((f) => [siteKey(f), f]));
+  const missed = textFindings.filter((f) => !astSites.has(siteKey(f)));
+
+  if (missed.length > 0) {
     console.error(
-      `\nlifecycle-column-census --compare: the regex found MORE than the parser for ${regressions.join(", ")}.\n` +
-      "The parser has a blind spot; its count cannot be the bar until this is closed.",
+      `\nlifecycle-column-census --compare: the regex found ${missed.length} site(s) the parser did not.\n` +
+      "The parser has a blind spot; its count cannot be the bar until this is closed.\n" +
+      missed.slice(0, 10).map((f) => `  ${f.file}:${f.line} (${f.columnId})`).join("\n"),
     );
     process.exit(1);
   }
-  const extra = summary.totals.column - text.totals.column;
-  console.log(`  parser is a superset (+${extra} column guards the regex cannot see).`);
+
+  /* Reclassifications are expected and are the parser's value-add, so they are reported, not failed. */
+  const reclassified = textFindings.filter(
+    (f) => f.kind === "column" && astSites.get(siteKey(f)).kind !== "column",
+  );
+  const byKind = reclassified.reduce((acc, f) => {
+    const kind = astSites.get(siteKey(f)).kind;
+    acc[kind] = (acc[kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  const parserOnly = findings.filter((f) => !textFindings.some((t) => siteKey(t) === siteKey(f)));
+  console.log(`  parser sees every site the regex does (+${parserOnly.length} sites the regex cannot see).`);
+  if (reclassified.length > 0) {
+    console.log(`  ${reclassified.length} the regex calls a column guard, the parser classifies as ${JSON.stringify(byKind)}.`);
+  }
 }
 
 if (!strict) process.exit(0);
