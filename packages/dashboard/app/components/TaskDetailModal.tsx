@@ -926,17 +926,50 @@ export function TaskDetailContent({
     }
   }, [initialTab]);
 
-  useEffect(() => {
-    if (activeTab === "pr" && task.column !== "in-review") {
-      setActiveTab("definition");
-    }
-  }, [activeTab, task.column]);
+  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> | null>(null);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: TaskDetailModal.tsx):
+  The card's ROLES, resolved from the column flags this modal already fetches. Declared immediately
+  after `workflowMoveMetadata` because that state is their source — anything above this line cannot
+  reference them without a temporal-dead-zone error, which is why four sites higher in the component
+  are flagged in the PR rather than converted here.
+
+  `currentColumnFlags` is null until the workflow fetch resolves, so these flip after first paint.
+  Every consumer below therefore lists the role it reads in its dependency array — the same
+  late-arriving-flags hazard that produced four stale memos in TaskCard (PR #2688 review). This repo
+  has no react-hooks/exhaustive-deps rule, so that is checked by hand.
+  */
+  const detailColumnFlags = workflowMoveMetadata?.currentColumnFlags;
+  const isDoneColumn = isCompleteColumnRole(detailColumnFlags, task.column);
+  const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
+  const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
+  const isReviewColumn = isReviewColumnRole(detailColumnFlags, task.column);
 
   useEffect(() => {
-    if (activeTab === "summary" && task.column !== "done") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-00:30 (PR #2698 review — greptile P1):
+    Must use the ROLE, because tab VISIBILITY already does. Leaving this on the literal while the
+    tab's visibility check resolved traits made the two disagree on a custom board: the PR tab
+    appeared (the column carries the review role) and this effect immediately bounced the operator
+    back to Changes, because the column is not named `in-review`. A tab that shows up and instantly
+    redirects is worse than one that never shows.
+
+    That inconsistency was created by converting half the pair. The state this reads is hoisted above
+    these effects for exactly this reason — see the note at its declaration.
+    */
+    if (activeTab === "pr" && !isReviewColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column]);
+  }, [activeTab, task.column, isReviewColumn]);
+
+  useEffect(() => {
+    // Same pairing as the PR tab above: visibility resolves the complete role, so reconciliation must
+    // too, or the Summary tab appears on a custom terminal column and bounces straight back.
+    if (activeTab === "summary" && !isDoneColumn) {
+      setActiveTab("definition");
+    }
+  }, [activeTab, task.column, isDoneColumn]);
 
   // Reset description and planner-chat focus state when task changes
   useEffect(() => {
@@ -1014,25 +1047,6 @@ export function TaskDetailContent({
   the caller-owned field definitions.
   */
   const [taskWorkflowBadge, setTaskWorkflowBadge] = useState<{ id: string; name: string; icon?: string } | null>(null);
-  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> | null>(null);
-
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: TaskDetailModal.tsx):
-  The card's ROLES, resolved from the column flags this modal already fetches. Declared immediately
-  after `workflowMoveMetadata` because that state is their source — anything above this line cannot
-  reference them without a temporal-dead-zone error, which is why four sites higher in the component
-  are flagged in the PR rather than converted here.
-
-  `currentColumnFlags` is null until the workflow fetch resolves, so these flip after first paint.
-  Every consumer below therefore lists the role it reads in its dependency array — the same
-  late-arriving-flags hazard that produced four stale memos in TaskCard (PR #2688 review). This repo
-  has no react-hooks/exhaustive-deps rule, so that is checked by hand.
-  */
-  const detailColumnFlags = workflowMoveMetadata?.currentColumnFlags;
-  const isDoneColumn = isCompleteColumnRole(detailColumnFlags, task.column);
-  const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
-  const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
-  const isReviewColumn = isReviewColumnRole(detailColumnFlags, task.column);
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
   // in which case the fields section renders nothing (today's UI byte-identical).
