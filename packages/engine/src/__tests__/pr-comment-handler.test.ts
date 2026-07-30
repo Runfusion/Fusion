@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PrCommentHandler } from "../pr-comment-handler.js";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import type { TaskStore, Task } from "@fusion/core";
 
 const mockStore = {
@@ -236,6 +237,74 @@ describe("PrCommentHandler", () => {
         }),
       );
       expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:30 (engine):
+    DIFFERENTIAL over the column vocabulary. The case above asserts the LEGACY ids, which is what both
+    literals on this path compared against — it passed before this conversion and would pass for a broken
+    one, because the fake supplies no workflow and the resolver degrades to the built-in board.
+
+    The failure is silent and human-facing: on a renamed review lane the gate returned early, so a
+    reviewer's "changes requested" produced NO steering comment and the card never went back to work.
+    The feedback simply vanished behind a log line.
+
+    Both literals are covered, deliberately. The destination (`moveTask(taskId, "in-progress")`) is a
+    call argument the census cannot see; converting only the gate would admit the review and then attempt
+    a move into a lane the board may not declare.
+
+    REVERT CHECK, measured (each independently):
+      - gate restored to `task.column !== "in-review"` -> fails; updateTask/moveTask never called.
+      - destination restored to the literal            -> fails; moveTask called with "in-progress"
+        instead of the renamed wip lane.
+    */
+    it("handles a changes-requested review on a RENAMED board and requeues to its OWN wip lane", async () => {
+      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle");
+      (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(
+        { id: "FN-001", column: RENAMED_VOCAB.review, review: undefined } as Task,
+      );
+      Object.assign(mockStore, {
+        getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getWorkflowDefinition: vi.fn(async (id: string) => (id === "pr-comment-lifecycle" ? { ir } : undefined)),
+      });
+
+      await handler.handleChangesRequested("FN-001", mockPrInfo, "reviewer", "Please add tests");
+
+      // The reviewer's feedback is recorded rather than dropped...
+      expect(mockStore.updateTask).toHaveBeenCalledWith(
+        "FN-001",
+        expect.objectContaining({
+          reviewState: expect.objectContaining({
+            items: expect.arrayContaining([
+              expect.objectContaining({ source: "github-pr", body: "Please add tests" }),
+            ]),
+          }),
+        }),
+      );
+      // ...and the card returns to THIS board's wip lane, not the legacy id.
+      expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", RENAMED_VOCAB.wip);
+      expect(mockStore.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
+    });
+
+    it("still ignores a review on a RENAMED board when the card is not in a review lane", async () => {
+      /*
+      Non-vacuous companion: without it, a gate admitting every column would satisfy the case above.
+      Same renamed board, same review — only the card's lane changes.
+      */
+      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle");
+      (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(
+        { id: "FN-001", column: RENAMED_VOCAB.hold, review: undefined } as Task,
+      );
+      Object.assign(mockStore, {
+        getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getWorkflowDefinition: vi.fn(async (id: string) => (id === "pr-comment-lifecycle" ? { ir } : undefined)),
+      });
+
+      await handler.handleChangesRequested("FN-001", mockPrInfo, "reviewer", "Please add tests");
+
+      expect(mockStore.moveTask).not.toHaveBeenCalled();
     });
   });
 

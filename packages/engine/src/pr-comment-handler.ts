@@ -2,6 +2,7 @@ import type { TaskStore } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "./logger.js";
 import { resolveTerminalColumnsFor } from "./executor.js";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 /*
 FNXC:PullRequestReview 2026-07-26-00:00:
@@ -180,8 +181,36 @@ export class PrCommentHandler {
   ): Promise<void> {
     try {
       const task = await this.store.getTask(taskId);
-      if (task.column !== "in-review") {
-        prMonitorLog.log(`Task ${taskId} not in-review (${task.column}), skipping changes-requested handling`);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (engine):
+      TWO lifecycle literals on this path, and only ONE of them is countable.
+
+      The GATE (`!== "in-review"`) silently dropped a GitHub "changes requested" review on any board
+      whose review lane is renamed: no steering comment was recorded and the card never went back to
+      work, so a human reviewer's feedback vanished with a log line nobody reads. That is the counted one.
+
+      The DESTINATION below (`moveTask(taskId, "in-progress")`) is a call argument, so the census cannot
+      see it — the same pairing as the branch-worktree auto-requeue (#2797). Converting the gate alone
+      would let the handler admit the review and then attempt a move into a lane the board may not
+      declare, which `moveTask` rejects. They convert together or not at all.
+
+      Both fall back to the legacy ids: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather
+      than throwing, so a board whose workflow cannot be read behaves exactly as before.
+      */
+      const reviewLanes = new Set<string>(["in-review"]);
+      let wipTarget = "in-progress";
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, taskId);
+        if (ir) {
+          for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+            for (const id of columnsWithFlag(ir, flag)) reviewLanes.add(id);
+          }
+          const wipLanes = columnsWithFlag(ir, "countsTowardWip");
+          if (wipLanes.length > 0) wipTarget = wipLanes[0];
+        }
+      } catch { /* degraded: legacy ids */ }
+      if (!reviewLanes.has(task.column)) {
+        prMonitorLog.log(`Task ${taskId} not in a review lane (${task.column}), skipping changes-requested handling`);
         return;
       }
 
@@ -208,7 +237,7 @@ export class PrCommentHandler {
         },
         "queued",
       );
-      await this.store.moveTask(taskId, "in-progress");
+      await this.store.moveTask(taskId, wipTarget);
       await this.store.logEntry(
         taskId,
         `PR #${prInfo.number}: changes requested by @${reviewerLogin} — moved back to in-progress`,

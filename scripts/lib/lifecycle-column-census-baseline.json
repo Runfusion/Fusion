@@ -86,7 +86,6 @@
     "packages/engine/src/backlog-pressure-reporter.ts": 1,
     "packages/engine/src/ephemeral-worker-manager.ts": 1,
     "packages/engine/src/merger.ts": 1,
-    "packages/engine/src/pr-comment-handler.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
     "packages/engine/src/triage.ts": 1
   },
