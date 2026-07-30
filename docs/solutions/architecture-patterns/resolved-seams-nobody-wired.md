@@ -172,13 +172,21 @@ membership sets:
 | `engine/src/scheduler.ts:1593` | **blocked** — same, via `resolveTaskParkedColumnsSync` |
 | `core/src/workflow-lifecycle-traits.ts:231` | **not a membership use** — a returned 2-tuple |
 | `engine/src/planner-lane-resolution.ts:70, 84` | **ordering-sensitive** — a precedence list, not a set; converting would change which lane wins |
-| `core/src/default-workflow-hooks.ts:274, 280` | unclassified — needs a per-site read |
-| `dashboard/src/routes/register-task-workflow-routes.ts:304` | unclassified |
-| `engine/src/triage.ts:833` | unclassified |
+| `core/src/default-workflow-hooks.ts:274, 280` | **genuine, but a contract change** — `planningColumnsOf`/`liveWorkColumnsOf` take a `LifecycleColumns`, which is first-per-role *by construction*. Fixing the arity means `DefaultWorkflowMoveContext` carrying the IR (or trait sets) instead, which is a shared hook contract touching every caller. Not a local edit. |
+| `engine/src/triage.ts:833` | **blocked twice over** — built from `resolvePlannerLanes` (the sync reader) *and* used to build `listTasks({ column })` queries, so it is in the query-filter class too |
+| `dashboard/src/routes/register-task-workflow-routes.ts:304` | **FALSE POSITIVE of the scan** — already correct: `columnsWithFlag` for both roles, unioned, legacy only when the resolved set is empty |
 
-So of twelve: **four fixed, two blocked on the sync reader, three not defects, three still to classify.**
-That spread is the point — a sweep converting all twelve would have broken the ordering-sensitive pair and
-delivered nothing at the two sync-blocked ones.
+So of twelve: **four fixed, three blocked (two on the sync reader, one also query-shaped), one needs a
+contract change, three are not defects, one was my scan misfiring.**
+
+Two things that spread is worth saying out loud:
+
+1. A sweep converting all twelve would have **broken** the ordering-sensitive pair, delivered **nothing**
+   at the sync-blocked ones, and "fixed" a site that was already right.
+2. **The scan itself has false positives**, because it classifies by syntax — two role-shaped reads and a
+   bracket on one line. That is the same failure this program has documented about the census: an
+   instrument that counts syntax and is read as counting meaning. Treat the twelve as candidates, never
+   as a backlog.
 
 Re-measure with: for each file importing a lifecycle resolver, flag lines containing **two or more**
 `.hold`/`.intake`/`.review`/`.wip`/`.complete`/`.archived` reads **and** an array or `new Set(`.
