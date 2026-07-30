@@ -37,27 +37,39 @@ parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or Ma
     is resolving lanes for the page it fetched: a `fetchTasks` variant returning flags, or a per-task
     resolution over the 50 rows. Data-fetch change, not prop threading.
 
-  DevServerView — converted on its MainContent surface; the right-dock `overflowViewRegistry` path
-    still falls back, because `OverflowViewRenderProps` carries no per-task flags. Guard count is 0
-    for the file either way, so do not read it as done.
+  DevServerView — CLOSED 2026-07-30-20:30. Was converted on its MainContent surface only, with the
+    right-dock `overflowViewRegistry` path still falling back; both surfaces are now covered because
+    `OverflowViewRenderProps` carries `columnFlagsByTaskId`. Kept here because the reasoning matters:
+    the guard count read 0 for the file the entire time ONE surface was broken.
 
-BATCH CLOSE-OUT — 75 -> 6, and every remaining one is deliberate (u12, 2026-07-30-02:10)
+BATCH CLOSE-OUT — 75 -> 6, and the six are the TRUE number (u12, 2026-07-30-22:40)
 
-`packages/dashboard/app` is down to TWO guards across two files. None is an oversight; each is
-recorded at its site with the reason and what would actually unblock it:
+This section was rewritten three times as the batch progressed and had gone self-contradictory —
+claiming 75 -> 6 in one line, "TWO guards" in the next, and listing files the dock fix had already
+closed. Replaced wholesale with the measured final state rather than patched again.
 
-  3  DockTaskList.tsx        mounts ONLY through overflowViewRegistry, which carries no per-task
-                             flags. Same blocker as DevServerView's dock surface.
-  1  ResearchTaskActionModal fetches its OWN page, so a board-built flags map misses the archived
-                             rows this filter is about. Needs a data-fetch change.
-  1  TaskCard.tsx            left counted by an earlier pass on purpose, "so the census keeps
-                             pointing at the class"; not overridden from outside.
-  1  useTasks.ts             CROSS-BATCH — see below. Converting core's stall gate alone regresses.
+  2  utils/taskRevert.ts             REVERTED to literals — `findOpenUndoTaskForSource`'s only
+                                     caller sits ~60 lines above where `detailColumnFlags` is
+                                     derived, so it cannot supply them.
+  2  utils/taskTiming.ts             REVERTED to literals — both callers reach these from
+                                     module-level helpers with no flags in scope.
+  1  components/ResearchTaskActionModal.tsx
+                                     Fetches its OWN page; a board-built map misses the archived
+                                     rows this filter is about. Needs a data-fetch change.
+  1  components/TaskCard.tsx         Left counted by an earlier pass on purpose, "so the census
+                                     keeps pointing at the class". Not overridden from outside.
 
-DONE 2026-07-30-04:00: the dock-wide fix landed. `OverflowViewRenderProps` now carries
-`columnFlagsByTaskId`, threaded from App (reusing the map it already builds for the footer) through
-`useRightDockController` into the registry. That closed DockTaskList (3) and DevServerView's second
-surface together, as predicted — remaining batch total is 3.
+WHY THE COUNT WENT UP AT THE END. It read 2 before the seam guard
+(`__tests__/resolved-flags-seams-have-suppliers.test.ts`) was added. That guard found FIVE inert
+conversions in one tranche of mine — parameters and props that no caller supplied, so the literal was
+gone, the census had banked the credit, and the legacy fallback ran forever. Three were wired; three
+were reverted to literals because their callers genuinely cannot supply flags.
+
+So 6 is honest and 2 was not. An optional parameter every caller omits is strictly worse than the
+literal it replaced.
+
+CLOSED SINCE THE EARLIER DRAFTS: DockTaskList (3) and DevServerView's dock surface, both by the one
+registry change; useTasks (1), by deleting a check the line below it already implied.
 
 RESOLVED 2026-07-30-06:20 — the cross-batch coupling is GONE, and my flag of it was wrong
 

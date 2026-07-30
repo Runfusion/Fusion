@@ -26,8 +26,12 @@ Two full rebase attempts produced repeated conflicts and no progress.
 
 ## What works
 
-```
-git checkout -B <local> origin/<batch-branch>
+```bash
+# The repo's standing rule: branch work happens in a worktree; the primary checkout stays on main.
+wt switch --create batch-sync            # or: git worktree add -b batch-sync ../kb-worktrees/batch-sync main
+cd ../kb-worktrees/batch-sync            # (skip both if you are ALREADY in a worktree for this branch)
+
+git fetch origin && git reset --hard origin/<batch-branch>
 git merge origin/main --no-edit
 # one conflict, in the baseline:
 git checkout origin/main -- scripts/lib/lifecycle-column-census-baseline.json
