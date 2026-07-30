@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type {
+  WorkflowIr,
   TaskStore,
   Task,
   CentralCore,
@@ -33,6 +34,7 @@ import {
   resolveEffectivePlannerOversightLevel,
   resolveEffectiveSettings,
   resolveMaxAutoMergeRetries,
+  resolveTaskLifecycleColumns,
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
 } from "@fusion/core";
@@ -641,8 +643,26 @@ export class ProjectEngine {
         const store = this.runtime.getTaskStore();
         const queuedTaskIds = [...this.mergeQueue];
         const tasks = await Promise.all(queuedTaskIds.map(async (taskId) => await store.getTask(taskId).catch(() => null)));
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-19:10 (fleet: project-engine.ts merge lane):
+        THE MERGE LANE IS THE TASK'S OWN, resolved through core's `resolveTaskLifecycleColumns` — the
+        canonical helper, so no new abstraction here. Every guard in this file spelled it `in-review`, and
+        on a renamed board that means the merge machinery does not recognise its own queue: this snapshot
+        returned an EMPTY list for a queue full of review cards, so the coordinator saw nothing to admit.
+
+        Resolved per task rather than once, because a merge queue can hold cards from different workflows;
+        the shared `irCache` keeps that to one IR read per workflow, not per card.
+        */
+        const irCache = new Map<string, WorkflowIr>();
+        const lifecycleByTaskId = new Map<string, string>();
+        for (const task of tasks) {
+          if (!task) continue;
+          const lifecycle = await resolveTaskLifecycleColumns(store, task.id, irCache);
+          lifecycleByTaskId.set(task.id, lifecycle?.review ?? "in-review");
+        }
         return tasks.flatMap((task) => {
-          if (!task || task.paused || task.userPaused || task.column !== "in-review") return [];
+          if (!task || task.paused || task.userPaused
+            || task.column !== (lifecycleByTaskId.get(task.id) ?? "in-review")) return [];
           return [{
             taskId: task.id,
             projectId,
@@ -2283,8 +2303,14 @@ export class ProjectEngine {
     } catch {
       // Fall through to the not-eligible response below.
     }
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:15 (fleet): merge eligibility asks whether the card is in
+       ITS board's merge lane. With the literal, no card on a renamed board was ever eligible — auto-merge
+       did not fail, it declined every card, which is why this class of defect has no error signature. */
+    const eligibleReviewColumn = task
+      ? (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review"
+      : "in-review";
     const eligible = !!task && !!settings
-      && task.column === "in-review"
+      && task.column === eligibleReviewColumn
       && !settings.globalPause && !settings.enginePaused
       && (await this.allowInReviewMergeProcessing(task, settings, store))
       && !(task.paused && !task.mergeDetails?.mergeConfirmed);
@@ -2954,7 +2980,10 @@ export class ProjectEngine {
           Session-advisor log feed when effective enable resolves true for the task
           (task override → project default → workflow flag → off). Still needs model.
           */
-          if (task.column === "in-progress" && this.sessionAdvisor) {
+          /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:30 (fleet): the wip lane — the advisor feed exists
+             for cards that are executing, and the literal silenced it on every renamed board. */
+          if (task.column === ((await resolveTaskLifecycleColumns(store, task.id))?.wip ?? "in-progress")
+            && this.sessionAdvisor) {
             const advisorEnabled = resolveTaskSessionAdvisorEnabled(
               task,
               engineSettings,
@@ -3240,7 +3269,7 @@ export class ProjectEngine {
               continue;
             }
             const task = await store.getTask(taskId);
-            if (!task || task.column !== "in-review") {
+            if (!task || task.column !== ((await resolveTaskLifecycleColumns(store, taskId))?.review ?? "in-review")) {
               continue;
             }
             if (!(await this.allowInReviewMergeProcessing(task, settings, store))) {
@@ -4722,7 +4751,14 @@ export class ProjectEngine {
 
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
-      if (to !== "in-review") return;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-19:20 (fleet): ONE snapshot for the handoff and its
+      post-grace recheck below. The two are halves of one decision — "did this card just enter the merge
+      lane, and is it still there?" — and with the literal neither half fired on a renamed board, so
+      auto-merge was never handed a card at all.
+      */
+      const handoffReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
+      if (to !== handoffReviewColumn) return;
       if (task.paused) return;
       if (this.options.getTaskMergeBlocker?.(task)) return;
 
@@ -4743,7 +4779,7 @@ export class ProjectEngine {
             runtimeLog.warn(`Auto-merge handoff (${task.id}): task disappeared during grace period`);
             return;
           }
-          if (latestTask.column !== "in-review") {
+          if (latestTask.column !== handoffReviewColumn) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: column changed to ${latestTask.column}`);
             return;
           }
@@ -4854,7 +4890,9 @@ export class ProjectEngine {
 
   private wireTaskPauseMergeInterruption(store: TaskStore): void {
     this.taskUpdatedHandler = async (task: Task) => {
-      if (task.column !== "in-review") {
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:25 (fleet): on a renamed board this dropped EVERY card
+         from the paused-review set on its next update, so a merge paused mid-flight was never interrupted. */
+      if (task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
         this.pausedReviewTaskIds.delete(task.id);
         return;
       }
