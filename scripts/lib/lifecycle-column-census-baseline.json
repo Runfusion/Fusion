@@ -12,7 +12,6 @@
     "packages/engine/src/restart-recovery-coordinator.ts": 5,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 4,
     "packages/engine/src/replan-target.ts": 4,
-    "packages/engine/src/triage.ts": 4,
     "packages/core/src/async-mission-store-queries.ts": 3,
     "packages/core/src/task-store/async-merge-coordination.ts": 3,
     "packages/core/src/task-store/task-artifacts-ops.ts": 3,
@@ -101,6 +100,7 @@
     "packages/engine/src/plugin-runner.ts": 1,
     "packages/engine/src/pr-comment-handler.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
+    "packages/engine/src/triage.ts": 1,
     "plugins/fusion-plugin-even-realities-glasses/src/notifications/diff.ts": 1,
     "plugins/fusion-plugin-reports/src/store/report-types.ts": 1
   },
