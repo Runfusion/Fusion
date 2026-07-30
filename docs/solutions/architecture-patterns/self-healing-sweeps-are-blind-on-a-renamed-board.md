@@ -105,11 +105,42 @@ review had already fixed one commit earlier.
 4. **The log strings.** Widening a query silently invalidates every message naming the old literal.
    `recoverInterruptedMergingTasks` logged `"stale merging task(s) in in-review"` after its read covered
    several lanes — an operator debugging a renamed board would have been told the wrong column.
+5. **The guards the widened query now ACTIVATES.** This is the one that bites hardest, because it makes a
+   conversion look complete while delivering nothing.
 
-Part 4 is the one to check last and forget first. It is invisible to the census (string contents, not
-comparisons), invisible to types, and survives indefinitely because nobody diffs log strings. Each of the
-**44 remaining queries** carries the same risk: grep the enclosing sweep for its own lane names after
-widening its read.
+## Converting a query is also an activation
+
+A guard downstream of a literal query is **unreachable on a renamed board** — the sweep never hands it a
+row. Unreachable and correct are indistinguishable from the outside, which is exactly why these guards sit
+unwired for years without anyone noticing.
+
+Widen the read and they become reachable for the first time. `recoverMergeableReviewTasks` called
+`getTaskMergeBlocker(t)` unwired; the moment its query found renamed-board cards, that call declined every
+one of them. **The sweep would have found the cards and refused them** — strictly worse than not finding
+them, because it looks fixed.
+
+Measured across `self-healing.ts`: **6 sweeps hold both a literal column query and an unwired lane guard**,
+and 30 hold a literal query with no such guard.
+
+```text
+  finalizeNoOpReviewTasks                    getTaskMergeBlocker
+  recoverReviewTasksWithFailedPreMergeSteps  getTaskMergeBlocker ×2
+  recoverOrphanOnlyScopeViolations           getTaskHardMergeBlocker
+  recoverPostDoneNonContinuableWedge         getTaskHardMergeBlocker
+  recoverCompletionHandoffLimbo              getTaskMergeBlocker
+  recoverAlreadyMergedReviewTasks            getTaskHardMergeBlocker   (converted — guard now wired)
+```
+
+The last row is the cautionary one: I converted that sweep's query two commits before noticing its guard,
+so for two commits it found renamed-board cards and declined them. The scan is cheap — for each sweep, grep
+its body for a lane-sensitive helper called without a resolved set — and it must run **before** the query is
+widened, not after.
+
+`getTaskHardMergeBlocker` was the blind spot for four of the six: it is a *wrapper*, it had no lane
+parameter at all, and every one of its callers sat behind a literal query. Nothing exercised it.
+
+Parts 4 and 5 are both invisible to the census — one is string contents, the other is reachability — and
+each of the **43 remaining queries** carries both risks.
 
 ## Related
 
