@@ -5459,7 +5459,7 @@ export class TaskExecutor {
     source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
   ): Promise<void> {
     const currentTask = await this.store.getTask(task.id).catch(() => null);
-    if (!currentTask || this.isRequiredArtifactRecoveryProtected(currentTask)) return;
+    if (!currentTask || await this.isRequiredArtifactRecoveryProtected(currentTask)) return;
     task = currentTask;
     const decision = computeRecoveryDecision({
       recoveryRetryCount: task.recoveryRetryCount,
@@ -5490,7 +5490,7 @@ export class TaskExecutor {
 
     if (!decision.shouldRetry) {
       const liveTask = await this.store.getTask(task.id).catch(() => null);
-      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      if (!liveTask || await this.isRequiredArtifactRecoveryProtected(liveTask)) return;
       const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
       await this.store.logEntry(task.id, error, undefined, context);
       await this.store.updateTask(task.id, {
@@ -5512,7 +5512,7 @@ export class TaskExecutor {
     this.workflowLifecycleMovesInFlight.add(task.id);
     try {
       const liveTask = await this.store.getTask(task.id).catch(() => null);
-      if (!liveTask || this.isRequiredArtifactRecoveryProtected(liveTask)) return;
+      if (!liveTask || await this.isRequiredArtifactRecoveryProtected(liveTask)) return;
       await moveTaskToReplanColumn(this.store, { id: task.id, column: liveTask.column }, replanColumn);
     } finally {
       this.workflowLifecycleMovesInFlight.delete(task.id);
@@ -5526,15 +5526,30 @@ export class TaskExecutor {
     }, context);
   }
 
-  private isRequiredArtifactRecoveryProtected(task: Task): boolean {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-13:50 (fleet: executor.ts — made ASYNC to own its resolution):
+  This predicate protects a card from artifact-recovery replanning, and three of its four conditions are
+  lifecycle columns: the terminal pair, and a review row whose auto-merge is off (a human owns it).
+  Spelled as literals, every one of them read false on a renamed board — so a finished card, or a review
+  row a human was holding, could be moved to the replan column and have its status rewritten to
+  needs-replan.
+
+  ASYNC rather than lane-parameters: all four callers already `await store.getTask` immediately before
+  calling this, so there is no new I/O ordering, and a parameter list would put the resolution in four
+  places that must agree. The archived half is why the SYNC planner-lane resolver was not an option — it
+  exposes no archived lane — and widening a shared resolver from inside a call-site sweep is the kind of
+  scope creep that makes a conversion unreviewable.
+  */
+  private async isRequiredArtifactRecoveryProtected(task: Task): Promise<boolean> {
+    const terminalColumns = await resolveTerminalColumnsFor(this.store, task.id);
+    const reviewLane = (await this.resolveResumeLanes(task.id)).review;
     return Boolean(
       task.deletedAt
       || task.paused
       || task.userPaused === true
-      || task.column === "done"
-      || task.column === "archived"
+      || terminalColumns.includes(task.column)
       || task.mergeDetails?.mergeConfirmed === true
-      || (task.column === "in-review" && task.autoMerge === false),
+      || (task.column === reviewLane && task.autoMerge === false),
     );
   }
 
@@ -10952,7 +10967,7 @@ export class TaskExecutor {
             void (async () => {
               try {
                 const resumeTask = await this.store.getTask(task.id);
-                if (this.isRequiredArtifactRecoveryProtected(resumeTask) || resumeTask.status === "failed") return;
+                if (await this.isRequiredArtifactRecoveryProtected(resumeTask) || resumeTask.status === "failed") return;
                 await this.execute(resumeTask);
               } catch (err) {
                 executorLog.error(`Failed required-artifact read retry for ${task.id}:`, err);
