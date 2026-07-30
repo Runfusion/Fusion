@@ -4,7 +4,12 @@ import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
-import { isIntakeColumnRole } from "../utils/columnRoles";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isIntakeColumnRole,
+  isReviewColumnRole,
+} from "../utils/columnRoles";
 // `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
 // the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
 // the note at `moveTransitions`); every workflow-resolved path now reads the payload's
@@ -135,17 +140,38 @@ export function getTaskPrAutomationLabel(t: TFunction<"app">, status?: string): 
   return prAutomationStatusLabels[status];
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (fleet phase — the SAME inversion already recorded for `isPreExecutionHoldColumn` below):
+These three predicates now route through the shared role helpers in `utils/columnRoles.ts` instead of
+comparing lifecycle ids inline.
+
+`isReviewColumn` and `isDoneOrReview` ORed the legacy id UNCONDITIONALLY, which is not a fallback: a
+resolved column merely NAMED `in-review` or `done` answered true even when its traits said otherwise.
+`isMutableLiveColumn` was already correctly flags-first and is a pure de-duplication here.
+
+Behaviour delta, stated exactly. Flags absent: unchanged — the helpers degrade to the same ids
+(`done`, `archived`, `in-review`). Flags present and agreeing: unchanged. Flags present and
+DISAGREEING with the column's name: was true, now false — which is the defect, identical in kind to
+the one recorded for `isPreExecutionHoldColumn` in this file.
+
+`isDoneOrReview` keeps its `complete && !archived` shape deliberately. An archived card is finished
+but not *completed*, and Refine must not be offered on intentionally archived work; expressing that as
+`isCompleteColumnRole(...) && !isArchivedColumnRole(...)` preserves both the trait path and the
+flagless path exactly (flagless reduces to `column === "done"`, since a column cannot be both ids).
+*/
 function isReviewColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  return column === "in-review" || flags?.mergeBlocker === true || flags?.humanReview === true;
+  return isReviewColumnRole(flags, column);
 }
 
 function isDoneOrReview(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  return column === "done" || isReviewColumn(column, flags) || (flags?.complete === true && flags?.archived !== true);
+  return (
+    isReviewColumn(column, flags)
+    || (isCompleteColumnRole(flags, column) && !isArchivedColumnRole(flags, column))
+  );
 }
 
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  if (flags) return flags.complete !== true && flags.archived !== true;
-  return column !== "done" && column !== "archived";
+  return !isCompleteColumnRole(flags, column) && !isArchivedColumnRole(flags, column);
 }
 
 /**
@@ -429,6 +455,24 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   resurrecting intentionally archived work into a planner lane. Check both the semantic
   workflow trait and legacy id so every menu host omits this dead affordance.
   */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (fleet phase — FLAGGED AND LEFT, deliberately NOT marked deliberate):
+  This is an AND of both signals — hide Respecify when EITHER the id or the trait says archived — so it
+  is not the flags-first shape the rest of this file now uses, and converting it would WIDEN the
+  affordance: a column named `archived` whose traits say otherwise would start offering Respecify into a
+  route that rejects archived sources, producing the dead affordance the note above says it prevents.
+
+  That is a behaviour change with a user-visible failure mode, which is out of fleet scope. Left as-is
+  and left COUNTED — the census's exemption marker is deliberately NOT applied here — because marking it
+  would shrink the count by reclassification rather than by conversion, and the number should keep
+  pointing at this line until whoever owns Respecify decides whether fail-closed or trait-authoritative
+  is correct.
+
+  (Writing that marker's name in prose here is itself enough to exempt the guard: the classifier
+  substring-searches a comparison's leading comments. I did exactly that in the first draft and the
+  count fell to 3 instead of 4 — a comment silently changing a measurement. Worth knowing for anyone
+  documenting why a site was NOT exempted.)
+  */
   if (task.column !== "archived" && currentColumnFlags?.archived !== true) {
     actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
   }
@@ -446,7 +490,18 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   it never renders as an empty/dead affordance for tasks blocked by other
   reasons or already recovered.
   */
-  if (hasBypassReviewHandler && task.column === "in-review" && hasFailedPreMergeReviewStep(task)) {
+  /*
+  FNXC:ReviewLaneBypass 2026-07-30-21:40 (fleet phase — the bypass was INVISIBLE on a renamed board):
+  The review-lane test is now the `review` ROLE, not the id `in-review`. This one is worth calling out
+  because the direction of the fix is unusual: converting it makes the affordance APPEAR where it
+  previously did not. A workflow that renames its review lane still strands cards on a failed pre-merge
+  step in exactly the FN-7720 way, but the id comparison hid the only escape hatch from that state —
+  the operator saw a permanently unmergeable card and no way to release it.
+
+  `hasFailedPreMergeReviewStep(task)` remains the real precondition, so widening the lane test cannot
+  surface the action on a card that is not actually stranded.
+  */
+  if (hasBypassReviewHandler && isReviewColumnRole(currentColumnFlags, task.column) && hasFailedPreMergeReviewStep(task)) {
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),

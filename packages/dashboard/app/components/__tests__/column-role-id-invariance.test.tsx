@@ -30,7 +30,7 @@ check fails the agent-active case the same way. Both were run.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { buildTaskActionMenuModel } from "../TaskContextMenu";
+import { buildTaskActionMenuModel, getTaskReviewAction } from "../TaskContextMenu";
 import { isTaskAgentActive } from "../../utils/taskActivity";
 
 const t = ((_key: string, fallback?: string) => fallback ?? _key) as never;
@@ -133,6 +133,131 @@ describe("column-role decisions are invariant under column RENAMING (U12 evidenc
     expect(new Set(verdicts).size).toBe(1);
     // Non-vacuous: fresh planner activity on a pre-implementation card IS active.
     expect(verdicts[0]).toBe(true);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:55 (fleet phase — the TERMINAL/REVIEW roles, and the
+  direction the cases above cannot reach):
+
+  The renaming property is the wrong instrument for the three predicates converted here
+  (`isReviewColumn`, `isDoneOrReview`, `isMutableLiveColumn`). They ORed the legacy id with the traits
+  UNCONDITIONALLY, so renaming `in-review` to `validating` never broke them — the trait arm answered.
+  A pure rename case passes before AND after, which is a test that proves nothing.
+
+  The delta is the OTHER direction: a column that still CARRIES a lifecycle name while its traits say
+  something else. That is not a hypothetical board — it is what a project gets by repurposing a default
+  column instead of deleting it, and by the pre-load window where a card's stored id outlives the
+  workflow that declared it. So the property here is the converse of the one above: hold the id at a
+  lifecycle name, and the decision must follow the TRAITS.
+
+  REVERT CHECK, measured (both run, both fail on revert):
+    - Restoring `column === "in-review" || ...` in `isReviewColumn` and `column === "done" || ...` in
+      `isDoneOrReview` fails "traits decide, not the lifecycle-sounding name": the `in-review`-named
+      mid-flight card gains `refine`, which its `building`-named twin does not have, and the two
+      lineages stop agreeing.
+    - Restoring `task.column === "in-review"` on the bypass guard fails "the review bypass survives a
+      renamed review lane": the action disappears for `validating`.
+  */
+  const REVIEW_TRAITS = { mergeBlocker: true } as const;
+
+  /*
+  Every optional handler wired, deliberately. `menuDecisions` above supplies only `onPlan`, so the
+  actions gated behind a handler — `refine` among them — cannot appear in its output at all. My first
+  draft of these cases reused it and passed with the conversion REVERTED, because the branch under test
+  was unreachable rather than correct. Anything a host can wire has to be wired for the absence of an
+  action to carry information.
+  */
+  function fullMenuDecisions(columnId: string, flags: Record<string, boolean>, task: Partial<Task> = {}) {
+    const model = buildTaskActionMenuModel({
+      task: mkTask({ id: "FN-1", column: columnId, ...task }),
+      t,
+      columnLabel,
+      currentColumnFlags: flags as never,
+      onPlan: vi.fn(),
+      onOpenRefine: vi.fn(),
+      onRespecify: vi.fn(),
+      onReset: vi.fn(),
+      onTogglePause: vi.fn(),
+      onBypassReview: vi.fn(),
+    } as never);
+    return {
+      shouldShowActionsMenu: model.shouldShowActionsMenu,
+      actionIds: model.actions.map((action: { id: string }) => action.id),
+    };
+  }
+
+  it("traits decide, not the lifecycle-sounding name: an `in-review`-NAMED mid-flight card matches its renamed twin", () => {
+    const namedLikeReview = fullMenuDecisions("in-review", WIP_TRAITS as never);
+    const plainlyNamed = fullMenuDecisions("building", WIP_TRAITS as never);
+
+    expect(namedLikeReview).toEqual(plainlyNamed);
+    /*
+    Non-vacuous in the direction that matters: Refine belongs to done/review lanes, so a card whose
+    traits say it is mid-flight must not offer it however its column is spelled. Before the conversion
+    the name alone was enough.
+    */
+    expect(namedLikeReview.actionIds).not.toContain("refine");
+  });
+
+  it("traits decide for the terminal role too: a `done`-NAMED mid-flight card is still mutable live work", () => {
+    const namedLikeDone = fullMenuDecisions("done", WIP_TRAITS as never);
+    expect(namedLikeDone).toEqual(fullMenuDecisions("building", WIP_TRAITS as never));
+    expect(namedLikeDone.actionIds).not.toContain("refine");
+  });
+
+  it("a mid-flight card named `in-review` is not offered MERGE — the id alone used to open the merge lane", () => {
+    /*
+    The sharpest consequence of the unconditional id OR, and a separate surface from the menu:
+    `getTaskReviewAction` returns undefined for anything that is not a review lane, so before the
+    conversion a repurposed column still NAMED `in-review` produced a live "Merge & Close" on a card
+    whose traits say it is mid-implementation.
+    */
+    expect(
+      getTaskReviewAction(mkTask({ id: "FN-6", column: "in-review" }), {
+        t,
+        currentColumnFlags: WIP_TRAITS as never,
+        onMerge: vi.fn(),
+      } as never),
+    ).toBeUndefined();
+
+    // Non-vacuous: the same card in a real review lane DOES get the action, under either spelling.
+    for (const columnId of ["in-review", "validating"]) {
+      expect(
+        getTaskReviewAction(mkTask({ id: "FN-7", column: columnId }), {
+          t,
+          currentColumnFlags: REVIEW_TRAITS as never,
+          onMerge: vi.fn(),
+        } as never),
+      ).toBeDefined();
+    }
+  });
+
+  it("the review bypass survives a renamed review lane (the affordance the id comparison hid)", () => {
+    const stranded = {
+      workflowStepResults: [{ phase: "pre-merge", status: "failed" }],
+    } as unknown as Partial<Task>;
+
+    for (const columnId of ["in-review", "validating"]) {
+      const model = buildTaskActionMenuModel({
+        task: mkTask({ id: "FN-4", column: columnId, ...stranded }),
+        t,
+        columnLabel,
+        currentColumnFlags: REVIEW_TRAITS as never,
+        onBypassReview: vi.fn(),
+      } as never);
+      expect(model.actions.map((action: { id: string }) => action.id)).toContain("bypass-review");
+    }
+  });
+
+  it("and the bypass still requires a genuinely stranded card, so widening the lane test did not widen the action", () => {
+    const model = buildTaskActionMenuModel({
+      task: mkTask({ id: "FN-5", column: "validating" }),
+      t,
+      columnLabel,
+      currentColumnFlags: REVIEW_TRAITS as never,
+      onBypassReview: vi.fn(),
+    } as never);
+    expect(model.actions.map((action: { id: string }) => action.id)).not.toContain("bypass-review");
   });
 
   it("a stale planner card is inactive on all three lineages, so the invariance is not just `always true`", () => {
