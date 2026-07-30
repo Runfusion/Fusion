@@ -24,6 +24,7 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
+import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
@@ -2535,9 +2536,7 @@ export function TaskDetailContent({
         ids when the destination has no resolved metadata.
         */
         const targetFlags = workflowMoveMetadata?.moveColumns?.find((candidate) => candidate.id === column)?.flags;
-        const targetIsPreImplementation = targetFlags
-          ? targetFlags.intake === true || targetFlags.hold === true
-          : column === "todo" || column === "triage";
+        const targetIsPreImplementation = isPreImplementationColumnRole(targetFlags, column);
         const shouldPrompt = targetIsPreImplementation && hasStepProgress;
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
@@ -3036,13 +3035,11 @@ export function TaskDetailContent({
   */
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
-  The INTAKE lane's approval hold. `task.column === "triage"` is deleted by U11, which
+  The INTAKE lane's approval hold. The legacy `triage` id is deleted by U11, which
   would silently drop the Approve/Reject controls from a parked planning card — the
   operator sees a task stuck "awaiting approval" with no way to answer it.
   */
-  const isIntakeColumn = workflowMoveMetadata?.currentColumnFlags
-    ? workflowMoveMetadata.currentColumnFlags.intake === true
-    : task.column === "triage";
+  const isIntakeColumn = isIntakeColumnRole(workflowMoveMetadata?.currentColumnFlags, task.column);
   const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 

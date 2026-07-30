@@ -42,6 +42,15 @@ const LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS: ReadonlySet<string> = new Set(["todo
 const LEGACY_INTAKE_COLUMN_ID = "triage";
 
 /**
+ * Pre-graph hold id, used only when a column has no resolved traits.
+ *
+ * Post-U11 `todo` carries BOTH `intake` and `hold` in the default lineage, which is why
+ * the intake and hold fallbacks name different ids and neither can be derived from the
+ * other.
+ */
+const LEGACY_HOLD_COLUMN_ID = "todo";
+
+/**
  * Does this column play the INTAKE role — the lane a card enters before implementation?
  *
  * Drives the transient Planning badge. Traits when resolved; the legacy intake id only
@@ -62,4 +71,13 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
   return flags
     ? Boolean(flags.intake || flags.hold)
     : LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS.has(columnId);
+}
+
+/**
+ * Does this column play the HOLD role — a lane a card waits in rather than works in?
+ *
+ * Traits when resolved; the legacy hold id only when they are absent.
+ */
+export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags ? flags.hold === true : columnId === LEGACY_HOLD_COLUMN_ID;
 }

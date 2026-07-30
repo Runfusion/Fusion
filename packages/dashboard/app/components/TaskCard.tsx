@@ -34,6 +34,7 @@ import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import { isTaskStuck } from "../utils/taskStuck";
+import { isHoldColumnRole, isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import { getRevertOfId, isTaskReverted } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
@@ -1004,12 +1005,8 @@ function TaskCardComponent({
   loaded board whose column its workflow declares — the traits decide and the U11 merge
   is a non-event. The fallback retires with the load window, not with this change.
   */
-  const isIntakeColumn = taskColumnFlags
-    ? taskColumnFlags.intake === true
-    : task.column === "triage";
-  const isHoldColumn = taskColumnFlags
-    ? taskColumnFlags.hold === true
-    : task.column === "todo";
+  const isIntakeColumn = isIntakeColumnRole(taskColumnFlags, task.column);
+  const isHoldColumn = isHoldColumnRole(taskColumnFlags, task.column);
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSteps, setShowSteps] = useState(
@@ -1965,9 +1962,9 @@ function TaskCardComponent({
     || Boolean(fanout && fanout.totalCount > 0);
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
-  `manualIntake`, not `intake && column !== "triage"`. The old form used a hardcoded id to
+  `manualIntake`, not `intake` combined with a legacy-id exclusion. The old form used a hardcoded id to
   stand in for a fact the payload did not carry: an intake column that does NOT auto-triage.
-  It also inverts under U11 — `triage` is deleted, so `column !== "triage"` becomes
+  It also inverts under U11 — `triage` is deleted, so excluding that id becomes
   vacuously true and Start would appear on every planning card. The flag is derived
   server-side from the intake trait's `autoTriage: false` config.
   */
@@ -2480,9 +2477,7 @@ function TaskCardComponent({
       the single fallback documented at the role helpers above.
       */
       const targetFlags = taskMoveColumns?.find((candidate) => candidate.id === column)?.flags;
-      const targetIsPreImplementation = targetFlags
-        ? targetFlags.intake === true || targetFlags.hold === true
-        : column === "todo" || column === "triage";
+      const targetIsPreImplementation = isPreImplementationColumnRole(targetFlags, column);
       const shouldPrompt = targetIsPreImplementation && hasStepProgress;
       let moveOptions: { preserveProgress?: boolean } | undefined;
 

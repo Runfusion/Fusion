@@ -11,6 +11,7 @@ import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
+import { isPreImplementationColumnRole } from "../utils/columnRoles";
 import { isTaskAgentActive } from "../utils/taskActivity";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
@@ -441,11 +442,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       where the card and the destination differ. Ids remain the fallback for the
       no-metadata window.
       */
-      const shouldPrompt = hasStepProgress && (
-        columnFlags
-          ? Boolean(columnFlags.intake || columnFlags.hold)
-          : column === "todo" || column === "triage"
-      );
+      const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(columnFlags, column);
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
