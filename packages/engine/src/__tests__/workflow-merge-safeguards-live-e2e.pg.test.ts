@@ -203,7 +203,36 @@ pgDescribe("live merge safeguards E2E: real store, real refusals", () => {
 
   it("ALSO moves a USER-paused proven-merged card to complete — flagged, see comment", async () => {
     const wf = await seedWorkflow(DEFAULT_VOCAB, "userpaused");
-    await seedProvenMergedTask("FN-SG-USERPAUSED", DEFAULT_VOCAB, wf, { userPaused: true, paused: true });
+    await seedProvenMergedTask("FN-SG-USERPAUSED", DEFAULT_VOCAB, wf);
+    /*
+    FNXC:MergeSafeguards 2026-07-29-21:40 (#2615 review — greptile P1 was CORRECT):
+    `userPaused` must be set through `store.pauseTask(..., { userPaused: true })`, the
+    supported writer. Passing it in an `updateTask` patch does NOT persist — measured:
+    the row read back as `{ userPaused: undefined, paused: true }`, so the original
+    version of this case was a silent duplicate of the plain-pause case above and would
+    have stayed green even if user-paused cards were genuinely refused.
+
+    I had "verified" the field was writable by finding it in a column list at
+    task-mutation-ops.ts:48 — which is a SELECT projection, i.e. what is READ, not what
+    may be written. Reading the list was not evidence; running it was.
+    */
+    await h.store().pauseTask("FN-SG-USERPAUSED", true, undefined, { userPaused: true });
+
+    /*
+    FNXC:MergeSafeguards 2026-07-29-21:30 (#2615 review — greptile P1):
+    PROVE THE FIXTURE TOOK. The review flagged that if `updateTask` dropped
+    `userPaused` as an unsupported field, this case would silently degrade into a
+    duplicate of the plain-pause case above and stay green even if genuinely
+    user-paused cards were refused. `userPaused` IS in updateTask's allowed-field set
+    (task-mutation-ops.ts:48), but "I read the allow-list" is not evidence — a fixture
+    that cannot prove its own precondition is exactly the failure mode this suite
+    exists to remove, so assert the persisted row before acting on it.
+    */
+    // PROVE THE FIXTURE TOOK before acting on it: a case that cannot establish its own
+    // precondition proves nothing about the guard it names.
+    h.store().taskCache.delete("FN-SG-USERPAUSED");
+    const seeded = await h.store().getTask("FN-SG-USERPAUSED");
+    expect({ userPaused: seeded.userPaused, paused: seeded.paused }).toEqual({ userPaused: true, paused: true });
 
     const result = await finalize("FN-SG-USERPAUSED");
 
