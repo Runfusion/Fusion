@@ -68,3 +68,52 @@ describe("gitlab parity inventory documentation contract", () => {
     expect(readDoc("docs/signals-connectors.md")).toContain("[GitLab Parity Inventory](./gitlab-parity-inventory.md)");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-09:45 (fleet phase — CODE parity, not just documentation parity):
+The contract above checks that the parity INVENTORY DOC mentions each surface. It cannot notice that the
+two tracking services, which implement one of those surfaces twice, have drifted in how they decide which
+moves warrant a comment.
+
+That drift really happened in this program: `github-tracking-comments.ts` was converted to resolved
+lifecycle roles while `gitlab-tracking-comments.ts` kept comparing `event.to` to `"in-progress"` and
+`"done"`. The GitHub half worked on a renamed board and the GitLab half silently posted nothing — the
+FN-6115 -> FN-6118 -> FN-6123 shape (one behaviour in two modules, one converted) arriving through the
+provider-parity door instead of the desktop/mobile one.
+
+Comments are stripped before searching, so the FNXC notes at those sites — which necessarily quote the
+literals they explain — do not satisfy or trip this check.
+*/
+describe("github and gitlab tracking services resolve lanes the same way", () => {
+  const SERVICES = [
+    "packages/dashboard/src/github-tracking-comments.ts",
+    "packages/dashboard/src/gitlab-tracking-comments.ts",
+  ];
+
+  it("both resolve the moved task's lifecycle columns", async () => {
+    const { stripComments } = await import("../../../../scripts/lib/lifecycle-column-census.mjs") as {
+      stripComments: (source: string) => string;
+    };
+    for (const file of SERVICES) {
+      const code = stripComments(readDoc(file));
+      expect(code, `${file} must resolve lifecycle columns rather than name lanes`)
+        .toContain("resolveTaskLifecycleColumns");
+    }
+  });
+
+  it("neither compares a move target to a legacy lane id", async () => {
+    const { stripComments } = await import("../../../../scripts/lib/lifecycle-column-census.mjs") as {
+      stripComments: (source: string) => string;
+    };
+    /*
+    `event.to` specifically: these services' move handlers are the drifted surface. A broader scan would
+    trip on unrelated status strings and on the formatters' own `transition` discriminant, which is a
+    caller-chosen mode and deliberately still a literal in BOTH files.
+    */
+    const OFFENDING = /event\.to\s*[!=]==\s*"(in-progress|done|todo|triage|in-review|archived)"/g;
+    for (const file of SERVICES) {
+      const code = stripComments(readDoc(file));
+      expect(code.match(OFFENDING) ?? [], `${file} still compares event.to to a legacy lane id`).toEqual([]);
+    }
+  });
+});

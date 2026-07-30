@@ -34,7 +34,7 @@
     "packages/core/src/task-store/task-store-helpers.ts": 4,
     "packages/dashboard/app/components/TaskReviewTab.tsx": 4,
     "packages/dashboard/app/components/taskSorting.ts": 4,
-    "packages/dashboard/src/gitlab-tracking-comments.ts": 4,
+    "packages/dashboard/src/gitlab-tracking-comments.ts": 1,
     "packages/dashboard/src/routes/register-git-github.ts": 4,
     "packages/engine/src/agent-heartbeat.ts": 4,
     "packages/engine/src/replan-target.ts": 4,

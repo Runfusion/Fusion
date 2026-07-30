@@ -22,6 +22,64 @@ describe("GitLabTrackingCommentService", () => {
     expect(fetchImpl.mock.calls[1][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/issues/5/notes");
     expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (done)");
   });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-09:35 (fleet phase — the GitLab half, and the PAIR):
+  `handleTaskMoved` decided which moves warrant a comment by comparing `event.to` to the literals
+  `in-progress` and `done`. On a renamed board neither matched, so GitLab tracking silently posted NO
+  comments — the linked issue or MR just stopped being updated, with no error and no log line.
+
+  The store fake gains a workflow reader ONLY for these cases; every case above omits it and keeps
+  asserting the legacy-id fallback, which is exactly why none of them could have caught this. (See
+  docs/solutions/test-failures/optional-flags-seam-hides-unconverted-column-guards.md.)
+
+  REVERT CHECK, measured: restoring the literal lane test makes the renamed case fail with 0 fetch calls.
+  */
+  const RENAMED_IR = {
+    version: "v2",
+    id: "custom:renamed",
+    name: "Renamed",
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function renamedStore() {
+    const s = store();
+    return Object.assign(s, {
+      getTaskWorkflowSelection: () => ({ workflowId: "custom:renamed", stepIds: [] }),
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+    });
+  }
+
+  it("posts a tracking comment when a card reaches a RENAMED complete lane", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 1 })); vi.stubGlobal("fetch", fetchImpl);
+    const s = renamedStore(); new GitLabTrackingCommentService(s as any).start();
+    s.emit("task:moved", { task: task("merge_request"), from: "backlog", to: "shipped" });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    // The comment SHAPE is still the fixed "done" mode — a role decides the lane, not the wording.
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (shipped)");
+  });
+
+  it("posts a tracking comment when a card reaches a RENAMED wip lane", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 1 })); vi.stubGlobal("fetch", fetchImpl);
+    const s = renamedStore(); new GitLabTrackingCommentService(s as any).start();
+    s.emit("task:moved", { task: task("group_issue"), from: "backlog", to: "building" });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+  });
+
+  it("stays silent for a move into a lane that plays no notable role on that renamed board", async () => {
+    // Non-vacuous: without this, a service commenting on EVERY move satisfies both cases above.
+    const fetchImpl = vi.fn(); vi.stubGlobal("fetch", fetchImpl);
+    const s = renamedStore(); new GitLabTrackingCommentService(s as any).start();
+    s.emit("task:moved", { task: task(), from: "building", to: "backlog" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("skips missing auth without calling GitLab", async () => {
     const s = store(); s.getSettings.mockResolvedValueOnce({ gitlabAuthToken: "" }); const fetchImpl = vi.fn(); vi.stubGlobal("fetch", fetchImpl);
     new GitLabTrackingCommentService(s as any).start(); s.emit("task:moved", { task: task(), from: "todo", to: "done" });
