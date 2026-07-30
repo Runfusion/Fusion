@@ -1,12 +1,16 @@
 import type { Agent, AgentStore, Task, TaskStore } from "@fusion/core";
-import { isAgentAutoAssignable, isEphemeralAgent } from "@fusion/core";
-
-const ACTIVE_COLUMNS = new Set(["todo", "in-progress", "in-review"]);
+import { isAgentAutoAssignable, isEphemeralAgent, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 type SelectPermanentAgentForTaskOptions = {
   task: Task;
   agentStore: Pick<AgentStore, "listAgents" | "getChainOfCommand">;
-  taskStore: Pick<TaskStore, "listTasks">;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:30 (batch-engine): widened from Pick<TaskStore, "listTasks">
+  to include the workflow readers  needs. Its only production caller
+  (scheduler.ts) passes a full TaskStore, so this narrows nothing in practice; the Pick was simply
+  documenting the subset used at the time.
+  */
+  taskStore: Pick<TaskStore, "listTasks" | "getTaskWorkflowSelection" | "getTaskWorkflowSelectionAsync" | "getWorkflowDefinition">;
 };
 
 function isAgentEnabled(agent: Agent): boolean {
@@ -79,9 +83,33 @@ export async function selectPermanentAgentForTask({ task, agentStore, taskStore 
   const preferredEligible = eligibleAgents.filter((agent) => preferredAgentIds.has(agent.id));
   const candidatePool = preferredEligible.length > 0 ? preferredEligible : eligibleAgents;
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
+  Assignment load counts how many ACTIVE tasks each agent already holds, and it is what balances new work
+  across agents. On a renamed board no task counted, so every agent looked unloaded and the balancer piled
+  work onto whichever sorted first.
+
+  One IR cache for the pass so the loop stays cheap; the legacy trio is unioned in for the usual reason.
+  */
+  const loadIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const activeLanes = new Map<string, ReadonlySet<string>>();
+  for (const taskItem of allTasks) {
+    if (activeLanes.has(taskItem.id)) continue;
+    const lanes = new Set<string>(["todo", "in-progress", "in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(taskStore, taskItem.id, loadIrCache);
+      if (ir) {
+        for (const flag of ["hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) lanes.add(id);
+        }
+      }
+    } catch { /* degraded: legacy trio */ }
+    activeLanes.set(taskItem.id, lanes);
+  }
+
   const assignmentLoad = new Map<string, number>();
   for (const taskItem of allTasks) {
-    if (!taskItem.assignedAgentId || !ACTIVE_COLUMNS.has(taskItem.column)) continue;
+    if (!taskItem.assignedAgentId || activeLanes.get(taskItem.id)?.has(taskItem.column) !== true) continue;
     assignmentLoad.set(taskItem.assignedAgentId, (assignmentLoad.get(taskItem.assignedAgentId) ?? 0) + 1);
   }
 
