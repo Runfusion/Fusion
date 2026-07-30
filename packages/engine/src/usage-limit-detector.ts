@@ -167,14 +167,22 @@ export class UsageLimitPauser {
         TRIGGERING task was paused, and that only because of the always-include-the-trigger fallback below.
         The peer executing on the same rate-limited provider was left running.
 
-        Fail-soft to the legacy id when the workflow cannot be resolved, which is what the literal did.
+            FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (PR #2672 review, greptile P1):
+        THE FALLBACK IS PER ROLE, not per object. My first version keyed it on whether `activeLanes` existed
+        at all, so a workflow that RESOLVES but declares no wip (or no review) column suppressed the legacy
+        id and resolved no providers — reintroducing this very bug for the partial-vocabulary case. A missing
+        ROLE is not the same fact as a missing WORKFLOW, and only the second one means "no basis".
+
+        Falling back per role can only ADD pauses, for a card sitting in a legacy-named column on a board that
+        declares no such role — which is the safe direction here and the one the note above states: the cost
+        of a wrong include is pausing work that was fine.
         */
-        ? ((activeLanes ? activeLanes.wip === task.column : task.column === "in-progress") ? [
+        ? (((activeLanes?.wip ?? "in-progress") === task.column) ? [
             resolveExecutorSessionModel(task.modelProvider, task.modelId, settings).provider,
             resolveValidatorSessionModel(task.validatorModelProvider, task.validatorModelId, settings).provider,
           ] : [])
         : agentType === "merger"
-          ? ((activeLanes ? activeLanes.review === task.column : task.column === "in-review")
+          ? (((activeLanes?.review ?? "in-review") === task.column)
             ? [resolveMergerSessionModel(settings, undefined, task).provider]
             : [])
           : [];
@@ -236,7 +244,21 @@ export class UsageLimitPauser {
     keeps the legacy literal for it.
     */
     const activeLanesByTask = new Map<string, { wip?: string; review?: string } | undefined>();
-    await Promise.all(tasks.map(async (task) => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (PR #2672 review, greptile P2):
+    RESOLVE ONLY THE CANDIDATES. The first version resolved every task on the board before filtering, so a
+    rate limit on a 400-card board paid 400 resolutions to pause a handful — and terminal or paused cards,
+    which can never be affected, were resolved too. The cheap predicates run first now, so the resolution
+    cost tracks the number of plausible tasks rather than the size of the board.
+
+    KNOWN AND UNCHANGED: concurrent misses on the same workflow can still both read, because `irCache` fills
+    after the await. That is a property this path shares with the planner-lane resolution above it, and
+    serialising to fix it would trade a bounded duplicate read for latency on the pause — which is the
+    operation an operator is waiting on. Named rather than silently accepted.
+    */
+    const laneCandidates = tasks.filter((task) =>
+      task.paused !== true && task.column !== "done" && task.column !== "archived");
+    await Promise.all(laneCandidates.map(async (task) => {
       const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
       activeLanesByTask.set(task.id, columns ? { wip: columns.wip, review: columns.review } : undefined);
     }));

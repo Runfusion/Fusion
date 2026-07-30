@@ -425,3 +425,93 @@ describe("a provider rate limit pauses every card actually running on that provi
     expect(await pausedIds(store)).toContain("FN-PEER");
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:35 (PR #2672 review, greptile P1 + P2):
+
+TWO PROPERTIES MY FIRST VERSION GOT WRONG.
+
+1. THE FALLBACK IS PER ROLE, NOT PER OBJECT. I keyed it on whether `activeLanes` existed at all, so a
+   workflow that RESOLVES but declares no wip (or no review) column suppressed the legacy id and resolved no
+   providers — reintroducing the exact bug this change fixes, for the partial-vocabulary case. A missing ROLE
+   is not the same fact as a missing WORKFLOW; only the second means "no basis".
+
+2. RESOLVE ONLY THE CANDIDATES. Resolving every task before filtering made a rate limit on a 400-card board
+   pay 400 resolutions to pause a handful, including terminal and paused cards that can never be affected.
+*/
+describe("lane resolution degrades per role and costs only what it must", () => {
+  /** Declares a wip lane but NO review lane — the partial vocabulary that broke the first version. */
+  const NO_REVIEW_IR = {
+    version: "v2", id: "wf-partial", name: "partial", nodes: [], edges: [],
+    columns: [
+      { id: "queued", name: "Queued", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  const card = (id: string, column: string) => ({
+    id, column, dependencies: [], steps: [], currentStep: 0, log: [],
+    modelProvider: "openai-codex", modelId: "gpt-5",
+  });
+
+  function storeFor(tasks: any[], ir: unknown, workflowId = "wf-partial") {
+    const store = createMockStore(tasks);
+    const selection = { workflowId, stepIds: [] };
+    const reads = { definition: 0 };
+    /*
+    Records WHICH task ids were asked about, not how many reads happened. A read count is
+    concurrency-dependent here — the shared IR cache fills after an await, so same-workflow tasks race and the
+    number lands anywhere between 1 and N. Asking "was this task resolved at all?" is exact and race-free,
+    which is what a filtering assertion actually needs.
+    */
+    const asked: string[] = [];
+    store.getTaskWorkflowSelectionAsync = async (id: string) => {
+      asked.push(id);
+      return selection;
+    };
+    store.getTaskWorkflowSelection = (id: string) => {
+      asked.push(id);
+      return selection;
+    };
+    store.getWorkflowDefinition = async () => {
+      reads.definition += 1;
+      return ir ? { id: workflowId, ir } : undefined;
+    };
+    (store as any).reads = reads;
+    (store as any).asked = asked;
+    return store;
+  }
+
+  it("keeps the legacy REVIEW id when the workflow declares a wip lane but no review lane", async () => {
+    // Pre-fix: `activeLanes` was truthy, `review` undefined, so an `in-review` card resolved no providers and
+    // kept running on the rate-limited provider.
+    const store = storeFor([card("FN-TRIGGER", "in-review"), card("FN-PEER", "in-review")], NO_REVIEW_IR);
+
+    await new UsageLimitPauser(store).onUsageLimitHit("merger", "FN-TRIGGER", "rate_limit_error: Rate limit exceeded", "openai-codex");
+
+    expect((store.pauseTask.mock.calls as unknown[][]).map((c) => c[0])).toContain("FN-PEER");
+  });
+
+  it("does not resolve a workflow for terminal or paused tasks", async () => {
+    // Only FN-LIVE is a plausible candidate; the other three can never be affected, so paying a resolution
+    // for them is cost with no possible outcome.
+    const store = storeFor(
+      [
+        card("FN-LIVE", "in-progress"),
+        card("FN-DONE", "done"),
+        card("FN-ARCHIVED", "archived"),
+        { ...card("FN-PAUSED", "in-progress"), paused: true },
+      ],
+      NO_REVIEW_IR,
+    );
+
+    await new UsageLimitPauser(store).onUsageLimitHit("executor", "FN-LIVE", "rate_limit_error: Rate limit exceeded", "openai-codex");
+
+    // Exact, not a count: the three tasks that can never be affected are never resolved at all.
+    const asked = (store as any).asked as string[];
+    expect(asked).toContain("FN-LIVE");
+    expect(asked).not.toContain("FN-DONE");
+    expect(asked).not.toContain("FN-ARCHIVED");
+    expect(asked).not.toContain("FN-PAUSED");
+  });
+});
