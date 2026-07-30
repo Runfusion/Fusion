@@ -186,3 +186,68 @@ The second is the general warning for this whole audit: **on the merged column, 
 different questions.** Any site that used `triage` to mean "is being planned" cannot simply be
 paired with `todo`, because `todo` also means "is parked waiting for capacity". Those sites need
 status or a trait, not a wider literal.
+
+
+---
+
+# Open defect: the live move path accepts the deleted column (2026-07-30)
+
+Found while proving U11's caveat 2. **Not fixed** — see the scoping note below. Reproduction and
+guard-rails: `packages/core/src/__tests__/live-move-path-undeclared-target.test.ts`.
+
+## The defect
+
+A default-workflow card in Planning can be moved **into `triage`** — a column its workflow no
+longer declares — re-creating exactly the stranded state `reconcileUndeclaredTaskColumns` exists to
+repair. Measured on a fresh store:
+
+```
+experimentalFeatures.workflowColumns   null            <- no production writer
+createTask(...)                        column = "todo"
+moveTask("todo" -> "triage")           ACCEPTED
+moveTask("todo" -> "bogus-column")     REJECTED: "Valid targets: in-progress, triage, archived"
+```
+
+The second rejection is the tell: validation is real, but it is the **legacy `VALID_TRANSITIONS`**
+table talking, and that table does not know the card's workflow. Its `todo` row still lists
+`triage`.
+
+## Why the workflow-aware check does not run
+
+`moves.ts` gates its workflow-adjacency block — including
+`workflowHasColumn(workflowIr, toColumn)` — on `isWorkflowColumnsCompatibilityFlagEnabled`, which
+reads the RAW `experimentalFeatures.workflowColumns` key. Nothing writes it, so the block is dead on
+the path every real project takes.
+
+**This also means U11's undeclared-source escape hatch in `resolveAllowedColumns` does not run in
+production.** It was added (with #2515) so a card stranded in a deleted column would have a legal
+move instead of `Valid targets: none`; on the live path that rescue comes from the legacy table
+instead. Mutation-verified: stubbing the hatch back to `[]` leaves the operator-move test green.
+
+## Why it is not fixed here
+
+PR #2499 un-gated the CAPACITY check and explicitly scoped validation out:
+
+> SCOPE, deliberately narrow: only the CAPACITY check is un-gated. `workflowIr` stays flag-gated so
+> transition VALIDATION keeps its current behavior — the inline path's bare-Error/"Valid targets:"
+> contract is unchanged, and none of the Phase A2 divergences are flipped here.
+
+That is a considered decision by the owner of this function, and several suites pin the error
+contract it protects. What has changed since is U11: **the legacy table now offers a target the
+default workflow does not declare, which it never did before.** That is new input to the scoping
+call, not licence to ignore it — so this is handed to U2b with a reproduction rather than patched
+from outside.
+
+## Exposure
+
+Narrow but real. U10 already fixed the dashboard move menu to offer only workflow-declared targets,
+so the board does not present this. The exposure is the **write path** — REST API, CLI, plugins, and
+any stale client — which is why the guard belongs in `moves.ts` rather than only in the UI.
+
+## Guard-rails already in place for the fix
+
+Four passing cases pin what a fix must NOT break: every declared lifecycle move
+(`todo -> in-progress -> in-review -> done`), archiving, and a `recoveryRehome` reaching an
+undeclared column on purpose (the path that rescues already-stranded cards). Plus a premise test
+asserting the compatibility flag really is unset, so the suite fails loudly if that ever changes
+rather than silently testing a different code path.
