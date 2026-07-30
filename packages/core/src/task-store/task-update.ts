@@ -16,7 +16,7 @@ import type {Task, Column, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateCustomFieldPatch, CustomFieldRejectionError} from "../task-fields.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
-import {validateNodeOverrideChange} from "../node-override-guard.js";
+import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../node-override-guard.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -50,7 +50,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const preUpdateDescription = task.description;
 
       if (updates.nodeId !== undefined) {
-        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null);
+        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null, await resolveNodeOverrideLanes(store, id));
         if (!validation.allowed) {
           throw new Error(validation.message);
         }

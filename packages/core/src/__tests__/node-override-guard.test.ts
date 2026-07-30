@@ -2,6 +2,47 @@ import { describe, expect, it } from "vitest";
 
 import { validateNodeOverrideChange } from "../node-override-guard.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:35 (batch-core):
+
+BOTH GUARDS ANSWERED A ROLE QUESTION WITH A COLUMN NAME.
+
+  - "is this task executing right now?" refused a mid-flight override. Keyed on `in-progress`, a
+    renamed board let an operator re-route a RUNNING task — precisely what the guard exists to stop.
+  - the terminal-node gate asks whether the task has COMPLETED. Keyed on `done`, a renamed board
+    refused the override for exactly the tasks that had legitimately reached the end node.
+
+The guard is synchronous by design, so the lanes are injected — and both production callers
+(`branch-and-pr-entities.ts` and `task-update.ts`) now resolve and pass them, which is what keeps
+this from being an option only tests supply.
+*/
+describe("node override lanes are resolved, not named", () => {
+  const RENAMED = { wipColumns: new Set(["building"]), completeColumns: new Set(["shipped"]) };
+
+  it("refuses a mid-flight override for a task in a RENAMED wip lane", () => {
+    const result = validateNodeOverrideChange(
+      { id: "FN-1", column: "building" } as never, "some-node", RENAMED,
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("task-in-progress");
+  });
+
+  it("still ALLOWS an override for a task outside every wip lane", () => {
+    /* The paired negative: resolving lanes must not turn the guard into a blanket refusal. */
+    const result = validateNodeOverrideChange(
+      { id: "FN-2", column: "backlog" } as never, "some-node", RENAMED,
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it("permits a terminal-node override for a task finished in a RENAMED complete lane", () => {
+    const result = validateNodeOverrideChange(
+      { id: "FN-3", column: "shipped" } as never, "end", RENAMED,
+    );
+    expect(result.allowed).toBe(true);
+  });
+});
+
 describe("validateNodeOverrideChange", () => {
   it("allows when newNodeId is undefined (not being changed)", () => {
     const result = validateNodeOverrideChange(

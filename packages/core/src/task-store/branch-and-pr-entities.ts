@@ -19,7 +19,7 @@ import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePr
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
@@ -591,8 +591,10 @@ export async function updateTaskImpl(store: TaskStore,
     if (updates.nodeId !== undefined) {
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
+        const overrideLanes = await resolveNodeOverrideLanes(store, id);
         const validation = validateNodeOverrideChange(currentTask, updates.nodeId ?? null, {
           isTerminalNodeId: (nodeId) => isTaskTerminalNodeIdImpl(store, id, nodeId),
+          ...overrideLanes,
         });
         if (!validation.allowed) {
           throw new Error(validation.message);

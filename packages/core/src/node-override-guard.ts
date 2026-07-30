@@ -1,3 +1,30 @@
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:30 (batch-core):
+The async companion to `validateNodeOverrideChange`, which is deliberately synchronous. Lives beside
+the guard so the two cannot drift: a caller that resolves lanes some other way would eventually
+disagree with what the guard means by "executing" or "completed".
+
+A workflow expressing no trait at all is a v1 upgrade rather than a board without these roles, so it
+keeps the legacy ids — as does an unresolvable one. Both are the behaviour the literals already had.
+*/
+export async function resolveNodeOverrideLanes(
+  store: Parameters<typeof resolveWorkflowIrForTask>[0],
+  taskId: string,
+): Promise<{ wipColumns: Set<string>; completeColumns: Set<string> }> {
+  const wipColumns = new Set<string>(["in-progress"]);
+  const completeColumns = new Set<string>(["done"]);
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir && declaresAnyLifecycleTrait(ir)) {
+      for (const id of columnsWithFlag(ir, "countsTowardWip")) wipColumns.add(id);
+      for (const id of columnsWithFlag(ir, "complete")) completeColumns.add(id);
+    }
+  } catch { /* degraded: the legacy ids */ }
+  return { wipColumns, completeColumns };
+}
 export type NodeOverrideBlockReason = "task-in-progress" | "terminal-without-merge-proof";
 
 export interface NodeOverrideValidationResult {
@@ -27,6 +54,17 @@ export interface NodeOverrideTaskInput {
 }
 
 export interface NodeOverrideValidationOptions {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:20 (batch-core):
+  The task's resolved WIP and COMPLETE lanes. This guard is SYNCHRONOUS and both its production
+  callers already await a store before reaching it, so the lanes come in rather than being resolved
+  here — the same shape `isTerminalNodeId` already uses for the same reason.
+
+  Both callers supply them. An omitted set keeps the legacy id, which is what a caller without cheap
+  IR access (a CLI tool, a route with only a task row) still gets.
+  */
+  wipColumns?: ReadonlySet<string>;
+  completeColumns?: ReadonlySet<string>;
   /**
    * Resolve whether `nodeId` is the task workflow's terminal `end` node.
    * Callers with access to the task's resolved workflow IR (e.g.
@@ -50,7 +88,12 @@ export function validateNodeOverrideChange(
     return { allowed: true };
   }
 
-  if (task.column === "in-progress") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:20 (batch-core):
+  "Is this task executing right now?" — keyed on the literal, a renamed board let an operator change
+  the node override MID-FLIGHT on a running task, which is exactly what this guard exists to refuse.
+  */
+  if ((options?.wipColumns ?? new Set(["in-progress"])).has(task.column)) {
     return {
       allowed: false,
       reason: "task-in-progress",
@@ -72,7 +115,13 @@ export function validateNodeOverrideChange(
   const isTerminal =
     newNodeId !== null &&
     (options?.isTerminalNodeId ? options.isTerminalNodeId(newNodeId) : defaultIsTerminalNodeId(newNodeId));
-  if (isTerminal && task.column !== "done") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:20 (batch-core):
+  The terminal-node gate asks whether the task has already COMPLETED. On a renamed board a finished
+  task never matched, so overriding to the terminal node was refused for exactly the tasks that had
+  legitimately reached it.
+  */
+  if (isTerminal && !(options?.completeColumns ?? new Set(["done"])).has(task.column)) {
     const mergeConfirmed = task.mergeDetails?.mergeConfirmed === true;
     if (mergeConfirmed) {
       return { allowed: true, requiresFinalize: true };
