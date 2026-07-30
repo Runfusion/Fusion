@@ -194,7 +194,32 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
     */
     const retriageColumns = author === "user"
       ? await (async () => {
-        const workflowIr = await resolveWorkflowIrForTask(store, id).catch(() => undefined);
+        /*
+        FNXC:PostCommentRetriage 2026-07-31-08:05 (PR #2612 review — greptile):
+        SAY SO WHEN THE FALLBACK FIRES. The legacy pair is the right BEHAVIOUR on a
+        resolution failure — this is best-effort re-triage whose failure mode is a
+        MISSED re-spec — but swallowing the cause left the one question an operator
+        asks unanswerable: "why did my correction not re-trigger planning on a
+        renamed board?" The card simply does not re-triage, and the lanes it was
+        compared against are invisible.
+
+        DEBUG, not warn, and deliberately: an unresolvable workflow is also the
+        ordinary shape for a task with no selection yet, so a warn would fire on
+        every such comment add and train people to ignore it. The four sibling
+        best-effort logs in this file warn because they describe an action that was
+        supposed to happen and did not; this describes a fallback that is frequently
+        correct.
+        */
+        const workflowIr = await resolveWorkflowIrForTask(store, id).catch((err: unknown) => {
+          storeLog.debug("Post-comment re-triage planner-lane resolution failed", {
+            ...commentContextBase,
+            phase: "addComment:planner-lane-resolution",
+            fallbackHold: "todo",
+            fallbackIntake: "triage",
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return undefined;
+        });
         const lifecycle = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
         return {
           intake: lifecycle?.intake ?? "triage",
