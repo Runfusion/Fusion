@@ -10521,6 +10521,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       card against ITS OWN workflow below. A card wedged `failed` after a post-done continuation error on
       a renamed board was never listed at all, so it stayed failed with every step done.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (#2869 review — greptile, "traitless review lanes
+      remain invisible"): CONFIRMED, DEFERRED, SAME CLASS AS #2876.
+
+      A board that renames its review lane but declares NO lifecycle traits contributes nothing to this
+      union, so the card is not in `wedgeById` and the per-card fallback below — including its
+      `new Set(["in-review"])` degraded answer — never runs for it. The fallback cannot rescue a card
+      the query never returned.
+
+      The three-state rule at PROJECT scope. Not fixed here because the safe direction differs by
+      caller: over-inclusion is free for a sweep (the per-card check discards it) and inflates an
+      operator-facing number in the analytics aggregators, so it needs an opt-in
+      (`{ untraitedProject: "declared-columns" }`) on the shared helper rather than a change to what it
+      returns by default.
+
+      Fixture note: hand-authored V2 without traits, NOT a v1 upgrade — `synthesizeDefaultColumns`
+      emits the default ids, so a v1-shaped fixture cannot express a renamed lane and would pass
+      vacuously.
+      */
       const wedgeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const wedgeById = new Map<string, Task>();
       for (const column of wedgeReviewColumns) {
