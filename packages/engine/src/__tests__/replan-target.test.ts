@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
@@ -276,12 +277,24 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
-  it("falls back to triage for workflows declaring neither triage nor todo (never a custom column)", async () => {
-    // builtin:marketing declares ideation/backlog/drafting/... — no triage, no todo.
-    // A custom entry column would strand the needs-replan card (triage only scans
-    // "triage" and "todo") and the legacy move path throws on custom targets.
+  it("targets its OWN rebound lane for a workflow declaring neither triage nor todo", async () => {
+    /*
+    FNXC:WorkflowReplan 2026-07-31-13:30 (U11 — the flagged fallback, now converted):
+    builtin:marketing declares ideation/backlog/drafting/... — no `triage`, no `todo`.
+    The old fallback handed it the literal `triage`, a column that lineage does not
+    declare AND that the default lineage no longer declares either since #2515. So the
+    replan move targeted a nonexistent column: the card either failed to move or landed
+    somewhere no sweep owns.
+
+    Resolved through `resolveReboundTarget` (KTD-10: hold -> intake -> first declared),
+    which is the same helper every other rebound path uses. The card now lands in a
+    column its own workflow actually declares.
+    */
     const store = storeWithSelection("builtin:marketing");
-    await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("triage");
+    const target = await resolveReplanTargetColumn(store, "FN-1");
+    expect(target).not.toBe("triage");
+    const ir = await resolveWorkflowIrForTask(store as never, "FN-1");
+    expect(workflowHasColumn(ir, target)).toBe(true);
   });
 
   /* Resolution failure no longer reaches the `triage` catch: the resolver swallows

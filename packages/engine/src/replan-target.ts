@@ -1,5 +1,5 @@
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveLifecycleColumns, resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import { resolveLifecycleColumns, resolveReboundTarget, resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 
 /*
@@ -349,8 +349,26 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     */
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
-    return "triage";
+    /*
+    FNXC:WorkflowReplan 2026-07-31-13:35 (U11 — the flagged fallback, now converted):
+    Was `return "triage"`, naming a column this workflow does not declare AND that the
+    DEFAULT lineage stopped declaring at #2515. A workflow with neither legacy planner
+    id was therefore handed a nonexistent target, so the replan move either failed or
+    put the card somewhere no sweep owns.
+
+    `resolveReboundTarget` is the KTD-10 helper every other rebound path already uses
+    (hold -> intake -> first declared), so the card lands in a column its own workflow
+    declares and the replan lanes stay consistent with the rebound lanes.
+    */
+    return resolveReboundTarget(ir) ?? "triage";
   } catch {
+    /*
+    NO IR MEANS NOTHING TO RESOLVE, so this keeps the legacy literal deliberately
+    rather than guessing. It is reached only when resolution THROWS — not when it
+    falls back to the default IR, which returns a real workflow and takes the `todo`
+    branch above. Changing it to another literal would trade one arbitrary column for
+    another without evidence about the workflow.
+    */
     return "triage";
   }
 }
