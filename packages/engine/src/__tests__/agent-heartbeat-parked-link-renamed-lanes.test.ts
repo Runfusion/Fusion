@@ -113,3 +113,58 @@ describe("the parked-link sweep resolves its lanes by ROLE, not by the legacy de
     expect(store.syncExecutionTaskLink).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (#2820 review — greptile P2):
+THE SECOND CALL SITE. The commit converted BOTH `isParkedTaskColumn` callers but the tests drove only
+`reconcileOrphanedRunningAgents`. `buildReportsHealthSection` resolves its lanes independently and
+rewrites the rendered report, so it is a separate surface and needed its own case — converting two
+copies and testing one is the Surface Enumeration failure this program keeps paying for.
+
+What it does on the parked path: renders the state as `active` rather than `running` and annotates the
+task as "queued/no live run", which is the operator-visible half of the same defect. With the lanes
+unresolved on a renamed board the report kept saying RUNNING.
+
+REVERT CHECK, measured: dropping the resolved argument here fails the RENAMED case — the section still
+reports `running`.
+*/
+function buildHealth(monitor: HeartbeatMonitor, agentStore: unknown): Promise<string | null> {
+  return (monitor as unknown as {
+    buildReportsHealthSection: (agentId: string, agentStore: unknown) => Promise<string | null>;
+  }).buildReportsHealthSection("boss", agentStore);
+}
+
+describe("the reports health section resolves its parked lanes by ROLE", () => {
+  for (const [label, vocab] of [["DEFAULT", DEFAULT_VOCAB], ["RENAMED", RENAMED_VOCAB]] as const) {
+    it(`renders a parked report as queued on a ${label} hold lane (${vocab.hold})`, async () => {
+      const { monitor, store } = harness(vocab);
+      /* The direct report is the running agent linked to the parked card. */
+      store.getAgentsByReportsTo.mockResolvedValue([
+        { id: "a1", name: "A", role: "executor", state: "running", taskId: "FN-PARKED", lastHeartbeatAt: new Date().toISOString() },
+      ]);
+
+      const section = await buildHealth(monitor, store);
+
+      expect(section).toContain("queued/no live run");
+    });
+  }
+
+  it("still reports a live report as running on a RENAMED board", async () => {
+    /*
+    Non-vacuous companion: without it, a section that annotated every report would satisfy the cases
+    above. Same renamed board, same agent — only the card's lane changes to the wip one.
+    */
+    const { monitor, store, taskStore } = harness(RENAMED_VOCAB);
+    (taskStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...parkedCard(RENAMED_VOCAB),
+      column: RENAMED_VOCAB.wip,
+    });
+    store.getAgentsByReportsTo.mockResolvedValue([
+      { id: "a1", name: "A", role: "executor", state: "running", taskId: "FN-PARKED", lastHeartbeatAt: new Date().toISOString() },
+    ]);
+
+    const section = await buildHealth(monitor, store);
+
+    expect(section).not.toContain("queued/no live run");
+  });
+});
