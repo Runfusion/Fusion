@@ -332,10 +332,20 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     alone. Resolving that correctly is its own change with its own evidence; it is
     deliberately not smuggled into a conversion PR.
 
-    U11 IMPACT, flagged rather than assumed: the second lookup asks for `"todo"`,
-    which U11 deletes. For builtin coding the first lookup still matches `triage`
-    (which U11 keeps), so the builtins stay correct — but a workflow relying on the
-    `todo` branch loses it. That is a real follow-up, not a blocker for this PR.
+    U11 IMPACT — CORRECTED 2026-07-29-23:59. The note here previously said U11 deletes `todo` and
+    keeps `triage`. It is the other way round: U11 chose "keep the id `todo`, delete `triage`" so
+    that the ~120 `column === "todo"` guards kept their meaning and no data migration shipped. The
+    default lineage now declares `todo, in-progress, in-review, done, archived` and NO `triage`.
+
+    The lookups below are therefore correct today, but for the opposite reason to the one recorded:
+    the default lineage FALLS THROUGH the `triage` lookup and lands on `todo`, which is its merged
+    planning column and the right replan target. `triage` still matches for the workflows that
+    genuinely declare it (Lead generation, PR review — where it is the intake/planning lane).
+
+    STILL A REAL FOLLOW-UP, unchanged by the correction: the `return "triage"` fallbacks on the
+    no-match and throw paths name a column the default lineage no longer declares, so a workflow
+    with neither `triage` nor `todo` is handed a nonexistent target. Behavior change, so it is
+    flagged rather than fixed in a comment correction.
     */
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
