@@ -112,6 +112,90 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
       expect(metadata?.priorColumn).toBe("a-column-no-workflow-declares");
     });
 
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-16:20 (U11 migration proof):
+    THE PATH AN OPERATOR ACTUALLY HITS, which the cases above do not cover. They strand a card in a
+    synthetic `a-column-no-workflow-declares`; the real upgrade leaves cards in `triage` — a column
+    that WAS declared until U11 removed it from the default lineage, on the REAL `builtin:coding`
+    workflow rather than a fixture vocabulary.
+
+    That difference matters: `triage` is still a legal `ColumnId` and is still declared by
+    legacy-coding, Ideas and every linear built-in (R11), so nothing rejects it and nothing throws.
+    The card simply sits in a column its OWN workflow no longer declares, where — per the file
+    header — it carries no trait flags and is invisible to every trait-driven sweep.
+
+    Proven below with progress and plan artifacts, because re-homing targets the HOLD column and a
+    repair that loses the spec would be worse than the strand.
+    */
+    async function strandInTriageOnDefaultWorkflow(taskId: string): Promise<void> {
+      const store = h.store();
+      await seedTask(taskId, "todo", "builtin:coding");
+      // Direct write: `moveTask` refuses to take a card into an undeclared column, which is the
+      // transition policy working. The corrupt post-upgrade state IS the fixture.
+      await h.adminSql()`UPDATE project.tasks SET "column" = 'triage', current_step = 2 WHERE id = ${taskId}`;
+      store.taskCache.delete(taskId);
+    }
+
+    it("re-homes a card left in the deleted `triage` column on a DEFAULT-workflow board", async () => {
+      await strandInTriageOnDefaultWorkflow("FN-MIG-1");
+      expect(await persistedColumn("FN-MIG-1")).toBe("triage");
+
+      const rehomed = await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+
+      expect(rehomed).toBe(1);
+      // The merged Planning column — the default workflow's hold column, id `todo`.
+      expect(await persistedColumn("FN-MIG-1")).toBe("todo");
+    });
+
+    it("FAILS to move the card when the sweep does not run (proves the sweep is the mover)", async () => {
+      /*
+      The revert check, in-suite: without this the test above could pass because some OTHER sweep
+      or a store-open reconcile moved the card, and it would keep passing if
+      `reconcileUndeclaredTaskColumns` were deleted outright.
+      */
+      await strandInTriageOnDefaultWorkflow("FN-MIG-2");
+
+      // Deliberately do NOT call the sweep.
+      expect(await persistedColumn("FN-MIG-2")).toBe("triage");
+    });
+
+    it("preserves step progress and the plan artifact across the re-home", async () => {
+      await strandInTriageOnDefaultWorkflow("FN-MIG-3");
+      const before = await h.store().getTask("FN-MIG-3");
+
+      await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+
+      h.store().taskCache.delete("FN-MIG-3");
+      const after = await h.store().getTask("FN-MIG-3");
+      expect(after.column).toBe("todo");
+      // `preserveProgress: true` is passed by the sweep; assert it actually holds end-to-end
+      // rather than trusting the option name.
+      expect(after.currentStep).toBe(before.currentStep);
+      expect(after.description).toBe(before.description);
+    });
+
+    it("SKIPS a userPaused card, leaving it in the deleted column (documented caveat)", async () => {
+      /*
+      Confirmed behavior, recorded as a test so it is a decision rather than an accident: an
+      operator park is authoritative and the sweep will not override it. The consequence is real —
+      a paused card stays in a column its workflow no longer declares, invisible to trait-driven
+      sweeps, until someone unpauses it.
+
+      It is a caveat rather than a stall because the card is reachable: unpausing it makes the next
+      sweep re-home it, and the U11 undeclared-source escape hatch in `resolveAllowedColumns` lets
+      an operator move it by hand in the meantime.
+      */
+      await strandInTriageOnDefaultWorkflow("FN-MIG-4");
+      // `user_paused` is an integer flag in the PG schema, not a boolean.
+      await h.adminSql()`UPDATE project.tasks SET user_paused = 1 WHERE id = ${"FN-MIG-4"}`;
+      h.store().taskCache.delete("FN-MIG-4");
+
+      const rehomed = await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
+
+      expect(rehomed).toBe(0);
+      expect(await persistedColumn("FN-MIG-4")).toBe("triage");
+    });
+
     it("still re-homes a default-vocabulary card to `todo` (regression floor)", async () => {
       const workflowId = await seedWorkflow(DEFAULT_VOCAB, "undeclared-default");
       await strandInUndeclaredColumn("FN-RB-3", workflowId);
