@@ -444,12 +444,32 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   */
   actions.push(...destructiveActions);
 
+  /*
+  FNXC:TaskContextMenu 2026-07-30-01:10 (U11 vacuous guard):
+  `shouldShowActionsMenu` opened with `task.column !== "triage"` — "this card is past intake, so
+  always offer the menu". U11 DELETES the `triage` column, so that comparison became vacuously TRUE
+  for every real card and the whole condition short-circuited: the actions menu showed on EVERY card,
+  including a bare intake card with nothing to act on. The disjuncts below exist precisely to
+  enumerate what IS actionable on an intake card, and none of them were being consulted.
+
+  Resolved from the INTAKE role specifically, NOT intake-or-hold. Pre-U11 only `triage` was
+  restricted while `todo` (the hold lane) always showed the menu, so widening to hold would REMOVE
+  the menu from hold cards that have always had it — Coding (Ideas) keeps a hold-only `todo`. On the
+  merged column intake and hold are the same column, so this restricts exactly what `triage` did.
+
+  The legacy id remains the fallback: `currentColumnFlags` arrives from an async metadata fetch and
+  is undefined until it lands, so the comparison is still the only signal in that window.
+  */
+  const isIntakeLaneColumn = options.currentColumnFlags
+    ? options.currentColumnFlags.intake === true
+    : task.column === "triage";
+
   return {
     actions,
     moveTransitions: getTaskMoveTransitions(task, t, columnLabel, workflowMoveColumns),
     reviewAction: getTaskReviewAction(task, options),
     shouldShowActionsMenu:
-      task.column !== "triage" ||
+      !isIntakeLaneColumn ||
       task.status === "awaiting-approval" ||
       canRetryTask ||
       isTaskPaused ||

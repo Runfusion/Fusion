@@ -28,6 +28,75 @@ function actionIds(task: Task, overrides: Partial<Parameters<typeof buildTaskAct
 }
 
 describe("TaskContextMenu shared task action model", () => {
+  /*
+  FNXC:TaskContextMenu 2026-07-30-01:05 (U11 vacuous guard):
+  `shouldShowActionsMenu` opened with `task.column !== "triage"` — "this card is past intake, so
+  always offer the menu". U11 DELETES the `triage` column, so that comparison is vacuously TRUE for
+  every real card and the whole condition short-circuits: the actions menu shows on EVERY card,
+  including a bare intake card with nothing actionable on it. The remaining disjuncts exist precisely
+  to enumerate what IS actionable there (approval, retry, pause, assigned agent, GitHub tracking).
+
+  The pre-existing case above still passes because it names the literal `triage`, which no live board
+  produces any more — the test kept asserting a column that had ceased to exist. These cases drive
+  the MERGED column (id `todo`, carrying intake+hold) the way the product actually does.
+
+  Resolved from the INTAKE role, not intake-or-hold: pre-U11 only `triage` was restricted while `todo`
+  (the hold lane) always showed the menu, so widening to hold would REMOVE the menu from cards that
+  have always had it.
+  */
+  it("hides the actions menu on a bare card in the MERGED intake column", () => {
+    const mergedIntakeFlags = { intake: true, hold: true } as never;
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+    }).shouldShowActionsMenu).toBe(false);
+  });
+
+  it("still shows it for an actionable card in that same column", () => {
+    const mergedIntakeFlags = { intake: true, hold: true } as never;
+
+    // Each disjunct that makes an intake card actionable must still open the menu.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo", status: "awaiting-approval" as never }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+    }).shouldShowActionsMenu).toBe(true);
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo", status: "failed" as never }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: mergedIntakeFlags,
+      canRetryTask: true,
+      hasRetryHandler: true,
+    }).shouldShowActionsMenu).toBe(true);
+  });
+
+  it("keeps the menu on a HOLD-only column, which was never restricted", () => {
+    // Coding (Ideas): intake is `ideas`, `todo` is hold-only. A hold card has always had the
+    // menu, so resolving to intake-or-hold would have silently removed it.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: { hold: true } as never,
+    }).shouldShowActionsMenu).toBe(true);
+  });
+
+  it("falls back to the legacy id while column metadata is still loading", () => {
+    // `currentColumnFlags` arrives from an async metadata fetch and is undefined until it lands,
+    // so the legacy comparison remains the only signal in that window.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "triage" }),
+      t,
+      columnLabel: columnLabel as never,
+    }).shouldShowActionsMenu).toBe(false);
+  });
+
   it("mirrors detail Actions menu availability across lifecycle states", () => {
     expect(actionIds(makeTask({ column: "triage" }))).toEqual(["respecify", "pause", "delete"]);
     expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, columnLabel: columnLabel as any }).shouldShowActionsMenu).toBe(false);
