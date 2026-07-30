@@ -26,7 +26,7 @@ import {
   evaluateTransitionInvariants,
 } from "../workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../default-workflow-hooks.js";
-import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {columnsWithFlag, resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
@@ -862,6 +862,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         names on every workflow, so a renamed board got no reopen effects at all.
         */
         lifecycleColumns: moveLifecycleColumns,
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-09:05 (PR #2734 review — greptile):
+        The SET-shaped roles beside the singular ones. `workflowIr` is already in hand here, so these
+        cost three trait scans and no extra read — and they are what let the timing hook treat a move
+        BETWEEN two WIP lanes as staying in WIP rather than as an exit plus a re-entry.
+        */
+        lifecycleColumnSets: workflowIr === undefined
+          ? undefined
+          : {
+              wip: columnsWithFlag(workflowIr, "countsTowardWip"),
+              complete: columnsWithFlag(workflowIr, "complete"),
+              review: columnsWithFlag(workflowIr, "mergeOrchestration"),
+            },
       };
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-08:10: the store's own copy of the reopen

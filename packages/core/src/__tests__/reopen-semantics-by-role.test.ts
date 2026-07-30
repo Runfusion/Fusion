@@ -323,3 +323,60 @@ describe("timing, completion and in-review effects are keyed on ROLES", () => {
     }
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:05 (PR #2734 review — greptile):
+SECONDARY LANES. `LifecycleColumns` names one column per role by design (#2721 pinned that), so a
+workflow declaring `countsTowardWip` on two columns had a second WIP lane the hooks did not recognise.
+
+The timing consequence is the concrete one: a move BETWEEN two WIP lanes looked like an exit from WIP
+followed by a re-entry, so `cumulativeActiveMs` closed and reopened a segment the card never left.
+*/
+describe("timing hooks honour EVERY lane carrying the role", () => {
+  const ctx = (fromColumn: string, toColumn: string, sets?: { wip?: readonly string[] }) => {
+    const task = {
+      id: "FN-1",
+      columnMovedAt: "2026-07-30T10:00:00.000Z",
+      executionStartedAt: "2026-07-30T09:00:00.000Z",
+      cumulativeActiveMs: 0,
+    } as never as { cumulativeActiveMs?: number };
+    return {
+      task,
+      ctx: {
+        task,
+        fromColumn,
+        toColumn,
+        movedAt: "2026-07-30T10:00:00.000Z",
+        lifecycleColumns: { wip: "building", complete: "shipped" },
+        lifecycleColumnSets: sets,
+        resetSteps: () => {},
+      } as never,
+    };
+  };
+
+  it("does NOT close the active segment when a card moves between two WIP lanes", () => {
+    const { task, ctx: c } = ctx("building", "building-two", { wip: ["building", "building-two"] });
+
+    applyTimingEffects(c);
+
+    // Still inside WIP, so no segment was accrued on the way out.
+    expect(task.cumulativeActiveMs).toBe(0);
+  });
+
+  it("DOES close it when the card genuinely leaves every WIP lane", () => {
+    const { task, ctx: c } = ctx("building", "signoff", { wip: ["building", "building-two"] });
+
+    applyTimingEffects(c);
+
+    expect(task.cumulativeActiveMs).toBeGreaterThan(0);
+  });
+
+  it("falls back to the singular role when no set is supplied", () => {
+    /* Additive: a caller that does not pass sets keeps exactly the previous behaviour. */
+    const { task, ctx: c } = ctx("building", "signoff");
+
+    applyTimingEffects(c);
+
+    expect(task.cumulativeActiveMs).toBeGreaterThan(0);
+  });
+});

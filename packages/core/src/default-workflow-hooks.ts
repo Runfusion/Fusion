@@ -127,8 +127,35 @@ export interface DefaultWorkflowMoveContext {
    * only in that no-basis case, never as a substitute for an absent role.
    */
   lifecycleColumns?: LifecycleColumns | undefined;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-09:05 (PR #2734 review — greptile):
+  THE SET-SHAPED COMPANION, because `LifecycleColumns` names ONE column per role by design — #2721
+  pinned that as the contract, not a gap. A workflow may put `countsTowardWip` (or `complete`, or
+  `mergeOrchestration`) on several columns, and these hooks ask "is this card IN that role", which is
+  membership.
+
+  Concretely for the timing hook: with a single id, a card moving between two WIP lanes looked like an
+  EXIT from WIP followed by a re-entry, so `cumulativeActiveMs` closed and reopened a segment the card
+  never left — and a card living only in the secondary lane accrued nothing at all.
+
+  Optional and additive: absent, every read falls back to the singular struct and then the legacy id,
+  so nothing changes for the default lineage or for a caller that does not supply it. The caller in
+  `moves.ts` already holds the IR, so populating it costs no extra read.
+  */
+  lifecycleColumnSets?: { wip?: readonly string[]; complete?: readonly string[]; review?: readonly string[] } | undefined;
   /** Reset all steps to pending + currentStep 0 (store owns the impl). */
   resetSteps: () => void;
+}
+
+/** Membership for a role: the resolved SET when the caller supplied one, else the singular id, else the legacy id. */
+function inRole(
+  column: string,
+  set: readonly string[] | undefined,
+  single: string | undefined,
+  legacy: string,
+): boolean {
+  if (set !== undefined && set.length > 0) return set.includes(column);
+  return column === (single ?? legacy);
 }
 
 // ── Field-mutation effects (applied in-lock, before commit) ───────────────────
@@ -163,8 +190,9 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   the exit test and the re-entry test have to agree about which column is WIP or a rename makes the
   accounting count the same interval twice, or not at all.
   */
-  const wipColumn = ctx.lifecycleColumns?.wip ?? "in-progress";
-  if (fromColumn === wipColumn && toColumn !== wipColumn) {
+  const isWip = (column: string) =>
+    inRole(column, ctx.lifecycleColumnSets?.wip, ctx.lifecycleColumns?.wip, "in-progress");
+  if (isWip(fromColumn) && !isWip(toColumn)) {
     const segmentStartMs = Date.parse(task.executionStartedAt ?? task.columnMovedAt ?? ctx.movedAt);
     const segmentEndMs = Date.parse(task.columnMovedAt ?? ctx.movedAt);
     const segmentDeltaMs =
@@ -173,7 +201,7 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
         : 0;
     task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
   }
-  if (toColumn === wipColumn) {
+  if (isWip(toColumn)) {
     task.cumulativeActiveMs ??= 0;
     if (!task.firstExecutionAt) task.firstExecutionAt = task.columnMovedAt;
     if (!task.executionStartedAt) task.executionStartedAt = task.columnMovedAt;
@@ -184,7 +212,7 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
 /** Stamp `executionCompletedAt` on entry to a completion column. */
 export function applyCompletionTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, toColumn } = ctx;
-  if (toColumn === (ctx.lifecycleColumns?.complete ?? "done") && !task.executionCompletedAt) {
+  if (inRole(toColumn, ctx.lifecycleColumnSets?.complete, ctx.lifecycleColumns?.complete, "done") && !task.executionCompletedAt) {
     task.executionCompletedAt = task.columnMovedAt;
   }
 }
@@ -317,7 +345,7 @@ export function isReopenIntoPlanning(
  *  block in store.ts. */
 export function applyInReviewEnterEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, toColumn } = ctx;
-  if (toColumn !== (ctx.lifecycleColumns?.review ?? "in-review")) return;
+  if (!inRole(toColumn, ctx.lifecycleColumnSets?.review, ctx.lifecycleColumns?.review, "in-review")) return;
   // Do not snapshot the global autoMerge setting here. Undefined means "follow
   // the live global setting"; only an explicit task value should stay sticky.
   task.recoveryRetryCount = undefined;
