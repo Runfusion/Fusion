@@ -140,6 +140,29 @@ function enclosingExpression(node) {
   return current;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:50 (work order for the batch phase):
+A literal sitting in the SAME expression as a trait check is a legacy FALLBACK, not an unconverted
+guard — someone already converted that site and kept the id for workflows whose flags do not resolve.
+Those are deletions (or scoped fallbacks), not conversions, and telling a batch worker which is which
+is the difference between converting a file and guessing at it.
+
+Detected by the trait vocabulary appearing beside the comparison: `flags?.intake`, `columnFlags`,
+`resolveColumnFlags`, `mergeBlocker`, `countsTowardWip`, and the role names themselves.
+*/
+const TRAIT_CHECK_MARKERS = [
+  "flags", "Flags", "intake", "hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker",
+  "complete", "archived", "resolveLifecycleColumns", "resolveColumnFlags", "columnHasFlag",
+];
+
+function sitsBesideTraitCheck(scope, sourceFile) {
+  const text = scope.getText(sourceFile);
+  /* The comparison's own literal can be a role NAME (`archived`, `done`), so require a trait ACCESS
+     shape rather than a bare word: a property/identifier read, not the string being compared. */
+  return TRAIT_CHECK_MARKERS.some((marker) => new RegExp(`[.?\\w]${marker}\\b`).test(text)
+    || new RegExp(`\\b${marker}\\s*[?.]`).test(text));
+}
+
 /** Every string literal compared against `receiverName` inside `scope`. */
 function siblingLiteralsFor(scope, receiverName) {
   const values = new Set();
@@ -246,6 +269,8 @@ export function findComparisons(filePath, source) {
           columnId: parts.literal,
           receiver,
           kind: deliberate ? "deliberate" : isRole ? "role" : isStatus ? "status" : "column",
+          /* Advisory only: it never changes the CLASS, so a wrong hint cannot move the bar. */
+          besideTraitCheck: sitsBesideTraitCheck(enclosingExpression(node), sourceFile),
         });
       }
     }

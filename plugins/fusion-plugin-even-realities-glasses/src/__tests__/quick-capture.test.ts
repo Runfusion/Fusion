@@ -144,25 +144,25 @@ describe("quick capture accepts the columns the board actually declares", () => 
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-03:00 (PR #2644 review, greptile P1):
+FNXC:PluginLifecycleColumns 2026-07-31-06:20 (PR #2644 review — third revision of this rule):
 
-THE BUILT-IN DEFAULT IS NOT NECESSARILY THIS PROJECT'S BOARD. `resolveDefaultWorkflowIr()` takes no
-project and no task, so a board built from a CUSTOM workflow had its own columns rejected — an
-operator saying "put it in checking" got 400 for a column their board declares.
+ACCEPT ONLY THE COLUMNS OF THE WORKFLOW THE NEW CARD WILL ACTUALLY USE, which is the project's DEFAULT
+workflow. The two earlier versions were both wrong, in opposite directions:
 
-Quick capture creates a NEW task, so there is no selection to resolve through. The honest answer is
-the union of every column any workflow in this project declares: it accepts a custom board's columns
-and still rejects a column no board has, which is the operator-visible distinction. Deliberately
-permissive ACROSS workflows rather than guessing which one a new card lands on — the server validates
-the create, so a wrong-workflow column surfaces as a real error instead of the silent substitution
-this replaces.
+  v1: the builtin default IR      -> rejected a custom board's own columns ("put it in checking" -> 400).
+  v2: the union of ALL workflows  -> accepted `checking` from workflow B while the card lands on
+                                     workflow A, which has no such column. The create then fails at the
+                                     server, past the point where the operator could hear about it.
 
-These cases drive the REAL default IR (unmocked) plus a custom definition, which is the shape the
-sibling renamed-board suite cannot express: it mocks the default resolver, so it would pass even if
-the custom-definition union were deleted. That is exactly what happened — the union had no failing
-test until this file got one.
+The union felt safer because it rejected less. "Rejects less" is not "correct" — it moved the failure
+downstream. `getDefaultWorkflowId()` is the same authority `resolveWorkflowIntakeFacts` uses in
+task-creation, so capture validation and card creation now agree by construction.
+
+THE FIRST VERSION OF THIS SUITE ASSERTED THE UNION, so it had to change with the rule — recorded rather
+than silently rewritten, because a test that changes with the code is only legitimate when the CONTRACT
+changed, and here it did.
 */
-describe("quick capture accepts columns declared by a project's CUSTOM workflows", () => {
+describe("quick capture accepts the columns of the workflow a new card lands on", () => {
   const customIr = {
     version: "v2", id: "wf-custom", name: "custom", nodes: [], edges: [],
     columns: [
@@ -171,7 +171,7 @@ describe("quick capture accepts columns declared by a project's CUSTOM workflows
     ],
   };
 
-  function deps(defaultColumn = "todo") {
+  function deps(options: { defaultWorkflowId?: string } = {}) {
     const created: Array<Record<string, unknown>> = [];
     return {
       created,
@@ -180,33 +180,46 @@ describe("quick capture accepts columns declared by a project's CUSTOM workflows
           created.push(input);
           return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-31T00:00:00.000Z" };
         },
+        getDefaultWorkflowId: async () => options.defaultWorkflowId,
+        getWorkflowDefinition: async (id: string) => (id === "wf-custom" ? { id, ir: customIr } : undefined),
         listWorkflowDefinitions: async () => [{ id: "wf-custom", ir: customIr }],
       },
       pluginId: "glasses",
-      defaultColumn,
+      defaultColumn: "backlog",
     } as never;
   }
 
-  it("accepts a column only the custom workflow declares", async () => {
-    // Pre-fix: rejected with 400, because only the builtin default IR was consulted.
-    const d = deps();
+  const columnOf = (d: unknown) => (d as { created: Array<{ column?: string }> }).created[0]?.column;
+
+  it("accepts a column of the project's default workflow when that workflow is custom", async () => {
+    const d = deps({ defaultWorkflowId: "wf-custom" });
 
     await runQuickCapture({ text: "ship the thing", column: "checking" }, d);
 
-    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("checking");
+    expect(columnOf(d)).toBe("checking");
   });
 
-  it("still accepts the builtin default's own columns", async () => {
+  it("REJECTS a column from another workflow the new card will not land on", async () => {
+    /*
+    The case that killed the union: `checking` exists on `wf-custom`, but this project's default is the
+    builtin lineage, and quick capture does not select a workflow. Accepting it would create a card in
+    a column its own workflow does not declare.
+    */
+    await expect(runQuickCapture({ text: "ship it", column: "checking" }, deps())).rejects.toThrow(
+      /invalid column/,
+    );
+  });
+
+  it("accepts the builtin default's own columns when the default is builtin", async () => {
     const d = deps();
 
     await runQuickCapture({ text: "ship it", column: "in-progress" }, d);
 
-    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("in-progress");
+    expect(columnOf(d)).toBe("in-progress");
   });
 
-  it("still rejects a column NO workflow in the project declares", async () => {
-    // The paired negative: union-across-workflows must not become accept-anything.
-    await expect(runQuickCapture({ text: "ship it", column: "nonsense" }, deps())).rejects.toThrow(
+  it("still rejects a column no workflow declares", async () => {
+    await expect(runQuickCapture({ text: "ship it", column: "nonsense" }, deps({ defaultWorkflowId: "wf-custom" }))).rejects.toThrow(
       /invalid column/,
     );
   });

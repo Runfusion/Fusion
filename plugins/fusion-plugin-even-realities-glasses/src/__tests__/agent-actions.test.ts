@@ -726,3 +726,68 @@ describe("an action reads the workflow once, not three times", () => {
     expect(deps.moveTask).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-06:50 (PR #2644 review, greptile P1 x2 — the snapshot still split):
+
+The previous revision read the definition itself only for a CUSTOM selection. A builtin or absent
+selection went through `resolveWorkflowIrForTask`, which does its OWN selection read and silently
+returns the DEFAULT coding IR on any failure — so the non-custom branch could hand back default lanes
+marked `degraded: false`. That is precisely the laundering the degraded state exists to prevent, one
+branch over, and it is why "I fixed the custom path" was not enough.
+
+Both branches now resolve for the id THIS function read, and the result must IDENTIFY as that
+workflow. An IR that identifies as neither the requested id nor the builtin default means the resolver
+fell back, which is degraded.
+*/
+describe("a resolved snapshot must identify as the workflow the card selected", () => {
+  const otherIr = {
+    version: "v2", id: "wf-someone-else", name: "someone-else", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function mismatchedDeps(task: FakeTask) {
+    const base = createDeps(task);
+    const selection = { workflowId: "wf-requested", stepIds: [] };
+    return {
+      ...base,
+      taskStore: {
+        ...base.taskStore,
+        getTaskWorkflowSelection: () => selection,
+        getTaskWorkflowSelectionAsync: async () => selection,
+        // Returns a DIFFERENT workflow's IR — the shape a silent resolver fallback produces.
+        getWorkflowDefinition: async () => ({ id: "wf-someone-else", ir: otherIr }),
+      },
+    };
+  }
+
+  it("refuses when the resolved IR identifies as a different workflow", async () => {
+    // Pre-fix: these lanes were used as if they were the card's own, and start-work moved it into
+    // another board's wip column.
+    const deps = mismatchedDeps(makeTask({ column: "backlog", status: null }));
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does NOT refuse a matching custom workflow (the paired positive)", async () => {
+    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+
+  it("does NOT refuse when there is no selection at all", async () => {
+    // Nothing to mismatch: the default IS the answer, and refusing here would break every board that
+    // has never had a workflow explicitly selected.
+    const deps = createDeps(makeTask({ column: "todo", status: null }));
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+  });
+});

@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveDefaultWorkflowIr } from "@fusion/core";
+import { resolveDefaultWorkflowIr, resolveWorkflowIrById } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import type { TaskColumn } from "./settings.js";
 
@@ -80,68 +80,44 @@ export function parseUtterance(raw: unknown, opts: { maxTitleChars?: number } = 
 }
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-30-13:10 (Phase C convergence — quick capture):
+FNXC:PluginLifecycleColumns 2026-07-31-06:10 (PR #2644 review, greptile P1 — third revision, and the
+union was wrong):
 
-THE ACCEPTED COLUMNS ARE THE BOARD'S, not a hand-listed five. The old list was wrong in BOTH
-directions after U11 (#2515):
+ACCEPT ONLY THE COLUMNS OF THE WORKFLOW THE NEW CARD WILL ACTUALLY USE.
 
-  - it ACCEPTED `triage`, a column the default board no longer declares, so quick capture
-    happily forwarded it and the create failed at the server — at the far end of a voice
-    interaction, where the operator hears a generic failure;
-  - it REJECTED every column of a renamed or custom board, so an operator saying "put it in
-    checking" got a 400 for a column their own board declares.
+  v1: the builtin default IR      -> rejected a custom board's own columns.
+  v2: the union of ALL workflows  -> accepted `checking` from workflow B while the card lands on
+                                     workflow A, which has no such column. The create then fails at
+                                     the server, or the card lands somewhere the operator did not ask
+                                     for. I called that "deliberately permissive"; it is just wrong,
+                                     and the reviewer was right to say so.
+  v3 (this): the PROJECT'S DEFAULT workflow, which is the workflow a quick-captured card is created
+     into. `getDefaultWorkflowId()` is the same authority `resolveWorkflowIntakeFacts` uses in
+     task-creation, so capture validation and card creation now agree by construction rather than by
+     coincidence.
 
-Resolved from `resolveDefaultWorkflowIr()`, which is the same default the dashboard's own
-board-workflows payload reports (`DEFAULT_WORKFLOW_LANE_ID`). Deliberately NOT a per-task
-resolution: the task does not exist yet, so there is no selection to resolve through.
-
-CORRECTION to what I wrote on PR #2607: I described this as SILENT substitution. It is not —
-`runQuickCapture` already compares the normalized value against the request and throws 400 on a
-mismatch, so an unusable column was visibly rejected, not quietly swapped. The bug is a wrong
-accept/reject set, which is milder than I claimed.
+The union felt safer because it rejected less. "Rejects less" is not the same as "correct": accepting
+a column the card cannot land in moves the failure downstream, past the point where the operator could
+still hear about it.
 */
 async function declaredCaptureColumnIds(
   taskStore: PluginContext["taskStore"],
 ): Promise<ReadonlySet<string>> {
   const ids = new Set<string>();
   try {
-    const ir = resolveDefaultWorkflowIr() as { columns?: Array<{ id?: unknown }> };
-    for (const column of ir.columns ?? []) {
+    const store = taskStore as unknown as { getDefaultWorkflowId?: () => Promise<string | undefined> };
+    const workflowId = await store.getDefaultWorkflowId?.();
+    const ir = workflowId
+      ? await resolveWorkflowIrById(taskStore as never, workflowId)
+      : resolveDefaultWorkflowIr();
+    for (const column of (ir as { columns?: Array<{ id?: unknown }> }).columns ?? []) {
       if (typeof column?.id === "string") ids.add(column.id);
     }
   } catch {
-    /* fall through */
-  }
-  /*
-  FNXC:PluginLifecycleColumns 2026-07-31-02:10 (PR #2644 review, greptile P1):
-  THE BUILT-IN DEFAULT IS NOT NECESSARILY THIS PROJECT'S BOARD. `resolveDefaultWorkflowIr()` takes no
-  project and no task, so on a board built from a CUSTOM workflow it rejected that board's own
-  columns — `checking` came back "invalid column" for an operator whose board declares it. My earlier
-  note claimed this matched "the same default the dashboard reports", which is true only for projects
-  that use the builtin lineage.
-
-  Quick capture creates a NEW task, so there is no selection to resolve through — the honest answer is
-  the union of every column any workflow in this project declares. That accepts a custom board's own
-  columns and still rejects a column no board has, which is the operator-visible distinction. It is
-  deliberately PERMISSIVE across workflows rather than guessing which one a new card will land on: the
-  server validates the final create, so a wrong-workflow column surfaces as a real error instead of
-  the silent default-substitution this replaces.
-  */
-  try {
-    const store = taskStore as unknown as {
-      listWorkflowDefinitions?: () => Promise<Array<{ ir?: unknown }>>;
-    };
-    for (const definition of (await store.listWorkflowDefinitions?.()) ?? []) {
-      const ir = typeof definition?.ir === "string" ? undefined : definition?.ir;
-      for (const column of (ir as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? []) {
-        if (typeof column?.id === "string") ids.add(column.id);
-      }
-    }
-  } catch {
-    /* a store without the workflows surface keeps the builtin answer */
+    /* fall through to the legacy vocabulary */
   }
   if (ids.size > 0) return ids;
-  /* A column-less IR and no definitions give no basis to decide; the legacy five keep prior behavior. */
+  /* A column-less IR gives no basis to decide; the legacy five keep prior behavior. */
   return LEGACY_CAPTURE_COLUMN_IDS;
 }
 

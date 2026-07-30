@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { resolveLifecycleColumns, resolveWorkflowIrById, resolveWorkflowIrForTask } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import { GlassesInputError } from "./quick-capture.js";
 
@@ -130,43 +130,56 @@ async function laneContext(
     return { lanes: undefined, declared: new Set(), degraded: true };
   }
 
-  const usesCustomDefinition = Boolean(selectionWorkflowId)
-    && !selectionWorkflowId!.startsWith("builtin:")
-    && Boolean(store.getWorkflowDefinition);
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-06:40 (PR #2644 review, greptile P1 x2 — the snapshot still split):
+  ONE RESOLUTION, AND IT MUST PROVE ITSELF. The previous revision read the definition itself only for a
+  CUSTOM selection; a builtin or absent selection went through `resolveWorkflowIrForTask`, which does its
+  OWN selection read and silently returns the DEFAULT coding IR on any failure. So the non-custom branch
+  could hand back default lanes marked `degraded: false` — the exact laundering the degraded state exists
+  to prevent, one branch over.
 
-  let definitionIr: unknown;
-  if (usesCustomDefinition) {
-    try {
-      definitionIr = (await store.getWorkflowDefinition!(selectionWorkflowId!))?.ir;
-    } catch {
-      return { lanes: undefined, declared: new Set(), degraded: true };
-    }
-    /*
-    The custom definition is gone. `resolveTaskLifecycleColumns` would silently hand back the DEFAULT
-    coding lanes here, which is indistinguishable from a genuinely default board — so refuse rather
-    than act on another board's vocabulary.
-    */
-    if (definitionIr == null) return { lanes: undefined, declared: new Set(), degraded: true };
+  Both branches now resolve through `resolveWorkflowIrById` for the id THIS function read, and the result
+  must IDENTIFY as that workflow. A returned IR whose id/name matches neither the requested id nor the
+  builtin default means the resolver fell back, which is degraded — refuse rather than act on a board the
+  card is not on.
+
+  An ABSENT selection is not degraded: there is nothing to mismatch, and the default IS the answer.
+  */
+  const resolveIr = async (): Promise<unknown> => {
+    if (!selectionWorkflowId) return resolveWorkflowIrForTask(taskStore as never, taskId);
+    return resolveWorkflowIrById(taskStore as never, selectionWorkflowId);
+  };
+
+  let snapshotIr: unknown;
+  try {
+    snapshotIr = await resolveIr();
+  } catch {
+    return { lanes: undefined, declared: new Set(), degraded: true };
   }
 
-  /*
-  FNXC:PluginLifecycleColumns 2026-07-31-02:50: lanes are derived from the IR THIS function already
-  read, not from a second `resolveTaskLifecycleColumns` call. My first pass at "one snapshot" still
-  made two reads — the explicit one plus the one inside the resolver — and my own counting test caught
-  it. Two reads is two snapshots however carefully the first one is checked.
-  */
-  const snapshotIr = usesCustomDefinition
-    ? definitionIr
-    : await resolveWorkflowIrForTask(taskStore as never, taskId).catch(() => undefined);
+  const irIdentity = snapshotIr as { id?: unknown; name?: unknown } | undefined;
+  const identifiesAsSelection = selectionWorkflowId === undefined
+    || irIdentity?.id === selectionWorkflowId
+    || irIdentity?.name === selectionWorkflowId
+    /*
+    A builtin id resolves through the catalog, whose IR carries its own name rather than the
+    `builtin:` id, so an exact match cannot be required for those. Accepting them here is safe
+    because the catalog is in-process: there is no read to fail silently.
+    */
+    || selectionWorkflowId.startsWith("builtin:");
+  if (!identifiesAsSelection) {
+    return { lanes: undefined, declared: new Set(), degraded: true };
+  }
+
   const roles = snapshotIr ? resolveLifecycleColumns(snapshotIr as never) : undefined;
   const lanes: Lanes | undefined = roles ?? undefined;
   const declared = new Set(
     Object.values(lanes ?? {}).filter((value): value is string => typeof value === "string"),
   );
   /*
-  Declared ids come from the SAME read that proved the definition exists, not from a second lookup.
-  A column carrying no lifecycle trait is invisible to `lanes`, which is why the IR's own column list
-  is unioned in — that is what stops an inert column named `todo` being claimed as a planner lane.
+  Declared ids come from the SAME snapshot. A column carrying no lifecycle trait is invisible to
+  `lanes`, which is why the IR's own column list is unioned in — that is what stops an inert column
+  named `todo` being claimed as a planner lane.
   */
   for (const column of (snapshotIr as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? []) {
     if (typeof column?.id === "string") declared.add(column.id);
