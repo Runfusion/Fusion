@@ -289,6 +289,59 @@ offers a per-task `classify`; the option is now the same shape rather than a thi
 REVERT PROOF, measured: answer the predicate from one workflow's lanes for every row (the flat-set
 shape) and the cross-workflow case below picks the loaded agent.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-12:25 (#2796 review — greptile):
+
+THE PREDICATE MUST SEE THE HELPER'S OWN ROWS, NOT A CALLER'S EARLIER SNAPSHOT.
+
+The scheduler built a Set of load-bearing task IDs from its own `listTasks` read, and this helper
+then applied the predicate to rows from ITS read. Anything changing in between diverged in both
+directions: a task MOVED out of a load-bearing lane kept its id in the set and still counted, while a
+task created or newly assigned in between was missing and counted as zero.
+
+The fix memoises the resolved LANES per task and tests them against `candidate.column`, so the verdict
+comes from the row the helper actually holds. That only works if the helper passes its own live rows
+to the predicate — this pins that contract. If the helper ever pre-resolved or cached rows, the
+scheduler's fix would silently go back to answering about a board that no longer exists.
+
+It is a contract test, not an end-to-end reproduction: the race lives in a dispatch path this suite
+cannot stand up, and the existing `scheduler-load-lane-union` test says the same of its own call site.
+*/
+describe("countsAsAssignmentLoad is called with the helper's own task rows", () => {
+  it("passes the live column, so a caller keyed on a stale snapshot cannot win", async () => {
+    const agents = [
+      makeAgent({ id: "AG-A", createdAt: "2026-01-01T00:00:00.000Z" }),
+      makeAgent({ id: "AG-B", createdAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+    /*
+    The helper's snapshot: FN-MOVED has already left the load-bearing lane and sits in `shipped`.
+    A caller that decided "FN-MOVED bears load" from an earlier read must not be able to impose that.
+    */
+    const taskStore = {
+      listTasks: async () => [
+        makeTask({ id: "FN-MOVED", assignedAgentId: "AG-A", column: "shipped" } as never),
+      ],
+    } as never;
+
+    const seen: Array<{ id: string; column: string }> = [];
+    const selected = await selectPermanentAgentForTask({
+      task: makeTask({ id: "FN-NEW" }),
+      agentStore: { listAgents: async () => agents, getChainOfCommand: async () => [] } as never,
+      taskStore,
+      countsAsAssignmentLoad: (t: { id: string; column: string }) => {
+        seen.push({ id: t.id, column: t.column });
+        /* The shape the scheduler now uses: resolved lanes for this task, tested against its LIVE column. */
+        return new Set(["backlog", "building", "signoff"]).has(t.column);
+      },
+    });
+
+    /* The predicate saw the helper's row, with the column as it is NOW. */
+    expect(seen).toEqual([{ id: "FN-MOVED", column: "shipped" }]);
+    /* And therefore AG-A carries no load, so the older agent wins on the tiebreaker. */
+    expect(selected?.id).toBe("AG-A");
+  });
+});
+
 describe("assignment load is counted per task, across workflows", () => {
   it("counts an assignment held in ANOTHER workflow's wip lane", async () => {
     const agents = [
