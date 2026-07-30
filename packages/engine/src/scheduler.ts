@@ -28,6 +28,7 @@ import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree-names
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
+import { resolveDedicatedPlannerColumnsForTask, resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
 import { resolveEffectiveNode, type EffectiveNode } from "./effective-node.js";
 import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./node-routing-policy.js";
@@ -1835,7 +1836,12 @@ export class Scheduler {
 
           if (typeof this.store.getTasksDir === "function") {
             const promptPath = getPromptPath(this.store.getTasksDir(), task.id);
-            const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
+            const staleness = await evaluateSpecStaleness({
+              settings,
+              promptPath,
+              task,
+              plannerColumns: await resolveDedicatedPlannerColumnsForTask(this.store, task.id),
+            });
             if (staleness.isStale) {
               schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
               await moveTaskToReplanColumn(this.store, task);
@@ -2403,7 +2409,10 @@ export class Scheduler {
         this.store,
         { ...task, column: toColumn },
         feature,
-        { hasLinkedAssertions },
+        {
+          hasLinkedAssertions,
+          plannerColumns: await resolvePlannerLanesForTask(this.store, task.id),
+        },
       );
 
       if (reconciliation.kind === "blocked") {

@@ -238,6 +238,7 @@ import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/conta
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
+import { resolveDedicatedPlannerColumnsForTask } from "./planner-lane-resolution.js";
 import {
   createAgentCreateTool,
   createAgentDeleteTool,
@@ -11870,7 +11871,14 @@ export class TaskExecutor {
     if (!isActiveTask) {
       const tasksDir = join(this.store.getFusionDir(), "tasks");
       const promptPath = getPromptPath(tasksDir, task.id);
-      const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
+      const staleness = await evaluateSpecStaleness({
+        settings,
+        promptPath,
+        task,
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-12:40 (U11): one-line pass-through
+           so the guard is driven rather than defaulted. Touches no executor logic. */
+        plannerColumns: await resolveDedicatedPlannerColumnsForTask(this.store, task.id),
+      });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
         // Move to the workflow-aware replan column first, then set status so the task

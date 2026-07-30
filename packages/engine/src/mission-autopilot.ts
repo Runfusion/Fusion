@@ -50,6 +50,7 @@ import type {
 type AutopilotMissionStore = MissionStore | AsyncMissionStore;
 import { autopilotLog } from "./logger.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
+import { resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
 import { isOperatorActionableAgentError } from "./transient-error-detector.js";
 
 /** Maximum retry attempts for slice activation failures. */
@@ -969,6 +970,7 @@ export class MissionAutopilot {
           : false;
         const reconciliation = await reconcileMissionFeatureState(this.taskStore, task, feature, {
           hasLinkedAssertions,
+          plannerColumns: await resolvePlannerLanesForTask(this.taskStore as never, task.id),
         });
 
         if (reconciliation.kind === "failure") {
