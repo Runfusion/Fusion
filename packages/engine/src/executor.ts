@@ -13340,8 +13340,14 @@ export class TaskExecutor {
               // was unwinding; continuing the cleanup would clobber a valid
               // recovery (see the analogous block in the outer finally for the
               // full reasoning).
+              /* FNXC:WorkflowLifecycleColumns 2026-08-01-11:40 (fleet: executor.ts stuck-requeue family):
+                 "has a concurrent recovery already moved this card on?" — the pre-completion lanes are the
+                 board's wip and hold. Spelled as literals, a renamed board answered "moved on" for a card
+                 that was still executing, so the stuck-requeue cleanup was skipped every time; the log line
+                 then blamed a concurrent recovery that had not happened. */
               const latestTask = await this.store.getTask(task.id);
-              if (latestTask.column !== "in-progress" && latestTask.column !== "todo") {
+              const requeueLanes = await this.resolveResumeLanes(task.id);
+              if (latestTask.column !== requeueLanes.wip && latestTask.column !== requeueLanes.hold) {
                 executorLog.log(
                   `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
                 );
@@ -15301,7 +15307,8 @@ export class TaskExecutor {
           let cleanupLockHeld = true;
           try {
             const latestTask = await this.store.getTask(task.id);
-            if (latestTask.column === "in-progress" || latestTask.column === "todo") {
+            const continuationLanes = await this.resolveResumeLanes(task.id);
+            if (latestTask.column === continuationLanes.wip || latestTask.column === continuationLanes.hold) {
               await this.store.updateTask(task.id, {
                 sessionFile: null,
                 status: null,
@@ -15353,7 +15360,8 @@ export class TaskExecutor {
           // all step progress reset, undoing valid completion. Skip the
           // entire cleanup if the column has moved on past in-progress/todo.
           const latestTask = await this.store.getTask(task.id);
-          if (latestTask.column !== "in-progress" && latestTask.column !== "todo") {
+          const outerRequeueLanes = await this.resolveResumeLanes(task.id);
+          if (latestTask.column !== outerRequeueLanes.wip && latestTask.column !== outerRequeueLanes.hold) {
             executorLog.log(
               `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
             );
@@ -16881,20 +16889,44 @@ export class TaskExecutor {
 
         const latestTask = await store.getTask(taskId);
         let latestColumn = latestTask.column;
-        if (latestColumn === "todo") {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-12:00 (fleet: executor.ts — the GUARD AND ITS DESTINATION
+        in one change):
+        `fn_task_done` arriving while the card still rests in the hold lane promotes it into the wip lane so
+        the completion handoff has somewhere to run. Converting the guard alone is the half-conversion that
+        this program's worst regressions are made of: a lane-resolved guard admitting a card and then a
+        literal `moveTask(..., "in-progress")` sending it to a column the board does not declare. The move
+        is REJECTED there, and the card is left mid-promotion with its completion already logged.
+
+        So the destination comes from the same snapshot, and it comes from `resolvePlannerLanes` rather than
+        `resolveResumeLanes` precisely because a MOVE needs a column that exists: `PlannerLanes` leaves `wip`
+        undefined when the board declares no wip lane, and the promotion is then skipped with a log line
+        instead of issuing a move to an invented column. The completion handoff below is gated on the wip
+        lane anyway, so skipping is the honest outcome rather than a silent one.
+        */
+        const donePromotionLanes = resolvePlannerLanes(store, taskId);
+        const doneWipLane = donePromotionLanes.wip;
+        if (latestColumn === donePromotionLanes.hold && doneWipLane !== undefined) {
           await store.logEntry(
             taskId,
             hardPauseActive
-              ? "fn_task_done called while task was in todo during pause — promoting to in-progress for deferred completion handoff"
-              : "fn_task_done called while task was in todo — promoting to in-progress before completion handoff",
+              ? `fn_task_done called while task was in ${latestColumn} during pause — promoting to ${doneWipLane} for deferred completion handoff`
+              : `fn_task_done called while task was in ${latestColumn} — promoting to ${doneWipLane} before completion handoff`,
             undefined,
             this.getRunContextFor(taskId),
           );
-          await store.moveTask(taskId, "in-progress");
-          latestColumn = "in-progress";
+          await store.moveTask(taskId, doneWipLane);
+          latestColumn = doneWipLane;
+        } else if (latestColumn === donePromotionLanes.hold) {
+          await store.logEntry(
+            taskId,
+            `fn_task_done called while task was in ${latestColumn}, but this workflow declares no wip column — leaving the card where it is`,
+            undefined,
+            this.getRunContextFor(taskId),
+          );
         }
 
-        if (latestColumn === "in-progress" && !hardPauseActive) {
+        if (latestColumn === doneWipLane && !hardPauseActive) {
           this.scheduleCompletedTaskWatchdog(taskId, "fn_task_done");
         }
 
@@ -20932,7 +20964,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             `${taskId} force-requeue could not read latest task state: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
-        if (latestColumn && latestColumn !== "in-progress") {
+        /* FNXC:WorkflowLifecycleColumns 2026-08-01-11:45 (fleet): the board's wip lane; with the literal a
+           renamed board skipped every force-requeue as "recovered concurrently". */
+        if (latestColumn && latestColumn !== (await this.resolveResumeLanes(taskId)).wip) {
           executorLog.log(
             `${taskId} force-requeue skipped — task is now in '${latestColumn}' (recovered concurrently)`,
           );
