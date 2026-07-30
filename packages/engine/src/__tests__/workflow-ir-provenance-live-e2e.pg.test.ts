@@ -1,34 +1,32 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-23:45 (the provenance signal lied about custom workflows):
+FNXC:WorkflowLifecycleColumns 2026-08-01-03:20 (provenance: what it may vouch for):
 
 `resolveWorkflowIrForTaskWithProvenance` exists so a caller can TRUST `source: "selection"`. Its own
-note says as much: "a signal that lies is one nobody can build the census conversions on."
+note says why: "a signal that lies is one nobody can build the census conversions on." Two ways it
+could lie, and only one of them was reachable — which is worth writing down, because the first
+version of this file asserted the reverse.
 
-It lied for a whole class of workflows. After the marker check it also compared the returned IR's `id`
-against the requested workflow id and reported `"default"` when they differed — but
-`createWorkflowDefinition` stores an authored IR VERBATIM, so `ir.id` keeps whatever the author wrote
-while the store allocates its own `WF-NNN`. Measured before the fix:
+REACHABLE, and the defect this suite exists for: an id that LOOKS built-in but is not registered — a
+workflow removed between releases, a typo'd selection — took a branch that substituted the default
+coding IR WITHOUT branding it as a fallback. Provenance then vouched for it as `"selection"`, handing
+a caller the default board's graph under the selected workflow's name.
+
+NOT REACHABLE, though I claimed it was: an id cross-check also ran after the marker check and reported
+`"default"` whenever the resolved IR's `id` differed from the requested workflow id. It does misfire —
+`createWorkflowDefinition` stores an IR verbatim while minting `WF-NNN` separately, so any IR carrying
+an author's id mismatches:
 
     store workflow id = WF-001   stored ir.id = custom:prov
     PROVENANCE source = default  resolved ir.id = custom:prov      <- the CORRECT IR, called a guess
 
-THE CONSEQUENCE IS LIVE, not theoretical. `triage.ts`'s post-U11 intake recovery reads
-`source === "selection" ? workflowHasColumn(ir, "triage") : true` and fails closed on `"default"`.
-Its comment reasons that declining "costs a deferred recovery that the next sweep retries" — which
-holds only if the provenance can ever become `"selection"`. For these workflows it never could, so a
-card stranded in `triage` was declined on every sweep forever, not deferred.
+— but NEITHER `WorkflowIrV1` NOR `WorkflowIrV2` DECLARES AN `id` FIELD. An editor-authored workflow
+carries none, `resolvedId` is undefined, and the check passed it as `"selection"`. The mismatch above
+comes from this suite's own fixture, which adds an id. So the check was unreliable and redundant, and
+removing it is correctness — not the live fix for `triage.ts`'s intake recovery that I first wrote
+here. Corrected rather than quietly softened, because an overstated finding is how a narrow cleanup
+gets backported as a critical fix.
 
-WHY DELETING THE CHECK IS SAFE RATHER THAN A LOOSENING. All three ways `resolveWorkflowIrById`
-degrades — missing definition, malformed definition, throwing lookup — return an IR branded by
-`markFellBack`, and the marker check runs first. The id comparison caught nothing the marker misses,
-which the last three cases below pin from the other direction so the deletion cannot silently widen
-trust. One of those — an id that LOOKS builtin but is not registered — was a genuine hole: that branch
-substituted the default without branding it, so the deletion would have reported it as `"selection"`.
-Caught in review, repaired at the source by branding the substitution, and pinned below.
-
-The `markFellBack` note already stated the principle the id check violated: "there is no rule over
-the returned value that separates them, because the two shapes are genuinely identical. So the
-function that KNOWS marks it."
+The remaining cases pin the fallback directions so the deletion cannot silently widen trust.
 
 LANE. `.pg.test.ts`, skipped via `pgDescribe` when no PostgreSQL is reachable. Throwaway per-file
 database; never port 4040.
@@ -55,7 +53,7 @@ pgDescribe("workflow IR provenance against a live store", () => {
   beforeEach(async () => { await h.beforeEach(); });
   afterEach(async () => { await h.afterEach(); });
 
-  it("REGRESSION — a custom workflow whose IR carries its own id is reported as SELECTION", async () => {
+  it("a workflow whose IR carries its own id is reported as SELECTION", async () => {
     /*
     The defect, and the shape every authored workflow has: the store allocates `WF-NNN` while the
     stored IR keeps the author's own id. Asserting the id mismatch explicitly, because if

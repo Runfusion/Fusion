@@ -339,26 +339,36 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   */
   const ir = await resolveWorkflowIrById(store, workflowId, irCache);
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-23:30 (the id cross-check is DELETED — it misfired):
+FNXC:WorkflowLifecycleColumns 2026-08-01-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
   THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
-  that a returned IR whose `id` differs from the requested one proves a fallback. It does not, and it
-  was wrong in the direction that matters:
+  that a returned IR whose `id` differs from the requested one proves a fallback. Both halves of that
+  are wrong.
 
-    store workflow id = WF-001   stored ir.id = custom:prov
-    -> source reported "default", for a workflow that resolved CORRECTLY
+  UNRELIABLE. Neither `WorkflowIrV1` nor `WorkflowIrV2` declares an `id` field, so the check is
+  answering a question about a property the IR type does not have. When one IS present — a fixture, a
+  hand-authored graph, an import — it is the AUTHOR's id and has no relation to the `WF-NNN` the store
+  mints, because `createWorkflowDefinition` persists the IR verbatim and allocates the row id
+  separately. Measured:
 
-  `createWorkflowDefinition` stores an authored IR VERBATIM, so `ir.id` keeps whatever the author
-  wrote while the store allocates its own `WF-NNN`. Those two are unequal for every such workflow, so
-  every one of them was reported as a guess — denying trust to exactly the custom boards this API
-  exists to serve, and silently disabling any conversion gated on `source === "selection"`.
+      store workflow id = WF-001   stored ir.id = custom:prov
+      -> source reported "default", for a workflow that resolved CORRECTLY
 
-  It was also redundant. The three ways `resolveWorkflowIrById` degrades — missing definition,
-  malformed definition, throwing lookup — all return a MARKED IR, and the line above already returns
-  `"default"` for those. The note on `markFellBack` states the principle the id check violated: "there
-  is no rule over the returned value that separates them, because the two shapes are genuinely
-  identical. So the function that KNOWS marks it."
+  REDUNDANT. All four ways `resolveWorkflowIrById` substitutes the default — missing definition,
+  malformed definition, throwing lookup, and an unregistered builtin id (branded above, in this same
+  change) — return a MARKED IR, and the line below returns `"default"` for every one of them.
 
-  Found while fixing PR #2812, where gating on this signal turned a passing case red.
+  The note on `markFellBack` states the principle: "there is no rule over the returned value that
+  separates them, because the two shapes are genuinely identical. So the function that KNOWS marks
+  it." The id check was an inference over the returned value, which is exactly what that note rules
+  out.
+
+  SCOPE, corrected after the first version of this change overstated it: an editor-authored workflow
+  carries no `ir.id`, so the check reported `"selection"` for it and the misfire never reached the one
+  production consumer (`triage.ts`'s post-U11 intake recovery). The reachable defect this change fixes
+  is the unregistered-builtin branding hole above; removing the id check is correctness and clarity,
+  not a live bug fix.
+
+  Found while fixing PR #2812, where gating on this signal turned a fixture-built case red.
   */
   if (didFallBackToDefault(ir)) return { ir, source: "default" };
   return { ir, source: "selection", workflowId };
