@@ -95,6 +95,17 @@ for (const file of walk(PACKAGES)) {
   called with more arguments raises the global max and makes an under-supplied seam look supplied.
 
   So a file that declares its own function with that name has its calls attributed to the local one.
+
+  STILL NOT HANDLED: an IMPORTED shadow. `Lane.tsx` imports `sortTasksForDisplayColumn` from
+  `./taskSorting`, not from core, and declares nothing — so its calls are still attributed to core's
+  same-named seam. Distinguishing those needs import resolution (which module does this identifier
+  actually bind to), and this scan deliberately stays at the single-file AST level. Consequence: the
+  `sortTasksForDisplayColumn` rows in any report are false positives, and a seam whose only real
+  suppliers are shadowed-by-import could in principle read as unsupplied.
+
+  That is a third distinct way this check can mislead, alongside the one-supplier floor and the
+  test-exclusion. All three are limits of matching by NAME; the fix is import resolution, and it is
+  not worth it until a report is wrong in a way that costs more than reading it carefully.
   */
   const locallyDeclared = new Set();
   const collectLocal = (node) => {
