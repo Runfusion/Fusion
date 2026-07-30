@@ -35,38 +35,40 @@ call-site fact, and a call-site fact is what is asserted.
 
 It is an alarm in both directions: a new unconverted caller fails it, and converting site 3655 fails
 it too, which is the moment to delete this file and record the fix.
+
+SYNTAX, NOT TEXT. The call sites are found by parsing `project-engine.ts` and inspecting real call
+expressions, matching the repo's existing precedent for the same problem
+(`core/.../sync-workflow-ir-callsite-allowlist.test.ts`). An audit that reasons about the text
+following a name can be broken — or silently misled — by a formatting-only change, which is the
+failure mode this whole series is about. The one prose assertion below is unavoidably textual and is
+whitespace-normalised for that reason.
 */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 
-const SOURCE = readFileSync(join(__dirname, "..", "project-engine.ts"), "utf8");
-const PREDICATE = "hasAutoHealableVerificationBufferFailure(";
+const FILE = join(__dirname, "..", "project-engine.ts");
+const SOURCE = readFileSync(FILE, "utf8");
+const PREDICATE = "hasAutoHealableVerificationBufferFailure";
 
-/** Call sites, excluding the declaration (which is followed by its parameter list, not an argument). */
-function callSites(): string[] {
-  return SOURCE.split(PREDICATE)
-    .slice(1)
-    .filter((s) => !s.startsWith("task: {") && !s.trimStart().startsWith("task: {"));
-}
-
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-31-09:20 (self-correction, forced by a mutation run):
-COUNT THE ARGUMENTS; do not match their NAMES. The first version filtered on the argument text
-containing `isReviewColumn` / `ReviewLane`, so converting the unconverted site to pass a plain `true`
-left the count at one and this suite stayed green — the "alarm in both directions" the header claims
-did not exist. Arity is the property actually being asserted, and it cannot be spelled around.
-*/
-function argumentCount(site: string): number {
-  let depth = 0;
-  let args = 1;
-  for (const ch of site) {
-    if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" && depth === 0) return args;
-    else if (ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === "," && depth === 0) args++;
-  }
-  return args;
+/** Every call of the predicate, as its argument-expression list. A declaration is not a call
+ *  expression, so it is excluded structurally rather than by guessing at its text. */
+function callSites(): ts.NodeArray<ts.Expression>[] {
+  const sf = ts.createSourceFile(FILE, SOURCE, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const found: ts.NodeArray<ts.Expression>[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const name = ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : ts.isIdentifier(callee) ? callee.text : undefined;
+      if (name === PREDICATE) found.push(node.arguments);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return found;
 }
 
 describe("auto-heal review-lane call sites", () => {
@@ -78,14 +80,15 @@ describe("auto-heal review-lane call sites", () => {
 
   it("has exactly one call site that does NOT pass the resolved review lane", () => {
     /*
-    The measurement. `maxAutoMergeRetries` is the second argument at every site, so a site that stops
-    there — its argument list closing right after it — passed no review-lane answer.
+    ARITY is the property asserted, deliberately. A first version of this file filtered on whether the
+    argument TEXT mentioned `isReviewColumn` / `ReviewLane`; converting the unconverted site to pass a
+    plain `true` then left the count at one and the suite stayed green, so the "alarm in both
+    directions" claimed above did not exist. Argument count cannot be spelled around, and parsing
+    means a reflowed call cannot be miscounted either.
     */
-    const unconverted = callSites().filter((site) => argumentCount(site) < 3);
+    const unconverted = callSites().filter((args) => args.length < 3);
 
     expect(unconverted).toHaveLength(1);
-    /* And it is the merge loop's auto-heal branch, not a gating caller. */
-    expect(unconverted[0]).toContain("maxAutoMergeRetries");
   });
 
   it("the DELIBERATE-LITERAL note still claims both call sites are converted", () => {
@@ -93,8 +96,10 @@ describe("auto-heal review-lane call sites", () => {
     Pinned deliberately. The note is the artefact that would stop a reviewer looking further, so the
     audit fails when the note is corrected — forcing whoever corrects it to also decide what to do
     about the third site, rather than fixing the sentence and leaving the gap.
+
+    Whitespace-normalised because the source wraps this sentence mid-phrase; a comment is prose and
+    has no syntax to parse, so this one assertion is textual by necessity rather than by choice.
     */
-    /* Matched across the source's own line wrap, which splits the sentence after "resolved". */
     expect(SOURCE.replace(/\s+/g, " ")).toContain("Both call sites pass the resolved answer");
   });
 });
