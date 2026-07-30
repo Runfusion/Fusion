@@ -152,6 +152,29 @@ describe("resume lanes come from the task's own workflow", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-18:10 (the edge my first discriminator missed):
+  DECLARED AND EMPTY, per #2765. This board is a real v2 workflow that declares intake and complete
+  but no hold, wip or review. My first rule proxied "synthesized" as "hold and review are both
+  undefined", so it read this board as v1-upgraded and let the resume router proceed into a wip lane
+  that does not exist. Checking whether ANY of the six roles resolved is the actual question.
+  */
+  it("treats a v2 board that declares OTHER roles but no wip as genuinely having no wip lane", async () => {
+    const intakeAndCompleteOnly = {
+      version: "v2",
+      id: "WF-sparse",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "inbox", label: "Inbox", traits: [{ trait: "intake" }] },
+        { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+    const h = harness(intakeAndCompleteOnly);
+
+    await expect(h.lanes("FN-1")).resolves.toMatchObject({ wipDeclared: false });
+  });
+
   it("falls back to the legacy trio when no workflow resolves", async () => {
     // A v1 / column-less workflow has no vocabulary to read, so the legacy names ARE the answer
     // and the default lineage behaves exactly as before.
