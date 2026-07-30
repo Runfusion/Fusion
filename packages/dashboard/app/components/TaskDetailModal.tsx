@@ -24,7 +24,13 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
-import { isFieldEditableColumnRole } from "../utils/columnRoles";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isFieldEditableColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+} from "../utils/columnRoles";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
@@ -997,6 +1003,13 @@ export function TaskDetailContent({
   */
   const [taskWorkflowBadge, setTaskWorkflowBadge] = useState<{ id: string; name: string; icon?: string } | null>(null);
   const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> | null>(null);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (fleet: TaskDetailModal.tsx):
+  ONE alias for this task's resolved column traits, so the role helpers below read the same
+  metadata the modal already fetches. No new abstraction: `currentColumnFlags` is produced by
+  the board-workflows payload and was already consumed at `canEdit`.
+  */
+  const taskColumnRoleFlags = workflowMoveMetadata?.currentColumnFlags;
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
   // in which case the fields section renders nothing (today's UI byte-identical).
@@ -1335,7 +1348,7 @@ export function TaskDetailContent({
   const [workflowResults, setWorkflowResults] = useState<WorkflowStepResult[]>([]);
   const [workflowResultsLoading, setWorkflowResultsLoading] = useState(false);
   const [workflowEnabledSteps, setWorkflowEnabledSteps] = useState<string[] | undefined>(task.enabledWorkflowSteps);
-  const isNodeOverrideLocked = task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
+  const isNodeOverrideLocked = isWipColumnRole(taskColumnRoleFlags, task.column) || ACTIVE_STATUSES.has(task.status as string);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -2597,7 +2610,7 @@ export function TaskDetailContent({
       deleteCloseRequested = true;
     };
 
-    if (task.column !== "archived" && onArchiveTask) {
+    if (!isArchivedColumnRole(taskColumnRoleFlags, task.column) && onArchiveTask) {
       const deleteChoice = await confirmWithChoice({
         title: t("taskDetail.delete.title", "Delete Task"),
         message: t("taskDetail.delete.message", "Delete {{id}}?", { id: task.id }),
@@ -2980,7 +2993,7 @@ export function TaskDetailContent({
   AI-undo task on conflict/unsupported. The source task's column is never
   mutated as a side effect.
   */
-  const isRevertable = (task.column === "done" || task.column === "archived")
+  const isRevertable = (isCompleteColumnRole(taskColumnRoleFlags, task.column) || isArchivedColumnRole(taskColumnRoleFlags, task.column))
     && Boolean(task.mergeDetails?.commitSha);
 
   const handleRevertTask = useCallback(async () => {
@@ -3605,8 +3618,8 @@ export function TaskDetailContent({
   */
   const overseerSnapshot = workingTask.plannerOverseerState ?? null;
   const overseerActive = Boolean(overseerSnapshot);
-  const isDoneOrArchivedColumn = task.column === "done" || task.column === "archived";
-  const isOverseerHumanReviewTerminal = task.column === "in-review" && !effectiveAutoMerge;
+  const isDoneOrArchivedColumn = isCompleteColumnRole(taskColumnRoleFlags, task.column) || isArchivedColumnRole(taskColumnRoleFlags, task.column);
+  const isOverseerHumanReviewTerminal = isReviewColumnRole(taskColumnRoleFlags, task.column) && !effectiveAutoMerge;
   const overseerHumanControlSuppressed = Boolean(isTaskPaused) || isDoneOrArchivedColumn || isOverseerHumanReviewTerminal;
   const oversightIsOff = effectiveOversightLevel === "off";
   /*
@@ -4371,7 +4384,7 @@ export function TaskDetailContent({
                   customFields={customFieldValues}
                   onSave={handleSaveCustomFields}
                   error={customFieldError}
-                  readOnly={Boolean(task.column === "archived")}
+                  readOnly={Boolean(isArchivedColumnRole(taskColumnRoleFlags, task.column))}
                 />
               ) : null}
               {showNearDuplicateWarning && (
@@ -5083,7 +5096,7 @@ export function TaskDetailContent({
                 </button>
               </>
             )}
-            {task.column === "done" && (
+            {isCompleteColumnRole(taskColumnRoleFlags, task.column) && (
               <button
                 className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("summary")}
@@ -5097,7 +5110,7 @@ export function TaskDetailContent({
             >
               {t("taskDetail.tabs.definition", "Plan")}
             </button>
-            {(task.column === "in-progress" || task.column === "in-review" || task.column === "done") && (
+            {(isWipColumnRole(taskColumnRoleFlags, task.column) || isReviewColumnRole(taskColumnRoleFlags, task.column) || isCompleteColumnRole(taskColumnRoleFlags, task.column)) && (
               <button
                 className={`detail-tab${activeTab === "changes" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("changes")}
@@ -5111,7 +5124,7 @@ export function TaskDetailContent({
             >
               {t("taskDetail.tabs.review", "Review")}
             </button>
-            {task.column === "in-review" && (
+            {isReviewColumnRole(taskColumnRoleFlags, task.column) && (
               <button
                 className={`detail-tab${activeTab === "pr" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("pr")}
@@ -5203,7 +5216,7 @@ export function TaskDetailContent({
                 canEdit={canEdit}
                 projectId={projectId}
                 isTaskInProgress={
-                  task.column === "in-progress"
+                  isWipColumnRole(taskColumnRoleFlags, task.column)
                   && !task.paused
                   && !task.userPaused
                   && task.status !== "paused"
@@ -5230,7 +5243,7 @@ export function TaskDetailContent({
                 projectId={projectId}
               />
             </div>
-          ) : activeTab === "summary" && task.column === "done" ? (
+          ) : activeTab === "summary" && isCompleteColumnRole(taskColumnRoleFlags, task.column) ? (
             <div className="detail-section detail-section--summary">
               <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
@@ -5382,7 +5395,7 @@ export function TaskDetailContent({
             />
           ) : activeTab === "pr" ? (
             <div className="detail-section detail-pr-tab">
-              {task.column === "in-review" && (
+              {isReviewColumnRole(taskColumnRoleFlags, task.column) && (
                 <>
                   {shouldShowInReviewStallBadge(workingTask) && workingTask.inReviewStall && (() => {
                     const copy = getInReviewStallCopy(workingTask.inReviewStall, {
@@ -6375,7 +6388,7 @@ export function TaskDetailContent({
           </>
           )}
         </div>
-        {task.column === "in-review" && (
+        {isReviewColumnRole(taskColumnRoleFlags, task.column) && (
           <PrCreateModal
             open={prCreateOpen}
             taskId={task.id}
@@ -6461,7 +6474,7 @@ export function TaskDetailContent({
               completed task's outcome. Omitted — not disabled — when the task has
               no landed commit to revert, avoiding an empty button shell.
               */}
-              {(task.column === "done" || task.column === "archived") && onRevertTask && isRevertable && (
+              {(isCompleteColumnRole(taskColumnRoleFlags, task.column) || isArchivedColumnRole(taskColumnRoleFlags, task.column)) && onRevertTask && isRevertable && (
                 <button
                   className="btn btn-sm"
                   onClick={() => void handleRevertTask()}
@@ -6515,7 +6528,7 @@ export function TaskDetailContent({
 
               {/* Move dropdown — column transitions and merge actions */}
               <div className="detail-move-dropdown" ref={moveMenuRef}>
-                {task.column === "in-review" ? (
+                {isReviewColumnRole(taskColumnRoleFlags, task.column) ? (
                   <div className="detail-move-actions-in-review">
                     <div>
                       <button
