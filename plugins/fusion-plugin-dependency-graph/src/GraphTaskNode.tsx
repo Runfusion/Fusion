@@ -84,14 +84,30 @@ export function GraphTaskNode({
   alone is the signal. Deleting it is also the only option that needs no resolution —
   this is a synchronous React render, where an IR lookup is not available.
   */
-  const isAwaitingApproval = task.status === "awaiting-approval";
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-11:50 (PR #2644 review, greptile P1):
+  A STALE APPROVAL STATUS MUST NOT HIDE A RUNNING CARD. Dropping the column condition made the
+  awaiting-approval signal status-only, which is right for a planning-lane card — but `awaiting-approval`
+  is DURABLE, so a card that carries it into an execution lane was rendered as not-active: no active
+  styling, no execution-status indicator, no current-step metadata, while it was plainly running.
+
+  So the suppression now yields to an execution SIGNAL rather than to a column name. If the card shows
+  execution activity, it is active and the stale approval status is residue; if it does not, the approval
+  state is the truth. That ordering needs no IR lookup, which matters here — this is a synchronous React
+  render.
+
+  The `in-progress` literal is pre-existing and NOT on the triage bar; converting it needs the board's
+  column traits, which this component is not given. Left with this note rather than half-converted.
+  */
+  const hasExecutionSignal = task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
+  const isAwaitingApproval = task.status === "awaiting-approval" && !hasExecutionSignal;
   const isActive =
     !globalPaused &&
     !isFailed &&
     !isPaused &&
     !isStuck &&
     !isAwaitingApproval &&
-    (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+    hasExecutionSignal;
 
   const hasValidCurrentStep =
     typeof task.currentStep === "number" &&

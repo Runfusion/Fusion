@@ -363,3 +363,49 @@ describe("capture resolves the board once, not once per question", () => {
     expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("building");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-12:35 (PR #2644 review — what I could NOT prove, recorded):
+
+`resolveWorkflowIrById` silently substitutes the BUILTIN default IR when a configured custom workflow is
+missing or unparsable, so its columns get treated as this project's vocabulary. The reviewer is right that
+this is laundering. I could not establish a better answer: the legacy-five fallback ACCEPTS `triage` (the
+column #2515 deleted — the defect I fixed earlier in this branch), accepting nothing rejects every named
+column on a project whose row is merely missing, and refusing outright loses the utterance.
+
+The tell that stopped me shipping a fix: my isolated revert stayed GREEN. Two candidate behaviours my
+tests could not distinguish means I had no evidence, and a change I cannot make fail is a change I cannot
+justify. The substitution is named at the site and the decision left to whoever owns the missing-workflow
+contract.
+
+What IS pinned below is the part that is provable: a readable custom board is used, and the row that was
+read is the snapshot (one read, enforced by the read-count cases above).
+*/
+describe("a readable custom default board is used for validation", () => {
+  it("accepts a column the custom board declares", async () => {
+    const customIr = {
+      version: "v2", name: "Custom", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      ],
+    };
+    const created: Array<Record<string, unknown>> = [];
+    const d = {
+      taskStore: {
+        createTask: async (input: Record<string, unknown>) => {
+          created.push(input);
+          return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-31T00:00:00.000Z" };
+        },
+        getDefaultWorkflowId: async () => "wf-custom",
+        getWorkflowDefinition: async () => ({ id: "wf-custom", ir: customIr }),
+      },
+      pluginId: "glasses",
+      defaultColumn: "backlog",
+    } as never;
+
+    await runQuickCapture({ text: "capture this", column: "building" }, d);
+
+    expect(created[0]?.column).toBe("building");
+  });
+});

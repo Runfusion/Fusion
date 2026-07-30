@@ -1,5 +1,5 @@
 import type { MissionFeature, Task, TaskStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 
 export type MissionFeatureSyncTargetStatus = "done" | "in-progress" | "triaged";
@@ -77,7 +77,22 @@ export async function reconcileMissionFeatureState(
   whose workflow cannot be read should keep tracking on the default vocabulary, not go
   silent, which is the exact failure being fixed here.
   */
-  const roles = await resolveTaskLifecycleColumns(taskStore, task.id);
+  /*
+  FNXC:MissionFeatureSyncLanes 2026-07-31-11:30 (found auditing my OWN merged code for the split I made
+  three times in PR #2644):
+  ONE SNAPSHOT. This read the workflow TWICE — `resolveTaskLifecycleColumns` for the roles and
+  `resolveWorkflowIrForTask` for the declared column ids — which is literally the same read twice, since
+  the former is `resolveLifecycleColumns(await resolveWorkflowIrForTask(...))`. A workflow edit between
+  them gives roles from one revision and declared columns from another, so the aliasing guard below is
+  evaluated against a column set that no longer matches the roles it is protecting.
+
+  FOURTH occurrence of this shape in my work on this program (executor resume lanes, glasses lane
+  context, glasses capture, here). The first three were caught in review; this one was already merged.
+  The predictor that found it is mechanical rather than clever: grep for two resolver calls inside one
+  function.
+  */
+  const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
+  const roles = ir ? resolveLifecycleColumns(ir) : undefined;
   /*
   FNXC:MissionFeatureSyncLanes 2026-07-30-05:40 (PR #2602 review — greptile P1):
   A per-role legacy fallback must NEVER claim a column the workflow assigned to a
@@ -101,7 +116,6 @@ export async function reconcileMissionFeatureState(
   I had written that gap down as a residual limitation. Documenting it was not handling
   it: the IR is in reach here, so read the columns and the limitation disappears.
   */
-  const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
   const declaredColumnIds = new Set(
     ((ir as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? [])
       .map((c) => c?.id)

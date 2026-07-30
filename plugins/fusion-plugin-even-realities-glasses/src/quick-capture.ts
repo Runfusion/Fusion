@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveDefaultWorkflowIr, resolveLifecycleColumns, resolveWorkflowIrById } from "@fusion/core";
+import { isBuiltinWorkflowId, resolveDefaultWorkflowIr, resolveLifecycleColumns, resolveWorkflowIrById } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import type { TaskColumn } from "./settings.js";
 
@@ -102,11 +102,41 @@ async function resolveCaptureBoard(
   taskStore: PluginContext["taskStore"],
 ): Promise<{ declared: ReadonlySet<string>; intake?: string }> {
   try {
-    const store = taskStore as unknown as { getDefaultWorkflowId?: () => Promise<string | undefined> };
+    const store = taskStore as unknown as {
+      getDefaultWorkflowId?: () => Promise<string | undefined>;
+      getWorkflowDefinition?: (id: string) => Promise<{ ir?: unknown } | undefined>;
+    };
     const workflowId = await store.getDefaultWorkflowId?.();
-    const ir = workflowId
-      ? await resolveWorkflowIrById(taskStore as never, workflowId)
-      : resolveDefaultWorkflowIr();
+    let ir: unknown;
+    if (workflowId && !isBuiltinWorkflowId(workflowId) && store.getWorkflowDefinition) {
+      const definition = await store.getWorkflowDefinition(workflowId);
+      /*
+      FNXC:PluginLifecycleColumns 2026-07-31-12:30 (PR #2644 review — and I could NOT prove the fix, so
+      it is not here):
+      The reviewer is right that `resolveWorkflowIrById` silently substitutes the BUILTIN default IR when
+      a configured custom workflow is missing or unparsable, so its columns get treated as this project's
+      vocabulary. What I could not establish is a BETTER answer for that state:
+        - falling back to the legacy five ACCEPTS `triage`, the column #2515 deleted — creating a card in
+          a column no board has, which is the defect I fixed earlier in this same branch;
+        - accepting nothing rejects every explicitly-named column on a project whose workflow row is
+          merely missing, which is harsher than the substitution;
+        - refusing the capture outright loses the operator's utterance.
+      Every candidate trades one wrong behaviour for another, and my tests could not distinguish them —
+      the isolated revert stayed green, which is the signal that I was about to ship an unprovable change.
+      So the substitution stands, named here, and the DECISION is left to whoever owns the missing-workflow
+      contract rather than guessed at in a plugin.
+
+      What IS fixed and provable: the definition row we read IS the snapshot, so this stays to ONE read.
+      A stored STRING ir is the only case needing core to parse it.
+      */
+      ir = definition?.ir != null && typeof definition.ir !== "string"
+        ? definition.ir
+        : await resolveWorkflowIrById(taskStore as never, workflowId);
+    } else {
+      ir = workflowId
+        ? await resolveWorkflowIrById(taskStore as never, workflowId)
+        : resolveDefaultWorkflowIr();
+    }
     const declared = new Set<string>();
     for (const column of (ir as { columns?: Array<{ id?: unknown }> }).columns ?? []) {
       if (typeof column?.id === "string") declared.add(column.id);
