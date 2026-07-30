@@ -17,6 +17,7 @@ import {validateCustomFieldPatch, CustomFieldRejectionError} from "../task-field
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../node-override-guard.js";
+import {isTaskTerminalNodeIdAsync} from "../workflow-ir-resolver.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -79,7 +80,26 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         loaded above if the re-read fails, which is no worse than before.
         */
         const freshForGuard = await store.readTaskJson(dir).catch(() => null);
-        const validation = validateNodeOverrideChange(freshForGuard ?? task, updates.nodeId ?? null, overrideLanes);
+        /*
+        FNXC:StateMachine 2026-08-01-10:20 (PR #2793's finding — the INNER half, merged with #2821):
+        THIS GUARD RUNS SECOND AND USED TO OVERRIDE THE FIRST. `updateTaskImpl` resolves the terminal
+        question and passes it in; this call passed no `isTerminalNodeId`, so it fell to
+        `defaultIsTerminalNodeId` — the bare literal `nodeId === "end"`. An unconverted literal behind
+        a converted call site, which meant converting the outer guard alone changed nothing an
+        operator could see. PR #2793 measured exactly that: correcting either guard on its own left
+        the rejected-`end` case unmoved, because both independently called it terminal.
+
+        Resolved here too, from the task's own workflow, and threaded ALONGSIDE #2821's
+        `overrideLanes` rather than in place of them — the two answer different questions about the
+        same call, and dropping either re-opens a defect the other did not cover.
+        */
+        const terminal = updates.nodeId == null
+          ? false
+          : await isTaskTerminalNodeIdAsync(store, id, updates.nodeId);
+        const validation = validateNodeOverrideChange(freshForGuard ?? task, updates.nodeId ?? null, {
+          ...overrideLanes,
+          isTerminalNodeId: () => terminal,
+        });
         if (!validation.allowed) {
           throw new Error(validation.message);
         }
