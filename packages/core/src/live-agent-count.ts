@@ -155,19 +155,9 @@ function hasLiveWorkflowStepLease(task: RunningAgentTaskShape): boolean {
 
 /*
 FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
-Every literal below sits after a `??` or a `flags ? … :` — it is reached ONLY when the caller
-supplied no trait flags and no enriched shape, which is the case the enrichers exist to remove.
-There is nothing to resolve from in that state, so converting is not possible; the choice is only
-between the known legacy answer and a different guess.
-
-That choice is not neutral here. Running and Waiting are COMPLEMENTS over the same rows, so a card
-matching neither arm is reported as neither running nor waiting and the footer's queued total
-silently under-reports it. Guessing "not WIP" or "not review" is therefore worse than the legacy id,
-which at least matches every pre-rename board.
-
-The fix for a renamed board is at the CALLER — pass flags, or use `enrichRunningAgentTaskShape`,
-which takes the IR and resolves every role by trait. Same reasoning as the marker above
-`isLegacyPreImplementationColumn`, which this file already records.
+Full rationale at the first marker of this name above (enrichRunningAgentTaskShapeFromFlags): these
+legacy-id literals are the flag-less fallback the enrichers exist to remove; converting here would
+guess, and a wrong guess under-reports the queued total. Fix at the CALLER by passing flags/IR.
 */
 function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   // Legacy literals are intentionally fixture-only degradation when workflow IR is unavailable.
@@ -184,19 +174,9 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
  */
 /*
 FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
-Every literal below sits after a `??` or a `flags ? … :` — it is reached ONLY when the caller
-supplied no trait flags and no enriched shape, which is the case the enrichers exist to remove.
-There is nothing to resolve from in that state, so converting is not possible; the choice is only
-between the known legacy answer and a different guess.
-
-That choice is not neutral here. Running and Waiting are COMPLEMENTS over the same rows, so a card
-matching neither arm is reported as neither running nor waiting and the footer's queued total
-silently under-reports it. Guessing "not WIP" or "not review" is therefore worse than the legacy id,
-which at least matches every pre-rename board.
-
-The fix for a renamed board is at the CALLER — pass flags, or use `enrichRunningAgentTaskShape`,
-which takes the IR and resolves every role by trait. Same reasoning as the marker above
-`isLegacyPreImplementationColumn`, which this file already records.
+Full rationale at the first marker of this name above (enrichRunningAgentTaskShapeFromFlags): these
+legacy-id literals are the flag-less fallback the enrichers exist to remove; converting here would
+guess, and a wrong guess under-reports the queued total. Fix at the CALLER by passing flags/IR.
 */
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
