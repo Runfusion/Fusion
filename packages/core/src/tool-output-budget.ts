@@ -3,9 +3,13 @@ import { createLogger } from "./logger.js";
 /*
 FNXC:EngineDiagnostics 2026-07-30-04:00:
 FN-8603 requires production diagnostics to route through the shared logger rather than bare console
-output, so severity markers and FUSION_DEBUG gating survive. This file had a bare `console.warn` on
-the invalid-override path, which `log-severity-spam-contract` flags as a contract violation. Kept at
-`warn` — an invalid operator-supplied budget is a real misconfiguration, not routine chatter.
+output, so every line carries the shared severity marker and subsystem prefix. This file had a bare
+`console.warn` on the invalid-override path, which `log-severity-spam-contract` flags as a contract
+violation.
+
+Kept at `warn`, NOT demoted: an invalid operator-supplied budget is a real misconfiguration, not
+routine chatter. Note this path is therefore not FUSION_DEBUG-gated — only `debug` is — so what the
+shared logger adds here is the marker and prefix, not suppression.
 */
 const log = createLogger("tool-output-budget");
 
