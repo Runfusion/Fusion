@@ -32,7 +32,7 @@ import {getErrorMessage} from "../error-message.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async-allocator.js";
-import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError} from "./async-persistence.js";
+import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError, readTaskRow} from "./async-persistence.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 
@@ -1045,8 +1045,27 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
         // `default-workflow:postCommit` needs no re-run — just a clear).
         const hasSurvivingPluginHook = hooksRemaining.some((h) => h !== "default-workflow:postCommit");
         if (hasSurvivingPluginHook) {
+          /*
+          FNXC:PostgresCutover 2026-07-31-15:40 (DEADLOCK, introduced by the backend-mode port above):
+          LOCK-FREE READ, and it must stay lock-free. This whole block runs inside
+          `store.withTaskLock(id, ...)`, and the per-task lock is NON-REENTRANT — the same invariant
+          `branch-and-pr-entities.ts` and `workflow-ops.ts` both state in prose. `store.getTask()`
+          acquires that lock (`getTaskImpl` opens with `store.withTaskLock(id, ...)`), so reading
+          through it here waits forever on a lock this very frame holds.
+
+          The SQLite path on the line below never had the bug: `readTaskFromDb` is a lock-free row
+          read. The port swapped it for `getTask` on the backend arm only, so the deadlock is
+          PostgreSQL-only — which is every production install.
+
+          Reachability is narrow but real, and it is exactly the state a crash leaves behind: the
+          branch runs only when a stale marker names a plugin hook the registry still knows
+          (`hasSurvivingPluginHook`). A marker with no plugin hook, or one naming an uninstalled
+          plugin, takes the degraded path and never reaches here — which is why every existing test
+          passes. This sweep runs at STARTUP, and it deadlocks while holding the task's lock, so the
+          affected task is also left permanently unlockable.
+          */
           const task = backend
-            ? await store.getTask(id).catch(() => null)
+            ? await readTaskRow(store.asyncLayer!, id).catch(() => null) as { column?: string } | null
             : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
             const ir = store.resolveTaskWorkflowIrSync(id);
@@ -1057,7 +1076,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
             // toColumn at marker-write time, so current == toColumn and onExit is a
             // no-op, which is correct — we never re-fire an exit we may have run).
             try {
-              await store.runPluginColumnTransitionHooks(id, ir, task.column, live.toColumn);
+              await store.runPluginColumnTransitionHooks(id, ir, task.column as string, live.toColumn);
             } catch (err) {
               storeLog.warn("transitionPending recovery: hook re-run faulted (degraded)", {
                 phase: "recover-stale-transition-pending",
