@@ -371,6 +371,33 @@ describe("timing hooks honour EVERY lane carrying the role", () => {
     expect(task.cumulativeActiveMs).toBeGreaterThan(0);
   });
 
+  it("treats an EMPTY set as 'no lane carries this role', not as a missing answer", () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-10:40 (PR #2734 review — greptile):
+    `lifecycleColumnSets` is populated only when the caller resolved an IR, so an empty array means the
+    board was READ and declares no WIP lane. The first version guarded on `length > 0` and fell back to
+    the singular id and then the legacy name, so a traitless column merely NAMED `in-progress` accrued
+    timing as though it were the WIP lane.
+
+    Undefined means "could not read"; empty means "read, and the answer is none". Same distinction as
+    #2731's `?? {}` and #2733's refusal to invent a complete column — which I applied in both of those
+    and then got wrong here.
+    */
+    const { task, ctx: c } = ctx("in-progress", "signoff", { wip: [] });
+    /*
+    The singular role must be ABSENT for this to discriminate. With `lifecycleColumns.wip` set, the
+    buggy fallback lands on that name and answers false anyway — my first version of this case did
+    exactly that and passed with the defect in place. Only when the singular is absent does the bug
+    reach the LEGACY name and treat a traitless `in-progress` column as WIP.
+    */
+    (c as unknown as { lifecycleColumns: Record<string, unknown> }).lifecycleColumns = { complete: "shipped" };
+
+    applyTimingEffects(c);
+
+    // No WIP lane exists, so leaving `in-progress` is not leaving WIP and nothing accrues.
+    expect(task.cumulativeActiveMs).toBe(0);
+  });
+
   it("falls back to the singular role when no set is supplied", () => {
     /* Additive: a caller that does not pass sets keeps exactly the previous behaviour. */
     const { task, ctx: c } = ctx("building", "signoff");

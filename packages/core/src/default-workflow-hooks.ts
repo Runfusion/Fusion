@@ -147,6 +147,20 @@ export interface DefaultWorkflowMoveContext {
   resetSteps: () => void;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:40 (PR #2734 review — greptile, and it is the same
+distinction I had just applied twice elsewhere and then got wrong here):
+AN EMPTY SET IS AN ANSWER, NOT AN ABSENT ONE.
+
+`lifecycleColumnSets` is supplied only when the caller resolved a workflow IR, so `set !== undefined`
+already means "the board was read". An EMPTY array then says "no column carries this role" — and the
+`length > 0` guard treated that as no-basis and fell back to the singular id, then to the legacy name.
+The consequence: on a valid v2 workflow with no WIP lane, a traitless column happening to be NAMED
+`in-progress` accrued timing as though it were one.
+
+Same shape as #2731 (`?? {}` for resolved-but-roleless flags) and #2733 (refuse rather than invent a
+complete column). Undefined means "could not read"; empty means "read, and the answer is none".
+*/
 /** Membership for a role: the resolved SET when the caller supplied one, else the singular id, else the legacy id. */
 function inRole(
   column: string,
@@ -154,7 +168,7 @@ function inRole(
   single: string | undefined,
   legacy: string,
 ): boolean {
-  if (set !== undefined && set.length > 0) return set.includes(column);
+  if (set !== undefined) return set.includes(column);
   return column === (single ?? legacy);
 }
 
