@@ -1,5 +1,5 @@
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveReboundTargetForTask } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveReboundTargetForTask } from "@fusion/core";
 import type { TaskExecutor } from "./executor.js";
 import { createLogger } from "./logger.js";
 import { setImmediate as setImmediateCb } from "node:timers";
@@ -156,18 +156,29 @@ export class RestartRecoveryCoordinator {
 
   async recoverInterruptedRuns(): Promise<void> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-18:30 (fleet — FLAGGED as the QUERY class, not converted):
-    The live filter here is the `listTasks({ column: "in-progress" })` QUERY, not the `.filter` below it: the
-    query has already restricted the rows, so the predicate is a redundant re-assertion of the same literal.
-    Converting the filter alone would drop the census count by one and change nothing an operator sees — the
-    board's wip-lane rows still would not be listed, because the QUERY never asked for them.
+    FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (the FLAGGED query, now converted):
+    The note this replaces was right that the QUERY was the live filter and the `.filter` below it a
+    redundant re-assertion — so converting the predicate alone would have dropped a census count and
+    changed nothing an operator sees, because the board's wip rows were never listed.
 
-    Query filters are the class the census tracks separately, and fixing them needs a project-level lane
-    resolution before the read (there is no task to resolve from yet). Same shape as `executor.ts`'s
-    in-progress sweep and `server.ts`'s reliability counts, both flagged in earlier fleet PRs.
+    Fixing it needs a PROJECT-level answer: there is no task in hand before the read.
+    `resolveProjectColumnsForRoles` unions every wip-bearing column any workflow declares with the
+    legacy id, so a renamed board is swept and a board mid-rename still finds rows under the old one.
+
+    THE REDUNDANT FILTER IS GONE rather than converted. Re-asserting the column the query just
+    selected on adds nothing, and a second copy of the same rule is how a read and its filter drift —
+    the `paused` check is the only thing that predicate contributed.
+
+    The move DESTINATION below was already resolved (`resolveReboundTargetForTask`); its comment still
+    described the pre-fix state and is corrected there. Naming all three layers because the previous
+    two conversions in this class each hid a second one behind the first.
     */
-    const allInProgress = await this.store.listTasks({ slim: true, column: "in-progress" });
-    const candidates = allInProgress.filter((task) => task.column === "in-progress" && !task.paused);
+    const wipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+    const byId = new Map<string, Task>();
+    for (const column of wipColumns) {
+      for (const task of await this.store.listTasks({ slim: true, column })) byId.set(task.id, task);
+    }
+    const candidates = [...byId.values()].filter((task) => !task.paused);
 
     if (candidates.length === 0) return;
 
@@ -202,7 +213,15 @@ export class RestartRecoveryCoordinator {
       task.id,
       "Restart recovery: interrupted run had no step progress and no fn_task_done — requeued to todo for safe retry",
     );
-    /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-20:50 / corrected 2026-07-31-23:20:
+    A census-invisible moveTask DESTINATION — a call argument, not a comparison. It is RESOLVED
+    (`resolveReboundTargetForTask`), so the original warning below no longer applies; the comment was
+    describing the pre-fix state long after the fix landed. Left in place, corrected, because the
+    reason it matters is still true: this requeue is not a #1411 `recoveryRehome` escape, so a
+    hardcoded destination would be REJECTED on a board that does not declare it and the recovery
+    would never complete.
+    */
     await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id));
   }
 }

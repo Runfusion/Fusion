@@ -195,3 +195,75 @@ describe("RestartRecoveryCoordinator", () => {
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:20:
+
+THE INVARIANT: restart recovery sweeps the board's OWN wip lane.
+
+THE FLAGGED QUERY, NOW CONVERTED. The note this replaces was correct that the `listTasks({ column })`
+QUERY was the live filter and the `.filter` beneath it a redundant re-assertion — so converting the
+predicate alone would have dropped a census count and changed nothing, because the board's wip rows
+were never listed. On a renamed board this recovery did not run at all: an engine restart left
+interrupted tasks stuck with no requeue.
+
+THREE LAYERS, and naming them is the point, because the previous two conversions in this class each
+hid a second one behind the first:
+
+  1. the QUERY — fixed here, project-level (`resolveProjectColumnsForRoles`), since no task is in hand
+     before the read;
+  2. the redundant `.filter` — DELETED rather than converted; re-asserting the column the query just
+     selected on adds nothing, and a second copy of a rule is how a read and its filter drift;
+  3. the move DESTINATION — already resolved via `resolveReboundTargetForTask`; only its comment was
+     stale, still describing the pre-fix state, and is corrected in place.
+
+REVERT PROOF, measured: restore `listTasks({ column: "in-progress" })` and the renamed case requeues
+nothing.
+*/
+describe("restart recovery resolves the board's own wip lane", () => {
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function renamedStore(tasksByColumn: Record<string, unknown[]>) {
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    return {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+      listTasks: vi.fn(async ({ column }: { column: string }) => tasksByColumn[column] ?? []),
+      updateTask: vi.fn().mockResolvedValue({}),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      moveTask: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+  }
+
+  const interrupted = (id: string, column: string) =>
+    createTask({ id, column, status: "failed", error: "Agent finished without calling fn_task_done", steps: [] } as never);
+
+  it("requeues an interrupted task sitting in a RENAMED wip lane", async () => {
+    // Pre-fix: the query asked for "in-progress", got nothing, and the restart recovery no-opped.
+    const store = renamedStore({ building: [interrupted("FN-1", "building")] });
+    const coordinator = new RestartRecoveryCoordinator(store, { resumeOrphaned: vi.fn().mockResolvedValue(undefined) } as never);
+
+    await coordinator.recoverInterruptedRuns();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
+  });
+
+  it("still skips a PAUSED task — the only thing the deleted filter contributed", async () => {
+    // Removing the redundant column re-assertion must not remove the pause guard with it.
+    const paused = { ...interrupted("FN-2", "building"), paused: true };
+    const store = renamedStore({ building: [paused] });
+    const coordinator = new RestartRecoveryCoordinator(store, { resumeOrphaned: vi.fn().mockResolvedValue(undefined) } as never);
+
+    await coordinator.recoverInterruptedRuns();
+
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});

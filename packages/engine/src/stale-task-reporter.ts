@@ -1,5 +1,9 @@
 import {
   getTaskAgeStalenessSignal,
+  resolveProjectColumnsForRoles,
+  resolveTaskLifecycleColumns,
+  REVIEW_ROLES,
+  type WorkflowIr,
   type Task,
   type TaskStore,
   type Settings,
@@ -35,11 +39,40 @@ export class StaleTaskReporter {
     }
 
     const cycleStartMs = this.now();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:20:
+    THE QUERY, not a comparison — this file's census count is ZERO and it was inert anyway.
+
+    `listTasks({ column })` filters in the store, so on a board whose lanes are renamed both reads
+    return EMPTY and the reporter surfaces nothing: no stale-task signal is ever raised, on exactly
+    the board where work is most likely to be sitting unnoticed. Nothing errors, and no entry in the
+    lifecycle backlog points here, because a query filter is not a comparison.
+
+    Resolved through `resolveProjectColumnsForRoles`, which answers the PROJECT-level question a read
+    needs — there is no task in hand yet — and always unions the legacy ids, so a board mid-rename
+    still surfaces rows stored under the old ones.
+
+    Second demonstration of the class after `backlog-pressure-reporter`; the pattern is three lines
+    (resolve the roles, iterate the set, dedupe by id) and is deliberately identical between them.
+    */
+    const [wipColumns, reviewColumns] = await Promise.all([
+      resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+      resolveProjectColumnsForRoles(this.store, REVIEW_ROLES),
+    ]);
+    const listByColumns = async (columns: ReadonlySet<string>): Promise<Task[]> => {
+      const byId = new Map<string, Task>();
+      for (const column of columns) {
+        for (const task of await this.store.listTasks({ column, slim: false })) byId.set(task.id, task);
+      }
+      return [...byId.values()];
+    };
     const [inProgress, inReview] = await Promise.all([
-      this.store.listTasks({ column: "in-progress", slim: false }),
-      this.store.listTasks({ column: "in-review", slim: false }),
+      listByColumns(wipColumns),
+      listByColumns(reviewColumns),
     ]);
 
+    /* One IR cache for the sweep, per the caller-owned-cache contract. */
+    const staleIrCache = new Map<string, WorkflowIr>();
     let surfaced = 0;
     for (const task of [...inProgress, ...inReview]) {
       const updatedAtMs = Date.parse(task.updatedAt);
@@ -49,7 +82,25 @@ export class StaleTaskReporter {
 
       let signal;
       try {
-        signal = getTaskAgeStalenessSignal(task, { now: cycleStartMs, thresholds });
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-22:40:
+        BOTH LAYERS, and the second only became visible once the first was fixed.
+
+        `getTaskAgeStalenessSignal` takes an optional `lifecycle` and defaults to the legacy pair, so
+        a card the widened query now returns was still refused inside the signal — it answered
+        `undefined` for every renamed lane. Converting only the query would have moved the failure one
+        frame deeper and left `surfaced: 0` exactly as before; my test caught it precisely because it
+        asserts the OUTCOME rather than the query argument.
+
+        Resolved per task, because a board spans workflows and this is a per-card question — the flat
+        project vocabulary above is correct for the READ and wrong for this.
+        */
+        const lifecycle = await resolveTaskLifecycleColumns(this.store, task.id, staleIrCache);
+        signal = getTaskAgeStalenessSignal(task, {
+          now: cycleStartMs,
+          thresholds,
+          ...(lifecycle ? { lifecycle } : {}),
+        });
       } catch (error) {
         if (error instanceof RangeError) {
           this.logger.warn(`Stale task reporter disabled by invalid thresholds: ${error.message}`);
