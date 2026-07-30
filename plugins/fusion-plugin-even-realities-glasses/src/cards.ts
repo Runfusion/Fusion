@@ -142,17 +142,40 @@ export function taskToCard(
   };
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:40:
+`terminalColumns` — which lanes mean "finished" — supplied by the route, not guessed here.
+
+The filter below named `archived` and `done`, and on a board that calls its finished lane anything
+else the consequence is not cosmetic: the deck is capped at `maxCards`, so every completed card
+counts as active and PUSHES REAL WORK OFF the glasses display. The wearer sees a shorter list of
+live tasks the more work the team finishes.
+
+Optional with a documented default so the existing `boardToDeck([task], { maxCards: 1 })` summary
+call is unchanged, and because the earlier audit of this deck was right that `cards.ts` itself has no
+resolution source — it takes plain `Task` rows. What that audit got wrong is the conclusion: the note
+it inherited was written for the DEPRECATED `fusion-plugin-even-cards`, which depends on
+`@fusion/plugin-sdk` alone. This package lists `@fusion/core` as a runtime dependency and already
+calls `resolveWorkflowIrById`/`resolveLifecycleColumns` in `quick-capture.ts` and `agent-actions.ts`,
+so the caller can resolve; only this function cannot.
+
+The route resolves it once per request. `scripts/lib/unwired-lane-parameter.mjs` watches the name, so
+an unwired version of this parameter fails the build rather than sitting here looking converted.
+*/
 export function boardToDeck(
   tasks: Task[],
-  opts: { maxCharsPerLine?: number; maxLines?: number; maxCards?: number; now?: string } = {},
+  opts: { maxCharsPerLine?: number; maxLines?: number; maxCards?: number; now?: string; terminalColumns?: ReadonlySet<string> } = {},
 ): CardDeck {
   const maxCharsPerLine = opts.maxCharsPerLine ?? DEFAULT_MAX_CHARS_PER_LINE;
   const maxLines = opts.maxLines ?? DEFAULT_MAX_LINES_PER_CARD;
   const maxCards = opts.maxCards ?? DEFAULT_MAX_CARDS_PER_DECK;
   const now = opts.now ?? new Date().toISOString();
   const summary = boardSummary(tasks);
+  /* DELIBERATE-LITERAL — the degraded default when the caller resolved no lanes; see above. */
+  const isTerminal = (column: string) =>
+    opts.terminalColumns ? opts.terminalColumns.has(column) : column === "archived" || column === "done";
   const active = tasks
-    .filter((task) => task.column !== "archived" && task.column !== "done")
+    .filter((task) => !isTerminal(task.column))
     .sort((a, b) => (b.updatedAt === a.updatedAt ? b.id.localeCompare(a.id) : b.updatedAt.localeCompare(a.updatedAt)))
     .slice(0, Math.max(0, maxCards - 1));
 

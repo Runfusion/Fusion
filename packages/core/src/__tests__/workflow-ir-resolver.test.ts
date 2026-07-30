@@ -5,6 +5,7 @@ import type { WorkflowIr } from "../workflow-ir-types.js";
 import {
   resolveWorkflowIrForTask,
   resolveWorkflowIrById,
+  resolveWorkflowIrForTaskWithProvenance,
 } from "../workflow-ir-resolver.js";
 
 /** A minimal custom IR distinguishable from the built-in default. */
@@ -73,7 +74,27 @@ describe("resolveWorkflowIrForTask", () => {
       defs: { "wf-gone": undefined },
     });
     const ir = await resolveWorkflowIrForTask(store, "t1");
-    expect(ir).toBe(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
+    /*
+    FNXC:WorkflowIrResolver 2026-07-31-08:10:
+    STRUCTURAL, not identity — the fallback is deliberately a BRANDED COPY now.
+
+    This asserted `toBe`, i.e. the very object exported as the builtin constant. #2815 added
+    `markFellBack`, which returns `{ ...ir }` carrying a non-enumerable symbol so a caller can tell a
+    RESOLVED workflow from a GUESSED one (the provenance contract #2618 introduced). Copying is the
+    mechanism, so identity here can never hold again — the test failed with "serializes to the same
+    string / Compared values have no visual difference", which is exactly what an identity-only break
+    looks like.
+
+    Loosening `toBe` to `toEqual` alone would lose a real assertion, so the brand is asserted too, via
+    the public provenance API rather than by reaching for the private symbol. That is the behaviour
+    #2815 exists to provide, and it is stronger than the identity check it replaces: an accidental
+    return of the shared constant would now fail HERE (source would still be "default", but a future
+    change dropping the brand would break `didFallBackToDefault` consumers silently otherwise).
+    */
+    expect(ir).toEqual(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
+    const provenance = await resolveWorkflowIrForTaskWithProvenance(store, "t1");
+    expect(provenance.source).toBe("default");
+    expect(provenance.ir).toEqual(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
   });
 
   it("falls back to the default when there is no selection", async () => {
@@ -130,7 +151,8 @@ describe("resolveWorkflowIrById", () => {
   it("falls back to the canonical IR for an unknown built-in id", async () => {
     const store = makeStore({});
     const ir = await resolveWorkflowIrById(store, "builtin:missing");
-    expect(ir).toBe(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
+    /* Structural for the same reason as above: an unknown builtin id takes the branded-copy fallback. */
+    expect(ir).toEqual(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
     expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
   });
 

@@ -126,7 +126,7 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
@@ -1449,8 +1449,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       The message names the lanes the check actually used, keeping #2709's fix: telling an operator to
       move to a column their board does not have is worse than refusing.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (#2819 review — the same empty-set hole, found by
+      sweeping every `resolveReviewColumns` call site rather than only the one the reviewer named):
+      A v1-upgraded board resolves to an EMPTY review set while its `in-review` column plainly exists,
+      so this guard would refuse the operator's bypass on every pre-v2 project with the unhelpful
+      message "must be in a review lane".
+      */
       const reviewIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
-      const reviewColumns = reviewIr === undefined ? ["in-review"] : resolveReviewColumns(reviewIr);
+      const reviewColumns = reviewIr === undefined || !declaresAnyLifecycleTrait(reviewIr)
+        ? ["in-review"]
+        : resolveReviewColumns(reviewIr);
       if (!reviewColumns.includes(task.column)) {
         const named = reviewColumns.length > 0 ? reviewColumns.map((c: string) => `'${c}'`).join(" or ") : "a review lane";
         throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in ${named}`);
@@ -1758,7 +1767,26 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * FNXC:RuntimeLifecycleAsync 2026-06-24-11:20:
    */
   async acquireMergeQueueLease(workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
-    return acquireMergeQueueLeaseImpl(this, workerId, opts);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+    Supplies the per-task review-lane resolver for the stale-row sweep. This is the production path,
+    so wiring it here is what makes the option live rather than one only tests fill.
+    */
+    const withResolver: MergeQueueAcquireOptions = {
+      ...opts,
+      resolveReviewColumnsFor: opts.resolveReviewColumnsFor ?? (async (taskId: string) => {
+        /*
+        Three states, not two. `undefined` is "could not read"; an IR whose columns carry NO
+        lifecycle trait at all is a v1 graph upgraded by `synthesizeDefaultColumns`, whose
+        `in-review` column plainly exists and holds cards. Both take the legacy answer. Only a
+        board that expresses traits and still has no review lane is answering the question.
+        */
+        const ir = await resolveWorkflowIrForTask(this, taskId).catch(() => undefined);
+        if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["in-review"]);
+        return new Set(resolveReviewColumns(ir));
+      }),
+    };
+    return acquireMergeQueueLeaseImpl(this, workerId, withResolver);
   }
 
   /**

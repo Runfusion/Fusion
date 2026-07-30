@@ -116,6 +116,76 @@ If the guard asks about task B while the flags describe task A, supplying them i
 them. An omission degrades to the legacy id, which is at least the OLD behaviour. Wrong flags are new
 behaviour that nobody chose.
 
+## A fifth shape: the consumer is converted and the PRODUCER passes a literal
+
+Found in MY OWN shipped fix, by the operator reviewing it — the sharpest instance in this document
+because every instrument here reported it as done.
+
+The PURE predicate `isNearDuplicateCanonicalInactive` was converted to take the canonical's resolved
+column flags, and its test proved that by supplying `column: "shipped"`. Meanwhile both production
+call sites in `moves.ts` gated on the RESOLVED complete lane and then passed the literal
+`column: "done"` — and the store wrapper `clearNearDuplicateReferencesToImpl` called the predicate
+with no flags at all, so even a correct producer would not have reached the converted branch.
+
+Be precise about which layer was converted, because the imprecision is the same defect one level up:
+the *predicate* was converted; the *call site* and the *producer* were not. PR #2823 converts both —
+until it lands, `branch-group-ops.ts` still invokes the predicate flagless on `main`.
+
+The consumer contract was correct, the producer was never converted, and the hand-supplied fixture
+value is exactly what hid it.
+
+Why nothing caught it:
+
+- the **census** counts comparisons, and a value passed as an argument is not a comparison;
+- the **seam check** asks whether callers SUPPLY the argument — these did, with a literal;
+- the **test** supplied the interesting value itself, so it exercised the consumer and never the
+  producer.
+
+Worse, driving the flow end to end still did not distinguish them: the consumer looks the passed
+column up in the canonical's IR, finds nothing for `done` on a renamed board, and falls through to
+the LEGACY predicate where `done` IS terminal. Right answer, wrong reason. It only bites on a board
+that DECLARES a `done` column WITHOUT the complete trait — then the literal resolves real flags,
+learns `done` is not terminal there, and strands every marker.
+
+**The rule: a differential test must vary the value the PRODUCTION code computes, not one the test
+hands in.** If your fixture passes the lane name, you have tested the consumer. Ask separately who
+computes that argument in production, and whether they compute it or spell it.
+
+MEASURED, so nobody builds the wrong instrument: an AST probe for a call argument
+`{ column: "<legacy id>" }` finds **79 sites** across `packages/`. It flags the two real `moves.ts`
+offenders, but most of the rest are legitimate — `set({ column: "archived" })` writing the archive
+state, `listTasks({ column: "todo" })` filtering a query. A blocking gate on this shape needs a
+curated list of consumers that interpret the column as a ROLE (as opposed to storing or filtering
+it), which is a judgment call per consumer rather than a mechanical check. Recorded rather than
+built.
+
+## Surfaces that were checked and are CLEAN — do not re-probe these
+
+Negative results, recorded so the next person does not spend a session rediscovering them. Each was
+a plausible "the census cannot see this" theory; each was measured.
+
+**Membership tests with inline literals** — `["done","archived"].includes(task.column)`. The census
+counts binary comparisons only, so this shape would be invisible. **Zero sites.** Nobody writes it.
+
+**Named legacy-id collections** — `const X = ["done","archived"]` then `X.has(col)`. **48 declarations**,
+and the raw count is misleading: on inspection they are all either
+
+- the intentional fallback vocabulary the role helpers degrade to (`LEGACY_TERMINAL_COLUMNS`,
+  `LEGACY_PLANNING_COLUMNS`, `LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS`), or
+- the builtin workflow's own column list (`DEFAULT_WORKFLOW_COLUMN_IDS`, `COLUMNS`), or
+- **already-converted** seams that seed the legacy pair as a floor and then UNION the resolved lanes
+  — `symbol-locks.ts` `terminalLanesFor` and `branch-group-ops.ts` `satisfiedColumns` both do exactly
+  this, with the reasoning recorded at the site.
+
+So the census's comparison-only scope is adequate for this codebase. Filing "48 uncounted sites"
+would have been the same mistake as gating on `{ column: "<literal>" }` call arguments (79 sites,
+mostly legitimate): a number that looks like a work list and is not.
+
+**The rule:** measure a candidate surface, then inspect a sample, before reporting it OR instrumenting
+it. A raw count is a hypothesis. The SQL surface survived this test — 14 sites, all genuinely
+vocabulary-bound — and got a ratchet. These two did not, and got nothing, which is the correct
+outcome and cost an hour to establish rather than a wrong gate to maintain.
+
 ## Guards start catching other people's work, not just yours
 
 Every guard in this lane was written after a defect I had shipped, so for a long time they only

@@ -202,7 +202,29 @@ pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
     expect(persistSpy).toHaveBeenCalledOnce();
     expect(restored.id).toBe(task.id);
     expect(restored.description).toBe("restore from snapshot only");
-    expect(restored.column).toBe("todo");
+    /*
+    FNXC:ArchiveRestore 2026-07-31-09:25:
+    `done`, because #2832 made restore return a card to the lane it was ARCHIVED FROM.
+
+    This asserted `todo`, which was the old behaviour: `preArchiveColumn` has no database column, so
+    the pre-#2832 code fell through to a literal and decided the destination the same way for every
+    restore. The fixture above creates this card in `done`, so `done` is now the answer.
+
+    MEASURED, NOT ASSUMED — and the result is narrower than "the lane it came from". Changing the
+    fixture to `in-progress` and re-running returns **`todo`**, not `in-progress`. So a terminal lane
+    is preserved while a WIP lane is re-queued, which is plausible product behaviour (a card cannot
+    resume mid-execution after a restore) but is NOT what #2832's summary describes.
+
+    Left asserting `done` rather than encoding a rule I inferred from two samples. The `in-progress`
+    observation is flagged on #2832 for its owner: if re-queueing WIP is deliberate it deserves its
+    own case, and if it is not, this snapshot-rebuild path still carries the defect #2832 fixed
+    elsewhere.
+
+    Note this assertion is weaker than it looks and cannot be strengthened here: `done` is also the
+    complete lane, which is what the pre-#2832 "no usable history" branch returned, so a card
+    archived from `done` reads the same under both implementations.
+    */
+    expect(restored.column).toBe("done");
     expect(await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId)).toBeUndefined();
   });
 

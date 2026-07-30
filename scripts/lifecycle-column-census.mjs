@@ -118,6 +118,20 @@ if (json) {
   counted apart again: they are the lineage describing itself and are not convertible.
   */
   console.log(`  QUERY filters (column: "<legacy>"): ${summary.properties.query}`);
+  /*
+  FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+  The split, because the single number reads as "dead reads to convert" and most of it is not.
+  Measured while converting this class: outside `self-healing.ts` the read-shaped sites are
+  convertible; the rest are soft-delete TOMBSTONE writes and synthetic in-memory literals, and
+  converting a tombstone write is HARMFUL — `getLiveTaskColumn` returns "archived" as a sentinel for
+  any soft-deleted row, so the write and the sentinel have to agree.
+
+  Reported only. The pinned total above and `queryByFile` are unchanged, so the ratchet does not move.
+  */
+  if (summary.queryRoles) {
+    const { read = 0, write = 0, other = 0 } = summary.queryRoles;
+    console.log(`    of those: ${read} read-shaped (convertible), ${write} writes (do NOT convert), ${other} other`);
+  }
   console.log(`  IR node definitions (not convertible): ${summary.properties.definition}\n`);
   console.log("  by column id:");
   for (const [id, count] of Object.entries(summary.byColumnId).sort((a, b) => b[1] - a[1])) {
