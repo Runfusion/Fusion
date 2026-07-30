@@ -299,3 +299,67 @@ describe("the configured default column is validated too", () => {
     expect(columnOf(d)).toBe("in-review");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-11:00 (PR #2644 review — I split the snapshot again):
+
+ONE RESOLUTION FOR BOTH ANSWERS. The declared-column set and the intake fallback each resolved the
+workflow independently, so a workflow edit between them validated against one revision and selected the
+intake column from another — persisting a card in a column the validated revision does not declare.
+
+Third place in this branch I have made this mistake (executor resume lanes, glasses lane context, here),
+and the second time AFTER fixing it elsewhere. The shape is always two helpers that each look correct,
+called in sequence, each doing its own read. Hence a read-count assertion rather than prose: it is the
+only thing that fails when someone reintroduces the split.
+*/
+describe("capture resolves the board once, not once per question", () => {
+  const customIr = {
+    version: "v2", name: "Custom Board", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function countingDeps(defaultColumn: string) {
+    const created: Array<Record<string, unknown>> = [];
+    const reads = { definition: 0 };
+    return {
+      created,
+      reads,
+      taskStore: {
+        createTask: async (input: Record<string, unknown>) => {
+          created.push(input);
+          return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-31T00:00:00.000Z" };
+        },
+        getDefaultWorkflowId: async () => "wf-custom",
+        getWorkflowDefinition: async () => {
+          reads.definition += 1;
+          return { id: "wf-custom", ir: customIr };
+        },
+      },
+      pluginId: "glasses",
+      defaultColumn,
+    } as never;
+  }
+
+  it("reads the workflow ONCE even when the fallback path needs the intake column too", async () => {
+    // `todo` is not declared here, so this capture needs BOTH answers: the declared set (to reject it)
+    // and the intake column (to land the card). One read must serve both.
+    const d = countingDeps("todo");
+
+    await runQuickCapture({ text: "capture this" }, d);
+
+    expect((d as unknown as { reads: { definition: number } }).reads.definition).toBe(1);
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("backlog");
+  });
+
+  it("reads once on the path where the requested column is accepted", async () => {
+    const d = countingDeps("backlog");
+
+    await runQuickCapture({ text: "capture this", column: "building" }, d);
+
+    expect((d as unknown as { reads: { definition: number } }).reads.definition).toBe(1);
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("building");
+  });
+});
