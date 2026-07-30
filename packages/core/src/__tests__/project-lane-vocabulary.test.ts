@@ -128,6 +128,17 @@ describe("resolveProjectColumnsForRoles", () => {
     expect(columns.has("vault")).toBe(true);
   });
 
+  it("degrades when the store does not declare listWorkflowDefinitions at all", async () => {
+    /*
+    Several call sites hold a deliberately narrow store interface that omits the method even though
+    the real TaskStore behind it has one (`EvalBatchTaskStore` was the first). Requiring it would
+    force every such interface — and its fakes — to widen, to satisfy a helper whose contract is
+    already "degrade to the legacy ids when the workflows cannot be read". Absent and throwing are
+    the same case.
+    */
+    expect([...(await resolveProjectColumnsForRoles({} as never, TERMINAL_ROLES))].sort()).toEqual(["archived", "done"]);
+  });
+
   it("declares a legacy id for every role it can be asked about", () => {
     // A role with no legacy entry would produce a set missing the pre-rename column — the exact
     // silent skip this module exists to prevent.

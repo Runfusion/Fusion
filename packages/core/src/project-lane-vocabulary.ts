@@ -35,7 +35,17 @@ import type { TraitFlags } from "./trait-types.js";
 
 /** The store surface this needs — deliberately narrow so callers can pass a fake. */
 export interface ProjectLaneVocabularyStore {
-  listWorkflowDefinitions: () => Promise<ReadonlyArray<{ ir?: unknown }>>;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-03:10:
+  OPTIONAL, because several call sites hold a deliberately narrow store interface that does not
+  declare this method even though the real `TaskStore` behind it has one (`EvalBatchTaskStore` is the
+  first such caller). Requiring it would force every narrow interface to widen — a contract change
+  rippling into their fakes — to satisfy a helper whose whole contract is "degrade to the legacy ids
+  when the workflows cannot be read".
+
+  Absent method and throwing method are therefore the same case, and both are already covered.
+  */
+  listWorkflowDefinitions?: () => Promise<ReadonlyArray<{ ir?: unknown }>>;
 }
 
 /**
@@ -73,6 +83,7 @@ export async function resolveProjectColumnsForRoles(
   }
 
   let definitions: ReadonlyArray<{ ir?: unknown }> = [];
+  if (typeof store.listWorkflowDefinitions !== "function") return columns;
   try {
     definitions = await store.listWorkflowDefinitions();
   } catch {
