@@ -121,6 +121,18 @@ an undeclared column — invisible to every trait-driven sweep until reconciliat
 throws. Whether that surfaces or disappears depends entirely on whether the caller catches, which is
 per-site and is **not** measured here — do not read "29" as "29 crashes".
 
+## The one remaining non-blocked site, and why it is not converted
+
+`packages/dashboard/app/utils/appLifecycle.ts:245` — the CLI-session **cancel** action, `deps.moveTask(session.id, "todo")`. Its dependency type pins the literal in the signature itself:
+
+```ts
+moveTask: (id: string, column: "todo") => Promise<unknown>;
+```
+
+Converting it needs the resolved hold lane threaded from the caller (`App.tsx#handleCliAction`), and there is **no resolved-columns map in that scope** — the app-side convention is an optional `columnFlagsById` passed down, as `deriveStatsFromTasks` does, and App does not have one here.
+
+Adding the parameter without wiring it would be an **unwired parameter**, which is precisely the anti-pattern the caller audit (#2803) removed five of. So this is left for the dashboard-app owner, who can introduce the map at the same time. One site, recorded rather than half-done.
+
 ## What to do
 
 1. **Convert the pair or neither.** When a census entry sits in a function that also performs a
