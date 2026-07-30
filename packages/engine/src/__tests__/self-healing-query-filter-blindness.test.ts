@@ -87,6 +87,8 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    parseFileScopeFromPrompt: vi.fn(async () => []),
+    getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -769,5 +771,54 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
 
     expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (the query-filter class, thirteenth sweep):
+  `reconcileCompletedTask` releases everything blocked on a task that just completed. Three literal reads
+  meant that on a renamed board it released NOTHING — every dependent stayed blocked on work that had
+  already finished. This is the most visible form of the class: the board simply stops moving, with no
+  error and no log line saying why.
+
+  The dependency-satisfaction guard converts in the same change, resolved PER DEPENDENCY: a dependency
+  routinely belongs to a different workflow than the card waiting on it.
+
+  REVERT CHECK, measured: with the three literal reads restored, this fails — the dependent is never
+  listed, so its `blockedBy` is never cleared.
+  */
+  it("releases a dependent on a RENAMED board when its blocker completes", async () => {
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-DONE",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, waiting]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
+  });
+
+  it("does not release a dependent blocked on a DIFFERENT task", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared every blockedBy it found would satisfy the
+    case above. Same board, same shape — only the blocker id differs.
+    */
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-SOMEONE-ELSE",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, waiting]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    expect(updateTask).not.toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
   });
 });

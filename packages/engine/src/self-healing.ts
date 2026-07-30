@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  LEGACY_COLUMN_IDS_BY_ROLE,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -4595,9 +4596,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
         return pathsOverlap(dependentScope, blockerScope);
       };
-      const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
-      const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
-      const inReviewTasks = (await this.store.listTasks({ column: "in-review", slim: true })).filter((t) => !t.paused);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-03:05 (the query-filter class, thirteenth sweep):
+      When a task completes, this releases everything blocked on it. Three literal reads meant that on a
+      renamed board it released NOTHING — every dependent stayed blocked on a task that had already
+      finished, which is the most visible form of this class: the board simply stops moving.
+
+      Buckets come from the read that produced each row (a row returned by `listTasks({ column: X })` is
+      in X by definition); re-deriving from `task.column` would only be able to lose rows.
+      */
+      const completedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
+      const completedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const completedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const readDependentBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+        }
+        return [...byId.values()];
+      };
+      const todoTasks = await readDependentBucket(completedHoldColumns);
+      const inProgressTasks = await readDependentBucket(completedWipColumns);
+      const inReviewTasks = (await readDependentBucket(completedReviewColumns)).filter((t) => !t.paused);
 
       const dependents = [...todoTasks, ...inProgressTasks, ...inReviewTasks].filter(
         (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
@@ -4605,10 +4625,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
       for (const dependent of dependents) {
         try {
-          const unresolvedDeps = dependent.dependencies.filter((depId) => {
+          /*
+          A dependency is SATISFIED once it reaches a complete, review or archived lane — resolved per
+          DEPENDENCY, since a dependency routinely belongs to a different workflow than the card waiting
+          on it (the answer main settled on in branch-group-ops, #2720). Legacy ids unioned, because
+          `resolveWorkflowIrForTask` returns the built-in IR for a missing workflow and without the union
+          a degraded board reads a finished dependency as unmet — the exact stall being cleared here.
+          */
+          const depLaneCache = new Map<string, Set<string>>();
+          const satisfiedLanesFor = async (depId: string): Promise<Set<string>> => {
+            const cached = depLaneCache.get(depId);
+            if (cached) return cached;
+            const lanes = new Set<string>([
+              ...(LEGACY_COLUMN_IDS_BY_ROLE.complete ?? []),
+              ...(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
+              ...(LEGACY_COLUMN_IDS_BY_ROLE.archived ?? []),
+            ]);
+            try {
+              const ir = await resolveWorkflowIrForTask(this.store, depId);
+              if (ir) {
+                for (const role of ["complete", "archived", ...REVIEW_ROLES] as const) {
+                  for (const id of columnsWithFlag(ir, role)) lanes.add(id);
+                }
+              }
+            } catch { /* degraded: legacy ids above still answer */ }
+            depLaneCache.set(depId, lanes);
+            return lanes;
+          };
+          const unresolvedDeps: string[] = [];
+          for (const depId of dependent.dependencies) {
             const dep = taskById.get(depId);
-            return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
-          });
+            if (dep && !(await satisfiedLanesFor(depId)).has(dep.column)) unresolvedDeps.push(depId);
+          }
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
 
