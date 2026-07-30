@@ -25,9 +25,10 @@ cost real work:
   only the COLUMN. Ten such sites were counted as un-migrated guards, and the "obvious" fix —
   renaming the role — silently empties the planner's prompt template.
 
-WHAT THIS REPORTS, therefore, is three separate numbers rather than one: COLUMN guards (the
-real backlog), ROLE comparisons (not in scope, and must not be converted), and
-DELIBERATE-LITERAL sites (reviewed, with the reason recorded at the site).
+WHAT THIS REPORTS, therefore, is four separate numbers rather than one: COLUMN guards (the real
+backlog), ROLE comparisons, STATUS comparisons (step/mission/goal statuses that merely share the
+names), and DELIBERATE-LITERAL sites (reviewed, with the reason recorded at the site). The last
+three must NOT be converted, and each of them was silently inside the tracked figure.
 
 REPORT-ONLY BY DEFAULT. `--strict` compares against a recorded baseline and fails when the
 column-guard count RISES, which is the ratchet shape; it is not wired into the merge gate here,
@@ -65,6 +66,27 @@ structural rather than nominal, and it generalises to receivers nobody has thoug
 `triage` is the only member of both vocabularies, which is the entire reason this census exists.
 */
 const ROLE_ONLY_SIBLING_VALUES = ["executor", "reviewer", "merger"];
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:10 (third colliding vocabulary — measured):
+STATUS IS NOT A COLUMN, and this one is big: 182 of the 1030 sites this census first called column
+guards compare an ENTITY STATUS. `StepStatus` is `pending | in-progress | done | skipped`; mission
+features and goals carry their own `done`/`archived` statuses. So `step.status === "done"`,
+`goal.status === "archived"` and `feature.status === "done"` were all counted as un-migrated
+lifecycle guards, which inflated `done` (105 of 313) and `in-progress` (49 of 201) enormously.
+
+Converting one of them would be worse than leaving it: asking "which column carries the complete
+trait" about a STEP's status is a category error, and the step would stop being recognised as
+finished.
+
+Two signals, the same pair used for roles:
+  - receiver NAME contains `status` (this is what `step.status` and `goal.status` look like);
+  - STRUCTURAL: compared against a status-only value nearby. `pending` and `skipped` are StepStatus
+    members and never column ids, so an expression matched against either is a status.
+The structural half is what generalises; the name half is what catches the single-comparison sites
+where no sibling value appears.
+*/
+const STATUS_ONLY_SIBLING_VALUES = ["pending", "skipped"];
 
 /** Marker that records a reviewed, intentionally-unconverted literal at its own site. */
 export const DELIBERATE_MARKER = "DELIBERATE-LITERAL";
@@ -138,13 +160,15 @@ export function findComparisons(filePath, source) {
       */
       const deliberate = hasDeliberateMarker(originalLines, index);
       const isRole = ROLE_RECEIVER_TOKENS.includes(receiver)
-        || comparedAgainstRoleOnlyValue(strippedLines, index, receiver);
+        || comparedAgainstSiblingValues(strippedLines, index, receiver, ROLE_ONLY_SIBLING_VALUES);
+      const isStatus = /status/i.test(receiver)
+        || comparedAgainstSiblingValues(strippedLines, index, receiver, STATUS_ONLY_SIBLING_VALUES);
       findings.push({
         file: filePath,
         line: index + 1,
         columnId,
         receiver,
-        kind: deliberate ? "deliberate" : isRole ? "role" : "column",
+        kind: deliberate ? "deliberate" : isRole ? "role" : isStatus ? "status" : "column",
       });
     }
   });
@@ -160,12 +184,12 @@ export function findComparisons(filePath, source) {
  *   const purposeUsesRoleFallback = sessionPurpose === "triage"
  *     || sessionPurpose === "executor"
  */
-function comparedAgainstRoleOnlyValue(lines, lineIndex, receiver, window = 4) {
+function comparedAgainstSiblingValues(lines, lineIndex, receiver, values, window = 4) {
   if (!receiver) return false;
   const start = Math.max(0, lineIndex - window);
   const end = Math.min(lines.length - 1, lineIndex + window);
   for (let i = start; i <= end; i += 1) {
-    for (const value of ROLE_ONLY_SIBLING_VALUES) {
+    for (const value of values) {
       const pattern = new RegExp(`\\b${receiver}\\b\\s*(?:===|!==)\\s*(["'])${value}\\1`);
       if (pattern.test(lines[i] ?? "")) return true;
     }
@@ -175,7 +199,7 @@ function comparedAgainstRoleOnlyValue(lines, lineIndex, receiver, window = 4) {
 
 /** Aggregate findings into the three headline counts plus per-file and per-column breakdowns. */
 export function summarize(findings) {
-  const totals = { column: 0, role: 0, deliberate: 0 };
+  const totals = { column: 0, role: 0, status: 0, deliberate: 0 };
   const byColumnId = {};
   const byFile = new Map();
 

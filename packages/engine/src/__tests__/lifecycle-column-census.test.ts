@@ -198,7 +198,7 @@ describe("a role comparison is recognised by the vocabulary it uses, not only by
       `  || sessionPurpose === "reviewer";`,
     ].join("\n");
 
-    expect(summarize(census(source)).totals).toEqual({ column: 0, role: 1, deliberate: 0 });
+    expect(summarize(census(source)).totals).toEqual({ column: 0, role: 1, status: 0, deliberate: 0 });
   });
 
   it("recognises the single-line ternary form too", () => {
@@ -235,6 +235,74 @@ describe("a role comparison is recognised by the vocabulary it uses, not only by
   });
 });
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:20 (third colliding vocabulary):
+
+STATUS IS NOT A COLUMN, and this is the largest correction the census has produced: 182 of the 1030
+sites it first called column guards compare an ENTITY STATUS. `StepStatus` is
+`pending | in-progress | done | skipped`; mission features and goals carry their own
+`done`/`archived` statuses. So `step.status === "done"` and `goal.status === "archived"` were
+counted as un-migrated lifecycle guards, inflating `done` (105 of 313) and `in-progress` (49 of
+201).
+
+Converting one would be worse than leaving it: asking "which column carries the complete trait"
+about a STEP's status is a category error, and the step would stop reading as finished.
+*/
+describe("entity statuses that share a column name are not column guards", () => {
+  it("classifies step, goal and feature statuses as status, not backlog", () => {
+    const source = [
+      `const isDone = step.status === "done" || step.status === "skipped";`,
+      `if (existing.status === "archived") return;`,
+      `if (feature.status === "done") count += 1;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    // Three, not four: `skipped` is a StepStatus value but NOT one of the six legacy column ids,
+    // so the census never looks at it. Only the `done`/`archived`/`done` comparisons are findings
+    // at all — which is itself worth knowing, since it means the status inflation comes entirely
+    // from the three names the two vocabularies share.
+    expect(summary.totals.status).toBe(3);
+    expect(summary.totals.column).toBe(0);
+  });
+
+  it("recognises a status by the vocabulary even when the receiver is not named `status`", () => {
+    // `pending` and `skipped` are StepStatus members and never column ids, so an expression
+    // matched against either is a status whatever it is called — the same structural signal the
+    // role classification uses, for the same reason: names are unbounded.
+    const source = [
+      `const finished = s === "done"`,
+      `  || s === "pending"`,
+      `  || s === "skipped";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.status).toBe(1);
+  });
+
+  it("does NOT reclassify a real column guard sitting near status code", () => {
+    const source = [
+      `if (step.status === "pending") return;`,
+      `if (task.column === "done") return;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    // The column guard stays backlog. The `pending` line is not a finding at all — it compares a
+    // value outside the column vocabulary — so a nearby status check cannot launder the guard, and
+    // it cannot pad the status count either.
+    expect(summary.totals.column).toBe(1);
+    expect(summary.totals.status).toBe(0);
+  });
+
+  it("keeps a column guard that merely lives in a file full of statuses", () => {
+    const source = `if (toColumn === "in-progress" && task.status === "pending") return;`;
+    const summary = summarize(census(source));
+
+    // The column half is still backlog; only the status half is excluded.
+    expect(summary.totals.column).toBe(1);
+  });
+});
+
 describe("receiver extraction survives real call shapes", () => {
   it("reads through property access, optional chaining, and parentheses", () => {
     expect(receiverOf("if (task.column ")).toBe("column");
@@ -252,7 +320,7 @@ describe("the census refuses to report success on nothing", () => {
     exit and is exercised by running the script; this pins the pure half — an empty census is
     three zeros and carries no verdict of its own.
     */
-    expect(summarize([]).totals).toEqual({ column: 0, role: 0, deliberate: 0 });
+    expect(summarize([]).totals).toEqual({ column: 0, role: 0, status: 0, deliberate: 0 });
     expect(summarize([]).byFile).toEqual([]);
   });
 });
@@ -270,7 +338,7 @@ describe("the summary separates the three classes", () => {
 
     const summary = summarize(census(source));
 
-    expect(summary.totals).toEqual({ column: 1, role: 1, deliberate: 1 });
+    expect(summary.totals).toEqual({ column: 1, role: 1, status: 0, deliberate: 1 });
     expect(summary.byColumnId).toEqual({ todo: 1 });
   });
 });

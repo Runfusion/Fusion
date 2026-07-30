@@ -62,6 +62,7 @@ if (json) {
   console.log(`lifecycle-column-census: scanned ${files.length} source files\n`);
   console.log(`  COLUMN guards (the backlog):   ${summary.totals.column}`);
   console.log(`  ROLE comparisons (not guards): ${summary.totals.role}`);
+  console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}\n`);
   console.log("  by column id:");
   for (const [id, count] of Object.entries(summary.byColumnId).sort((a, b) => b[1] - a[1])) {

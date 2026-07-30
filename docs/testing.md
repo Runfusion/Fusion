@@ -77,10 +77,11 @@ Public `@fusion/core` exports consumed by runtime tools should include a literal
 ## Lifecycle-column census (report-only)
 
 <!-- FNXC:WorkflowLifecycleColumns 2026-07-30-14:50: added while converting the last of the tracked triage guards. The point of documenting it is the measurement, not the script: the number the workflow-owned-lifecycle program tracked was wrong in three ways at once, and the same mistake is available to any future migration that greps for one string. -->
-`pnpm census:lifecycle-columns` reports every comparison of a task column against the six legacy
-column ids (`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`) across the packages
-and plugins source trees, with comments stripped. It reports **three separate numbers**, and that
-separation is the whole value:
+`pnpm census:lifecycle-columns` reports every comparison against the six legacy column ids
+(`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`) across the packages and plugins
+source trees, with comments stripped. It reports **four separate numbers**, and that separation is
+the whole value — three of the four must NOT be converted, and every one of them was silently
+inside the single tracked figure:
 
 - **COLUMN guards** — the real backlog. A lifecycle decision made by column NAME stops matching
   the moment a board renames a column.
@@ -88,14 +89,26 @@ separation is the whole value:
   These compare an AGENT ROLE. The planner *lane* is named `triage` and keeps that name; U11
   removed only the *column*. These must NOT be converted — renaming the role silently empties the
   planner's prompt template and mis-binds its model markers.
+- **STATUS comparisons** — `step.status === "done"`, `goal.status === "archived"`,
+  `feature.status === "done"`. `StepStatus` is `pending | in-progress | done | skipped`, and
+  missions, goals and features carry their own statuses; three of those names collide with column
+  ids. This is the largest correction the census makes — 182 sites, inflating `done` by 105 and
+  `in-progress` by 49. Converting one is a category error: asking which column carries the
+  `complete` trait about a STEP's status would stop the step reading as finished.
 - **DELIBERATE-LITERAL** — reviewed sites whose literal is correct, with the reason recorded at the
   site rather than in a list that can drift from it. Grep `DELIBERATE-LITERAL` to enumerate them.
 
 Why it exists: the program tracked its remaining work by grepping `=== "triage"`, and that count
 was simultaneously too low (six ids exist; `triage` was under 4% of the total, and the pattern was
 anchored on locals named `column`, so real guards on `from` and `originColumn` were invisible) and
-too high (ten role comparisons counted as backlog). A count that is wrong in both directions sends
-work to the wrong files and hides the files that need it.
+too high (12 role comparisons and 182 entity-status comparisons counted as backlog). A count that is
+wrong in both directions sends work to the wrong files and hides the files that need it.
+
+The two non-column classes are recognised structurally, not by a name list, because names are
+unbounded and a name list was already wrong twice (`sessionPurpose`, `surface`). `AgentRole` is
+`triage | executor | reviewer | merger` and `StepStatus` is `pending | in-progress | done | skipped`;
+the members that are NEVER column ids (`executor`/`reviewer`/`merger`, `pending`/`skipped`) identify
+which vocabulary an expression belongs to whatever its variable is called.
 
 `--json` emits the machine-readable form. `--strict` compares per-file counts against
 `scripts/lib/lifecycle-column-census-baseline.json` and fails when any file's column-guard count
