@@ -98,4 +98,59 @@ describe("board surfaces resolve column roles per column, not per board", () => 
     expect(source).toMatch(/from "\.\.\/utils\/columnRoles"/);
     expect(source.match(/is[A-Za-z]+ColumnRole\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-02:20 (PR #2738 review — greptile P1):
+  A PER-TASK role question must not be answered from the cross-workflow UNION.
+
+  `columnFlagsById` in ListView is built from `listColumns`, which is a union across workflows keyed
+  by column id — the file already documents this for `moveTargets`. The union was harmless while the
+  flags answered COLUMN-level questions (is this whole list section the archive?). Converting the row
+  context menu and progress bar made them per-TASK questions, and there two workflows reusing an id
+  with different traits serve one workflow's semantics to the other's card: Archive and Revert appear
+  or vanish, and the progress bar shows or hides, for reasons belonging to a neighbouring workflow.
+
+  Pinned at the seam that decides it, because the divergence only exists when the two maps disagree.
+  */
+  it("resolves a task's role from ITS workflow when two workflows reuse a column id", () => {
+    const unionFlags = { complete: true, archived: false };
+    const ownWorkflowFlags = { complete: false, archived: true };
+
+    /* The union says "complete" (so: offer Archive); the task's own workflow says "archived"
+       (so: do not offer Archive, offer Revert). They must not agree by construction. */
+    expect(isCompleteColumnRole(unionFlags, "wrapped")).toBe(true);
+    expect(isCompleteColumnRole(ownWorkflowFlags, "wrapped")).toBe(false);
+    expect(isArchivedColumnRole(ownWorkflowFlags, "wrapped")).toBe(true);
+  });
+
+  /* The ratchet: the per-task sites must not read the union map directly. */
+  it("ListView.tsx resolves per-task roles through the per-task accessor", () => {
+    const source = readFileSync(resolve(__dirname, "../components/ListView.tsx"), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+    expect(code, "the per-task accessor must exist").toMatch(/const getTaskColumnFlags\s*=/);
+
+    /*
+    Any per-TASK read of the id-keyed union is the regression — not just an inline one.
+
+    The first version of this guard matched only `isXColumnRole(columnFlagsById.get(task.column)`,
+    and mutation testing walked straight through it: assigning the union to a local
+    (`const taskColumnFlags = columnFlagsById.get(task.column)`) and passing that reproduces the bug
+    while the guard stays green. So the rule is about the LOOKUP, wherever its result goes.
+
+    `getTaskColumnFlags` is the one legitimate site — it is the accessor that falls back to the union
+    on purpose — so it is excised before matching rather than special-cased in the regex.
+    */
+    const accessorStart = code.indexOf("const getTaskColumnFlags");
+    expect(accessorStart, "the per-task accessor must exist").toBeGreaterThan(-1);
+    const accessorEnd = code.indexOf("[columnFlagsById, taskContextMenuColumnsByTaskId]", accessorStart);
+    expect(accessorEnd, "expected the accessor's dependency list to bound it").toBeGreaterThan(accessorStart);
+    const outsideAccessor = code.slice(0, accessorStart) + code.slice(accessorEnd);
+
+    const unionReadsForATask = outsideAccessor.match(/columnFlagsById\.get\(\s*task\.column/g);
+    expect(
+      unionReadsForATask,
+      "a per-task flag lookup must go through getTaskColumnFlags, not the cross-workflow union",
+    ).toBeNull();
+  });
 });

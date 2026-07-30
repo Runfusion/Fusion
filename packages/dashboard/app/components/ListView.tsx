@@ -858,6 +858,30 @@ export function ListView({
     return map;
   }, [boardWorkflows, tasks, workflowMode]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-02:20 (PR #2738 review — greptile P1):
+  PER-TASK column flags. `columnFlagsById` is a UNION across workflows keyed by column id, which the
+  note above already calls out for `moveTargets` — two workflows reusing an id collapse to one entry.
+
+  That union was harmless while flags answered only COLUMN-level questions (`isArchivedColumn(column)`
+  for a whole list section). Converting the row context menu and the progress bar made them per-TASK
+  questions, and there the union serves one workflow's `complete`/`archived`/`countsTowardWip` to
+  another workflow's card — so Archive and Revert appear or vanish, and the progress bar shows or
+  hides, according to a neighbouring workflow's semantics. My change is what widened that exposure,
+  so it resolves per task here.
+
+  Same validated mapping as `taskContextMenuColumnsByTaskId` (unmapped task -> no metadata, stale id
+  -> default), and the same fallback: the shared union, which is the pre-existing approximation
+  rather than a confidently wrong answer.
+  */
+  const getTaskColumnFlags = useCallback((
+    task: Task,
+  ): Parameters<typeof isCompleteColumnRole>[0] | undefined => {
+    const own = taskContextMenuColumnsByTaskId.get(task.id);
+    const fromOwnWorkflow = own?.find((column) => column.id === task.column)?.flags;
+    return fromOwnWorkflow ?? columnFlagsById.get(task.column);
+  }, [columnFlagsById, taskContextMenuColumnsByTaskId]);
+
   const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
     const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
     if (taskWorkflowId) return taskWorkflowId;
@@ -876,9 +900,12 @@ export function ListView({
   The id fallback now lives once in `isIntakeColumnRole`, together with the reason it
   cannot be deleted; see `utils/columnRoles.ts`.
   */
+  /* Found by the PR #2738 ratchet, and it PREDATES this change: the name says "ForTask" while the
+     lookup went to the cross-workflow union, so the Planning badge followed a neighbouring
+     workflow's `intake` trait. Same one-line fix as the sites below. */
   const isIntakeColumnForTask = useCallback((task: Task): boolean => {
-    return isIntakeColumnRole(columnFlagsById.get(task.column), task.column);
-  }, [columnFlagsById]);
+    return isIntakeColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — same change as Column.tsx):
@@ -2017,7 +2044,7 @@ export function ListView({
       task,
       t,
       columnLabel: getListColumnLabel,
-      currentColumnFlags: columnFlagsById.get(task.column),
+      currentColumnFlags: getTaskColumnFlags(task),
       workflowMoveColumns: taskContextMenuColumnsByTaskId.get(task.id) ?? listContextMenuColumns,
       canRetryTask,
       hasDuplicateHandler: Boolean(onDuplicateTask),
@@ -2116,7 +2143,8 @@ export function ListView({
     });
 
     const actions = [...model.actions];
-    if (isCompleteColumn(task.column) && onArchiveTask) {
+    const taskColumnFlags = getTaskColumnFlags(task);
+    if (isCompleteColumnRole(taskColumnFlags, task.column) && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
     }
     /*
@@ -2125,7 +2153,7 @@ export function ListView({
     entry above. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if ((isCompleteColumn(task.column) || isArchivedColumn(task.column)) && onRevertTask) {
+    if ((isCompleteColumnRole(taskColumnFlags, task.column) || isArchivedColumnRole(taskColumnFlags, task.column)) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
@@ -2145,7 +2173,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, getTaskColumnFlags, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, taskContextMenuColumnsByTaskId, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2981,7 +3009,7 @@ export function ListView({
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
                           const isTransientPlannerActive = isIntakeColumnForTask(task)
                             && !visualStatus
@@ -3004,7 +3032,7 @@ export function ListView({
                               ? t("tasks.statusPlanning", "Planning")
                               : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
-                          const taskProgress = getTaskProgress(task, columnFlagsById.get(task.column));
+                          const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                           const hasProgress = taskProgress.hasProgress;
                           const isSelectionMode = bulkEditEnabled;
 
@@ -3244,7 +3272,7 @@ export function ListView({
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: columnFlagsById.get(task.column) });
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                             const isTransientPlannerActive = isIntakeColumnForTask(task)
                               && !visualStatus
@@ -3393,7 +3421,7 @@ export function ListView({
                                 {visibleColumns.has("progress") && (
                                   <td className="list-cell list-cell-progress">
                                     {(() => {
-                                      const taskProgress = getTaskProgress(task, columnFlagsById.get(task.column));
+                                      const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                                       if (!taskProgress.hasProgress) return "-";
                                       return (
                                         <div className="list-progress">
