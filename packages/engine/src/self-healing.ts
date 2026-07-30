@@ -6578,8 +6578,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async reconcileStaleMergerStatus(): Promise<number> {
     try {
-      const done = await this.store.listTasks({ column: "done", slim: true });
-      const archived = await this.store.listTasks({ column: "archived", slim: true });
+      const done = await this.filterByCompleteRole(await this.store.listTasks({ slim: true, includeArchived: false }), new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>());
+      const archived = (await this.store.listTasks({ slim: true, includeArchived: true })).filter((t) => t.column === this.archivedLaneOf(t.id));
       const candidates = [...done, ...archived].filter((task) => {
         const s = task.status;
         return s === "merging" || s === "merging-pr";
@@ -7780,10 +7780,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const tasks = await this.filterByReviewRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
-        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
-      );
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:25 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing.test.ts` stubs this sweep with `mockResolvedValueOnce` chains or asserts
+      the exact `listTasks` argument, so it is coupled to the number/ORDER/shape of the calls, not just
+      to the rows returned. A single board read desynchronises that. The per-task guard is already
+      converted; the query half waits on that suite's harness.
+      */
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const latestFailedPreMergeStep = (task: Pick<Task, "workflowStepResults">): WorkflowStepResult | undefined => {
@@ -8498,7 +8502,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
 
-      const slim = await this.store.listTasks({ column: "in-review", slim: true });
+      const slim = await this.filterByReviewRole(await this.store.listTasks({ slim: true, includeArchived: false }), new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>());
       const candidates = slim.filter((t) =>
         t.column === this.reviewLaneOf(t.id)
         && allowsAutoMergeProcessing(t, settings)
@@ -9687,6 +9691,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const now = Date.now();
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing.test.ts` stubs this sweep with `mockResolvedValueOnce` CHAINS, so it
+      is coupled to the number and ORDER of `listTasks` calls, not merely their shape. One board
+      read desynchronises the sequence and the sweep receives another call's rows.
+      Guard half is converted; the query half waits on that suite's harness.
+      */
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
       /*
       FNXC:WorkflowColumns 2026-07-29-17:40 (PR #2560 review):
@@ -9705,13 +9716,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       covering suites all stub `listTasks` for the unfiltered shape, which is why this one is
       convertible where `reclaimSelfOwnedBranchConflicts` is not.
       */
-      const deadlockBoard = await this.store.listTasks({ slim: true, includeArchived: false });
-      const deadlockLaneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-      const preWipCandidates = await this.filterByPreWipRole(deadlockBoard, ["intake", "hold"], deadlockLaneCache);
-      const inProgress = await this.filterByWipRole(deadlockBoard, deadlockLaneCache);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:25 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing.test.ts` stubs this sweep with `mockResolvedValueOnce` chains or asserts
+      the exact `listTasks` argument, so it is coupled to the number/ORDER/shape of the calls, not just
+      to the rows returned. A single board read desynchronises that. The per-task guard is already
+      converted; the query half waits on that suite's harness.
+      */
+      const triage = await this.store.listTasks({ column: "triage", slim: true });
+      const todo = await this.store.listTasks({ column: "todo", slim: true });
+      const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
 
       const dependentsByBlocker = new Map<string, Task[]>();
-      for (const task of [...preWipCandidates, ...inProgress]) {
+      for (const task of [...triage, ...todo, ...inProgress]) {
         if (!task.blockedBy) continue;
         const dependents = dependentsByBlocker.get(task.blockedBy) ?? [];
         dependents.push(task);
@@ -10850,6 +10867,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:45 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing-foreign-only-contamination.test.ts` stubs `listTasks` per column, so an
+      unfiltered board read starves this sweep. Found by a merge-base differential on the FULL
+      engine-default project (base 62 failed, this conversion made it 63). The per-task guard is
+      already converted; the query half waits on that suite's harness.
+      */
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
       const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
       const candidates = [
@@ -12450,10 +12474,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverNoProgressNoTaskDoneFailures(): Promise<number> {
     try {
-      const tasks = await this.filterByWipRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
-        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
-      );
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:25 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing.test.ts` stubs this sweep with `mockResolvedValueOnce` chains or asserts
+      the exact `listTasks` argument, so it is coupled to the number/ORDER/shape of the calls, not just
+      to the rows returned. A single board read desynchronises that. The per-task guard is already
+      converted; the query half waits on that suite's harness.
+      */
+      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const candidates = tasks.filter((task) =>
@@ -12687,10 +12715,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.filterByReviewRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
-        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
-      );
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-00:25 (fleet: FLAGGED AND SKIPPED):
+      Reverted. `self-healing.test.ts` stubs this sweep with `mockResolvedValueOnce` chains or asserts
+      the exact `listTasks` argument, so it is coupled to the number/ORDER/shape of the calls, not just
+      to the rows returned. A single board read desynchronises that. The per-task guard is already
+      converted; the query half waits on that suite's harness.
+      */
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const candidates = tasks.filter((task) =>
         task.column === this.reviewLaneOf(task.id) &&
