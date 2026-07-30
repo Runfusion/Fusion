@@ -152,7 +152,7 @@ the backup path rather than the broken guard.
 
 | site | fires for a default card? | what stops happening | backup | verdict |
 |---|---|---|---|---|
-| `self-healing.ts:12106` `recoverOrphanedApprovedTriageTasks` | **no** | clearing a stale `planning` status | `triage.sweepStalePlanningStatuses` (periodic, covers `todo`) | redundant net lost — **cleanup** |
+| `self-healing.ts:12106` `recoverApprovedTriageTasks` | **no** | clearing a stale `planning` status | `triage.sweepStalePlanningStatuses` (periodic, covers `todo`) | redundant net lost — **cleanup** |
 | `self-healing.ts:12427` `recoverOrphanedPlanningTasks` | **no** | same repair | same | redundant net lost — **cleanup** |
 | `self-healing.ts:2961/2981/3016` `recoverAdvancedTriageTasks` | **no** | re-homing a card with a worktree + durable IR pin to its pinned resume column | hold-release still releases it on capacity (it has a real spec, so `isUnplannedForExecution` is false) | **degraded, not stuck** — the card takes the capacity path instead of resuming at its pinned node |
 | `self-healing.ts:12254` `recoverStarvedRefinementTriageTasks` | **no** | a bounded priority nudge for starved refinements | none needed — the doc comment states it is a nudge, not a rescue | **low** |
@@ -171,9 +171,11 @@ also pairing `:3016`**, it will attempt a `todo → todo` move. Repair the three
 
 Two sites in the ownership split are already handled, and one of them has a **wrong** obvious fix:
 
-- **`usage-limit-detector.ts:126`** — fixed in PR #2567. Real breakage: the planning lane stopped
-  being recognised, so a card being planned was neither parked when its provider hit a usage limit
-  nor resumed when it recovered.
+- **`usage-limit-detector.ts:126`** — **still broken on `main` at the time of writing**; the fix is
+  in PR #2567, which is OPEN and not yet merged. Do not read the row below as "already handled on
+  main" — until #2567 lands, a default-workflow card being planned in `todo` is excluded from
+  provider-wide parking, so a sibling triage agent hitting a usage limit leaves it running into the
+  same limit. The classification here is "owned and fixed in flight", not "no longer an issue".
 - **`spec-staleness.ts:95`** — proven safe as-is and merged with #2515. **The mechanical conversion
   is wrong here.** Adding `|| task.column === "todo"` breaks the parked-preserved-progress path:
   after the merge `todo` is both the planner column and the capacity-hold column, so the column can
