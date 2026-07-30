@@ -35,7 +35,7 @@ surfaces answer the same question and must agree (FN-5893 surface enumeration).
 */
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core"; // registers the built-in column traits, so `human-review` resolves its flags
-import { reviewColumnsForTask, namedReviewColumns } from "../routes/register-git-github.js";
+import { reviewColumnsForTask, namedReviewColumns, applyChangesRequestedTransition } from "../routes/register-git-github.js";
 
 /** Renamed v2 board: `signoff` carries the merge trait, and there is no `in-review` column at all. */
 const RENAMED_IR = {
@@ -135,5 +135,78 @@ describe("namedReviewColumns renders a refusal an operator can act on", () => {
 
   it("joins multiple lanes with 'or', so the operator sees every lane that would work", () => {
     expect(namedReviewColumns(new Set(["signoff", "approval"]))).toBe("'signoff' or 'approval'");
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2780 review — greptile):
+
+THE GUARD AND THE MOVE ARE ONE PAIR, AND THIS PINS THEM TOGETHER.
+
+`applyChangesRequestedTransition` admits a task via the resolved review set, then MOVES it back to be
+reworked. When only the guard was converted, a board that renames its review lane but declares no
+`todo` got the worst of both: admitted by the guard, rejected by the move, left in review carrying a
+review-feedback document and no rework. Strictly worse than before the guard was broadened.
+
+Half-converted pairs are the recurring failure in this program — a role-resolved guard in front of a
+name-matched action — so the ratchet has to assert the DESTINATION, not merely that a move happened.
+*/
+describe("applyChangesRequestedTransition rebounds to a lane the board actually has", () => {
+  const SNAPSHOT = {
+    decision: "CHANGES_REQUESTED",
+    items: [{ id: "gh-review-1", state: "CHANGES_REQUESTED", author: { login: "reviewer" }, body: "please fix" }],
+  } as never;
+
+  /** Renames review to `signoff` and rework to `backlog`; declares NO `todo`. */
+  const NO_TODO_IR = {
+    version: "v2", id: "wf-no-todo", name: "no-todo", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "signoff", name: "Signoff", traits: [{ trait: "merge" }] },
+    ],
+  };
+
+  function storeForMove(ir: unknown, workflowId: string) {
+    const selection = { workflowId, stepIds: [] as string[] };
+    const moves: Array<{ id: string; to: string }> = [];
+    const store = {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: workflowId, ir }),
+      upsertTaskDocument: vi.fn().mockResolvedValue(undefined),
+      moveTask: vi.fn(async (id: string, to: string) => { moves.push({ id, to }); }),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    };
+    return { store, moves };
+  }
+
+  it("moves a card out of a RENAMED review lane into the board's own hold lane, not `todo`", async () => {
+    const { store, moves } = storeForMove(NO_TODO_IR, "wf-no-todo");
+    const task = { id: "FN-1", column: "signoff", prInfo: { number: 7 } } as never;
+
+    await applyChangesRequestedTransition(store as never, task, SNAPSHOT, { number: 7 } as never);
+
+    /*
+    `backlog`, resolved from the hold trait. With the literal this asserted `todo` — a column this
+    board does not declare, so the move was rejected and the card never left review.
+    */
+    expect(moves).toEqual([{ id: "FN-1", to: "backlog" }]);
+  });
+
+  it("still rebounds to `todo` on a v1-upgraded board, whose columns carry no traits", async () => {
+    /*
+    The fallback direction. `resolveReboundTarget` returns the first declared column when no column
+    carries hold or intake, which for a v1 upgrade is `todo` — so the legacy behaviour is preserved
+    without the literal being what produces it.
+    */
+    const { store, moves } = storeForMove(V1_UPGRADED_IR, "wf-v1");
+    const task = { id: "FN-2", column: "in-review", prInfo: { number: 8 } } as never;
+
+    await applyChangesRequestedTransition(store as never, task, SNAPSHOT, { number: 8 } as never);
+
+    expect(moves).toEqual([{ id: "FN-2", to: "todo" }]);
   });
 });

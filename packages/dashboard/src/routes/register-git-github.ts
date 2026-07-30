@@ -1,4 +1,4 @@
-import { createLogger, resolveWorkflowIrForTask, resolveReviewColumns } from "@fusion/core";
+import { createLogger, resolveWorkflowIrForTask, resolveReviewColumns, resolveReboundTarget } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-git-github");
 import { type NextFunction, type Request, type Response } from "express";
@@ -2263,7 +2263,7 @@ async function syncPrReviewsToTask(store: TaskStore, task: Task, snapshot: PrRev
   }
 }
 
-async function applyChangesRequestedTransition(
+export async function applyChangesRequestedTransition(
   store: TaskStore,
   task: Task,
   snapshot: PrReviewSnapshot,
@@ -2289,7 +2289,25 @@ async function applyChangesRequestedTransition(
     content: feedbackBody || "Reviewer requested changes.",
     author: "system",
   });
-  await store.moveTask(task.id, "todo", {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2780 review — greptile, and it caught my own half-conversion):
+  THE GUARD AND THE MOVE MUST RESOLVE THE SAME WAY.
+
+  Broadening the entry guard above to accept any resolved review lane, while leaving this move on the
+  literal `todo`, made the pair WORSE than before: on a board that renames its review lane but declares
+  no `todo`, the guard now admits the task and this move is then rejected. The card keeps its
+  review-feedback document, never re-enters rework, and sits in review looking handled. Before the
+  broadening it simply never got this far.
+
+  That is the half-converted-pair shape this program has hit repeatedly — a role-resolved guard in
+  front of a name-matched action. Whenever one half moves, the other has to move with it.
+
+  `resolveReboundTarget` is the shared answer for "where does a card go to be worked again": hold, else
+  intake, else the first declared column. `todo` stays only for a workflow that cannot be resolved.
+  */
+  const reboundIr = await resolveWorkflowIrForTask(store, task.id).catch(() => undefined);
+  const reworkColumn = (reboundIr === undefined ? undefined : resolveReboundTarget(reboundIr)) ?? "todo";
+  await store.moveTask(task.id, reworkColumn, {
     preserveProgress: true,
     preserveWorktree: true,
     moveSource: "engine",
