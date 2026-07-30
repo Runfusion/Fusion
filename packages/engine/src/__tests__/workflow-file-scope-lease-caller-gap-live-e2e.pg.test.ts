@@ -36,8 +36,8 @@ conversion therefore reads as complete from every angle except running it.
 
 SCOPE, STATED HONESTLY. The differential below is driven end to end: real persisted rows from a live
 PostgreSQL store, the real exported predicate, both call shapes. The CALL-SITE fact — that the two
-self-healing sites pass neither option — is asserted against source text, not driven through the
-self-healing sweep, which would need the full dependency-lease reconcile harness. That is a real limit
+self-healing sites pass neither option — is asserted against the module's SYNTAX (parsed, not
+string-matched), not driven through the self-healing sweep, which would need the full dependency-lease reconcile harness. That is a real limit
 and it is why the last case reads the file rather than pretending otherwise. It doubles as the alarm:
 when someone converts those call sites, that case fails and points at this file.
 
@@ -47,6 +47,7 @@ unaffected. Throwaway per-file database; never port 4040.
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import "@fusion/core"; // registers the built-in column traits
 import type { Task, TaskStore } from "@fusion/core";
 
@@ -131,23 +132,41 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
   it("SOURCE-LEVEL — the two self-healing call sites still pass neither option", async () => {
     /*
     NOT driven through the self-healing sweep, deliberately: reaching those sites needs the full
-    dependency-lease reconcile harness. Asserted against source text instead, and labelled as such
-    rather than dressed up as an end-to-end result.
+    dependency-lease reconcile harness. Asserted against the module's SYNTAX instead, and labelled as
+    such rather than dressed up as an end-to-end result.
+
+    FNXC:OverlapScheduling 2026-07-31-10:40 (pre-empting PR #2799's review finding):
+    AST, not string splitting. An audit that splits on the callee name and reasons about the text that
+    follows can be broken — or silently misled — by a formatting-only change, which is the failure mode
+    this whole series is about. Matching the repo's existing precedent for the same problem
+    (`core/.../sync-workflow-ir-callsite-allowlist.test.ts`), this parses `self-healing.ts` and
+    inspects real call expressions and their options objects.
 
     Its job is to be an alarm. When those call sites are converted this fails, and whoever converted
     them is pointed at the three cases above, which describe what changes.
     */
-    const source = readFileSync(join(__dirname, "..", "self-healing.ts"), "utf8");
+    const file = join(__dirname, "..", "self-healing.ts");
+    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
-    const callSites = source.split("shouldHoldActiveFileScopeLease(").slice(1);
-    expect(callSites.length).toBe(2);
+    const callSites: ts.NodeArray<ts.Expression>[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && node.expression.text === "shouldHoldActiveFileScopeLease") {
+        callSites.push(node.arguments);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sf, visit);
 
-    for (const site of callSites) {
-      /* The options object literal ends at the first `})` that closes the call. Bounding the window
-         keeps a later, unrelated `isWipColumn` in the file from masking an omission here. */
-      const optionsWindow = site.slice(0, site.indexOf("})"));
-      expect(optionsWindow).not.toContain("isWipColumn");
-      expect(optionsWindow).not.toContain("isReviewColumn");
-    }
+    expect(callSites).toHaveLength(2);
+
+    /* A resolved answer arrives as a property of the options object; checked as a PROPERTY NAME, so a
+       comment or an unrelated identifier elsewhere in the call cannot be mistaken for one. */
+    const passesResolvedRole = (args: ts.NodeArray<ts.Expression>): boolean =>
+      args.some((arg) => ts.isObjectLiteralExpression(arg) && arg.properties.some((prop) =>
+        prop.name && ts.isIdentifier(prop.name)
+        && (prop.name.text === "isWipColumn" || prop.name.text === "isReviewColumn")));
+
+    expect(callSites.filter(passesResolvedRole)).toHaveLength(0);
   });
 });
