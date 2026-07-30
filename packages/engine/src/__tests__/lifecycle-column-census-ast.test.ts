@@ -326,3 +326,86 @@ describe("state, phase and result enums are not column guards", () => {
     expect(result.totals.column).toBe(1);
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-01:30:
+
+A LEGACY LITERAL IN A FALLBACK BRANCH IS NOT BACKLOG. The converted shape is
+
+    if (flags) return flags.hold === true || flags.countsTowardWip === true;
+    return column === "todo" || column === "in-progress";      // reachable only without traits
+
+and that literal is CORRECT — it answers for callers with no resolved column metadata, which is the case
+`resolveLifecycleColumns` returns `undefined`-for-the-whole-struct to preserve. Telling a batch worker to
+"convert" it means telling them to delete the only answer available when traits are absent.
+
+MEASURED, which is why this is a class and not a preference: a proximity scan for "legacy literal near a
+role-resolved call" over the dashboard returned 19 hits and ZERO defects, all this shape. The same scan over
+the engine found two real defects (#2670, #2672) — and in BOTH the literal was in a SEPARATE STATEMENT beside
+resolved data, not in a fallback branch. That difference is structural, so the parser can see it; proximity
+cannot.
+
+Advisory only: `traitFallback` never changes `kind`, so a wrong hint cannot move the bar. Repo-wide it flags
+9 of 746 column guards.
+*/
+describe("a literal in a trait-fallback branch is flagged as such", () => {
+  const fallbacksIn = (source: string) => census(source).filter((f) => (f as { traitFallback?: boolean }).traitFallback).length;
+
+  it("flags the ternary form", () => {
+    const source = `export function isHold(flags: F | undefined, columnId: string) {
+      return flags ? flags.hold === true : columnId === "todo";
+    }`;
+
+    expect(fallbacksIn(source)).toBe(1);
+  });
+
+  it("flags the early-return form, which is how most of them are written", () => {
+    const source = [
+      "function mayEdit(column: string, flags?: F) {",
+      "  if (flags) return flags.hold === true || flags.countsTowardWip === true;",
+      `  return column === "todo" || column === "in-progress";`,
+      "}",
+    ].join("\n");
+
+    // Two literals in one return, both in the fallback.
+    expect(fallbacksIn(source)).toBe(2);
+  });
+
+  it("does NOT flag a literal in a separate statement beside resolved data — the #2670 / #2672 shape", () => {
+    /*
+    This is the distinction the whole class exists for. Both engine defects looked like this: resolved lane
+    data in scope, and a guard next to it still matching a name. Flagging these as fallbacks would have hidden
+    exactly the two bugs the scan found.
+    */
+    const source = [
+      "async function park(task: T) {",
+      "  const lanes = await resolveLifecycleColumns(ir);",
+      `  if (task.column === "done" || task.column === "archived") return false;`,
+      "  await move(task.id, lanes.hold);",
+      "}",
+    ].join("\n");
+
+    expect(fallbacksIn(source)).toBe(0);
+  });
+
+  it("does NOT flag a fallback branch whose test is itself a column-name check", () => {
+    // `if (column === "todo")` tests a NAME, not resolved data, so its else branch is not a trait fallback —
+    // otherwise any if/else over column names would launder itself.
+    const source = [
+      "function f(column: string) {",
+      `  if (column === "todo") return 1;`,
+      `  return column === "in-progress" ? 2 : 3;`,
+      "}",
+    ].join("\n");
+
+    expect(fallbacksIn(source)).toBe(0);
+  });
+
+  it("leaves `kind` alone, so a wrong hint cannot move the bar", () => {
+    const source = `const x = flags ? flags.hold === true : columnId === "todo";`;
+    const finding = census(source)[0] as { kind: string; traitFallback?: boolean };
+
+    expect(finding.kind).toBe("column");
+    expect(finding.traitFallback).toBe(true);
+  });
+});

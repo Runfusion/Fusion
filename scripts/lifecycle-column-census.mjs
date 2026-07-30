@@ -98,6 +98,15 @@ if (json) {
   console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
   /*
+  FNXC:LifecycleColumnCensus 2026-08-01-01:40:
+  Reported BESIDE the backlog, not subtracted from it. A fallback literal is still a literal and should go
+  when the trait path becomes unconditional — but it is an ALREADY-CONVERTED site's documented degradation,
+  not unconverted work, and a batch worker told to convert it would delete the only answer available to a
+  caller without traits. Measured: 19 of 19 dashboard proximity hits were this shape and none was a defect,
+  while both engine defects (#2670, #2672) were literals in a separate statement instead.
+  */
+  console.log(`  of the column guards, ${summary.traitFallbackCount ?? 0} are trait-fallback branches (already converted)`);
+  /*
   FNXC:LifecycleColumnCensus 2026-07-29-19:40:
   Reported BESIDE the backlog, never inside it. A `column: "todo"` source query decides which rows
   a sweep even considers, so it can kill a sweep whose per-task guard was correctly converted —

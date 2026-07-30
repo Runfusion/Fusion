@@ -224,6 +224,77 @@ function columnPropertyLiteral(node) {
   return LEGACY_COLUMN_IDS.includes(node.initializer.text) ? node.initializer.text : undefined;
 }
 
+
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-01:10:
+A LEGACY LITERAL IN A FALLBACK BRANCH IS NOT BACKLOG. The converted shape across the dashboard is
+
+    if (flags) return flags.hold === true || flags.countsTowardWip === true;
+    return column === "todo" || column === "in-progress";      // <- reachable only without traits
+
+and that second literal is CORRECT: it answers for callers that have no resolved column metadata, which is
+the distinction `resolveLifecycleColumns` returns `undefined`-for-the-whole-struct to preserve. Counting it
+as an unconverted guard tells a batch worker to convert code that is already converted — and "convert it"
+there means deleting the only answer available when traits are absent.
+
+MEASURED, which is why this is worth a class rather than a preference: a proximity scan for
+"legacy literal near a role-resolved call" over the dashboard returned 19 hits and ZERO defects, every one
+this shape. The same scan over the engine found two real defects (#2670, #2672) — and in BOTH the literal was
+in a separate statement beside resolved data, not in a fallback branch. That is the whole difference, and it
+is structural, so the parser can see it.
+
+Reported as its own line rather than removed from the total: a fallback literal is still a literal, and the
+day the trait path is unconditional it should be deleted. This distinguishes "not yet converted" from
+"converted, with a documented degradation".
+*/
+const TRAIT_TEST_HINTS = [
+  "flags", "Flags", "columnFlags", "lifecycle", "roles", "trait", "resolveColumnFlags", "columnHasFlag",
+  "resolveLifecycleColumns", "intake", "hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker",
+];
+
+/** True when `text` reads as a test for resolved trait data rather than for a column name. */
+function testsTraitData(text) {
+  return TRAIT_TEST_HINTS.some((hint) => new RegExp(`[.?\\w]${hint}\\b|\\b${hint}\\s*[?.]|\\b${hint}\\b`).test(text))
+    && !new RegExp(`(===|!==)\\s*["'](${LEGACY_COLUMN_IDS.join("|")})["']`).test(text);
+}
+
+/**
+ * True when this comparison sits in the FALLBACK branch of a conditional whose test reads resolved
+ * trait data — i.e. it is the documented answer for callers without traits, not an unconverted guard.
+ */
+function isTraitFallback(node, sourceFile) {
+  let current = node;
+  while (current.parent && !ts.isSourceFile(current.parent)) {
+    const parent = current.parent;
+    if (ts.isConditionalExpression(parent) && parent.whenFalse === current) {
+      if (testsTraitData(parent.condition.getText(sourceFile))) return true;
+    }
+    if (ts.isIfStatement(parent)) {
+      /*
+      Two shapes count: the explicit `else`, and the EARLY-RETURN form — `if (flags) return ...;` followed by
+      the literal as the next statement, which is how most of these are actually written. The early-return
+      case is detected by looking at the preceding sibling statement rather than at an else branch.
+      */
+      if (parent.elseStatement === current && testsTraitData(parent.expression.getText(sourceFile))) return true;
+    }
+    if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
+      const statements = parent.statements ?? [];
+      const index = statements.indexOf(current);
+      for (let i = index - 1; i >= 0 && i >= index - 2; i -= 1) {
+        const prior = statements[i];
+        if (ts.isIfStatement(prior)
+          && prior.elseStatement === undefined
+          && testsTraitData(prior.expression.getText(sourceFile))
+          && /\breturn\b/.test(prior.thenStatement.getText(sourceFile))) {
+          return true;
+        }
+      }
+    }
+    current = parent;
+  }
+  return false;
+}
+
 /** Parse one file and classify every comparison against a legacy column id. */
 export function findComparisons(filePath, source) {
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -246,6 +317,11 @@ export function findComparisons(filePath, source) {
           columnId: parts.literal,
           receiver,
           kind: deliberate ? "deliberate" : isRole ? "role" : isStatus ? "status" : "column",
+          /*
+          Advisory only — it never changes `kind`, so a wrong hint cannot move the bar. It exists so a batch
+          worker can tell an unconverted guard from an already-converted site's documented fallback.
+          */
+          traitFallback: isTraitFallback(node, sourceFile),
         });
       }
     }
@@ -268,6 +344,14 @@ export function findComparisons(filePath, source) {
 
 /** Aggregate findings into the four headline counts plus per-file and per-column breakdowns. */
 export function summarize(findings) {
+  /*
+  FNXC:LifecycleColumnCensus 2026-08-01-01:55:
+  Reported ALONGSIDE `totals`, not inside it. `totals` is the four-class contract other suites deep-equal, so
+  adding a key there breaks assertions that are correctly strict about the shape — my first attempt did
+  exactly that and failed two existing cases. An advisory number does not belong in the structure that
+  defines the bar.
+  */
+  let traitFallbackCount = 0;
   const totals = { column: 0, role: 0, status: 0, deliberate: 0 };
   const byColumnId = {};
   const byFile = new Map();
@@ -302,6 +386,7 @@ export function summarize(findings) {
       continue;
     }
     totals[finding.kind] += 1;
+    if (finding.kind === "column" && finding.traitFallback) traitFallbackCount += 1;
     if (finding.kind === "deliberate") {
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2661 review — greptile P1, same class again):
@@ -324,6 +409,8 @@ export function summarize(findings) {
 
   return {
     totals,
+    /* Advisory, deliberately OUTSIDE `totals`: see the note on `summarize`. */
+    traitFallbackCount,
     byColumnId,
     byFile: [...byFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     deliberateByFile: [...deliberateByFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
