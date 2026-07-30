@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:50:
+BLOCK NEW INERT CONVERSIONS — an optional trailing lane/flag parameter that no caller supplies.
+
+The lifecycle-column program replaces `column === "done"` with a resolved-role read. A conversion
+that adds the parameter and never wires a caller is WORSE than the literal:
+
+  tsc passes        the parameter is optional, so omitting it is legal
+  tests pass        the fallback IS the old behaviour — that is what the fallback is for
+  the census DROPS  it counts comparisons, and the literal really is gone
+
+So the instrument measuring the program scores the broken version as a win. Measured rate when this
+check was written: five of nine conversions in one reviewed-and-green tranche were inert.
+
+WHAT IT CHECKS. Exported functions whose LAST parameter is optional and named like resolved lanes
+(`columnFlags`, `lifecycleColumns`, `reviewColumns`, ...). At least one call site must pass that many
+arguments. Component props are covered separately by
+`packages/dashboard/app/__tests__/resolved-flags-seams-have-suppliers.test.ts`.
+
+LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Tests are excluded, so a function called only from tests
+reports zero callers — those are allow-listed below, not silently skipped. It proves a caller passes
+SOMETHING in that position, not that the value is correct or non-undefined. Cheap half of the
+question; it is the half that was silently wrong.
+
+TO CLEAR A FAILURE: wire a supplier, or delete the parameter and leave the literal counted. Adding an
+allow-list entry is the last resort and needs the reason spelled out.
+*/
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PACKAGES = join(REPO, "packages");
+const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2e", ".gate-bundle", "coverage"]);
+const TRAILING_FLAG_PARAM = /([Cc]olumnFlags|[Ll]ifecycleColumns|[Rr]eviewColumns|[Tt]erminalColumns|[Pp]lannerLanes)$/;
+/** Unanchored twin used only to skip files fast; see the note at the call site. */
+const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lannerLanes)/;
+
+/** Known-unsupplied seams, each with why it is tolerated. Shrink this list; never grow it casually. */
+const ALLOWED = new Map([
+  ["evaluateMergeBlockerGuard", "Exported for tests only; scanner excludes __tests__ so it reports 0 callers."],
+  ["isRecoverableMissingWorktreeReviewFailure", "Exported for tests only; same scanner limitation."],
+  /*
+  TEMPORARY — real offenders in packages owned by other batches, reported to them rather than edited
+  from outside. Remove these two entries when those batches wire or delete the parameters; the check
+  will then start guarding those files too. Both are the same shape this check exists to catch.
+  */
+  ["getTotalAgentActiveMs", "TEMPORARY: core-owned; reported on #2783. Twin of a dashboard function reverted for exactly this."],
+  ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
+]);
+
+function* walk(dir) {
+  for (const entry of readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) yield* walk(full);
+    else if (/\.tsx?$/.test(full) && !/\.d\.ts$/.test(full)) yield full;
+  }
+}
+
+const declared = new Map();
+const maxArgs = new Map();
+
+for (const file of walk(PACKAGES)) {
+  const source = readFileSync(file, "utf8");
+  /* Cheap pre-filter. NOT `TRAILING_FLAG_PARAM` — that is `$`-anchored for parameter NAMES and never
+     matches whole file text, which silently emptied the scan on the first run. The completeness
+     check at the bottom is what caught it. */
+  if (!PREFILTER.test(source)) continue;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const visit = (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+      const last = node.parameters[node.parameters.length - 1];
+      if (last.questionToken && ts.isIdentifier(last.name) && TRAILING_FLAG_PARAM.test(last.name.text)) {
+        declared.set(node.name.text, { file: relative(REPO, file), arity: node.parameters.length });
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = ts.isIdentifier(node.expression) ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : null;
+      if (callee) maxArgs.set(callee, Math.max(maxArgs.get(callee) ?? 0, node.arguments.length));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+}
+
+const offenders = [];
+for (const [fn, { file, arity }] of declared) {
+  if (ALLOWED.has(fn)) continue;
+  const best = maxArgs.get(fn) ?? 0;
+  if (best < arity) offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+}
+
+if (declared.size === 0) {
+  console.error("[check-inert-flag-seams] found NO trailing lane/flag params — the scan is broken, not the code.");
+  process.exit(1);
+}
+
+if (offenders.length > 0) {
+  console.error("\n[check-inert-flag-seams] optional trailing lane/flag parameter with no supplier:\n");
+  for (const line of offenders.sort()) console.error(line);
+  console.error(
+    "\nThe literal it replaced is gone, the census counted the conversion, and the behaviour is the\n"
+    + "legacy fallback forever. Wire a supplier, or delete the parameter and leave the literal counted.\n",
+  );
+  process.exit(1);
+}
+
+console.log(`[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied.`);
