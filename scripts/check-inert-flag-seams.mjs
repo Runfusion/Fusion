@@ -68,11 +68,21 @@ const ALLOWED = new Map([
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
     "sortTasksForDisplayColumn",
-    "TEMPORARY: core-owned (task-priority.ts). Its `columnFlags` argument is supplied by its own "
-      + "tests and no production caller — the three dashboard call sites bind to a DIFFERENT function "
-      + "of the same name in app/components/taskSorting.ts. Surfaced only once this check resolved "
-      + "imported shadows; before that the dashboard calls raised the arg-count max and cleared it.",
+    "PERMANENT, with evidence. core/task-priority.ts's copy has ZERO callers anywhere: the three "
+      + "dashboard call sites bind to a DIFFERENT function of the same name in "
+      + "app/components/taskSorting.ts, and only its own tests pass the flags. It is not reachable "
+      + "externally either — @fusion/core is private, @runfusion/fusion declares no `exports` map and "
+      + "re-exports nothing from core wholesale, and it is absent from plugin-sdk. So there is no "
+      + "production behaviour to be wrong, and nothing to wire a supplier from.\n"
+      + "Deliberately NOT 'fixed'. Deleting the parameter (this check's usual remedy) would trade a "
+      + "dormant-but-correct implementation for a dormant legacy-only one, and deleting the function "
+      + "would discard a well-documented ordering it is plausible someone wires later. Both are churn "
+      + "with no product effect. The honest resolution is a duplicate-vs-core consolidation with the "
+      + "dashboard twin, which is a refactor and needs an owner — not a seam fix.\n"
+      + "Was TEMPORARY pending #2783; that PR merged without it, so the pending-owner framing was a "
+      + "fiction and is removed rather than left to rot.",
   ],
+
 ]);
 
 /*
