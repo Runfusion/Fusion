@@ -36,13 +36,22 @@ function task(overrides: Partial<Task>): Task {
 
 const NOW = Date.parse("2026-01-08T00:00:00.000Z"); // a week later — well past any threshold
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-21:30 (rebase onto #2746 — another worker landed the same fix):
+THE CONTEXT SHAPE IS THEIRS, not mine. #2746 converted `task-age-staleness.ts` while this PR was open, with a
+`lifecycle: { wip, review }` context field where I had used two flat fields. Theirs is on main and is the better
+shape — one field for one resolved struct, so a third lane cannot arrive as a third parameter — so my
+conversion of that file is dropped and these cases were rewritten against their API.
+
+Kept rather than deleted: the cases assert the INVARIANT (a renamed board produces a signal; a card outside the
+active lanes does not; omitting lanes keeps the legacy ids), and #2746 has no case for the third of those.
+*/
 describe("age staleness follows the caller's active lanes", () => {
   it("produces a signal for a renamed WIP lane", () => {
     // Pre-fix: `building` matched neither literal, so the signal was undefined and the board looked healthy.
     const signal = getTaskAgeStalenessSignal(task({ column: "building" }), {
       now: NOW,
-      wipColumn: "building",
-      reviewColumn: "signoff",
+      lifecycle: { wip: "building", review: "signoff" },
     });
 
     expect(signal).toBeDefined();
@@ -50,14 +59,14 @@ describe("age staleness follows the caller's active lanes", () => {
 
   it("produces a signal for a renamed REVIEW lane", () => {
     expect(getTaskAgeStalenessSignal(task({ column: "signoff" }), {
-      now: NOW, wipColumn: "building", reviewColumn: "signoff",
+      now: NOW, lifecycle: { wip: "building", review: "signoff" },
     })).toBeDefined();
   });
 
   it("stays silent for a card in neither active lane", () => {
     // The paired negative: intake and terminal cards have no age-staleness signal by design.
     expect(getTaskAgeStalenessSignal(task({ column: "backlog" }), {
-      now: NOW, wipColumn: "building", reviewColumn: "signoff",
+      now: NOW, lifecycle: { wip: "building", review: "signoff" },
     })).toBeUndefined();
   });
 
