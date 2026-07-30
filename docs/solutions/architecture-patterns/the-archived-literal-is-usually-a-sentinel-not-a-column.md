@@ -18,9 +18,20 @@ second-largest single-file count outside `self-healing.ts`. Reading all nine:
 
 | line | shape | convertible? |
 |---|---|---|
-| 142 | `row.column === "archived"` on a raw DB row | **yes** — the only one |
-| 213, 332, 345 | `task.column === "archived" \|\| task.deletedAt != null` | mixed, see below |
+| 142 | `row.column === "archived"` on a raw DB row | **yes** |
+| 213, 332, 345 | `task.column === "archived"` on a row `select` | **yes** — a real board lane |
 | 439, 499, 559, 616, 674 | `column === "archived"` where `column` came from `getLiveTaskColumn` | **no — sentinel** |
+
+**Corrected 2026-07-30** (PR #2877 review). This table first said "8 of 9 must not be converted",
+which contradicted the rule stated further down and — much worse — would have told the next reader
+that three genuine defects were intentional. Lines 213/332/345 read `task.column` off a row `select`,
+so they are board lanes by exactly the test this document gives. The real split is **5 sentinels, 4
+convertible**, and the fact that both classes live in one file, spelled identically, is the actual
+lesson rather than the ratio.
+
+Consequence of getting it wrong, since it is the point of the document: on a board whose archived lane
+is renamed, line 213 keeps a card's documents WRITABLE and 332/345 reject a legitimate archived-document
+publication as `parent-not-archived` / `archived-state-inconsistent`.
 
 `getLiveTaskColumn` returns *either* the task's real column *or* the literal string `"archived"`,
 which it manufactures for an archived-or-soft-deleted parent:
@@ -37,18 +48,20 @@ would keep passing on the built-in board and start *failing* on a renamed one �
 conversion makes the renamed board *worse*, which is the opposite of what the census number
 suggests.
 
-So: **8 of 9 guards in that file must not be converted.** A file's census count is an upper bound on
-convertible sites, not a work estimate.
+So: **5 of the 9 guards in that file must not be converted.** A file's census count is still an upper
+bound on convertible sites rather than a work estimate — the point stands with the corrected number,
+and it stands more sharply now that the same file is known to hold both classes.
 
-## The one that is real, and why it is deferred rather than done
+## The four that are real, and why they are deferred rather than done
 
-Line 142's own test *is* a board-column comparison. A live row sitting in a workflow-declared
+Line 142's own test *is* a board-column comparison, and so are 213/332/345. A live row sitting in a workflow-declared
 archived lane named anything but `archived` is not recognised, so `getLiveTaskColumn` returns
 `"vault"`, every downstream sentinel check is false, and the card's documents stay writable while
 the board shows it archived.
 
-It is narrow — archived rows normally move to the archive *table*, and `deletedAt` covers
-soft-delete — and it is not a rename to fix. `getLiveTaskColumn` takes a `db` handle, not a store:
+All four are narrow for the same reason — archived rows normally move to the archive *table*, and the
+`deletedAt` companion on each covers soft-delete, which is why only a live row in a renamed archived
+lane reaches them. None is a rename to fix. `getLiveTaskColumn` takes a `db` handle, not a store:
 it has no task, no workflow, and no lane vocabulary. Converting it means threading a resolved
 archived-lane set through a low-level DB helper and every caller of it, which is a design change
 with a measurable read cost on a hot path. Stated here rather than done quietly, in the shape
