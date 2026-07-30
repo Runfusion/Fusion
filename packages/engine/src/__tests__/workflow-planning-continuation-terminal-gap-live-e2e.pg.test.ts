@@ -30,9 +30,10 @@ literal is `LEGACY_TERMINAL_PAIR`, one function away, where it is correct for an
 and correctly annotated. Same mechanism as #2795 and #2798; this file adds the intra-file variant.
 
 SCOPE, STATED HONESTLY. The behavioural cases are driven end to end with real persisted rows from a
-live PostgreSQL store and the real exported functions. The call-site split is asserted against source
-text — driving the drain needs the runtime's full dependency set, which I did not build — and the
-audit case says so rather than dressing it up.
+live PostgreSQL store and the real exported functions. The call-site split is asserted against the
+runtime module's SYNTAX (parsed, not string-matched — see the note on that case) because driving the
+drain needs the runtime's full dependency set, which I did not build; the audit case says so rather
+than dressing it up.
 
 LANE. `.pg.test.ts`, skipped via `pgDescribe` when no PostgreSQL is reachable, so the merge gate is
 unaffected. Throwaway per-file database; never port 4040.
@@ -40,6 +41,7 @@ unaffected. Throwaway per-file database; never port 4040.
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import "@fusion/core"; // registers the built-in column traits
 import type { Task, TaskStore, WorkflowWorkItem } from "@fusion/core";
 
@@ -152,27 +154,58 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
 
   it("AUDIT — one of the two classifier call sites is converted, and the inner predicate is not", async () => {
     /*
-    NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against source
-    text and labelled as such.
+    NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against the
+    module's SYNTAX and labelled as such.
+
+    FNXC:WorkflowScheduling 2026-07-31-10:15 (PR #2799 review — greptile P2):
+    AST, not string splitting. The first version found call sites by splitting on the callee name and
+    then reasoning about the text that followed — whitespace, the next `;`, whether the slice started
+    with a parameter name. A formatting-only change to the runtime could fail this suite or, worse,
+    silently misclassify a site, which is the failure mode this whole series is about. Matching the
+    repo's existing precedent for the same problem (`core/.../sync-workflow-ir-callsite-allowlist.test.ts`),
+    the check now parses the module and inspects real call expressions and their argument lists, so
+    it depends on the code's structure rather than its layout.
 
     An alarm in both directions, like #2798's: converting the remaining site fails this case, which
     is the moment to read the three behavioural cases above and update it deliberately.
     */
-    const source = readFileSync(join(__dirname, "..", "runtimes", "in-process-runtime.ts"), "utf8");
+    const file = join(__dirname, "..", "runtimes", "in-process-runtime.ts");
+    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
-    const classifierCalls = source
-      .split("resolvePlanningContinuationCandidate(")
-      .slice(1)
-      .filter((s) => !s.startsWith("\n  item")); // the declaration's own parameter list
-    const converted = classifierCalls.filter((s) => s.slice(0, s.indexOf(";")).includes("terminalColumns"));
+    /** Every call of `name`, as its argument-expression list. Declarations are not call expressions,
+     *  so they are excluded structurally rather than by guessing at their text. */
+    function callArguments(name: string): ts.NodeArray<ts.Expression>[] {
+      const found: ts.NodeArray<ts.Expression>[] = [];
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
+          found.push(node.arguments);
+        }
+        ts.forEachChild(node, visit);
+      };
+      ts.forEachChild(sf, visit);
+      return found;
+    }
 
-    expect(classifierCalls.length).toBe(2);
-    expect(converted.length).toBe(1);
+    /** Does this call pass a resolved terminal-column set? Checked by looking for the property in the
+     *  options-object argument, or an identifier of that name, rather than by substring. */
+    const passesTerminalColumns = (args: ts.NodeArray<ts.Expression>): boolean =>
+      args.some((arg) => {
+        if (ts.isObjectLiteralExpression(arg)) {
+          return arg.properties.some((prop) => prop.name && ts.isIdentifier(prop.name)
+            && prop.name.text === "terminalColumns");
+        }
+        return ts.isIdentifier(arg) && arg.text === "terminalColumns";
+      });
 
-    /* The inner predicate, called from the classifier without threading its resolved set. */
-    const innerCalls = source.split("isPlanningContinuationTaskDispatchable(").slice(1)
-      .filter((s) => !s.startsWith("\n  task"));
-    expect(innerCalls.length).toBe(1);
-    expect(innerCalls[0]?.slice(0, innerCalls[0].indexOf(")"))).not.toContain("terminal");
+    const classifierCalls = callArguments("resolvePlanningContinuationCandidate");
+    expect(classifierCalls).toHaveLength(2);
+    expect(classifierCalls.filter(passesTerminalColumns)).toHaveLength(1);
+
+    /* The inner predicate, called from the classifier without threading its resolved set: exactly one
+       call, and it takes only the task. Arity is the property asserted, so a renamed local cannot
+       spell around it. */
+    const innerCalls = callArguments("isPlanningContinuationTaskDispatchable");
+    expect(innerCalls).toHaveLength(1);
+    expect(innerCalls[0]?.length).toBe(1);
   });
 });
