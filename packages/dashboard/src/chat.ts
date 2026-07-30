@@ -601,7 +601,17 @@ export function dedupeChatTools(tools: ChatCustomTool[]): ChatCustomTool[] {
   });
 }
 
-function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getPricingOverrides: () => Promise<Settings["modelPricingOverrides"] | undefined>) {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (batch-dashboard-src):
+EXPORTED so the RESOLVER side of the metrics seam is testable, not just the guard.
+
+The formatter takes `wipColumns` and its own tests inject that set by hand — which proves the guard
+and says nothing about whether production fills it. Measured: deleting the `wipColumns` argument
+below left the whole 3830-test dashboard suite green. An options-bag property is also invisible to
+`check-inert-flag-seams.mjs`, which only tracks trailing optional PARAMETERS, so nothing else was
+watching this either. Exporting the factory is the cheapest way to put a test on the producer.
+*/
+export function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getPricingOverrides: () => Promise<Settings["modelPricingOverrides"] | undefined>) {
   return {
     name: "fn_task_planner_get_task_metrics",
     label: "Get Current Task Metrics",
@@ -614,9 +624,17 @@ function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getP
     execute: async () => {
       try {
         const task = await taskStore.getTask(taskId, { activityLogLimit: 100 });
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-16:10 (batch-dashboard-src):
+        Supplies the task's OWN wip lanes. This is the production path for the metrics tool, so
+        wiring it here is what makes the option live rather than one only tests fill — without it
+        the formatter keeps the legacy `in-progress` and a renamed execution lane reports a frozen
+        active runtime.
+        */
         const metrics = formatTaskPlannerChatMetrics(task, {
           pricingOverrides: await getPricingOverrides(),
           nowMs: Date.now(),
+          wipColumns: await wipColumnsForTask(taskStore, taskId),
         });
         return {
           content: [{ type: "text" as const, text: metrics.summaryText }],
