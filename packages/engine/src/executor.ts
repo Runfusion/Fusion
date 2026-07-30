@@ -3594,7 +3594,12 @@ export class TaskExecutor {
         // Handle unpause of an in-progress task with no active session.
         // Approval can be decided while the old session is still unwinding;
         // remember that edge instead of losing the only task:updated event.
-        if (!task.paused && task.column === "in-progress" && this.approvalSuspended.has(task.id)) {
+        /* FNXC:WorkflowLifecycleColumns 2026-08-01-13:10 (fleet: executor.ts unpause listener): both
+           checks in this listener ask "is this card still in the wip lane?"; one snapshot for the pair so
+           the approval-suspension edge and the orphaned-resume branch cannot disagree. With the literal,
+           neither fired on a renamed board — an unpaused card with no active session was never resumed. */
+        const unpauseWipLane = (await this.resolveResumeLanes(task.id)).wip;
+        if (!task.paused && task.column === unpauseWipLane && this.approvalSuspended.has(task.id)) {
           if (
             this.executing.has(task.id)
             || this.activeSessions.has(task.id)
@@ -3612,7 +3617,7 @@ export class TaskExecutor {
         // dispatchUnpauseResume owns the terminal-failure and duplicate guards.
         if (
           !task.paused
-          && task.column === "in-progress"
+          && task.column === unpauseWipLane
           && !this.activeSessions.has(task.id)
           && !this.activeStepExecutors.has(task.id)
           && !this.activeWorkflowStepSessions.has(task.id)
@@ -11833,7 +11838,21 @@ export class TaskExecutor {
     const implementationIncompleteMergeFailure = this.isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
     if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
     const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;
-    if (live.column !== "in-review" && !(incompleteSteps && live.column === "todo") && !(prematureMergeWithIncompleteSteps && live.column === "in-progress")) return false;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-13:00 (fleet: executor.ts — the REVERSE half-conversion):
+    THE DESTINATION WAS ALREADY RESOLVED HERE AND THE GATE WAS NOT. `resolveReboundColumnFor` below picks
+    the board's rebound column (U7), but this gate compared against three default-lineage literals — so on
+    a renamed board the router refused before ever reaching the resolved move. That is the mirror image of
+    the dangerous half-conversion: instead of admitting a card and sending it nowhere, it refuses a card
+    whose recovery was fully implemented. Same one-decision-two-boards defect, opposite direction.
+
+    Three lanes, one snapshot: proceed for a card in review, OR in the hold lane with unfinished steps, OR
+    in the wip lane after a premature merge attempt.
+    */
+    const resumeRouterLanes = await this.resolveResumeLanes(live.id);
+    if (live.column !== resumeRouterLanes.review
+      && !(incompleteSteps && live.column === resumeRouterLanes.hold)
+      && !(prematureMergeWithIncompleteSteps && live.column === resumeRouterLanes.wip)) return false;
 
     const message = incompleteSteps
       ? `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete steps — moved back to todo for execution resume`
@@ -14175,7 +14194,9 @@ export class TaskExecutor {
               }
               const hasExplicitWorktreeBinding = typeof liveTask.worktree === "string" || liveTask.worktree === null;
               const hasExplicitBranchBinding = typeof liveTask.branch === "string" || liveTask.branch === null;
-              const worktreeContractIntact = liveTask.column === "in-progress"
+              /* FNXC:WorkflowLifecycleColumns 2026-08-01-13:15 (fleet): the contract holds while the card
+                 is in ITS board's wip lane; the literal made every renamed-board retry look reclaimed. */
+              const worktreeContractIntact = liveTask.column === (await this.resolveResumeLanes(task.id)).wip
                 && !liveTask.paused
                 && (!hasExplicitWorktreeBinding || liveTask.worktree === worktreePath)
                 && (!hasExplicitBranchBinding || (typeof liveTask.branch === "string" && liveTask.branch.length > 0));
@@ -14642,7 +14663,10 @@ export class TaskExecutor {
         this.clearPausedAborted(task.id);
         const latestTask = await this.store.getTask(task.id);
         if (
-          latestTask?.column === "todo" &&
+          /* FNXC:WorkflowLifecycleColumns 2026-08-01-13:18 (fleet): the HOLD lane — this recognises a card
+             the abort already parked with its progress preserved, and skipping the cleanup is what keeps
+             that progress. On a renamed board the cleanup ran anyway and discarded it. */
+          latestTask?.column === (await this.resolveResumeLanes(task.id)).hold &&
           latestTask.paused === true &&
           ((latestTask.currentStep ?? 0) > 0 || latestTask.steps?.some((step) => step.status === "done" || step.status === "in-progress"))
         ) {

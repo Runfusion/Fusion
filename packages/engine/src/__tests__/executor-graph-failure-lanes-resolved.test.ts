@@ -305,3 +305,60 @@ describe("the review-lane family resolves the board's own review column", () => 
     expect(await finalizeAlreadyReviewed(executor, "FN-17")).not.toBe("missing");
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-13:30 (fleet: executor.ts — the REVERSE half-conversion):
+
+`routeGraphFailureToExecutionResume`'s move DESTINATION was already resolved from the workflow (U7's
+`resolveReboundColumnFor`) while its entry gate compared against three default-lineage literals. So on
+a renamed board the router refused before it ever reached the resolved move: a recovery that was fully
+implemented, never running.
+
+That is the mirror image of the dangerous half-conversion. The familiar direction admits a card and
+then sends it to a column the board does not declare; this direction refuses a card whose recovery
+already worked. Both are one decision reading two boards, and only the second is silent — which is
+why it survived.
+
+The gate admits three shapes, so all three are asserted plus the refusal, which is what stops a gate
+that returns true unconditionally from passing.
+*/
+describe("the execution-resume router's gate reads the same board as its destination", () => {
+  function routeResume(executor: TaskExecutor, live: Record<string, unknown>, failureValue: string): Promise<boolean> {
+    return (executor as unknown as {
+      routeGraphFailureToExecutionResume: (live: unknown, failedNode: string, failureValue: string) => Promise<boolean>;
+    }).routeGraphFailureToExecutionResume(live, "merge", failureValue);
+  }
+
+  const withIncompleteSteps = (column: string, id: string) => ({
+    id, column, worktree: "/wt", steps: [{ name: "s", status: "pending" }], workflowStepResults: [],
+  });
+
+  it("admits a review-lane card", async () => {
+    const live = withIncompleteSteps("checking", "FN-18");
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await routeResume(executor, live, "other")).toBe(true);
+  });
+
+  it("admits a HOLD-lane card that still has unfinished steps", async () => {
+    const live = withIncompleteSteps("queued", "FN-19");
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await routeResume(executor, live, "other")).toBe(true);
+  });
+
+  it("admits a WIP-lane card after a premature merge attempt", async () => {
+    // The third shape: implementation-incomplete merge failure with steps still open.
+    const live = withIncompleteSteps("building", "FN-20");
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await routeResume(executor, live, "implementation-incomplete")).toBe(true);
+  });
+
+  it("still REFUSES a card in the intake lane, which is none of the three shapes", async () => {
+    const live = withIncompleteSteps("backlog", "FN-21");
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await routeResume(executor, live, "other")).toBe(false);
+  });
+});
