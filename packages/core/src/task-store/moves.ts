@@ -1200,7 +1200,18 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       }
     }
 
-    if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.hold ?? "todo") && moveSource === "user") {
+    /*
+    FNXC:WorkflowTaskCancellation 2026-07-30-23:05 (PR #2705 review — greptile):
+    HOLD, THEN INTAKE, THEN THE LEGACY ID. A workflow may declare an intake column and NO hold column
+    (Coding (Ideas)'s `ideas` is the shipped example). `?? "todo"` then names a column that workflow
+    does not declare, so this comparison never matches and the operator's hard cancel silently does
+    nothing: the merge request stays live and the active work items are never cancelled, while the
+    card moves anyway. Failing OPEN on a cancellation contract is the worst available outcome.
+
+    Same precedence the replan target settled on in #2659, and for the same reason — the
+    pre-implementation lane is hold when one exists and intake otherwise.
+    */
+    if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.hold ?? moveLifecycle?.intake ?? "todo") && moveSource === "user") {
       const handoffAccepted = await store.getCompletionHandoffAcceptedMarker(id);
       const mergeRequest = await store.getMergeRequestRecordAsync(id);
       if (handoffAccepted && mergeRequest && mergeRequest.state !== "succeeded" && mergeRequest.state !== "cancelled") {
@@ -1218,7 +1229,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
       void store.clearCompletionHandoffAcceptedMarker(id);
     }
-    if (toColumn === (moveLifecycle?.hold ?? "todo") && moveSource === "user" && (fromIsImplementation || fromColumn === (moveLifecycle?.review ?? "in-review"))) {
+    if (toColumn === (moveLifecycle?.hold ?? moveLifecycle?.intake ?? "todo") && moveSource === "user" && (fromIsImplementation || fromColumn === (moveLifecycle?.review ?? "in-review"))) {
       // FNXC:WorkflowTaskCancellation 2026-07-21-11:51:
       // The task move is already committed here. Continuation cleanup is
       // best-effort so a storage fault cannot suppress task:moved or strand
