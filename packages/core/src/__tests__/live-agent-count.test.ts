@@ -88,3 +88,41 @@ describe("live agent count predicates", () => {
     });
   });
 });
+
+/*
+FNXC:WorkflowColumns 2026-07-29-20:30 (triage-guard census — anti-convergence guard):
+These pin the NO-ROLE-INFORMATION fallback across BOTH lifecycle vocabularies, so a
+future pass that drives the `column === "triage"` census to zero by deleting the
+legacy half fails here instead of silently breaking legacy boards.
+
+The fallback cannot resolve by trait — it runs precisely when no flags and no IR are
+available — so a literal is the only thing expressible, and it must cover the merged
+default column (`todo`, post-#2515) AND a legacy/custom workflow that still declares
+`triage` (a legal column id per KTD-8).
+
+It is reachable in production, contrary to the note that used to sit on it: the CLI
+counts unenriched rows, and both dashboard callers pass a possibly-undefined flag
+lookup, so a board mid-load lands here.
+*/
+describe("live-agent-count no-role-information fallback", () => {
+  const bare = (column: string) => ({ column, status: null } as unknown as Parameters<typeof isWaitingAgentTask>[0]);
+
+  it("counts a merged-column card as waiting with no flags supplied", () => {
+    expect(isWaitingAgentTask(bare("todo"))).toBe(true);
+  });
+
+  it("counts a LEGACY triage card as waiting with no flags supplied", () => {
+    // Deleting the `triage` half of the fallback to zero the census turns this red.
+    expect(isWaitingAgentTask(bare("triage"))).toBe(true);
+  });
+
+  it("does not count a wip or terminal column as waiting", () => {
+    expect(isWaitingAgentTask(bare("in-progress"))).toBe(false);
+    expect(isWaitingAgentTask(bare("done"))).toBe(false);
+  });
+
+  it("enrichment from ABSENT flags still resolves both vocabularies", () => {
+    expect(enrichRunningAgentTaskShapeFromFlags(bare("todo") as never, undefined).columnIsIntakeOrHold).toBe(true);
+    expect(enrichRunningAgentTaskShapeFromFlags(bare("triage") as never, undefined).columnIsIntakeOrHold).toBe(true);
+  });
+});

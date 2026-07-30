@@ -84,15 +84,30 @@ export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskS
     columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : task.column === "triage" || task.column === "todo",
     columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === "in-progress",
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-29-23:10:
-    These id fallbacks are REACHABLE, not fixture-only — callers may pass no flags for a column
-    absent from the board's flag map, which is the renamed or undeclared column case. A card in
-    such a column then matches no arm and is counted as neither running nor waiting, so the
-    footer's queued total under-reports it.
+    FNXC:WorkflowLifecycleColumns 2026-07-30-05:00 (triage-guard census — DO NOT converge these to zero):
+    THE LITERAL FALLBACKS ARE REACHABLE IN PRODUCTION. An earlier note claimed they were
+    "fixture-only; board/store callers always supply flags/IR". Measured, that is false on two counts:
+      - `cli/src/commands/project.ts` calls `countRunningAgentTasks(tasks)` on UNENRICHED rows — it
+        never calls an enrich helper at all;
+      - both dashboard callers pass a possibly-undefined lookup
+        (`columnFlagsByTaskId?.get(id) ?? columnFlagsById?.get(column)` in useExecutorStats,
+        `columnFlags` in Column.tsx), so a board mid-load, or a column id absent from the map, lands
+        here — the renamed or undeclared column case.
 
-    Converting them means deciding what an ABSENT flag set should mean, and "not intake" is as
-    much a guess as "todo is intake"; either choice moves an operator-visible count. Supply flags
-    rather than relying on these.
+    WHY `"triage"` STAYS despite the census. This branch runs precisely when NO role information is
+    available, so it cannot resolve by trait; a literal is the only thing expressible. It must
+    therefore cover BOTH vocabularies: the merged default column (`todo`, post-#2515) AND a legacy or
+    custom workflow that still declares `triage` (a legal column id per KTD-8). Deleting the `triage`
+    half to drive the census to zero would make every legacy-board card silently stop counting as
+    waiting — the exact silent-non-firing failure the census exists to eliminate, introduced in the
+    name of closing it.
+
+    Nor is narrowing it safe in the other direction: with an absent flag set, "not intake" is as much
+    a guess as "todo is intake", and either choice moves an operator-visible count (a card matching no
+    arm is counted as neither running nor waiting, so the footer under-reports it).
+
+    The right way to remove these is to make role information MANDATORY at the call sites — a
+    dashboard-loading change, not a vocabulary change. Supply flags rather than relying on these.
     */
     columnIsReviewOrMerge: flags ? flags.mergeOrchestration === true || flags.mergeBlocker === true : task.column === "in-review",
   };
@@ -112,7 +127,9 @@ function hasLiveWorkflowStepLease(task: RunningAgentTaskShape): boolean {
 }
 
 function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
-  // Legacy literals are intentionally fixture-only degradation when workflow IR is unavailable.
+  // FNXC:WorkflowColumns 2026-07-29-20:30: not fixture-only — see the note in
+  // enrichRunningAgentTaskShapeFromFlags. This is the no-role-information fallback and
+  // it is reached by the CLI's unenriched count and by dashboard boards mid-load.
   return task.columnTerminalKind ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
 }
 
