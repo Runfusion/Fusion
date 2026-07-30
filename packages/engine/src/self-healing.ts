@@ -10678,11 +10678,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverCompletionHandoffLimbo(): Promise<void> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return;
-    const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (the query-filter class, eighth sweep):
+    `listTasks({ column: "in-review" })` returned EMPTY on a renamed board, so a task stranded in
+    completion-handoff limbo — falsely marked exhausted while the merge queue already owns it — was never
+    cleared and stayed wedged.
+
+    Activation check first: this is one of the three remaining sweeps holding both a literal query and an
+    unwired `getTaskMergeBlocker`, so the guard is wired in the same change. This loop is already async,
+    so the per-card resolution happens inline rather than needing a precomputed map.
+    */
+    const limboReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    const limboById = new Map<string, Task>();
+    for (const column of limboReviewColumns) {
+      for (const task of await this.store.listTasks({ column, slim: false })) limboById.set(task.id, task);
+    }
+    const tasks = [...limboById.values()];
+    const limboIrCache = new Map<string, WorkflowIr>();
+    const unresolvedLimboCards: string[] = [];
+    const ownLimboReviewLanes = async (task: Task): Promise<ReadonlySet<string>> => {
+      const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, limboIrCache)
+        .catch(() => undefined);
+      const own = resolved
+        ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+        : [];
+      if (!resolved || resolved.source === "default") unresolvedLimboCards.push(task.id);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-22:40. */
+      return own.length > 0 ? new Set(own) : new Set(["in-review"]);
+    };
     const now = Date.now();
 
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.paused) continue;
+      if (task.paused) continue;
+      const limboReviewLanes = await ownLimboReviewLanes(task);
+      if (!limboReviewLanes.has(task.column)) continue;
       if (!allowsAutoMergeProcessing(task, settings)) continue;
       if (await this.isFalseCompletionHandoffExhaustionWhileMergeOwned(task)) {
         await this.store.updateTask(task.id, {
@@ -10699,7 +10728,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (task.status != null || task.mergeDetails != null || task.review != null || task.reviewState != null) continue;
       if (this.options.isTaskActive?.(task.id)) continue;
       if (await this.isMergeLaneOwned(task.id)) continue;
-      if (getTaskMergeBlocker(task) !== undefined) continue;
+      /* Wired: unwired, this would skip every card the widened read now finds. */
+      if (getTaskMergeBlocker(task, { reviewColumns: limboReviewLanes }) !== undefined) continue;
 
       const doneMarker = [...(task.log ?? [])].reverse().find((entry) => entry.action === "Task marked done by agent");
       if (!doneMarker?.timestamp) continue;

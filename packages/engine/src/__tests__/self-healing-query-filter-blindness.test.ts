@@ -608,4 +608,53 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
     expect(aheadCheck).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (the query-filter class, eighth sweep):
+  `recoverCompletionHandoffLimbo` clears a task falsely marked completion-handoff-exhausted while the
+  merge queue already owns it. Its literal read meant such a task stayed wedged on a renamed board.
+
+  ASSERTS CANDIDACY, per the rule this file's siblings had to learn four times: `isMergeLaneOwned` runs
+  once per row that has already passed BOTH the lane test and the merge blocker, so it is the first
+  observable separating "found and accepted" from "found and skipped". `getSettings` would not do — the
+  sweep calls it on its first line.
+
+  REVERT CHECK, measured (each independently):
+    - literal read restored     -> never reached, the card is not found
+    - { reviewColumns } dropped -> the card is found and then skipped by the blocker
+  */
+  it("reaches a limbo card on a RENAMED board, past the now-reachable blocker", async () => {
+    const wedged = {
+      ...shippedCard(),
+      id: "FN-LIMBO",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      worktree: "/tmp/wt",
+      steps: [],
+      /* The limbo gate requires status/mergeDetails/review/reviewState ALL null — `{}` is not null. */
+      mergeDetails: undefined,
+      log: [{ action: "Task marked done by agent", timestamp: new Date(Date.now() - 86_400_000).toISOString() }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([wedged]);
+    Object.assign(store, { logEntry: vi.fn(async () => undefined) });
+
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    vi.spyOn(manager as unknown as { isMergeLaneOwned: (id: string) => Promise<boolean> }, "isMergeLaneOwned")
+      .mockResolvedValue(false);
+    /*
+    DOWNSTREAM of the blocker, deliberately. `isMergeLaneOwned` runs BEFORE it, so spying there would
+    prove the read and say nothing about the wiring — an observable upstream of the thing under test is
+    the same vacuity in a new costume. `recoverApprovedStrandedAiMergeCommit` is the first call after the
+    blocker check.
+    */
+    const pastBlocker = vi
+      .spyOn(manager as unknown as {
+        recoverApprovedStrandedAiMergeCommit: (t: Task, s: unknown) => Promise<boolean>;
+      }, "recoverApprovedStrandedAiMergeCommit")
+      .mockResolvedValue(true);
+
+    await manager.recoverCompletionHandoffLimbo();
+
+    expect(pastBlocker).toHaveBeenCalled();
+  });
 });

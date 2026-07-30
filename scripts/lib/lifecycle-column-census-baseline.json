@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 90,
+    "packages/engine/src/self-healing.ts": 89,
     "packages/engine/src/scheduler.ts": 12,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/engine/src/executor.ts": 8,
@@ -132,7 +132,7 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 38,
+    "packages/engine/src/self-healing.ts": 37,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
     "packages/core/src/task-store/moves.ts": 2,
