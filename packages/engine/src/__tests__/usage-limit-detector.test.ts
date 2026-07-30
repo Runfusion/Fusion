@@ -333,3 +333,95 @@ describe("usage-limit parking and recovery round trip (U11)", () => {
     expect(store.pauseTask).not.toHaveBeenCalledWith("FN-106", false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-22:35:
+
+THE EXECUTOR AND MERGER LANES WERE STILL LITERALS. `taskUsesProvider` resolves a task's active lane to decide
+which providers it is running on; the PLANNER lane was converted to traits (the note in that function
+describes the exact failure and says it was fixed), and the executor/merger halves were left as
+`task.column === "in-progress"` / `=== "in-review"`.
+
+So on a renamed board an actively-executing card resolved NO providers, and a provider rate limit never
+paused it — the engine kept hammering the limited provider with that card. Measured before the fix on a
+renamed board (`building` = wip), executor limit triggered by a peer: only the TRIGGERING task was paused,
+and only because of the always-include-the-trigger fallback. The peer running on the same rate-limited
+provider was left going.
+
+HOW THIS WAS FOUND, because the route matters more than the bug: a scan for "legacy literal within a few
+lines of a role-resolved call" flagged this file. The FIRST thing I suspected there — the `done`/`archived`
+terminal filter — turned out to be a FALSE POSITIVE: its revert stayed green, because the lane check already
+excludes finished cards. Chasing why the revert would not go red is what surfaced the real defect one line
+over. A revert proof that stays green is information, not a dead end.
+*/
+describe("a provider rate limit pauses every card actually running on that provider", () => {
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "queued", name: "Queued", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "checking", name: "Checking", traits: [{ trait: "merge" }, { trait: "merge-blocker" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  const card = (id: string, column: string) => ({
+    id, column, dependencies: [], steps: [], currentStep: 0, log: [],
+    modelProvider: "openai-codex", modelId: "gpt-5",
+  });
+
+  function resolvingStore(tasks: any[], ir: unknown) {
+    const store = createMockStore(tasks);
+    const selection = { workflowId: "wf-renamed", stepIds: [] };
+    store.getTaskWorkflowSelection = () => (ir ? selection : undefined);
+    store.getTaskWorkflowSelectionAsync = async () => (ir ? selection : undefined);
+    store.getWorkflowDefinition = async () => (ir ? { id: "wf-renamed", ir } : undefined);
+    return store;
+  }
+
+  async function pausedIds(store: any, agentType = "executor", trigger = "FN-TRIGGER"): Promise<string[]> {
+    await new UsageLimitPauser(store).onUsageLimitHit(agentType, trigger, "rate_limit_error: Rate limit exceeded", "openai-codex");
+    return (store.pauseTask.mock.calls as unknown[][]).map((call) => call[0] as string);
+  }
+
+  it("pauses a PEER executing in the renamed WIP column", async () => {
+    // Pre-fix: only FN-TRIGGER, via the always-include fallback. FN-PEER kept running on the limited provider.
+    const store = resolvingStore(
+      [card("FN-TRIGGER", "building"), card("FN-PEER", "building"), card("FN-SHIPPED", "shipped")],
+      RENAMED_IR,
+    );
+
+    const paused = await pausedIds(store);
+
+    expect(paused).toContain("FN-PEER");
+    // The terminal lane is still excluded — by the lane check itself, which is why the `done`/`archived`
+    // filter above it did not need converting.
+    expect(paused).not.toContain("FN-SHIPPED");
+  });
+
+  it("pauses a merger-lane peer in the renamed REVIEW column", async () => {
+    const store = resolvingStore(
+      [card("FN-TRIGGER", "checking"), card("FN-PEER", "checking"), card("FN-WIP", "building")],
+      RENAMED_IR,
+    );
+
+    const paused = await pausedIds(store, "merger");
+
+    expect(paused).toContain("FN-PEER");
+    // A wip card is not on the merger lane, so a merger-provider limit must leave it alone.
+    expect(paused).not.toContain("FN-WIP");
+  });
+
+  it("does NOT pause a card parked in the renamed planning lane on an executor limit", async () => {
+    // The paired negative: "pause everything with that provider" must not pass for "resolve the lane".
+    const store = resolvingStore([card("FN-TRIGGER", "building"), card("FN-PARKED", "queued")], RENAMED_IR);
+
+    expect(await pausedIds(store)).not.toContain("FN-PARKED");
+  });
+
+  it("keeps the legacy literals when no workflow resolves", async () => {
+    const store = resolvingStore([card("FN-TRIGGER", "in-progress"), card("FN-PEER", "in-progress")], undefined);
+
+    expect(await pausedIds(store)).toContain("FN-PEER");
+  });
+});
