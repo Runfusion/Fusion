@@ -29,6 +29,7 @@ import type {
   TaskStore,
   PermanentAgentGatingContext,
 } from "@fusion/core";
+import { completeColumnsForTask, wipColumnsForTask } from "./task-lifecycle-lanes.js";
 import type { AgentActionGateContext, SkillSelectionContext } from "@fusion/engine";
 import {
   ApprovalRequestStore,
@@ -515,7 +516,13 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
       const profile = typeof raw.profile === "string" ? raw.profile : "verify:fast";
       if (!taskId || !profiles.has(profile)) return { content: [{ type: "text" as const, text: "ERROR: task_id and an allowlisted profile are required; raw commands are not accepted." }], isError: true, details: {} };
       const task = await taskStore.getTask(taskId);
-      if (!task || task.column !== "in-progress" || !task.worktree || !existsSync(task.worktree)) return { content: [{ type: "text" as const, text: "ERROR: verification requires an in-progress task with a live executor worktree." }], isError: true, details: {} };
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+      Verification requires a card that is actively being worked, resolved from its own workflow.
+      Keyed on the literal, chat-driven verification refused every task on a renamed board with
+      "requires an in-progress task" — naming a column that board does not have.
+      */
+      if (!task || !(await wipColumnsForTask(taskStore, taskId)).has(task.column) || !task.worktree || !existsSync(task.worktree)) return { content: [{ type: "text" as const, text: "ERROR: verification requires an in-progress task with a live executor worktree." }], isError: true, details: {} };
       const settings = await taskStore.getSettings();
       const command = profile === "verify:fast" ? "pnpm verify:fast" : typeof settings.testCommand === "string" ? settings.testCommand : "";
       if (!command) return { content: [{ type: "text" as const, text: "ERROR: the selected verification profile is not configured." }], isError: true, details: {} };
@@ -647,7 +654,14 @@ function createTaskPlannerRefinementTool(taskStore: TaskStore, taskId: string) {
       }
       try {
         const sourceTask = await taskStore.getTask(taskId);
-        if (sourceTask.column !== "done") {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+        Refinement is for FINISHED work — complete only, not the landed set: an archived task is off
+        the board and is not a refinement source. Paired with the tool-registration guard in
+        `createSession`; if only one of the two resolved, the tool would either be offered and then
+        refuse, or be withheld from tasks it would have accepted. Both move together.
+        */
+        if (!(await completeColumnsForTask(taskStore, taskId)).has(sourceTask.column)) {
           return {
             content: [{ type: "text" as const, text: `ERROR: Current task ${taskId} is ${sourceTask.column}; use planner steering for live tasks instead of creating a refinement.` }],
             details: { sourceTaskId: taskId, column: sourceTask.column },
@@ -2623,7 +2637,15 @@ export class ChatManager {
       FNXC:TaskDetailPlannerChat 2026-07-01-21:44:
       Done-task planner Chat uses a separate task-scoped refinement tool rather than Activity steering. The tool is registered only for synthetic task-planner sessions whose server-loaded current task is done, accepts only feedback text, and calls TaskStore.refineTask with the bound source id so models cannot route refinements to arbitrary tasks/projects/workflows.
       */
-      const taskPlannerRefinementTools = this.taskStore && taskPlannerChatTaskId && taskPlannerTaskColumn === "done"
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+      The registration half of the refinement pair — see the guard inside the tool itself. Resolved
+      the same way so a renamed board offers the tool exactly where the tool would accept it.
+      */
+      const taskPlannerTaskIsComplete = this.taskStore && taskPlannerChatTaskId
+        ? (await completeColumnsForTask(this.taskStore, taskPlannerChatTaskId)).has(taskPlannerTaskColumn)
+        : false;
+      const taskPlannerRefinementTools = this.taskStore && taskPlannerChatTaskId && taskPlannerTaskIsComplete
         ? [createTaskPlannerRefinementTool(this.taskStore, taskPlannerChatTaskId)]
         : [];
 

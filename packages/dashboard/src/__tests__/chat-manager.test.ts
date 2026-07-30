@@ -2148,6 +2148,59 @@ describe("ChatManager.sendMessage", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-05:25 (batch-core):
+
+  THE REFINEMENT PAIR MUST RESOLVE THE SAME WAY ON BOTH HALVES.
+
+  Two separate guards decide this feature: `createSession` REGISTERS the tool only for a finished
+  task, and the tool's own execute() REFUSES a source task that is not finished. Both compared
+  `column === "done"`, so on a renamed board the tool was never offered — and if only the
+  registration half had been converted, the tool would have been offered and then refused itself.
+  Half-converted pairs are the recurring failure in this program, so this asserts BOTH halves in one
+  case: the tool is present, and it actually creates the refinement.
+
+  `shipped` carries `complete`; this board declares no `done` column at all.
+  */
+  it("registers AND accepts the refinement tool for a task finished in a RENAMED complete lane", async () => {
+    mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-SHIPPED", status: "active" });
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+
+    const renamedIr = {
+      version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const selection = { workflowId: "wf-renamed", stepIds: [] };
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({ id: "FN-SHIPPED", title: "Finished task", column: "shipped" }),
+      addSteeringComment: vi.fn(),
+      refineTask: vi.fn().mockResolvedValue({ id: "FN-REF2", description: "d", column: "triage", createdAt: "2026-07-30T00:00:00.000Z" }),
+      getSettings: vi.fn().mockResolvedValue({}),
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-renamed", ir: renamedIr }),
+    };
+    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+
+    await chatManager.sendMessage("chat-001", "Follow up on this");
+
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const refinementTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_create_refinement");
+    /* Half one: registered. Keyed on the literal, this was undefined on a renamed board. */
+    expect(refinementTool).toBeDefined();
+
+    const result = await refinementTool.execute("call-1", { feedback: "Add export support" });
+    /* Half two: accepted. A registration-only fix would return isError here instead. */
+    expect(result.isError).toBeUndefined();
+    expect(taskStore.refineTask).toHaveBeenCalledWith("FN-SHIPPED", "Add export support");
+  });
+
   it("does not register the refinement tool for live task-planner sessions", async () => {
     mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-LIVE", status: "active" });
     const createResolvedSession = vi.fn(async () => ({

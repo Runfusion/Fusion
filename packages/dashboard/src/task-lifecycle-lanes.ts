@@ -102,3 +102,27 @@ export async function archivedColumnsForTask(
     return new Set(["archived"]);
   }
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (batch-core):
+WIP lanes — "is this card actively being worked?". Uses `countsTowardWip`, which is the trait the
+concurrency limit is keyed on, so this answers the same question the scheduler does rather than a
+parallel one.
+*/
+export async function wipColumnsForTask(
+  store: Pick<TaskStore, "getTask">,
+  taskId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<Set<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(
+      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
+      taskId,
+      irCache,
+    );
+    const wip = columnsWithFlag(ir, "countsTowardWip");
+    return new Set(wip.length > 0 ? wip : ["in-progress"]);
+  } catch {
+    return new Set(["in-progress"]);
+  }
+}
