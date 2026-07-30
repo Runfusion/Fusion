@@ -701,6 +701,23 @@ function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColu
   */
   return isFieldEditableColumnRole(flags, column);
 }
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-08:50:
+DELIBERATE-LITERAL — the unresolved-flags fallback, reviewed 2026-07-31-08:50.
+
+Census-invisible: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
+backlog pointed at this gate — even though the function twenty lines above it (`isTaskFieldEditableColumn`)
+was already converted onto the shared role helper. A converted predicate and an unconverted one, in
+one file, answering adjacent questions.
+
+The listed ids are every lane EXCEPT `done`/`archived`, so the real question is "has this card NOT
+finished yet". Keyed on the list, a renamed board matched nothing and the GitHub-tracking toggle was
+disabled on EVERY card — with nothing on screen to explain why, the same failure mode the note above
+`isTaskFieldEditableColumn` describes for inline editing.
+
+`ideas` is retained deliberately: it is the Coding (Ideas) intake column, which the workflow-id check
+below covers only for that one built-in workflow.
+*/
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
 const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
@@ -708,8 +725,21 @@ const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 FNXC:GitHubTracking 2026-07-22-00:46:
 Ideas tasks must be able to opt into or out of GitHub tracking before planning, whether they remain in the Ideas intake column or have advanced in Coding (Ideas). Use the resolved workflow ID rather than its display name so localized names and arbitrary custom workflows cannot gain this editing capability.
 */
-function canTaskEditGithubTracking(column: ColumnId, workflowId: string | undefined): boolean {
-  return GITHUB_TRACKING_EDITABLE_COLUMNS.has(column) || workflowId === CODING_IDEAS_WORKFLOW_ID;
+/* Exported for its regression test: the alternative is another source-shaped ratchet, and this
+   predicate is small enough to assert behaviourally. */
+export function canTaskEditGithubTracking(
+  column: ColumnId,
+  workflowId: string | undefined,
+  flags?: TaskContextMenuColumnFlags,
+): boolean {
+  if (workflowId === CODING_IDEAS_WORKFLOW_ID) return true;
+  /*
+  Resolved: editable until the card is FINISHED. `flags` is absent in two real states — the window
+  before the board-workflows payload resolves, and a column the workflow does not declare — where the
+  traits are unknown rather than known-false, so the literal set above answers instead.
+  */
+  if (flags) return !(flags.complete === true || flags.archived === true);
+  return GITHUB_TRACKING_EDITABLE_COLUMNS.has(column);
 }
 
 export function TaskDetailContent({
@@ -1838,7 +1868,7 @@ export function TaskDetailContent({
   const canEdit = isTaskFieldEditableColumn(task.column, detailColumnFlags) && !isSaving;
   /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
   const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
-  const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
+  const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id, detailColumnFlags) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
   const gitlabTrackedItem = workingTask.gitlabTracking?.item;
