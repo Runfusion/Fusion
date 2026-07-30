@@ -3755,15 +3755,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — P0, post-#2515):
       Resolve the workflow's INTAKE column; do not name `triage`. #2515 removed `triage`
       from the default lineage — the single pre-implementation column is now id `todo`
-      displayed as "Planning" — so `task.column !== "triage"` became TRUE for every
+      displayed as "Planning" — so comparing the card's column against the legacy
+      `triage` id became TRUE for every
       default-workflow card and this route rejected all of them. A card parked
       `awaiting-approval` could not be approved OR rejected (same guard below), i.e. it
       was STUCK with no operator action able to release it. The guard did not stop
       firing; it started firing on everything.
       */
       const approveIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      // WIDEN, never narrow: accept the resolved intake column OR the legacy id, so this
-      // P0 fix cannot reject a card the route previously allowed.
+      /*
+      The resolved column ONLY — the legacy-`triage` disjunct this comment
+      used to justify is gone (PR #2614 review — greptile: the comment outlived the code).
+      It was a belt-and-braces widening added with the P0 fix, on the theory that a card
+      might still be sitting in `triage`. Nothing shipped declares that column since
+      #2515, so the disjunct only widened what the guard accepts, and re-adding it changed
+      no test in either direction. A guard that accepts a column no workflow declares is
+      not caution, it is an unreachable branch that reads like a requirement.
+      */
       if (task.column !== approveIntakeColumn) {
         throw badRequest(`Task must be in the '${approveIntakeColumn}' column to approve plan`);
       }
