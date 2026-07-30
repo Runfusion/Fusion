@@ -132,6 +132,26 @@ describe("usage-limit fan-out still recognises the planning lane", () => {
     expect(store.pauseTask).not.toHaveBeenCalledWith("FN-PEER", true, undefined, expect.anything());
   });
 
+  it("does NOT treat a MID-PIPELINE hold column as a planning lane", async () => {
+    /*
+    FNXC PR #2572 review (greptile, 2nd): `hold` is not a synonym for planning. A workflow may
+    carry the trait on a manual/timed/dependency wait that sits AFTER implementation; a card
+    parked there is not queued for planning and must not be paused by a planning-provider limit.
+    */
+    const midPipelineHoldIr = { version: "v2", id: WF, nodes: [], edges: [], columns: [
+      { id: "todo", label: "Planning", traits: [{ trait: "intake" }] },
+      { id: "in-progress", label: "Build", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "awaiting-signoff", label: "Awaiting sign-off", traits: [{ trait: "hold", config: { release: "manual" } }] },
+      { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+    ] } as unknown as WorkflowIr;
+    const peer = planning("FN-PEER", "awaiting-signoff");
+    const { store, detector } = detectorHarness([planning("FN-TRIGGER", "todo"), peer], midPipelineHoldIr);
+
+    await detector.onUsageLimitHit("triage", "FN-TRIGGER", "429 usage limit reached", "anthropic");
+
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-PEER", true, undefined, expect.anything());
+  });
+
   it("does NOT sweep a card that is mid-implementation into the planning lane", async () => {
     /* The guard must stay narrow: an in-progress card is the executor lane's business. */
     const peer = planning("FN-PEER", "in-progress");

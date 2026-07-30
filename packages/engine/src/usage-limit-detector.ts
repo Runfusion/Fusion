@@ -207,9 +207,21 @@ export class UsageLimitPauser {
     if (agentType === "triage") {
       await Promise.all(tasks.map(async (task) => {
         const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-29-22:10 (PR #2572 review — greptile, 2nd):
+        INTAKE ONLY. `hold` is not a synonym for "planning": a workflow may carry a hold trait on
+        a MID-PIPELINE wait — manual release, timed, dependency, external event — and a card
+        parked there is downstream of implementation, not queued for planning. Including hold
+        would pause it on a planning-provider limit, which is the same over-classification as the
+        literal-exclusion predicate this replaced, just further along.
+
+        The planning session is the one that runs on an intake card, so intake is the lane. When a
+        workflow's hold column IS its pre-implementation queue it is normally the same column as
+        intake (the merged Planning lane declares both traits) and is covered by that; where they
+        differ, the hold column is a wait and is deliberately excluded.
+        */
         const lanes = new Set<string>();
         if (columns?.intake) lanes.add(columns.intake);
-        if (columns?.hold) lanes.add(columns.hold);
         preImplementationByTask.set(task.id, lanes);
       }));
     }
