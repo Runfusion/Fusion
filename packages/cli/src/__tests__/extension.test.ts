@@ -4480,6 +4480,79 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-18:35 (#2843 review — greptile P1, "workflow snapshot race
+    misroutes delegation"):
+
+    A TORN SNAPSHOT IS NOT AN ANSWER.
+
+    `resolved.ir` and the selection id came from separate reads, so a selection changing between them
+    left the two describing different boards. The dangerous order is a selection CLEARED after it
+    resolved: the substitution check stays false, the lanes come from a workflow the card no longer
+    runs, and the card is moved to that board's hold lane.
+
+    Simulated by making the second selection read return a DIFFERENT workflow than the first, which is
+    what a concurrent edit looks like from inside this function.
+    */
+    it("refuses to land the card when the workflow selection CHANGES mid-placement", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-torn-selection" });
+      const store = h.store();
+
+      let call = 0;
+      const sel = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockImplementation(async () => {
+        call += 1;
+        /* First read: no selection. Second read: someone selected a workflow in between. */
+        return call === 1 ? undefined : ({ workflowId: "WF-CHANGED", stepIds: [] } as never);
+      });
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-torn",
+          { agent_id: agentId, description: "Selection changes mid-flight" },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        sel.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("changed while it was being placed");
+    });
+
+    /*
+    The paired negative, and the one that keeps the tear check from becoming "refuse whenever the
+    selection store is flaky": an UNREADABLE selection is unknown, not changed. Failing here would
+    turn every selection-store hiccup into a failed delegation.
+    */
+    it("still lands the card when a selection read FAILS — unreadable is unknown, not changed", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-selection-unreadable" });
+      const store = h.store();
+
+      const sel = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValue(
+        new Error("selection store unavailable"),
+      );
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-selection-unreadable",
+          { agent_id: agentId, description: "Selection unreadable" },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        sel.mockRestore();
+      }
+
+      expect(result.isError).not.toBe(true);
+      expect(result.content[0].text).toContain("will be picked up");
+    });
+
+    /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-15:55 (#2843 review — greptile, "missing hold reports
     successful delegation"):
 
