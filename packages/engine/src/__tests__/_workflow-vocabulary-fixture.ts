@@ -64,6 +64,16 @@ export interface LifecycleIrOptions {
      OPT-IN for the same reason as `mergeOrchestration`: a shared fixture must not
      silently change an existing suite's subject. */
   readonly mergedIntakeAndHold?: boolean;
+  /* FNXC:ReviewRework 2026-07-30-01:10 (U9 E2E evidence — the review half):
+     Adds the `review --failure--> exec` rework edge, so a REVISE verdict routes the
+     card BACK to the wip column. Without it the review node has only a success edge
+     and every E2E here drives review as a pass-through, which means the plan's
+     `InReview --> InProgress: review requests changes` transition had no live-engine
+     evidence on ANY board.
+
+     Opt-in like the other options: this changes the graph's reachable shape, and a
+     shared fixture must not alter an existing suite's subject. */
+  readonly reviewRework?: boolean;
 }
 
 /**
@@ -125,7 +135,18 @@ export function lifecycleIr(v: Vocabulary, id: string, options: LifecycleIrOptio
     nodes: [
       { id: "start", kind: "start", column: v.hold },
       { id: "plan", kind: "prompt", column: v.hold, config: { seam: "planning" } },
-      { id: "exec", kind: "prompt", column: v.wip, config: { seam: "execute" } },
+      {
+        id: "exec",
+        kind: "prompt",
+        column: v.wip,
+        /* `reworkRegion` is required by the IR validator for any rework-edge TARGET
+           ("only legal ... into a top-level rework region head") — the same shape the
+           builtin coding IR uses on `merge-attempt`. Declared only when the rework edge
+           exists, so the non-rework IR stays byte-identical. */
+        config: options.reviewRework
+          ? { seam: "execute", reworkRegion: true, maxReworkCycles: 3 }
+          : { seam: "execute" },
+      },
       { id: "review", kind: "prompt", column: v.review, config: { seam: "review" } },
       /* A real merge-class node. The IR validator REFUSES a `merge-blocker` column with no
          reachable merge-class node ("the gate can never clear without one") — discovered by this
@@ -141,6 +162,9 @@ export function lifecycleIr(v: Vocabulary, id: string, options: LifecycleIrOptio
       { from: "exec", to: "review", condition: "success" },
       { from: "review", to: "merge-gate", condition: "success" },
       { from: "merge-gate", to: "end", condition: "success" },
+      ...(options.reviewRework
+        ? [{ from: "review", to: "exec", condition: "failure", kind: "rework" }]
+        : []),
     ],
   } as WorkflowIr;
 }
