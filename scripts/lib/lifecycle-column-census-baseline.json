@@ -39,7 +39,6 @@
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
-    "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 4,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
@@ -53,6 +52,7 @@
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000done": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
     "packages/dashboard/app/hooks/useTaskDiffStats.ts\u0000done": 2,
+    "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 2,
     "packages/engine/src/cli-agent/state-machine.ts\u0000done": 2,
     "packages/engine/src/scheduler.ts\u0000archived": 2,
     "packages/engine/src/scheduler.ts\u0000done": 2,
@@ -105,7 +105,6 @@
     "packages/dashboard/src/github-tracking-state.ts\u0000archived": 1,
     "packages/dashboard/src/github-tracking-state.ts\u0000done": 1,
     "packages/dashboard/src/gitlab-tracking-comments.ts\u0000in-progress": 1,
-    "packages/dashboard/src/reliability-metrics.ts\u0000done": 1,
     "packages/dashboard/src/reliability-metrics.ts\u0000in-progress": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000todo": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000triage": 1,

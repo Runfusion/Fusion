@@ -119,9 +119,6 @@ function percentile(sortedValues: number[], p: number): number {
   return sortedValues[Math.min(sortedValues.length - 1, Math.max(0, index))] ?? 0;
 }
 
-/* FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values — `from`/`to`
-   as RECORDED on a past move event, matched as recorded. Full reasoning above
-   `tasksEnteredInReviewPerDay`. */
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-30-23:55 (#2875 review — greptile P1, "resolved lanes discarded
 downstream"): THE PRODUCER WAS CONVERTED AND THIS CONSUMER THREW THE ANSWER AWAY.
