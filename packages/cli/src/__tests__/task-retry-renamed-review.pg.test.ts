@@ -155,4 +155,67 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
 
     expect(await retriedOutOfReview(id, "checking")).toBe(true);
   });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:15 (PR #2736 review — greptile P1):
+  THE TWO CLASSIFIERS MUST AGREE ON WHAT "IN REVIEW" MEANS.
+
+  Converting only the GENERIC retry classifier split the two: on a renamed lane the generic branch
+  fires while `isInReviewMissingWorktreeSessionStartFailure` (literal) does not.
+
+  MEASURED, because the reported consequence did not reproduce. The claim was that the generic branch
+  leaves `worktree`/`branch` intact so the next run repeats the failure. It does not: BOTH branches
+  end with them cleared, because the backward move to the hold column clears them anyway. Reverting
+  the fix leaves these cases green, so this suite does NOT prove that consequence and is not claimed
+  to. It pins the outcome that matters — a missing-worktree failure in either vocabulary comes back
+  retryable with no stale session metadata — and the classifiers are kept in agreement because two
+  definitions of "in review" in one function is a latent split, not because a failing case was found.
+  */
+  async function seedMissingWorktreeFailure(path: readonly string[], workflowId?: string): Promise<string> {
+    const store = h.store();
+    const task = await store.createTask({
+      title: "unusable worktree session start",
+      description: "test",
+      column: "todo",
+    });
+    if (workflowId) await store.writeTaskWorkflowSelection(task.id, workflowId, []);
+    for (const step of path) await store.moveTask(task.id, step as never);
+    await store.updateTask(task.id, {
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
+      worktree: "/tmp/fusion-missing-worktree",
+      branch: `fusion/${task.id}`,
+    } as never);
+    store.taskCache.delete(task.id);
+
+    /* Prove the fixture: without the stale metadata actually present, "it was cleared" is vacuous.
+       `worktree`/`branch` are the two the generic retry branch leaves ALONE, so they are exactly the
+       signal that distinguishes the specialized path from it. */
+    const seeded = await store.getTask(task.id);
+    expect(seeded.worktree).toBe("/tmp/fusion-missing-worktree");
+    expect(seeded.branch).toBe(`fusion/${task.id}`);
+    return task.id;
+  }
+
+  async function retriedWithClearedSession(taskId: string): Promise<boolean> {
+    await runTaskRetry(taskId);
+    h.store().taskCache.delete(taskId);
+    const after = await h.store().getTask(taskId);
+    return !after.worktree && !after.branch;
+  }
+
+  /* Control: the default vocabulary takes the specialized branch and clears the stale session. */
+  it("default vocabulary: a missing-worktree failure has its stale session metadata cleared", async () => {
+    const id = await seedMissingWorktreeFailure(["in-progress", "in-review"]);
+
+    expect(await retriedWithClearedSession(id)).toBe(true);
+  });
+
+  /* The P1. Before the fix this retried via the GENERIC branch and kept the stale metadata. */
+  it("renamed vocabulary: a missing-worktree failure has its stale session metadata cleared", async () => {
+    const wf = await seedRenamedWorkflow();
+    const id = await seedMissingWorktreeFailure(["drafting", "building", "checking"], wf);
+
+    expect(await retriedWithClearedSession(id)).toBe(true);
+  });
 });

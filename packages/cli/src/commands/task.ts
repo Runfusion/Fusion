@@ -1387,7 +1387,9 @@ export async function runTaskRetry(id: string, projectName?: string) {
     FNXC:MissingWorktreeRetry 2026-07-10-18:28:
     Upstream #1992 requires operator retry to recover an in-review task whose session start refused a missing/incomplete/unregistered worktree even when the row is stuck in an invalid merge-active status. This signature-only bypass clears stale session metadata instead of requiring a valid `merging` transition.
     */
-    const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+    /* Same resolved lane as the generic classifier above. Passing it is what keeps the two in
+       agreement: whichever branch fires, it fires for the same definition of "in review". */
+    const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, taskIsInReviewLane);
 
     // Validate task is in a retryable state
     if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
