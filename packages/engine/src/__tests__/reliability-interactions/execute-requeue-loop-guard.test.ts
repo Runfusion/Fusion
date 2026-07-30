@@ -423,6 +423,36 @@ describe("execute requeue loop guard", () => {
     expect(h.live.pausedReason).not.toBe(COMPLETED_BLOCKED_PAUSE_REASON);
   });
 
+  it("uses the LIVE column, not the stale snapshot, when deciding whether to move", async () => {
+    /*
+    The second half of the post-await re-read, and it needed its own case: the pause
+    test above passes even when the MOVE guard still reads the stale snapshot, so
+    without this one half of that fix was unproven.
+
+    Here the card has already reached the rebound column while the resolution was in
+    flight. Reading the stale snapshot issues a redundant move; reading the live row
+    correctly skips it.
+    */
+    const h = harness(
+      task({
+        id: "FN-2568-STALE-COLUMN",
+        column: "in-progress",
+        blockedBy: "FN-BLOCKER",
+        steps: [],
+      }),
+      [task({ id: "FN-BLOCKER", column: "todo" })],
+    );
+
+    const staleSnapshot = { ...(await h.store.getTask("FN-2568-STALE-COLUMN")) };
+    // Something else lands the card in the rebound column mid-await.
+    await h.store.moveTask("FN-2568-STALE-COLUMN", "todo" as never, { preservePause: true } as never);
+    h.store.moveTask.mockClear();
+
+    await (h.executor as any).parkCompletedBlockedTask(staleSnapshot, "dependency", "test", true);
+
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("honours a pause that lands DURING the workflow resolution await", async () => {
     /*
     The conversion introduced the first `await` between this method's pause guard and
