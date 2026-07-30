@@ -436,26 +436,36 @@ describe("createSSE connection log severity", () => {
 
   it("does not console.log +/- connection when FUSION_DEBUG is unset", () => {
     delete process.env.FUSION_DEBUG;
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    /*
+    FNXC:DashboardTestMocks 2026-08-03-04:55 (red on main — and the sibling NEGATIVE case was passing falsely):
+    The +/- connection lines go through core's `createLogger("sse").debug(...)`, and that logger writes every
+    level except `warn` to **console.error** (stdio-transport safety). So a spy on `console.log` sees nothing —
+    which made the DEBUG case below fail loudly and made THIS quiet case pass for the wrong reason: an absence
+    assertion against a channel the code never writes to is satisfied no matter what the gate does.
+
+    Both now spy on the channel the logger actually uses, so the quiet case proves the FUSION_DEBUG gate is
+    closed rather than proving the spy was pointed at the wrong stream.
+    */
     const connection = openSseConnection("client-severity-quiet");
     disconnectSSEClient("client-severity-quiet");
-    const spam = logSpy.mock.calls
+    const spam = errorSpy.mock.calls
       .map((call) => String(call[0] ?? ""))
       .filter((line) => line.includes("[sse] + connection") || line.includes("[sse] - connection"));
     expect(spam).toEqual([]);
-    logSpy.mockRestore();
+    errorSpy.mockRestore();
     connection.req.emit("close");
   });
 
   it("emits +/- connection when FUSION_DEBUG=sse", () => {
     process.env.FUSION_DEBUG = "sse";
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     openSseConnection("client-severity-debug");
     disconnectSSEClient("client-severity-debug");
-    const lines = logSpy.mock.calls.map((call) => String(call[0] ?? ""));
+    const lines = errorSpy.mock.calls.map((call) => String(call[0] ?? ""));
     expect(lines.some((line) => line.includes("[sse] + connection"))).toBe(true);
     expect(lines.some((line) => line.includes("[sse] - connection"))).toBe(true);
-    logSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });
 
