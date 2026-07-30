@@ -1812,6 +1812,26 @@ async function resolveTerminalColumnsFor(store: TaskStore, taskId: string): Prom
   }
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (fleet — executor.ts cluster):
+The workflow's COMPLETE column, for the guards that ask "has this card finished?" and mean
+completion specifically — not the terminal PAIR. `resolveTerminalColumnsFor` above answers
+"done or archived"; these sites deliberately exclude archived, because an archived card is
+finished but not newly-completed, and treating the two alike would fire merge-confirmation
+handling for cards that were archived rather than merged.
+
+Same shape as the two helpers beside it: resolve from the task's own workflow, fall back to
+the legacy id. `resolveWorkflowIrForTask` does not throw on a missing definition — it returns
+the built-in default — so the catch covers hard failures only.
+*/
+async function resolveCompleteColumnFor(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    return resolveCompleteColumn(await resolveWorkflowIrForTask(store, taskId)) ?? "done";
+  } catch {
+    return "done";
+  }
+}
+
 async function resolveReboundColumnFor(store: TaskStore, taskId: string): Promise<string> {
   try {
     return resolveReboundTarget(await resolveWorkflowIrForTask(store, taskId)) ?? "todo";
@@ -6398,7 +6418,7 @@ export class TaskExecutor {
           });
         }
         const live = await this.store.getTask(task.id).catch(() => task);
-        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
+        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== await resolveCompleteColumnFor(this.store, task.id)) {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
         }
         await this.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
@@ -7878,7 +7898,7 @@ export class TaskExecutor {
     A prior review handoff can move a graph-native workflow into its merge column before this boundary projects successful node results onto the legacy checklist. Preserve the no-move behavior, but do not return until the projection has run.
     */
     const alreadyAtMergeColumn = live.column === targetColumn;
-    if (live.column === "done") return live;
+    if (live.column === await resolveCompleteColumnFor(this.store, live.id)) return live;
     if (live.paused || live.userPaused) return live;
 
     /*
@@ -9026,7 +9046,7 @@ export class TaskExecutor {
 
   private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
     const live = await this.store.getTask(taskId).catch(() => null);
-    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === "done") return false;
+    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === await resolveCompleteColumnFor(this.store, live.id)) return false;
     /*
     FNXC:WorkflowMerge 2026-06-29-08:32:
     A workflow graph merge node can await a successful ProjectEngine merge request and return before the row reaches `done`. Merge confirmation is durable proof of landing; the executor must finalize that row from any non-terminal column instead of re-running parse or clearing mergeDetails.
@@ -10883,7 +10903,7 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (live.mergeDetails?.mergeConfirmed === true && live.column !== "done") {
+      if (live.mergeDetails?.mergeConfirmed === true && live.column !== await resolveCompleteColumnFor(this.store, live.id)) {
         if (await this.finalizeMergeConfirmedWorkflowGraphTask(live.id, "graph-failure")) {
           await this.persistTokenUsage(task.id);
           return;
@@ -11359,8 +11379,7 @@ export class TaskExecutor {
         }
         const canTerminalizeExecuteLoop = live.userPaused !== true
           && live.paused !== true
-          && live.column !== "done"
-          && live.column !== "archived";
+          && !(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column);
         if (nextCount >= MAX_EXECUTE_REQUEUE_LOOP_CYCLES && canTerminalizeExecuteLoop) {
           const terminalError = `EXECUTION_DISPATCH_LOOP_EXHAUSTED: execute node re-queued task to todo ${nextCount} times with no forward progress (last value=${failureValue ?? "no-value"}). No further automatic retries will run. Manually retry, decompose, or rescope the task.`;
           await this.store.updateTask(task.id, {
