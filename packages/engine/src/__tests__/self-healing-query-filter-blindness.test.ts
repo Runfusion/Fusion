@@ -118,6 +118,7 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    getAgentLogs: vi.fn(async () => []),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -898,5 +899,63 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:58 (the query-filter class, tenth sweep):
+  `recoverPostDoneNonContinuableWedge` clears a `failed` status on a task that finished every step and
+  was then wedged only because a post-done session continuation hit a non-continuable error. Its literal
+  read meant a renamed board's card stayed failed forever with all work done.
+
+  THE ONE SWEEP WHERE BOTH HALVES ARE PROVABLE. Its outcome — updateTask clearing `status`/`error` — is
+  downstream of the read AND of the getTaskHardMergeBlocker wired in the same change, and nothing on the
+  path needs git. Contrast the orphan-only sweep, where the blocker sits behind two git calls and only
+  candidacy could be asserted.
+
+  REVERT CHECKS, both measured, each run alone:
+    - literal read restored              -> fails, the card is never listed
+    - `{ reviewColumns: wedgeLanes }` dropped -> fails, the blocker judges the renamed lane as
+      not-a-review-lane and the sweep declines the card it just found
+  */
+  it("clears a post-done wedge on a RENAMED board, and the blocker judges the card's own lanes", async () => {
+    const wedged = {
+      ...shippedCard(),
+      id: "FN-WEDGE",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      steps: [{ id: "s1", status: "done" }],
+      log: [
+        { action: "Task marked done by agent", outcome: "" },
+        { action: "", outcome: "cannot continue from message role: assistant" },
+      ],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([wedged]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverPostDoneNonContinuableWedge();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-WEDGE", expect.objectContaining({ status: null, error: null }));
+  });
+
+  it("does not clear a wedge for a card sitting in a lane that is NOT a review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read that returned every column would satisfy the case above.
+    Same renamed board, same wedged card — only its lane changes.
+    */
+    const wedged = {
+      ...shippedCard(),
+      id: "FN-WEDGE-WIP",
+      column: RENAMED_VOCAB.wip,
+      status: "failed",
+      steps: [{ id: "s1", status: "done" }],
+      log: [
+        { action: "Task marked done by agent", outcome: "" },
+        { action: "", outcome: "cannot continue from message role: assistant" },
+      ],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([wedged]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverPostDoneNonContinuableWedge();
+
+    expect(updateTask).not.toHaveBeenCalled();
   });
 });
