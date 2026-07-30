@@ -5050,9 +5050,27 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       let repaired = 0;
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (fleet: self-healing.ts):
+      Per-task lane resolution for this loop's four guards, cached per workflow so the cost is one
+      IR resolution per workflow rather than per task. No source query to pair here: the loop is fed
+      `allTasks`, so the guards below are the whole predicate.
+      */
+      const laneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        const lanes = await (async () => {
+          try {
+            return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id, laneCache));
+          } catch {
+            return undefined;
+          }
+        })();
+        const wipLane = lanes?.wip ?? "in-progress";
+        const reviewLane = lanes?.review ?? "in-review";
+        const completeLane = lanes?.complete ?? "done";
+        const archivedLane = lanes?.archived ?? "archived";
+        if (!options?.includeTaskIds?.has(task.id) && (task.column === completeLane || task.column === archivedLane)) {
           continue;
         }
 
@@ -5089,8 +5107,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          && task.column !== wipLane
+          && (task.column !== reviewLane || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
@@ -5118,7 +5136,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        if (task.column === wipLane || task.column === reviewLane) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",
