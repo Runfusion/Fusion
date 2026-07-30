@@ -11,7 +11,7 @@ import type {
   Task,
 } from "@fusion/core";
 import type { LifecycleColumns, WorkflowIrResolverStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, NotificationDispatcher, columnsWithFlag, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { DASHBOARD_USER_ID, NotificationDispatcher, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
@@ -260,8 +260,21 @@ export class NotificationService {
   */
   private async resolveReviewColumnsForTask(taskId: string): Promise<Set<string>> {
     try {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (PR #2722 review — greptile, the MIRROR of the bug
+      this method was added to fix):
+      I built this union from `mergeBlocker` + `humanReview` and left `mergeOrchestration` OUT — so a
+      renamed review lane carrying only the merge trait was excluded, and moving a task there skipped
+      the operator's review notification. That is the same silent miss I added this method to fix,
+      pointed the other way.
+
+      `resolveReviewColumns` (core, #2730) is the shared answer to exactly this question and covers all
+      three flags. The BROAD set is right here — a notification is emitted, nothing is moved, so
+      over-admission costs an extra notification and under-admission costs the operator their signal.
+      #2750 documents the split for callers that move.
+      */
       const ir = await resolveWorkflowIrForTask(this.store as WorkflowIrResolverStore, taskId);
-      const lanes = [...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")];
+      const lanes = resolveReviewColumns(ir);
       return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
     } catch {
       return new Set(["in-review"]);
