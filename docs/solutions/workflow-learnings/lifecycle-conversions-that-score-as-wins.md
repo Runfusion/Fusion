@@ -159,6 +159,33 @@ curated list of consumers that interpret the column as a ROLE (as opposed to sto
 it), which is a judgment call per consumer rather than a mechanical check. Recorded rather than
 built.
 
+## Surfaces that were checked and are CLEAN — do not re-probe these
+
+Negative results, recorded so the next person does not spend a session rediscovering them. Each was
+a plausible "the census cannot see this" theory; each was measured.
+
+**Membership tests with inline literals** — `["done","archived"].includes(task.column)`. The census
+counts binary comparisons only, so this shape would be invisible. **Zero sites.** Nobody writes it.
+
+**Named legacy-id collections** — `const X = ["done","archived"]` then `X.has(col)`. **48 declarations**,
+and the raw count is misleading: on inspection they are all either
+
+- the intentional fallback vocabulary the role helpers degrade to (`LEGACY_TERMINAL_COLUMNS`,
+  `LEGACY_PLANNING_COLUMNS`, `LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS`), or
+- the builtin workflow's own column list (`DEFAULT_WORKFLOW_COLUMN_IDS`, `COLUMNS`), or
+- **already-converted** seams that seed the legacy pair as a floor and then UNION the resolved lanes
+  — `symbol-locks.ts` `terminalLanesFor` and `branch-group-ops.ts` `satisfiedColumns` both do exactly
+  this, with the reasoning recorded at the site.
+
+So the census's comparison-only scope is adequate for this codebase. Filing "48 uncounted sites"
+would have been the same mistake as gating on `{ column: "<literal>" }` call arguments (79 sites,
+mostly legitimate): a number that looks like a work list and is not.
+
+**The rule:** measure a candidate surface, then inspect a sample, before reporting it OR instrumenting
+it. A raw count is a hypothesis. The SQL surface survived this test — 14 sites, all genuinely
+vocabulary-bound — and got a ratchet. These two did not, and got nothing, which is the correct
+outcome and cost an hour to establish rather than a wrong gate to maintain.
+
 ## Guards start catching other people's work, not just yours
 
 Every guard in this lane was written after a defect I had shipped, so for a long time they only
