@@ -183,6 +183,24 @@ export async function resolveWorkflowIrById(
 
   if (isBuiltinWorkflowId(workflowId)) {
     const builtin = getBuiltinWorkflow(workflowId);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-01:15 (PR #2815 review — greptile P1, and it corrects me):
+    THE FOURTH DEGRADATION PATH, and the only one that was never branded. An id that LOOKS builtin but
+    is not registered — a workflow removed between releases, a typo'd selection — lands here, finds no
+    `builtin.ir`, and silently substitutes the default coding IR.
+
+    That matters to this PR specifically. Deleting the id cross-check was justified on the grounds
+    that every fallback is branded and the brand is checked first; this path is the counterexample, so
+    the deletion would have turned an unmarked fallback into a reported `source: "selection"` — the
+    lying signal this API exists to prevent, arriving through the one door I had not checked. My claim
+    that the id comparison "caught nothing the marker misses" was wrong: it caught exactly this,
+    because the default IR's id differs from the requested one.
+
+    Branding it is the right repair rather than restoring the id check, because it fixes the cause —
+    the resolver knew it was substituting and did not say so — instead of re-adding an inference that
+    misfires on every authored workflow (see the note below).
+    */
+    const fellBackToDefault = !builtin?.ir;
     const ir = builtin?.ir ?? defaultCodingWorkflowIr();
     const resolved = typeof ir === "string" ? parseWorkflowIr(ir) : ir;
     const overrides = projectId
@@ -191,9 +209,16 @@ export async function resolveWorkflowIrById(
       : undefined;
     // FNXC:CustomWorkflows 2026-06-21-19:12:
     // Public IR resolution must see the same project-scoped built-in prompt overrides as task execution, while callers without the new store methods keep the canonical built-in IR.
+    /*
+    Marked AFTER the overrides are applied, because `applyPromptOverridesToIr` may return a new object
+    and a non-enumerable brand does not survive a copy. Marking earlier would leave the returned and
+    cached IR unbranded, which is the bug this fixes wearing a different shape.
+    */
     const effective = applyPromptOverridesToIr(resolved, overrides);
-    irCache?.set(cacheKey, effective);
-    return effective;
+    /* Branded BEFORE caching, so a later cache hit on this key reports the fallback too. */
+    const answer = fellBackToDefault ? markFellBack(effective) : effective;
+    irCache?.set(cacheKey, answer);
+    return answer;
   }
 
   try {
@@ -221,9 +246,24 @@ read the one fact only the resolver has.
 */
 const FELL_BACK_TO_DEFAULT = Symbol.for("fusion.workflowIr.fellBackToDefault");
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:45 (#2815 review — found while covering the fourth path):
+BRAND A COPY. `resolveDefaultWorkflowIr()` returns a SHARED object — `a.ir === b.ir` across two
+independent resolutions — so branding it in place marked the singleton itself. After any task
+anywhere hit a fallback, every later resolution of `builtin:coding` reported `source: "default"`,
+including a task that genuinely selected the default workflow. Process-wide, permanent, and
+invisible: the brand is non-enumerable, so nothing in a dump or a deep-equal shows it.
+
+It also made the fourth-path test unfalsifiable — the object under assertion was already branded by
+an earlier case in the same file, so removing the new mark changed nothing.
+
+A shallow copy keeps the IR structurally identical (the property is non-enumerable and the clone is
+deep-equal to the original) while giving the fallback its own object to carry the fact.
+*/
 function markFellBack(ir: WorkflowIr): WorkflowIr {
-  Object.defineProperty(ir, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
-  return ir;
+  const copy = { ...ir } as WorkflowIr;
+  Object.defineProperty(copy, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
+  return copy;
 }
 
 function didFallBackToDefault(ir: WorkflowIr): boolean {
@@ -298,25 +338,39 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   it has no column vocabulary either, so it is reported as a default rather than guessed at.
   */
   const ir = await resolveWorkflowIrById(store, workflowId, irCache);
-  if (didFallBackToDefault(ir)) return { ir, source: "default" };
-  const resolvedId = (ir as { id?: unknown }).id;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-16:20 (PR #2618 review — greptile P1, 2nd):
-  Only a CONTRADICTION proves a fallback. Requiring a matching id also reported `default` for a
-  perfectly good selection whose IR simply carries no id of its own — a valid v1, or a stored v2
-  that omits it. That direction errs safe (the caller keeps its legacy compat) but it silently
-  denies those workflows the very trust this API exists to grant, so the conversion would quietly
-  not take effect for them.
+FNXC:WorkflowLifecycleColumns 2026-08-01-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
+  THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
+  that a returned IR whose `id` differs from the requested one proves a fallback. Both halves of that
+  are wrong.
 
-  An ABSENT id is no evidence either way, so it is treated as the selection it was asked for. A
-  PRESENT id that differs is positive proof of a fallback, and it still catches the three ways
-  `resolveWorkflowIrById` degrades — missing definition, malformed definition, throwing lookup —
-  because every one of them returns the default coding IR, whose id is `builtin:coding` and
-  therefore differs from the custom id that was requested.
+  UNRELIABLE. Neither `WorkflowIrV1` nor `WorkflowIrV2` declares an `id` field, so the check is
+  answering a question about a property the IR type does not have. When one IS present — a fixture, a
+  hand-authored graph, an import — it is the AUTHOR's id and has no relation to the `WF-NNN` the store
+  mints, because `createWorkflowDefinition` persists the IR verbatim and allocates the row id
+  separately. Measured:
+
+      store workflow id = WF-001   stored ir.id = custom:prov
+      -> source reported "default", for a workflow that resolved CORRECTLY
+
+  REDUNDANT. All four ways `resolveWorkflowIrById` substitutes the default — missing definition,
+  malformed definition, throwing lookup, and an unregistered builtin id (branded above, in this same
+  change) — return a MARKED IR, and the line below returns `"default"` for every one of them.
+
+  The note on `markFellBack` states the principle: "there is no rule over the returned value that
+  separates them, because the two shapes are genuinely identical. So the function that KNOWS marks
+  it." The id check was an inference over the returned value, which is exactly what that note rules
+  out.
+
+  SCOPE, corrected after the first version of this change overstated it: an editor-authored workflow
+  carries no `ir.id`, so the check reported `"selection"` for it and the misfire never reached the one
+  production consumer (`triage.ts`'s post-U11 intake recovery). The reachable defect this change fixes
+  is the unregistered-builtin branding hole above; removing the id check is correctness and clarity,
+  not a live bug fix.
+
+  Found while fixing PR #2812, where gating on this signal turned a fixture-built case red.
   */
-  if (typeof resolvedId === "string" && resolvedId !== workflowId) {
-    return { ir, source: "default" };
-  }
+  if (didFallBackToDefault(ir)) return { ir, source: "default" };
   return { ir, source: "selection", workflowId };
 }
 

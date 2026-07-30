@@ -369,6 +369,62 @@ describe("resolved lanes drive destinations, not just gates", () => {
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
   });
 
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-22:50 (census-invisible moveTask destinations):
+  The four actions this suite had not yet reached. Same lesson as the note above — the census counts
+  the GATE and cannot see the DESTINATION — applied to `requestReview`, `acceptReview`, `returnToAgent`
+  and `retryTask`.
+
+  REVERT CHECKS, measured (each independently):
+    - requestReview gate  -> refuses the renamed card outright ("request-review not allowed in
+      column=building").
+    - requestReview dest  -> moves to the literal `in-review`, which this workflow does not declare.
+    - returnToAgent dest  -> moves to the literal `todo`, same.
+    - retryTask gate/dest -> refuses, or rebounds to a lane the board does not have.
+  */
+  it("requestReview gates on the renamed WIP lane and moves to the renamed REVIEW lane", async () => {
+    const deps = createResolvingDeps(makeTask({ column: "building", status: null }), renamedIr);
+
+    await requestReview({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "checking");
+    expect(deps.moveTask).not.toHaveBeenCalledWith("FN-1", "in-review");
+  });
+
+  it("requestReview still refuses a renamed card that is not in the wip lane", async () => {
+    /* Non-vacuous: without this a gate admitting every column would satisfy the case above. */
+    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+
+    await expect(requestReview({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/request-review not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("acceptReview gates on the renamed REVIEW lane", async () => {
+    const deps = createResolvingDeps(makeTask({ column: "checking", status: null }), renamedIr);
+
+    await acceptReview({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.updateTask).toHaveBeenCalledWith("FN-1", { status: null, assigneeUserId: null });
+  });
+
+  it("returnToAgent gates on the renamed REVIEW lane and rebounds to the renamed HOLD lane", async () => {
+    const deps = createResolvingDeps(makeTask({ column: "checking", status: null }), renamedIr);
+
+    await returnToAgent({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
+    expect(deps.moveTask).not.toHaveBeenCalledWith("FN-1", "todo");
+  });
+
+  it("retryTask rebounds a failed renamed card to the renamed HOLD lane", async () => {
+    const deps = createResolvingDeps(makeTask({ column: "building", status: "failed" }), renamedIr);
+
+    await retryTask({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
+    expect(deps.moveTask).not.toHaveBeenCalledWith("FN-1", "todo");
+  });
+
   it("REFUSES a card in a legacy-named column the workflow assigns to REVIEW", async () => {
     /*
     The aliasing case. Unscoped, `todo` counted as a planning lane and startWork would
