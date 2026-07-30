@@ -64,3 +64,55 @@ describe("taskTiming helpers", () => {
     expect(wallClock).toBe(16_500_000);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+
+THE INVARIANT: the card's active-time chip counts the live run from the card's OWN wip lane.
+
+THE FINDING THAT MATTERS MORE THAN THE FIX: `@fusion/core` exports its own `getTotalAgentActiveMs`,
+and it was already converted onto `isWipColumnRole`. The card chip imports THIS module instead — a
+second implementation of the same calculation in a different package — so that conversion never
+reached the surface an operator looks at. The census counted core's site as done while the rendered
+number stayed wrong. Two implementations of one rule, one converted and one not, is exactly the drift
+`column-roles.ts` exists to end.
+
+Keyed on the literal, the live execution segment was dropped on a renamed board: the chip
+under-reported the run in flight by exactly its elapsed time, then healed itself the moment the card
+moved on and the segment was persisted into `cumulativeActiveMs`. A number that is wrong only while
+you are watching it.
+
+REVERT PROOF, measured: restore `task.column === "in-progress"` in `getActiveRuntimeMs` and the
+renamed-lane cases below fail.
+*/
+describe("active-time resolves the card's own wip lane", () => {
+  const WIP_FLAGS = { countsTowardWip: true } as never;
+  const NOW = Date.parse("2026-07-31T12:00:00Z");
+  const STARTED = "2026-07-31T11:00:00Z";
+  const HOUR = 60 * 60 * 1000;
+
+  it("counts the in-flight run for a RENAMED wip lane", () => {
+    expect(getActiveRuntimeMs(
+      { column: "building", cumulativeActiveMs: 0, executionStartedAt: STARTED } as never, NOW, WIP_FLAGS,
+    )).toBe(HOUR);
+  });
+
+  it("includes it in the rendered total", () => {
+    expect(getTotalAgentActiveMs(
+      { column: "building", cumulativeActiveMs: 0, executionStartedAt: STARTED } as never, NOW, WIP_FLAGS,
+    )).toBe(HOUR);
+  });
+
+  it("does NOT count a live segment outside the wip lane", () => {
+    // A stale executionStartedAt on a review card is not active time.
+    expect(getActiveRuntimeMs(
+      { column: "signoff", cumulativeActiveMs: 0, executionStartedAt: STARTED } as never, NOW, { mergeBlocker: true } as never,
+    )).toBe(0);
+  });
+
+  it("keeps the legacy id when no flags are supplied", () => {
+    expect(getActiveRuntimeMs(
+      { column: "in-progress", cumulativeActiveMs: 0, executionStartedAt: STARTED } as never, NOW,
+    )).toBe(HOUR);
+  });
+});
