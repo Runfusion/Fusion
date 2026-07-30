@@ -59,6 +59,7 @@ import {
   workflowPlansInColumn,
   workflowDeclaresColumnModel,
   resolveLifecycleColumns,
+  resolveTaskLifecycleColumns,
   columnHasFlag,
   columnsWithFlag,
   resolveReboundTarget,
@@ -164,6 +165,25 @@ Spec revision rehomes to the workflow's INTAKE column (where specification happe
 different preference from the rebound target above — rebound prefers `hold`, respecify prefers
 `intake`. `builtin:coding`'s intake column IS `triage`, so the default path is unchanged.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (fleet: register-task-workflow-routes.ts):
+The REVIEW lane, resolved from the task's own workflow. Mirrors `resolveIntakeColumnForTask` below
+exactly — same shape, same fail-soft, same legacy fallback — because this file already established
+that pattern for the intake lane and the fleet rules are existing helpers only, no new abstractions.
+
+`in-review` remains the fallback: a store that cannot resolve a workflow keeps today's behaviour
+rather than dropping a card out of a review guard, and every one of these guards either gates an
+error response or a re-engagement, so failing open to the legacy id is the conservative direction.
+*/
+async function resolveReviewColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const lifecycle = await resolveTaskLifecycleColumns(store, taskId);
+    return lifecycle?.review ?? "in-review";
+  } catch {
+    return "in-review";
+  }
+}
+
 async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Promise<string> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
@@ -797,7 +817,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     task: Task,
     wake: InReviewUserCommentReengagementInput,
   ): Promise<InReviewUserCommentReengagementResult> {
-    if (task.column !== "in-review") {
+    if (task.column !== await resolveReviewColumnForTask(scopedStore, task.id)) {
       return { task, reengaged: false, suppressedReason: "not-in-review" };
     }
     if (task.sessionFile) {
@@ -2699,8 +2719,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             && (task.column === lifecycle.intake || task.column === lifecycle.hold);
         }
       }
+      /* ONE resolution for this handler's three review-lane guards below. */
+      const retryReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
       const isInReviewStatusNone =
-        task.column === "in-review" && (task.status === null || task.status === undefined);
+        task.column === retryReviewColumn && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -2733,13 +2755,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
       const isStaleMergeActiveRetry =
-        task.column === "in-review" &&
+        task.column === retryReviewColumn &&
         isStaleMergeActiveStatus(task, {
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
         });
       const isInReviewRetry =
-        task.column === "in-review" &&
+        task.column === retryReviewColumn &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
@@ -3780,8 +3802,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to recover branch binding");
+      if (task.column !== await resolveReviewColumnForTask(scopedStore, task.id)) {
+        throw badRequest("Task must be in the review column to recover branch binding");
       }
 
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
