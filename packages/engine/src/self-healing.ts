@@ -5597,9 +5597,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
-      const todoTasks = await this.store.listTasks({ column: "todo" });
-      const inProgressTasks = await this.store.listTasks({ column: "in-progress" });
-      const inReviewTasks = await this.store.listTasks({ column: "in-review" });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-19:50 (fleet: guard AND source query):
+      One board read filtered three ways by role. Convertible here — unlike
+      `reclaimSelfOwnedBranchConflicts`, whose skip note explains the difference — because this
+      sweep's covering stubs implement `listTasks` for BOTH shapes (`if (!opts?.column) return all`),
+      so an unfiltered read returns the whole fake board rather than nothing.
+
+      Checked before converting rather than after: that one line in the stubs is the entire
+      difference between a mechanical conversion and twelve broken reliability tests.
+      */
+      const staleBlockedBoard = await this.store.listTasks();
+      const blockedLaneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const todoTasks = await this.filterByPreWipRole(staleBlockedBoard, ["hold"], blockedLaneCache);
+      const inProgressTasks = await this.filterByWipRole(staleBlockedBoard, blockedLaneCache);
+      const inReviewTasks = await this.filterByReviewRole(staleBlockedBoard, blockedLaneCache);
       const blockedTasks = [
         ...todoTasks,
         ...inProgressTasks,
