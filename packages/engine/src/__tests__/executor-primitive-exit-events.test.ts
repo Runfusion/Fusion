@@ -206,6 +206,18 @@ describe("compat park for graphs that do not route review-pending", () => {
       }));
 
     expect(store.handoffToReview).not.toHaveBeenCalled();
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-30-10:40 (PR #2599 review — coderabbit):
+    Assert the DISPOSITION, not only the absence of a park. "No review handoff" passes just as
+    well for a run that silently did nothing, which is the failure mode this whole file exists to
+    catch. Verified against the real path rather than assumed: both cases reach the terminal sink
+    and park with the failure of the node that actually ended the walk.
+    */
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-COMPAT",
+      expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
+      undefined,
+    );
   });
 
   it("does NOT park for an ordinary failure with no pending-review value anywhere", async () => {
@@ -216,5 +228,69 @@ describe("compat park for graphs that do not route review-pending", () => {
       .handleGraphFailure(live, failureRun({ "node:execute:value": "implementation-incomplete" }));
 
     expect(store.handoffToReview).not.toHaveBeenCalled();
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-30-10:40 (PR #2599 review — coderabbit):
+    Assert the DISPOSITION, not only the absence of a park. "No review handoff" passes just as
+    well for a run that silently did nothing, which is the failure mode this whole file exists to
+    catch. Verified against the real path rather than assumed: both cases reach the terminal sink
+    and park with the failure of the node that actually ended the walk.
+    */
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-COMPAT",
+      expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
+      undefined,
+    );
+  });
+});
+
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-30-10:55 (PR #2599 review — coderabbit, major):
+A visited node id is not always the context key its value lives under. A foreach instance
+(`steps#0:step-execute`) records under the CONTAINER key `node:steps:value`. The default coding
+workflow IS a foreach, so a backward walk reading `node:<visitedId>:value` directly misses the
+pending-review ending on exactly the shape it was written for — and then keeps walking, adopting
+some earlier node's value as the run's verdict.
+*/
+describe("compat detection resolves foreach and optional-group context keys", () => {
+  beforeEach(() => { resetExecutorMocks(); resetWorkflowEventBusForTesting(); });
+  afterEach(() => resetWorkflowEventBusForTesting());
+
+  function parkHarness() {
+    const store = createMockStore();
+    const live = { id: "FN-FE", column: "in-progress", status: null, error: null, steps: [], log: [], paused: false, userPaused: false } as unknown as TaskDetail;
+    store.getTask.mockResolvedValue(live);
+    store.handoffToReview = vi.fn().mockImplementation(async (id: string) => store.moveTask(id, "in-review"));
+    return { store, live, executor: new TaskExecutor(store, "/tmp/test") };
+  }
+
+  it("finds a FOREACH instance's ending under its container key", async () => {
+    const { store, live, executor } = parkHarness();
+
+    await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
+      .handleGraphFailure(live, {
+        disposition: "failed" as const,
+        outcome: "failure" as const,
+        /* The walk must END elsewhere, or `graphFailureValue`'s own resolution answers first and
+           the backward walk is never exercised — which is how my first version of this test
+           passed with the fix reverted. */
+        visitedNodeIds: ["steps#0:step-execute", "cleanup"],
+        context: { "node:steps:value": "review-pending" },
+      });
+
+    expect(store.handoffToReview).toHaveBeenCalledWith("FN-FE", expect.anything());
+  });
+
+  it("finds an OPTIONAL-GROUP template ending under the group key", async () => {
+    const { store, live, executor } = parkHarness();
+
+    await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
+      .handleGraphFailure(live, {
+        disposition: "failed" as const,
+        outcome: "failure" as const,
+        visitedNodeIds: ["group::template", "cleanup"],
+        context: { "node:group:value": "review-pending" },
+      });
+
+    expect(store.handoffToReview).toHaveBeenCalledWith("FN-FE", expect.anything());
   });
 });

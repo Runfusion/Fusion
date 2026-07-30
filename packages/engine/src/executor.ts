@@ -9656,10 +9656,38 @@ export class TaskExecutor {
     that node's outcome is the run's, and this classifier stays out of the way.
     */
     for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
-      const value = context[`node:${result.visitedNodeIds[i]}:value`];
+      const value = this.recordedNodeValue(context, result.visitedNodeIds[i]);
       if (typeof value === "string") return value === "review-pending";
     }
     return false;
+  }
+
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-30-10:10 (U8, PR #2599 review — coderabbit, major):
+  A visited node id does NOT always name the context key its value is stored under, and the two
+  shapes that differ are the ones this unit cares about most. A foreach instance
+  (`steps#0:step-execute`) records under the CONTAINER key `node:steps:value`; an optional-group
+  template (`group::template`) records under the group key, then the template key. Reading
+  `node:<visitedId>:value` directly therefore misses a foreach ending and walks on to some
+  earlier node's value — and the default coding workflow IS a foreach, so the backward walk
+  would have misread precisely the shape it was written for.
+
+  Extracted from `graphFailureValue`, which already knew this, so the two cannot drift apart.
+  */
+  private recordedNodeValue(context: Record<string, unknown>, nodeId: string): string | undefined {
+    const direct = context[`node:${nodeId}:value`];
+    if (typeof direct === "string") return direct;
+    const groupDelimiter = nodeId.indexOf("::");
+    if (groupDelimiter !== -1) {
+      const groupValue = context[`node:${nodeId.slice(0, groupDelimiter)}:value`];
+      if (typeof groupValue === "string") return groupValue;
+      const templateValue = context[`node:${nodeId.slice(groupDelimiter + 2)}:value`];
+      return typeof templateValue === "string" ? templateValue : undefined;
+    }
+    const foreachDelimiter = nodeId.indexOf("#");
+    if (foreachDelimiter === -1) return undefined;
+    const containerValue = context[`node:${nodeId.slice(0, foreachDelimiter)}:value`];
+    return typeof containerValue === "string" ? containerValue : undefined;
   }
 
   private graphFailureValue(result: WorkflowGraphTaskRunResult): string | undefined {

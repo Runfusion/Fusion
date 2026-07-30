@@ -180,10 +180,13 @@ const LEDGER = {
     "graph handbacks (graphCompletion)": 3,
   },
   /*
-  handleGraphFailure moves NO card itself and hands off to NO review — every disposition it
-  owns is a terminal park. That is a genuinely better starting position than the
-  implementation phase, and it is measured, not assumed: the moveTask calls that look like
-  they belong to this method sit past its closing brace, in the recovery helpers below it.
+  handleGraphFailure moves NO card itself, and owned NO review handoff at baseline — every
+  disposition was a terminal park. It now carries exactly ONE review handoff: the named compat
+  path for user-authored graphs that do not declare the `outcome:review-pending` edge. For those
+  shapes the pending-review transition is RELOCATED here from the session loop, not eliminated,
+  and this entry going 0 -> 1 while `runImplementation` went 3 -> 2 is the honest record of that.
+  The zero moveTask count is measured, not assumed: the calls that look like they belong to this
+  method sit past its closing brace, in the recovery helpers below it.
   */
   handleGraphFailure: {
     "column transitions (store.moveTask)": 0,

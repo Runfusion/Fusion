@@ -176,8 +176,30 @@ describe("execute seam announces the implementation phase's exit", () => {
     expect(missing).toEqual([]);
     /* Each out-of-band id must accompany an inline review handoff — that pairing IS its meaning. */
     for (const exit of OUT_OF_BAND_IMPLEMENTATION_EXITS) {
-      const idx = source.indexOf(`reportImplementationExit?.("${exit}")`);
-      expect(source.slice(idx, idx + 400)).toContain("handoffTaskToReview(");
+      const occurrences = [...source.matchAll(new RegExp(`reportImplementationExit\\?\\.\\("${exit}"\\)`, "g"))];
+      expect(occurrences.length, `${exit} should be reported at every site that performs it`).toBeGreaterThan(0);
+      for (const match of occurrences) {
+        const idx = match.index ?? 0;
+        /*
+        FNXC:WorkflowExecutionOwnership 2026-07-30-10:25 (PR #2599 review — greptile):
+        WINDOW-FREE. A fixed 400-character lookaround was wrong in both directions: an unrelated
+        occurrence inside it let a missing marker pass, and harmless intervening instrumentation
+        pushed a valid pairing out of range. Ordering is asserted by INDEX instead — the marker
+        that precedes this report must be nearer to it than any earlier handoff is, which is what
+        "this site's own marker" means, and the handoff must follow the report.
+        */
+        const markerIdx = source.lastIndexOf("markCompletionFinalized(", idx);
+        const priorHandoffIdx = source.lastIndexOf("handoffTaskToReview(", idx);
+        expect(markerIdx, `${exit} must set the durable completion-finalize marker before handing off`).toBeGreaterThan(-1);
+        expect(
+          markerIdx,
+          `${exit}'s completion-finalize marker must belong to this site, not an earlier one`,
+        ).toBeGreaterThan(priorHandoffIdx);
+        expect(
+          source.indexOf("handoffTaskToReview(", idx),
+          `${exit} must be followed by the review handoff it describes`,
+        ).toBeGreaterThan(idx);
+      }
     }
   });
 
