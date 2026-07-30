@@ -1,4 +1,5 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
+import { isReviewColumnRole } from "./columnRoles";
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
 import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
@@ -140,8 +141,17 @@ const BADGE_SUPPRESSED_CODES: ReadonlySet<InReviewStallCode> = new Set([
   "merge-blocker",
 ]);
 
-export function shouldShowInReviewStallBadge(task: Pick<Task, "column" | "paused" | "inReviewStall" | "status">): boolean {
-  if (task.column !== "in-review" || task.paused === true || task.inReviewStall == null) {
+export function shouldShowInReviewStallBadge(
+  task: Pick<Task, "column" | "paused" | "inReviewStall" | "status">,
+  columnFlags?: Parameters<typeof isReviewColumnRole>[0],
+): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  `columnFlags` resolves the REVIEW role; omitted -> the legacy id, i.e. today's behaviour.
+  Keyed on the literal, the in-review stall badge never rendered on a renamed board — the signal was
+  computed and then thrown away at the last gate, so a stalled review looked healthy.
+  */
+  if (!isReviewColumnRole(columnFlags, task.column) || task.paused === true || task.inReviewStall == null) {
     return false;
   }
 

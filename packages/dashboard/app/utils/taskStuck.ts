@@ -1,4 +1,5 @@
 import type { Task } from "@fusion/core";
+import { isWipColumnRole } from "./columnRoles";
 import { isOverdue } from "./dataFreshness";
 
 const NON_STUCK_STATUSES = new Set(["failed", "stuck-killed"]);
@@ -20,8 +21,19 @@ const NON_STUCK_STATUSES = new Set(["failed", "stuck-killed"]);
  * for the comparison. This prevents false positives when the tab has been in
  * the background and the task data is stale.
  */
-export function isTaskStuck(task: Task, taskStuckTimeoutMs: number | undefined, dataAsOfMs?: number): boolean {
-  if (task.column !== "in-progress") {
+export function isTaskStuck(
+  task: Task,
+  taskStuckTimeoutMs: number | undefined,
+  dataAsOfMs?: number,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
+): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  "Stuck" only means anything for a card in the WIP lane. Keyed on the literal, NO card on a renamed
+  board could ever be reported stuck — the stuck badge and `countStuckTasks` both read zero while
+  work sat wedged. `columnFlags` omitted -> the legacy id.
+  */
+  if (!isWipColumnRole(columnFlags, task.column)) {
     return false;
   }
 

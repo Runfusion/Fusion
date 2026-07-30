@@ -1,4 +1,5 @@
 import type { StalePausedReviewCode, StalePausedReviewSignal, Task } from "@fusion/core";
+import { isReviewColumnRole } from "./columnRoles";
 
 export interface StalePausedReviewCopy {
   badgeLabel: string;
@@ -22,6 +23,13 @@ export function getStalePausedReviewCopy(signal: StalePausedReviewSignal): Stale
 
 export function shouldShowStalePausedReviewBadge(
   task: Pick<Task, "column" | "paused" | "stalePausedReview">,
+  columnFlags?: Parameters<typeof isReviewColumnRole>[0],
 ): boolean {
-  return task.column === "in-review" && task.paused === true && task.stalePausedReview != null;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+  Same gate as its sibling in inReviewStallCopy.ts, same failure: on a renamed board the
+  stale-paused-review badge was computed and then discarded here, so a review paused for days
+  looked healthy. `columnFlags` omitted -> the legacy id.
+  */
+  return isReviewColumnRole(columnFlags, task.column) && task.paused === true && task.stalePausedReview != null;
 }

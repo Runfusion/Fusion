@@ -8,6 +8,28 @@ applies_when: converting lifecycle-column literals under packages/dashboard/app
 
 # batch-dashboard-app — the work order
 
+## CLAIMED — do not re-convert (u12 worker, 2026-08-01)
+
+TWO WORKERS ARE ON THIS BRANCH. The coordinator assigned this batch to the u12 worker and another
+agent opened it; rather than contest ownership we are both feeding it, taking from opposite ends of
+the list. One of us should stand down — flagged to the coordinator, unresolved as of this note.
+
+ALREADY CONVERTED IN GREEN PRs, so converting them here duplicates work and will conflict:
+
+  Column.tsx    7 -> 0   PR #2738 (green, mergeable) — also fixes a board-level `workflowMode`
+                         flag answering a per-column question, which blanked every affordance on a
+                         column the workflow no longer declares
+  ListView.tsx  6 -> 0   PR #2738 — same change, plus per-TASK flag resolution for bulk actions
+
+Those are the next two entries in the list below by size. Skip them.
+
+DONE ON THIS BRANCH BY u12 (working the tail upward, so the largest-first pass does not collide):
+
+  taskActivity.ts 3, worktreeGrouping.ts 3, taskRevert.ts 2, taskTiming.ts 2,
+  inReviewStallCopy.ts 1, stalePausedReviewCopy.ts 1, taskStuck.ts 1, useExecutorStats.ts 1
+
+
+
 Branch: `batch-dashboard-app`. Feed conversions here as commits; do not open per-file PRs.
 Measured at the branch point, `packages/dashboard/app` only (tests excluded).
 

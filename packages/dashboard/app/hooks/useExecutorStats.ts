@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isReviewColumnRole } from "../utils/columnRoles";
 import type { Task, TraitFlags } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgentTask } from "../../../core/src/live-agent-count";
 import { fetchExecutorStats } from "../api";
@@ -89,7 +90,18 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     }
     if (isWaitingAgentTask(enriched)) queuedTaskCount++;
     // Kept in the API shape for compatibility; the footer no longer renders it.
-    if (task.column === "in-review") inReviewCount++;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-08-01-13:10 (batch-dashboard-app):
+    Review-lane count, resolved. Kept in the API shape for compatibility (the footer no longer
+    renders it), but a counter that silently reads 0 on a renamed board is worse than one that is
+    absent — a future consumer would take it at face value.
+    */
+    /* Per-TASK flags first, exactly as line ~86 does: `columnFlagsById` is keyed by column id and
+       is a cross-workflow union, so two workflows reusing an id would answer for each other. */
+    if (isReviewColumnRole(
+      columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column),
+      task.column,
+    )) inReviewCount++;
     if (hasActionableBlockedBy(task.blockedBy)) {
       blockedTaskCount++;
     }
