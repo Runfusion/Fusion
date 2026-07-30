@@ -67,9 +67,19 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         worse than before this change.
         */
         const overrideLanes = await resolveNodeOverrideLanes(store, id);
-        const freshForGuard = await store.getTask(id).catch(() => null);
-        const guardTask = freshForGuard ?? task;
-        const validation = validateNodeOverrideChange(guardTask, updates.nodeId ?? null, overrideLanes);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-01:50 (#2821 review — greptile, and it caught a DEADLOCK I shipped):
+        RE-READ WITHOUT THE LOCK. My previous version used `store.getTask(id)`, which acquires the
+        per-task lock. This function is `updateTaskUnlockedImpl` — the caller ALREADY HOLDS that lock,
+        and it is non-reentrant, so the inner read waited on the outer update forever. A stale-column
+        race is a narrow window; a deadlock is every `nodeId` update.
+
+        `readTaskJson` is the lock-free read this function already uses for its own working copy, so
+        the column is refreshed after the await without touching the lock. Falls back to the copy
+        loaded above if the re-read fails, which is no worse than before.
+        */
+        const freshForGuard = await store.readTaskJson(dir).catch(() => null);
+        const validation = validateNodeOverrideChange(freshForGuard ?? task, updates.nodeId ?? null, overrideLanes);
         if (!validation.allowed) {
           throw new Error(validation.message);
         }
