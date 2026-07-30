@@ -83,7 +83,26 @@ export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskS
     columnTerminalKind: flags?.archived ? "archived" : flags?.complete ? "complete" : "none",
     columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : task.column === "triage" || task.column === "todo",
     columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === "in-progress",
-    // The literal fallback is fixture-only; board/store callers always supply flags/IR.
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-23:10 (triage-guard census):
+    THE FALLBACK IS NOT FIXTURE-ONLY. The comment that stood here said board/store callers always
+    supply flags, and that is not true: `useExecutorStats` resolves
+    `columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column)`, which is `undefined`
+    for any card whose column is absent from the board's flag map — exactly the renamed or
+    undeclared column case. So these literals run in production, on the cards least likely to
+    match them.
+
+    Consequence today, and it is under-reporting rather than a stall: a card in a renamed planner
+    column matches neither `triage` nor `todo`, so `isWaitingAgentTask` returns false and the
+    footer's queued count silently omits it. Default-workflow cards still match through the `todo`
+    arm after the Planning merge, which is why nothing looks broken.
+
+    Deliberately NOT converted here. Removing the id guesses means deciding what an ABSENT flag
+    set should mean — "not intake" is as much a guess as "todo is intake", and either choice moves
+    the footer's numbers — so it needs the dashboard's flag-map population understood first and a
+    test that pins the queued count. Left as a labelled finding rather than a silent conversion,
+    with the census entry (`live-agent-count.ts`: 2) still open.
+    */
     columnIsReviewOrMerge: flags ? flags.mergeOrchestration === true || flags.mergeBlocker === true : task.column === "in-review",
   };
 }
