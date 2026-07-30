@@ -77,6 +77,20 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
  * `isPreExecutionHoldColumn` and this file already documents elsewhere.
  */
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-07:25 (U12 — census gate repair) DELIBERATE-LITERAL:
+  This IS the no-metadata fallback, so the literal is the answer rather than an unconverted guard —
+  the same status as `LEGACY_INTAKE_COLUMN_ID` on the line above, which reads as a named constant and
+  so was never counted while this inline twin was.
+
+  Deleting it is not available: `columnFlags` is legitimately absent during first paint and for a card
+  in a column its workflow no longer declares, and a bare trait read there silently drops the
+  affordance this drives. The reason is recorded in full at the top of this file.
+
+  `todo` ALONE, deliberately — not the `{todo, triage}` pair used by the pre-implementation helper.
+  `triage` was the intake lane and never the wait-for-capacity lane, so listing an intake card as
+  upcoming work would report a card with no plan as ready to run.
+  */
   return flags ? flags.hold === true : columnId === "todo";
 }
 
