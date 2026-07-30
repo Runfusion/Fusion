@@ -109,6 +109,68 @@ function findDroppedProps(): Orphan[] {
   return out;
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:20:
+THE SECOND SHAPE: a plain FUNCTION whose trailing flags parameter no caller supplies.
+
+That is the `worktreeGrouping` defect, and the props check above cannot see it — there is no
+interface and no JSX. It is also the shape the core and engine batches will hit most, since utils and
+hooks take parameters rather than props.
+
+Detection is by ARITY: find exported functions whose last parameter matches the flags pattern, then
+require at least one call somewhere in the app to pass that many arguments. An optional trailing
+parameter that every caller omits is exactly the inert seam.
+*/
+function findUnsuppliedTrailingFlagParams(): string[] {
+  const declared = new Map<string, { file: string; index: number }>();
+  const maxArgsByCallee = new Map<string, number>();
+
+  for (const file of walk(APP_ROOT)) {
+    const source = readFileSync(file, "utf8");
+    if (!/[Cc]olumnFlags/.test(source)) continue;
+    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    const visit = (node: ts.Node) => {
+      if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+        const last = node.parameters[node.parameters.length - 1];
+        const name = last.name.getText(sf);
+        /* Only object-destructured components have Props interfaces; this targets plain params. */
+        if (FLAGS_PROP.test(name) && ts.isIdentifier(last.name)) {
+          declared.set(node.name.text, { file: relative(APP_ROOT, file), index: node.parameters.length });
+        }
+      }
+      if (ts.isCallExpression(node)) {
+        const callee = ts.isIdentifier(node.expression)
+          ? node.expression.text
+          : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
+        if (callee) {
+          maxArgsByCallee.set(callee, Math.max(maxArgsByCallee.get(callee) ?? 0, node.arguments.length));
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+
+  const out: string[] = [];
+  for (const [fn, { file, index }] of declared) {
+    const best = maxArgsByCallee.get(fn) ?? 0;
+    if (best < index) out.push(`${file}: ${fn}() takes a trailing flags param no caller supplies (best call passes ${best} of ${index})`);
+  }
+  return out.sort();
+}
+
+describe("resolved column-flag FUNCTION params have a supplier", () => {
+  it("every trailing *ColumnFlags parameter is supplied by at least one caller", () => {
+    expect(
+      findUnsuppliedTrailingFlagParams(),
+      "an optional trailing flags parameter that every caller omits is inert: the literal it "
+        + "replaced is gone, the census counts the conversion, and the behaviour is the fallback "
+        + "forever. This is the `worktreeGrouping` shape, and the one utils and hooks hit.",
+    ).toEqual([]);
+  });
+});
+
 describe("resolved column-flag props are not dropped by the component that declares them", () => {
   /* Completeness: vacuous if the scan finds no flags props at all. */
   it("finds components declaring flags props", () => {

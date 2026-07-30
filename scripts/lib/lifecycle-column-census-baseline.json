@@ -30,6 +30,8 @@
     "packages/core/src/task-store/reads.ts": 2,
     "packages/core/src/task-store/symbol-locks.ts": 2,
     "packages/core/src/task-store/task-id-integrity.ts": 2,
+    "packages/dashboard/app/utils/taskRevert.ts": 2,
+    "packages/dashboard/app/utils/taskTiming.ts": 2,
     "packages/dashboard/src/github-tracking-state.ts": 2,
     "packages/dashboard/src/server.ts": 2,
     "packages/engine/src/agent-reflection.ts": 2,

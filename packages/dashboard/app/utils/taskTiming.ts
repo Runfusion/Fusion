@@ -1,5 +1,4 @@
 import type { Task, TaskLogEntry, WorkflowStepResult } from "@fusion/core";
-import { isWipColumnRole } from "./columnRoles";
 
 export interface TimingEvent {
   timestamp: string;
@@ -99,18 +98,26 @@ FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
 `columnFlags` resolves the WIP role; omitted -> the legacy id, i.e. today's behaviour.
 
 These two functions decide whether a card's runtime is still ACCRUING. Keyed on the literal, a card
-in a renamed wip lane reported only its persisted `cumulativeActiveMs` and never the in-flight
-segment, so every duration display froze at the last checkpoint while the agent kept working.
+in a renamed wip lane reports only its persisted `cumulativeActiveMs` and never the in-flight
+segment, so every duration display freezes at the last checkpoint while the agent keeps working.
+
+STILL LITERALS, REVERTED 2026-07-30-22:40 — the bug is real, my fix was inert. I added a
+`columnFlags` parameter to both and no caller could supply one: `getTotalAgentActiveMs` is reached
+from module-level helpers with no flags in scope (TaskCard's `getTaskEndToEndDurationMs`,
+TaskTokenStatsPanel), and `getActiveRuntimeMs`'s only caller is that wrapper. An optional parameter
+every caller omits is strictly worse than the literal — the literal is honest and stays counted.
+
+Unblocking needs a flags-bearing caller, which means the components that compute these durations
+resolving traits first. Left counted so the census keeps pointing here.
 */
 export function getActiveRuntimeMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
   nowMs: number,
-  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): number | null {
   const persisted = task.cumulativeActiveMs;
   const base = persisted ?? 0;
 
-  if (isWipColumnRole(columnFlags, task.column)) {
+  if (task.column === "in-progress") {
     const startedMs = parseTimestampToMs(task.executionStartedAt);
     if (startedMs != null) {
       return base + Math.max(0, nowMs - startedMs);
@@ -129,12 +136,19 @@ export function getActiveRuntimeMs(
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
   nowMs: number,
-  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): number | null {
-  const execution = getActiveRuntimeMs(task, nowMs, columnFlags) ?? 0;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (REVERTED — the seam had no supplier):
+  No `columnFlags` parameter here, deliberately. Both callers reach this from module-level helpers
+  with no flags in scope (`getTaskEndToEndDurationMs` in TaskCard, and TaskTokenStatsPanel), so the
+  parameter I added was never supplied and the conversion was inert. `getActiveRuntimeMs` keeps its
+  parameter because it HAS a supplier; this wrapper does not, so it passes nothing and the literal
+  inside stays counted.
+  */
+  const execution = getActiveRuntimeMs(task, nowMs) ?? 0;
   const planningStart = parseTimestampToMs(task.planningStartedAt);
   const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
+  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (task.column === "in-progress" && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
     ? execution + planning
     : null;
 }

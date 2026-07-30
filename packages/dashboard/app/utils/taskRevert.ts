@@ -1,4 +1,3 @@
-import { isArchivedColumnRole, isCompleteColumnRole } from "./columnRoles";
 import type { Task } from "@fusion/core";
 
 /**
@@ -73,11 +72,7 @@ behaviour. This searches for an OPEN undo task, so a finished one must be skippe
 literals, a renamed board never skipped anything: a completed undo task counted as still open, and
 the UI offered to resume work that had already landed.
 */
-export function findOpenUndoTaskForSource(
-  tasks: readonly Task[],
-  sourceTaskId: string,
-  columnFlags?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>,
-): Task | undefined {
+export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: string): Task | undefined {
   const trimmedSourceId = sourceTaskId.trim();
   if (trimmedSourceId.length === 0) {
     return undefined;
@@ -88,9 +83,21 @@ export function findOpenUndoTaskForSource(
     if (candidate.deletedAt) {
       continue;
     }
-    const candidateFlags = columnFlags?.get(candidate.id);
-    if (isCompleteColumnRole(candidateFlags, candidate.column)
-      || isArchivedColumnRole(candidateFlags, candidate.column)) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (REVERTED — the seam had no supplier):
+    STILL A LITERAL, deliberately, and left counted.
+
+    I converted this and added a `columnFlags` parameter. Its only caller is TaskDetailModal ~line
+    926, which sits ~60 lines ABOVE where `detailColumnFlags` is derived, so it could not supply one.
+    The parameter was therefore never passed: the guard was gone, the census counted a conversion,
+    and the behaviour was the legacy fallback forever.
+
+    Reverted rather than left as a dead seam. An unsupplied optional parameter is strictly worse than
+    the literal — the literal is at least honest, and the census keeps pointing here. Unblocking it
+    means hoisting the flags derivation above that call, which is a hook-ordering change in a
+    5000-line component (same blocker as the near-duplicate gate in that file).
+    */
+    if (candidate.column === "done" || candidate.column === "archived") {
       continue;
     }
     if (getRevertOfId(candidate.sourceMetadata) !== trimmedSourceId) {

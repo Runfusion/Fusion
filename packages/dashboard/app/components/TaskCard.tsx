@@ -1428,10 +1428,10 @@ function TaskCardComponent({
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
   const PriorityBadgeIcon = getPriorityIcon(normalizedPriority);
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
   const stalledReview = getStalledReviewSignal(task);
   const showStalledReview = Boolean(stalledReview && isReviewColumn && !isPaused);
-  const hasInReviewStall = shouldShowInReviewStallBadge(task);
+  const hasInReviewStall = shouldShowInReviewStallBadge(task, taskColumnFlags);
   /*
   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:05:
   FN-7831 requires the card header to show a distinct "Reviewing" badge while the optional `plan-review` workflow step is actively running, even while the card remains in Planning/`triage`. Use the shared predicate so TaskCard stays in sync with ListView.
@@ -1456,7 +1456,7 @@ function TaskCardComponent({
       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
     })
     : undefined;
-  const hasStalePausedReview = shouldShowStalePausedReviewBadge(task);
+  const hasStalePausedReview = shouldShowStalePausedReviewBadge(task, taskColumnFlags);
   const stalePausedReviewCopy = task.stalePausedReview ? getStalePausedReviewCopy(task.stalePausedReview) : undefined;
   const hasTaskAgeStaleness = shouldShowTaskAgeStalenessBadge(task);
   const taskAgeStalenessCopy = getTaskAgeStalenessCopy(task.ageStaleness);

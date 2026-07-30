@@ -64,14 +64,14 @@ export function isTaskStuck(
  * The optional `dataAsOfMs` parameter is passed through to `isTaskStuck()` for
  * freshness-aware stuck detection.
  */
-export function countStuckTasks(tasks: Task[], taskStuckTimeoutMs: number | undefined, dataAsOfMs?: number): number {
+export function countStuckTasks(tasks: Task[], taskStuckTimeoutMs: number | undefined, dataAsOfMs?: number, columnFlagsByTaskId?: ReadonlyMap<string, Parameters<typeof isWipColumnRole>[0]>): number {
   if (!taskStuckTimeoutMs || taskStuckTimeoutMs <= 0) {
     return 0;
   }
 
   let count = 0;
   for (const task of tasks) {
-    if (isTaskStuck(task, taskStuckTimeoutMs, dataAsOfMs)) {
+    if (isTaskStuck(task, taskStuckTimeoutMs, dataAsOfMs, columnFlagsByTaskId?.get(task.id))) {
       count++;
     }
   }

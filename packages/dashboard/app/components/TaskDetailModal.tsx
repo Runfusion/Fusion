@@ -5554,7 +5554,7 @@ export function TaskDetailContent({
             <div className="detail-section detail-pr-tab">
               {isReviewColumn && (
                 <>
-                  {shouldShowInReviewStallBadge(workingTask) && workingTask.inReviewStall && (() => {
+                  {shouldShowInReviewStallBadge(workingTask, detailColumnFlags) && workingTask.inReviewStall && (() => {
                     const copy = getInReviewStallCopy(workingTask.inReviewStall, {
                       mergeRetries: workingTask.mergeRetries,
                       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
@@ -5600,7 +5600,7 @@ export function TaskDetailContent({
                       </div>
                     );
                   })()}
-                  {shouldShowStalePausedReviewBadge(workingTask) && workingTask.stalePausedReview && (() => {
+                  {shouldShowStalePausedReviewBadge(workingTask, detailColumnFlags) && workingTask.stalePausedReview && (() => {
                     const copy = getStalePausedReviewCopy(workingTask.stalePausedReview);
                     const logMatch = [...(workingTask.log ?? [])].reverse().find((entry) => {
                       const match = getTaskLogEntryAction(entry).match(STALE_PAUSED_REVIEW_LOG_REGEX);
