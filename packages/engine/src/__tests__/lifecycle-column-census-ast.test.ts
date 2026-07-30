@@ -346,7 +346,8 @@ resolved data, not in a fallback branch. That difference is structural, so the p
 cannot.
 
 Advisory only: `traitFallback` never changes `kind`, so a wrong hint cannot move the bar. Repo-wide it flags
-9 of 746 column guards.
+8 of 746 column guards — 8 and not 9 since the #2677 review: the `hold` hint was matching inside `threshold`,
+which had marked one live guard as already-converted.
 */
 describe("a literal in a trait-fallback branch is flagged as such", () => {
   const fallbacksIn = (source: string) => census(source).filter((f) => (f as { traitFallback?: boolean }).traitFallback).length;
@@ -450,6 +451,39 @@ describe("a literal in a trait-fallback branch is flagged as such", () => {
     ].join("\n");
 
     expect(fallbacksIn(source)).toBe(0);
+  });
+
+  it("does NOT treat a hint embedded in a longer identifier as trait data", () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-10:40 (PR #2677 review — coderabbit):
+    `hold` is a hint, and it is a substring of `threshold`. A branch testing an unrelated
+    threshold was read as testing resolved trait data, which marks the live guard below it as an
+    already-converted fallback. `flags` inside `myflags` had the same problem.
+    */
+    for (const test of ["staleThreshold > 0", "opts.threshold != null", "household.size", "myflags"]) {
+      const source = [
+        "function f(column: string) {",
+        `  if (${test}) return 1;`,
+        `  return column === "todo";`,
+        "}",
+      ].join("\n");
+
+      expect(fallbacksIn(source)).toBe(0);
+    }
+  });
+
+  it("still sees the genuine trait forms the hints exist for", () => {
+    /* The paired positive: tightening the boundary must not stop matching real trait reads. */
+    for (const test of ["flags.hold === true", "flags?.hold", "lifecycleRoles.hold", "flags"]) {
+      const source = [
+        "function f(column: string, flags?: F) {",
+        `  if (${test}) return 1;`,
+        `  return column === "todo";`,
+        "}",
+      ].join("\n");
+
+      expect(fallbacksIn(source)).toBe(1);
+    }
   });
 
   it("leaves `kind` alone, so a wrong hint cannot move the bar", () => {

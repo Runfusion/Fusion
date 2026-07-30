@@ -252,9 +252,20 @@ const TRAIT_TEST_HINTS = [
   "resolveLifecycleColumns", "intake", "hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker",
 ];
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-10:40 (PR #2677 review — coderabbit):
+HINTS MUST NOT MATCH INSIDE A LONGER IDENTIFIER. The leading class was `[.?\w]`, so the `hold`
+hint matched `threshold`, `staleThreshold`, `household`, `stronghold`, `withhold` — and `flags`
+matched `myflags`. Any branch testing an unrelated `threshold` was then read as testing resolved
+trait data, which marks a live legacy guard as an already-converted fallback.
+
+The `\w` was also REDUNDANT, which is why removing it costs nothing: the third alternative
+`\bhold\b` already matches `flags.hold` and `flags?.hold`, because `.` is a non-word character
+and so supplies the word boundary itself. The `\w` alternative added only the false positives.
+*/
 /** True when `text` reads as a test for resolved trait data rather than for a column name. */
 function testsTraitData(text) {
-  return TRAIT_TEST_HINTS.some((hint) => new RegExp(`[.?\\w]${hint}\\b|\\b${hint}\\s*[?.]|\\b${hint}\\b`).test(text))
+  return TRAIT_TEST_HINTS.some((hint) => new RegExp(`[.?]${hint}\\b|\\b${hint}\\s*[?.]|\\b${hint}\\b`).test(text))
     && !new RegExp(`(===|!==)\\s*["'](${LEGACY_COLUMN_IDS.join("|")})["']`).test(text);
 }
 
