@@ -1916,7 +1916,13 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const postMergeByDay = postMergeAuditFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
     const fileScopeByDay = fileScopeInvariantFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
     const recoveriesByDay = recoverAlreadyMergedReviewTasksRecoveriesPerDay(runAuditEvents, effectiveStartMs, nowMs);
-    const duration = inReviewDurationMetrics(durationEvents, effectiveStartMs, nowMs);
+    /* `reviewLanes` is already resolved above for the entry/bounce counts; the complete lanes are the
+       other half of the review -> done transition this metric measures. */
+    const durationCompleteLanes = await resolveProjectColumnsForRoles(scopedStore, ["complete"]);
+    const duration = inReviewDurationMetrics(durationEvents, effectiveStartMs, nowMs, {
+      review: reviewLanes,
+      complete: durationCompleteLanes,
+    });
     const mergeAttempts = mergeAttemptsPerMergedTask(runAuditEvents, mergedTaskIds, effectiveStartMs, nowMs);
     const headline = inReviewFailureRate7d(enteredByDay, bouncedByDay, nowMs);
 

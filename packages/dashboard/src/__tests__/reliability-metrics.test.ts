@@ -304,3 +304,66 @@ describe("reliability move counts span every lane carrying the role", () => {
     expect(await countMovesInto(store({}) as never, WINDOW, new Set())).toEqual({});
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-00:05 (#2875 review — greptile P1):
+
+THE PRODUCER WAS CONVERTED AND THE CONSUMER DISCARDED THE ANSWER.
+
+`getInReviewDurationEvents` fetches moves using the project's RESOLVED review lanes; this function
+then matched `to === "in-review"` / `to === "done"` against them. On a renamed board every fetched
+event was thrown away, the sample count never reached three, and the panel reported
+`insufficient-samples` — silently absent rather than visibly wrong, which is why it survived.
+
+The negative matters as much: widening to "any move counts" would satisfy the renamed case and start
+measuring wip -> wip transitions as review durations.
+*/
+describe("inReviewDurationMetrics keys on the board's resolved lanes", () => {
+  const lanes = { review: new Set(["checking"]), complete: new Set(["shipped"]) };
+  const move = (taskId: string, from: string, to: string, at: string) => ({
+    type: "task:moved",
+    taskId,
+    timestamp: at,
+    metadata: { from, to },
+  }) as unknown as ActivityLogEntry;
+
+  /* Three samples: the metric requires at least that many before it reports anything. */
+  const renamedActivity = ["A", "B", "C"].flatMap((id, i) => [
+    move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+    move(id, "checking", "shipped", `2026-05-10T0${i}:30:00.000Z`),
+  ]);
+  const from = Date.parse("2026-05-10T00:00:00.000Z");
+  const to = Date.parse("2026-05-11T00:00:00.000Z");
+
+  it("measures review duration on a RENAMED board when the caller supplies its lanes", () => {
+    const metric = inReviewDurationMetrics(renamedActivity, from, to, lanes);
+
+    expect(metric.sampleCount).toBe(3);
+    expect(metric.p50Ms).toBe(30 * 60_000);
+  });
+
+  it("reports insufficient-samples for the same activity without the lanes — the defect", () => {
+    const metric = inReviewDurationMetrics(renamedActivity, from, to);
+
+    expect(metric.sampleCount).toBe(0);
+    expect(metric.reason).toBe("insufficient-samples");
+  });
+
+  it("does NOT count a card that ENTERED review and then bounced out to WIP", () => {
+    /*
+    The paired negative, and it has to look like this to bite. A card that never enters review records
+    no start, so ANY exit predicate — including "count every move" — yields zero and the test passes
+    against a broken implementation. Measured: my first version used drafting -> building noise and
+    stayed green when the exit condition was widened to `ms in range`.
+
+    Entering `checking` and leaving to `building` is the shape that distinguishes them: a start IS
+    recorded, so only a correct COMPLETE-lane check keeps it out of the durations.
+    */
+    const bounced = ["A", "B", "C"].flatMap((id, i) => [
+      move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+      move(id, "checking", "building", `2026-05-10T0${i}:30:00.000Z`),
+    ]);
+
+    expect(inReviewDurationMetrics(bounced, from, to, lanes).sampleCount).toBe(0);
+  });
+});
