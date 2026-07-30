@@ -110,7 +110,16 @@ export interface ArchivedTaskEntry {
   modelId?: string;
   validatorModelProvider?: string;
   validatorModelId?: string;
-  /** Optional: planning model override for the triage AGENT (a lane/role id, not a column). */
+  /**
+   * Optional provider/model override for the planning session — the same provider/model pair
+   * shape as the sibling `*ModelProvider` / `*ModelId` fields, resolved by the model-selection
+   * hierarchy.
+   *
+   * Named for the "triage" LANE (the agent role that runs specification), which is a role id and
+   * not a column id. The distinction is worth stating here because `triage` is also a legacy
+   * column id, and conflating the two is what produced dead column guards elsewhere in the
+   * codebase — this field has never had anything to do with a column.
+   */
   planningModelProvider?: string;
   planningModelId?: string;
   mergerModelProvider?: string;
