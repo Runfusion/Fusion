@@ -59,6 +59,13 @@ nothing and a second predicate in that form could be added while the baseline st
 same false-negative class as the pre-filters removed in the first round — a shape the pattern simply
 did not describe.
 
+`IS DISTINCT FROM` was a sixth-round finding and a live one: `async-merge-coordination.ts` writes
+`${schema.project.tasks.column} IS DISTINCT FROM 'in-review'` — the merge-queue stale sweep, one of
+the queries this gate exists to freeze — and the operator list did not contain it, so the predicate
+counted zero. `IS`/`IS NOT` are included alongside for the same reason: they are the same comparison
+wearing different SQL spelling, and enumerating operators one review round at a time is how the last
+five holes happened.
+
 The IN arm counts its LEGACY ELEMENTS, not the predicate: two ids in one list is two vocabulary-bound
 sites, the same accounting the `=` arm uses when a query holds two comparisons. The list body is
 matched loosely (`[^)]*`) so a mixed list — a legacy id beside a resolved one — is still caught, and
@@ -83,7 +90,7 @@ levels the gate under-counts again, which is a known limit, not an unknown one.
 */
 const IN_BODY = `(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*`;
 export const COMPARISON = new RegExp(
-  `${COLUMN_REF}\\s*(?:(?:=|!=|<>)\\s*${LEGACY_ID}|(?:NOT\\s+)?IN\\s*\\(${IN_BODY}${LEGACY_ID}${IN_BODY}\\))`,
+  `${COLUMN_REF}\\s*(?:(?:=|!=|<>|IS\\s+(?:NOT\\s+)?DISTINCT\\s+FROM|IS\\s+(?:NOT\\s+)?)\\s*${LEGACY_ID}|(?:NOT\\s+)?IN\\s*\\(${IN_BODY}${LEGACY_ID}${IN_BODY}\\))`,
   "gi",
 );
 /** Legacy ids inside one matched predicate — an `IN` list can hold several. */

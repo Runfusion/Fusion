@@ -195,3 +195,29 @@ test("an optional-chained reference is caught", () => {
 test("a non-null assertion on a DIFFERENT property is still not a column", () => {
   assert.equal(hits('const q = sql`${schema.project.tasks["title"]!} = \'done\'`;'), 0);
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-19:20 (#2841 review, SIXTH round — greptile P1):
+A LIVE one, unlike rounds four and five. `async-merge-coordination.ts` writes
+`${schema.project.tasks.column} IS DISTINCT FROM 'in-review'` — the merge-queue stale sweep, one of
+the very queries this gate exists to freeze — and the operator list did not contain that spelling, so
+the predicate counted zero. `IS` / `IS NOT` are covered alongside it rather than waiting for a
+seventh round to find them.
+*/
+
+test("IS DISTINCT FROM is a comparison — the live merge-queue predicate", () => {
+  assert.equal(hits("const q = sql`${schema.project.tasks.column} IS DISTINCT FROM 'in-review'`;"), 1);
+});
+
+test("IS NOT DISTINCT FROM is caught", () => {
+  assert.equal(hits("const q = sql`${t.column} IS NOT DISTINCT FROM 'done'`;"), 1);
+});
+
+test("IS / IS NOT are caught", () => {
+  assert.equal(hits("const q = `WHERE \"column\" IS 'done'`;"), 1);
+  assert.equal(hits("const q = `WHERE \"column\" IS NOT 'archived'`;"), 1);
+});
+
+test("IS DISTINCT FROM a NON-legacy id is not matched", () => {
+  assert.equal(hits("const q = sql`${t.column} IS DISTINCT FROM 'shipped'`;"), 0);
+});
