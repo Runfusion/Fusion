@@ -159,6 +159,17 @@ describeIfGit("task-revert workspace real-git scenarios", { timeout: 30_000 }, (
 
     expect(result.mode).toBe("git");
     expect(result.clean).toBe(true);
+    /*
+    FNXC:TaskRevert 2026-07-30-18:20 (PR #2766 review — coderabbit):
+    `clean: true` is a SHAPE check: an implementation that admits the renamed lane and then reverts
+    nothing reports exactly that. The point of admitting the card is that the work comes back out,
+    and on the workspace path it must come out of EVERY sub-repo — a per-repo loop that admits the
+    task once and then reverts only the first repo is a real failure this shape cannot see. Assert
+    the landed content is gone from both, matching the single-repo regression test's post-revert
+    assertion.
+    */
+    expect(git(repoA, "git show HEAD:a.ts")).toBe("line1");
+    expect(git(repoB, "git show HEAD:b.ts")).toBe("line1");
   });
 
   it("the workspace guard still REFUSES a live lane under a resolved set", async () => {
