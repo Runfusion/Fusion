@@ -1250,7 +1250,7 @@ would go inert.
 
 ONE CACHE per call, so a list spanning three workflows reads three IRs rather than one per task.
 */
-export async function resolveTerminalColumnsForTasks(
+async function resolveTerminalColumnsForTasks(
   store: TaskStore,
   tasks: readonly Task[],
 ): Promise<(task: Task) => boolean> {
@@ -1269,31 +1269,6 @@ export async function resolveTerminalColumnsForTasks(
     terminalByTaskId.set(task.id, columns);
   }
   return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
-}
-
-/**
- * MEMBERSHIP over the `archived` role for a fixed task set, unioned with the legacy id.
- *
- * Split from `resolveTerminalColumnsForTasks` rather than parameterised: the two callers ask genuinely
- * different questions — "is this finished?" (complete OR archived) versus "is this archived?" — and
- * collapsing them would make an archived-only guard also reject completed rows.
- */
-async function resolveArchivedColumnsForTasks(
-  store: TaskStore,
-  tasks: readonly Task[],
-): Promise<(task: Task) => boolean> {
-  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
-  const archivedByTaskId = new Map<string, ReadonlySet<string>>();
-  for (const task of tasks) {
-    if (archivedByTaskId.has(task.id)) continue;
-    const columns = new Set<string>(["archived"]);
-    try {
-      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
-      if (ir) for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
-    } catch { /* degraded: legacy id only */ }
-    archivedByTaskId.set(task.id, columns);
-  }
-  return (task: Task) => archivedByTaskId.get(task.id)?.has(task.column) === true;
 }
 
 export async function createAgentTask(
