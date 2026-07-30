@@ -68,7 +68,40 @@ Result across `core`, `engine`, `dashboard`, `cli` — **13 such helpers**:
 | left deliberately | 1 | `selectActionablePlanningContinuations` — **no production caller**; wiring a parameter into a function nothing calls is the unwired-parameter anti-pattern the caller audit (#2803) removed five of |
 | not lifecycle | 1 | `isBuiltinWorkflowEnabled` |
 
-The five that were unwired, and what each cost on a renamed board:
+**SCOPE OF THAT TABLE, corrected.** It enumerates the HELPERS and the call sites reached while fixing
+them. It does NOT claim every caller of every helper was audited — and for at least one helper that
+distinction matters a lot. `getTaskMergeBlocker` alone has **13 call sites** across core and engine;
+two are fixed here, two were already wired (`moves.ts:821` passes `moveLifecycle?.review`;
+`moves.ts:647` deliberately passes `skipColumnIdentityCheck` because the trait was already proven), four
+sit inside self-healing sweeps that are query-gated and never run on a renamed board anyway, and the
+**remaining five are genuinely unwired**:
+
+```text
+  packages/core/src/default-workflow-hooks.ts:72
+  packages/core/src/task-merge.ts:355, 377
+  packages/core/src/in-review-stall.ts:237
+  packages/engine/src/merger.ts:6645
+  packages/engine/src/merger-ai.ts:1173
+  packages/engine/src/executor.ts:2404
+```
+
+Run step 2 of the method per helper before believing any "audit complete" claim, including this one.
+
+## The recurring shape: outer question resolved, inner one not
+
+The sharpest instances are not "a caller forgot an argument" but "the same function resolved the lane and
+then re-asked with the literal", a few lines apart:
+
+- `task-artifacts-ops` resolves `completeColumn` from the workflow, then calls the blocker with the literal.
+- `default-workflow-hooks:72` gates on `lifecycleColumns?.review` / `?.complete`, then calls it with the literal.
+- `executor.ts:2404` compares against `(await this.resolveResumeLanes(taskId)).review`, then calls it with the literal.
+- `resolvePlanningContinuationCandidate` applies the caller's resolved terminal set, then delegates without it.
+
+A conversion that stops at the outer question looks complete at the call site and is not. Grep for the
+helper, not for the literal — the literal is one function away, where it is correctly annotated as a
+fallback.
+
+The five that were unwired at the sites reached here, and what each cost on a renamed board:
 
 - **`isParkedTaskColumn` ×2** (`agent-heartbeat`) — the stale-link clear never fired, so a durable agent
   kept claiming a parked card and Reports Health Check rendered it **RUNNING**.

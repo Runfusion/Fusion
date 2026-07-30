@@ -2401,7 +2401,16 @@ export class TaskExecutor {
       return "missing";
     }
 
-    const blocker = getTaskMergeBlocker(latestTask);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:40 (outer question resolved, inner one not):
+    The guard directly above compares against `(await this.resolveResumeLanes(taskId)).review`, then this
+    call re-asked with the literal — so a card that just PASSED the resolved lane check was refused by the
+    unresolved blocker on any renamed board.
+    */
+    const resumeReviewLane = (await this.resolveResumeLanes(taskId)).review;
+    const blocker = getTaskMergeBlocker(latestTask, {
+      reviewColumns: new Set([resumeReviewLane ?? "in-review"]),
+    });
     if (blocker) {
       await this.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, this.getRunContextFor(taskId));
       return "blocked";
