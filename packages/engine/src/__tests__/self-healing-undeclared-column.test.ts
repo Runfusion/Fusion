@@ -169,6 +169,27 @@ describe("reconcileUndeclaredTaskColumns (U12 — R7)", () => {
     expect(neighbour.column).toBe("triage");
   });
 
+  /*
+  FNXC:WorkflowColumns 2026-07-29-00:00 (PR #2600 review — greptile):
+  A STALE BUILT-IN id must not pass the resolvability proof. `isBuiltinWorkflowId` is a
+  PREFIX check, so `builtin:removed-workflow` satisfied it — and an unknown built-in id
+  resolves to the default coding IR, so the card was still re-homed against a workflow that
+  is not its own. The guard reproduced the hole it was added to close.
+
+  REVERT CHECK: restore the prefix check (`isBuiltinWorkflowId(...) => true`) and this
+  fails — the card is re-homed to the default's target instead of being left alone.
+  */
+  it("skips a card selecting a built-in workflow that no longer exists", async () => {
+    const stale = task({ id: "FN-9", column: "custom-lane" as Task["column"] });
+    const store = makeStore([stale]);
+    // Prefix-valid, existence-invalid.
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "builtin:removed-workflow" }));
+
+    expect(await manager(store).reconcileUndeclaredTaskColumns()).toBe(0);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(stale.column).toBe("custom-lane");
+  });
+
   it("is idempotent: a second run does not move the card again", async () => {
     const stranded = task({ id: "FN-4", column: "todo" });
     const store = makeStore([stranded]);
