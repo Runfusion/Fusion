@@ -4,12 +4,26 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 import { activeSessionRegistry } from "../active-session-registry.js";
 import { SelfHealingManager } from "../self-healing.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-17:40:
+The INTAKE column of the default lineage, which post-U11 is `todo` — the merged Planning column
+carrying intake+hold+resetOnEntry. `triage` is not a declared column on any current workflow.
+
+Why this fixture went stale rather than merely renamed: `recoverAdvancedTriageTasks` was converted
+from `listTasks({ column: "triage" })` to a ROLE filter (`filterByPreWipRole(..., ["intake"])`).
+This store fake has no workflow-selection readers, so the sweep resolves the DEFAULT IR, in which
+`triage` does not appear — the seeded card therefore carried no intake role, the filter returned no
+candidates, and the sweep reported 0 recoveries. The test was asserting against a column id the
+product had stopped declaring.
+*/
+const INTAKE_COLUMN = "todo";
+
 function task(id: string, overrides: Partial<Task> = {}): Task {
   return {
     id,
     title: id,
     description: id,
-    column: "triage",
+    column: INTAKE_COLUMN,
     status: null,
     paused: false,
     worktree: `/tmp/${id}`,

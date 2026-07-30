@@ -30,8 +30,22 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:55:
+    The starved refinement rests in the INTAKE column, which post-U11 is `todo` — the merged
+    Planning column carrying intake+hold. `recoverStarvedRefinementTriageTasks` filters by ROLE, and
+    this store fake has no workflow-selection readers, so it resolves the DEFAULT IR in which
+    `triage` is not a declared column: the old fixture therefore carried no intake role, the filter
+    returned no candidates, and the sweep reported 0 escalations.
+
+    Only THIS test's seed moved. The file's default stays `triage` on purpose: the case at the bottom
+    ("auto-approve-all overrides stored workflow approval") calls `recoverApprovedTask` directly, with
+    no role filter, and asserts a move INTO `todo` — seeding it in `todo` makes that move degenerate.
+    Whether asserting a triage -> todo move still encodes anything post-U11 is a question about that
+    test's subject, not this fix: FLAGGED, not guessed.
+    */
     const tasks: Task[] = [
-      task({ id: "FN-R1", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z", priority: "low" }),
+      task({ id: "FN-R1", column: "todo", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z", priority: "low" }),
       task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
       task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
       task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
