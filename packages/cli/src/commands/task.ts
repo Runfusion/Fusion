@@ -1483,10 +1483,20 @@ export async function runTaskRetry(id: string, projectName?: string) {
       return;
     }
 
-    // Move to todo column before applying retry resets. `moveTask` reads from the
+    // Move to the hold column before applying retry resets. `moveTask` reads from the
     // store's durable index and may overwrite task.json-only updates, so apply the
     // manual retry reset patch after the move to make the cleared counters stick.
-    await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, 'todo'));
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-12:30 (PR #2752 review — greptile P1):
+    THE FOURTH TARGET, and the one that matters most.
+
+    This is the GENERIC retry fallthrough — a plainly `failed` or `stuck-killed` card, which is the
+    ordinary case, not the in-review stall paths above. It was written with SINGLE quotes while its
+    three siblings used double, so my first pass converted three of four and left the common path
+    crashing. Found by review, not by me, and not by any tool: the census counts comparisons and sees
+    none of these, and a same-file grep for the double-quoted form reports clean.
+    */
+    await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
 
     // Clear failure state and stale branch refs so retry can choose a fresh base.
     await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {

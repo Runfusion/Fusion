@@ -218,4 +218,51 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
 
     expect(await retriedWithClearedSession(id)).toBe(true);
   });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-12:30 (PR #2752 review — greptile P1):
+  THE GENERIC RETRY PATH — a plainly failed card outside the review lane.
+
+  The cases above all enter through the in-review stall branches. The ordinary retry — a `failed`
+  card sitting in the WIP lane — falls through to a fourth `moveTask` that my first pass missed
+  because it was written with single quotes while its three siblings used double. Three of four
+  converted, and the one left behind was the common path.
+
+  Nothing automated would have caught that: the census counts comparisons and a move target has
+  none, and a grep for the double-quoted form reports the file clean. So the suite now exercises the
+  path by BEHAVIOUR rather than trusting that all the call sites were found.
+  */
+  async function seedFailedInWipLane(path: readonly string[], workflowId?: string): Promise<string> {
+    const store = h.store();
+    const column = path[path.length - 1];
+    const task = await store.createTask({ title: "plain failure", description: "test", column: "todo" });
+    if (workflowId) await store.writeTaskWorkflowSelection(task.id, workflowId, []);
+    for (const step of path) await store.moveTask(task.id, step as never);
+    await store.updateTask(task.id, { status: "failed" } as never);
+    store.taskCache.delete(task.id);
+
+    const seeded = await store.getTask(task.id);
+    expect(seeded.column).toBe(column);
+    expect(seeded.status).toBe("failed");
+    return task.id;
+  }
+
+  /* Control: the generic path works under the default vocabulary. */
+  it("default vocabulary: a plainly failed WIP card is retried to the hold column", async () => {
+    const id = await seedFailedInWipLane(["in-progress"]);
+
+    await runTaskRetry(id);
+    h.store().taskCache.delete(id);
+    expect((await h.store().getTask(id)).column).toBe("todo");
+  });
+
+  /* The P1: this threw `Invalid transition: 'building' -> 'todo'` before the fourth site moved. */
+  it("renamed vocabulary: a plainly failed WIP card is retried to the board's OWN hold column", async () => {
+    const wf = await seedRenamedWorkflow();
+    const id = await seedFailedInWipLane(["drafting", "building"], wf);
+
+    await runTaskRetry(id);
+    h.store().taskCache.delete(id);
+    expect((await h.store().getTask(id)).column).toBe("drafting");
+  });
 });
