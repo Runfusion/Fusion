@@ -532,8 +532,21 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         store.emit("task:updated", task);
       }
       if (toColumn === (moveLifecycle?.complete ?? "done")) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (#2823 review — greptile):
+        PASS THE COLUMN THE CARD ACTUALLY REACHED, not the legacy name for it.
+
+        The gate above already resolves the complete lane, so on a renamed board this fires correctly
+        — and then handed the consumer `column: "done"`, a column that board does not declare. The
+        consumer resolves the canonical's flags for the column it is GIVEN, so it asked "is `done`
+        terminal here?", got no, and left every duplicate marker in place. The conversion downstream
+        was inert through this path for exactly the boards it was written for.
+
+        `toColumn` is the lane the card reached; the resolved-vs-literal question is already settled
+        by the gate one line up.
+        */
         await store.clearNearDuplicateReferencesToFailSoft(id, {
-          column: "done",
+          column: toColumn,
           reason: "done",
         });
       }
@@ -1422,8 +1435,10 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
     }
     if (toColumn === (moveLifecycle?.complete ?? "done")) {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (#2823 review): the sibling of the call above —
+         same gate, same hardcoded argument, same inert result. Both move together. */
       await store.clearNearDuplicateReferencesToFailSoft(id, {
-        column: "done",
+        column: toColumn,
         reason: "done",
       });
     }

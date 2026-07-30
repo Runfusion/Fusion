@@ -136,10 +136,70 @@ pgDescribe("near-duplicate markers clear when the canonical reaches a RENAMED te
     await store.writeTaskWorkflowSelection(canonical.id, wf, []);
     const duplicate = await seedDuplicateOf(canonical.id, wf);
 
-    await store.clearNearDuplicateReferencesTo(canonical.id, {
-      column: "shipped" as never,
-      reason: "completed",
-    });
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-04:25 (#2823 review — greptile, and it was right):
+
+    DRIVEN THROUGH THE REAL COMPLETION MOVE, not by handing the consumer a column.
+
+    Supplying `column: "shipped"` by hand proved the consumer resolves flags correctly — and hid the
+    fact that nothing in production ever gives it that value. `moveTaskInternal` gates on the RESOLVED
+    complete lane and then passed the literal `column: "done"`, so the consumer asked "is `done`
+    terminal on this board?", got no, and left every marker in place. The fix was inert through the
+    only path that reaches it.
+
+    Moving the card is the whole point: it exercises the gate, the argument, and the consumer together,
+    which is the only arrangement that could have caught this.
+    */
+    /* Adjacency is derived from the graph, so the card walks its board rather than jumping. */
+    for (const lane of ["drafting", "building", "checking", "shipped"]) {
+      await store.moveTask(canonical.id, lane as never, { bypassGuards: true } as never);
+    }
+
+    expect(await markerStillSet(duplicate)).toBe(false);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:45 (#2823 review — what driving production actually showed):
+
+  THE CASE THAT SEPARATES THE ARGUMENT FROM THE ACCIDENT.
+
+  Driving the real completion move (the case above) does NOT distinguish the hardcoded `column:
+  "done"` from the resolved `toColumn`, and I checked by mutating both call sites: the suite stayed
+  green. The reason is that the consumer looks the passed column up in the canonical's IR, finds
+  nothing for `done` on a renamed board, and falls through to the LEGACY predicate — where `done` is
+  terminal. Right outcome, wrong reason.
+
+  It stops being an accident on a board that DECLARES a `done` column without the complete trait. The
+  literal then resolves real flags, learns `done` is not terminal here, early-returns, and strands
+  every duplicate marker. `toColumn` names the lane the card actually reached and is unaffected.
+
+  This is the only shape under which the argument is load-bearing, which is why it exists.
+  */
+  it("clears the marker on a board that declares a NON-TERMINAL column named `done`", async () => {
+    const store = h.store();
+    const definition = await store.createWorkflowDefinition({
+      name: "done-is-not-complete",
+      ir: {
+        version: "v2",
+        name: "done-is-not-complete",
+        columns: [
+          { id: "drafting", name: "Drafting", traits: [{ trait: "intake" }] },
+          /* Declared, and deliberately NOT the complete lane. */
+          { id: "done", name: "Done pile (not terminal)", traits: [] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "drafting" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+    const wf = (definition as unknown as { id: string }).id;
+    const canonical = await store.createTask({ title: "canonical", description: "t", column: "todo" });
+    await store.writeTaskWorkflowSelection(canonical.id, wf, []);
+    const duplicate = await seedDuplicateOf(canonical.id, wf);
+
+    for (const lane of ["drafting", "done", "shipped"]) {
+      await store.moveTask(canonical.id, lane as never, { bypassGuards: true } as never);
+    }
 
     expect(await markerStillSet(duplicate)).toBe(false);
   });
