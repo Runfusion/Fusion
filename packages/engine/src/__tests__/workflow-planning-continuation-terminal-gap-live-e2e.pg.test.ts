@@ -35,6 +35,26 @@ runtime module's SYNTAX (parsed, not string-matched — see the note on that cas
 drain needs the runtime's full dependency set, which I did not build; the audit case says so rather
 than dressing it up.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (follow-up — one severity correction and one site closed):
+
+TWO REFINEMENTS to the above, both measured rather than argued.
+
+1. `selectActionablePlanningContinuations` has NO PRODUCTION CALLER. Grepped across the repo excluding
+   node_modules and dist: the only references are this file and
+   `workflow-continuation-selection.test.ts`. The live drain is `drainDuePlanningContinuations:386`,
+   which IS converted. So the stated consequence — a completed card re-entering plan-review "silently,
+   on every custom board" — is NOT reachable today. The finding is real but LATENT: the helper is
+   exported, so the first production caller inherits the bug. Worth keeping, worth not over-stating.
+
+2. The THIRD site is closed. `resolvePlanningContinuationCandidate` now threads its own resolved
+   `terminal` into `isPlanningContinuationTaskDispatchable`. Its reachable case is a board that declares
+   `done` as a NON-terminal column id: the outer check passes, the inner one calls it terminal per the
+   legacy pair, and the card is skipped as "paused" — stalled by a lane name. Pinned by two cases in
+   `workflow-continuation-selection.test.ts`, revert-measured.
+
+The first site is deliberately left: wiring a parameter into a function nothing calls would be an
+unwired parameter, which is the anti-pattern the caller audit (#2803) removed five of.
+
 LANE. `.pg.test.ts`, skipped via `pgDescribe` when no PostgreSQL is reachable, so the merge gate is
 unaffected. Throwaway per-file database; never port 4040.
 */
