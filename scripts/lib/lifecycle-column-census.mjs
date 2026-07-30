@@ -47,7 +47,24 @@ export const LEGACY_COLUMN_IDS = ["triage", "todo", "in-progress", "in-review", 
  * the honest limitation of classifying by receiver name, and the reason the census reports
  * the two classes separately instead of silently netting them.
  */
-export const ROLE_RECEIVER_TOKENS = ["role", "agentType", "agent", "lane", "capability"];
+export const ROLE_RECEIVER_TOKENS = [
+  "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole",
+];
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:30 (PR #2633 review follow-up):
+A STRONGER SIGNAL THAN THE NAME LIST, because the name list is guesswork and was already wrong:
+`skill-resolver.ts` compares `sessionPurpose` and `tool-availability.ts` compares `surface`, and
+both were scored as column guards until they were found by hand. Names are unbounded.
+
+The AgentRole vocabulary is `triage | executor | reviewer | merger`, and three of those four are
+NEVER column ids. So an expression compared against `"executor"`, `"reviewer"` or `"merger"` in the
+same neighbourhood is being matched against ROLES, whatever its variable is called. That is
+structural rather than nominal, and it generalises to receivers nobody has thought of yet.
+
+`triage` is the only member of both vocabularies, which is the entire reason this census exists.
+*/
+const ROLE_ONLY_SIBLING_VALUES = ["executor", "reviewer", "merger"];
 
 /** Marker that records a reviewed, intentionally-unconverted literal at its own site. */
 export const DELIBERATE_MARKER = "DELIBERATE-LITERAL";
@@ -60,7 +77,18 @@ export const DELIBERATE_MARKER = "DELIBERATE-LITERAL";
  * code line survives.
  */
 export function stripComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-17:40 (PR #2633 review, greptile P1):
+  BLANK the comment, keep its NEWLINES. Deleting a multi-line block comment outright shifted every
+  following line, so `findComparisons` reported unrelated line numbers AND looked for the
+  site-local DELIBERATE-LITERAL marker at the wrong offset — a marker could be missed and a
+  reviewed literal counted as backlog, or the reverse. I had written this down as "over-counts,
+  visible in the report", which was wrong in the more damaging direction: wrong line numbers send
+  a reader to the wrong code.
+  */
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
+    .replace(/\/\/.*$/gm, "");
 }
 
 /** True when the marker appears within `window` lines above `index` (or on the line itself). */
@@ -104,13 +132,13 @@ export function findComparisons(filePath, source) {
       const receiver = receiverOf(line.slice(0, match.index));
       const columnId = match[3];
       /*
-      The comment-stripped text keeps line numbers only if block comments spanned whole lines,
-      which is not guaranteed — so the DELIBERATE marker is looked up in the ORIGINAL lines at
-      the same index, and the window is generous. A missed marker over-counts (visible in the
-      report) rather than silently excusing a live guard.
+      `stripComments` blanks comments in place (PR #2633 review), so this index is the ORIGINAL
+      line number and the marker lookup is exact. Before that fix a multi-line block comment
+      shifted every following line and this lookup could miss a marker entirely.
       */
       const deliberate = hasDeliberateMarker(originalLines, index);
-      const isRole = ROLE_RECEIVER_TOKENS.includes(receiver);
+      const isRole = ROLE_RECEIVER_TOKENS.includes(receiver)
+        || comparedAgainstRoleOnlyValue(strippedLines, index, receiver);
       findings.push({
         file: filePath,
         line: index + 1,
@@ -122,6 +150,27 @@ export function findComparisons(filePath, source) {
   });
 
   return findings;
+}
+
+/**
+ * True when `receiver` is compared against a role-only value (`executor`/`reviewer`/`merger`)
+ * within a few lines — evidence that the expression holds an AGENT ROLE, not a column.
+ *
+ * A window rather than the same line, because these read as multi-line `||` chains:
+ *   const purposeUsesRoleFallback = sessionPurpose === "triage"
+ *     || sessionPurpose === "executor"
+ */
+function comparedAgainstRoleOnlyValue(lines, lineIndex, receiver, window = 4) {
+  if (!receiver) return false;
+  const start = Math.max(0, lineIndex - window);
+  const end = Math.min(lines.length - 1, lineIndex + window);
+  for (let i = start; i <= end; i += 1) {
+    for (const value of ROLE_ONLY_SIBLING_VALUES) {
+      const pattern = new RegExp(`\\b${receiver}\\b\\s*(?:===|!==)\\s*(["'])${value}\\1`);
+      if (pattern.test(lines[i] ?? "")) return true;
+    }
+  }
+  return false;
 }
 
 /** Aggregate findings into the three headline counts plus per-file and per-column breakdowns. */

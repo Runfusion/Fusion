@@ -9,14 +9,18 @@ regression suite that pins each form this census must catch lives in
 Report-only by default:
   node scripts/lifecycle-column-census.mjs            # human table
   node scripts/lifecycle-column-census.mjs --json     # machine-readable
-  node scripts/lifecycle-column-census.mjs --strict   # fail if column guards ROSE vs baseline
+  node scripts/lifecycle-column-census.mjs --strict   # fail if any file DIVERGES from baseline
+  node scripts/lifecycle-column-census.mjs --strict --update-baseline   # re-record after lowering it
+
+`--strict` fails on a RISE (a reintroduced guard) and equally on a DROP that was not recorded: a
+stale allowance is a hole through which the same guards can return while the check stays green.
 
 NOT wired into the merge gate. A thousand-site backlog cannot be a blocking check on the day it
 is first measured; `--strict` exists so it can become one incrementally, per-file, once owners have
 converted their areas.
 */
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +54,7 @@ const findings = censusFiles(files);
 const summary = summarize(findings);
 const json = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
+const updateBaseline = process.argv.includes("--update-baseline");
 
 if (json) {
   console.log(JSON.stringify({ scannedFiles: files.length, ...summary, byFile: summary.byFile }, null, 2));
@@ -83,10 +88,25 @@ const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
 const baselineByFile = new Map(Object.entries(baseline.byFile ?? {}));
 const currentByFile = new Map(summary.byFile);
 const regressions = [];
+const stale = [];
 
 for (const [file, count] of currentByFile) {
   const allowed = baselineByFile.get(file) ?? 0;
   if (count > allowed) regressions.push({ file, count, allowed });
+  else if (count < allowed) stale.push({ file, count, allowed });
+}
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:55 (PR #2633 review, greptile P1):
+A file that has DROPPED below its baseline is also a failure, and this is the difference between
+a ratchet and a high-water mark. Left alone, a conversion that takes a file from 10 guards to 3
+leaves a stale allowance of 10 — so seven guards can be reintroduced later and `--strict` stays
+green. That is exactly the rot this tool exists to prevent, wearing a passing check.
+
+Files that disappear entirely are also stale entries; they are reported the same way, because a
+deleted or renamed file leaving its allowance behind is the same hole.
+*/
+for (const [file, allowed] of baselineByFile) {
+  if (!currentByFile.has(file) && allowed > 0) stale.push({ file, count: 0, allowed });
 }
 
 if (regressions.length > 0) {
@@ -102,5 +122,31 @@ if (regressions.length > 0) {
   process.exit(1);
 }
 
-console.log("\nlifecycle-column-census --strict: no file exceeded its baseline.");
+if (stale.length > 0) {
+  if (updateBaseline) {
+    writeFileSync(
+      BASELINE_PATH,
+      `${JSON.stringify({
+        generatedFrom: "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
+        totals: summary.totals,
+        byColumnId: summary.byColumnId,
+        byFile: Object.fromEntries(summary.byFile),
+      }, null, 2)}\n`,
+    );
+    console.log(`\nlifecycle-column-census --strict: baseline TIGHTENED for ${stale.length} file(s).`);
+    process.exit(0);
+  }
+  console.error("\nlifecycle-column-census --strict: baseline is STALE — it allows more than the tree has\n");
+  for (const s of stale) {
+    console.error(`  ${s.file}: allows ${s.allowed}, tree has ${s.count}`);
+  }
+  console.error(
+    "\nA stale allowance is a hole: those guards can be reintroduced later and this check stays\n" +
+    "green. Re-record the baseline in the SAME PR that lowered the count:\n\n" +
+    "  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n",
+  );
+  process.exit(1);
+}
+
+console.log("\nlifecycle-column-census --strict: every file matches its baseline exactly.");
 process.exit(0);

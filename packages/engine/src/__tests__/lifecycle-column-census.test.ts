@@ -129,6 +129,112 @@ describe("the census does NOT count things that are not column guards", () => {
   });
 });
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:05 (PR #2633 review, greptile P1):
+
+COMMENT STRIPPING MUST PRESERVE LINE COUNT. Deleting a multi-line block comment outright shifted
+every following line, and the consequence was not the harmless over-count I had written down: the
+site-local DELIBERATE-LITERAL lookup ran at the wrong offset, so ONE marker in a file laundered
+FOUR unrelated live guards in `replan-target.ts` — they were reported as reviewed-and-intentional
+when they are neither. Findings also pointed at unrelated source lines, which sends a reader to
+the wrong code. Blanking the comment in place fixes both.
+*/
+describe("stripping a comment must not move the lines after it", () => {
+  it("reports the ORIGINAL line number after a multi-line block comment", () => {
+    const source = ["/* a", "multi", "line", "comment */", `const a = task.column === "triage";`].join("\n");
+
+    expect(census(source)[0]?.line).toBe(5);
+  });
+
+  it("finds a site-local marker across a multi-line comment", () => {
+    const source = [
+      `/* FNXC:Whatever ${DELIBERATE_MARKER}: reason`,
+      "spanning",
+      "several",
+      "lines */",
+      `const a = task.column === "triage";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.deliberate).toBe(1);
+  });
+
+  it("does NOT let a marker launder guards the shift used to pull into range", () => {
+    // The replan-target.ts case, minimized: a marked site near the top, then a genuinely
+    // unrelated guard far below. Before the fix the deletion of the intervening comment moved
+    // the second guard inside the marker's window and it was scored `deliberate`.
+    const source = [
+      `/* ${DELIBERATE_MARKER}: this fallback must not be workflow-resolved. */`,
+      `const fallback = declared ? resolved : "triage";`,
+      "/*",
+      ...Array.from({ length: 30 }, (_, i) => ` * filler line ${i}`),
+      " */",
+      `if (task.column === "in-progress" || task.column === "done") return true;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.column).toBe(2);
+    expect(summary.totals.deliberate).toBe(0);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:35 (PR #2633 review follow-up):
+
+A NAME LIST IS GUESSWORK, and mine was already wrong: `skill-resolver.ts` compares
+`sessionPurpose` and `tool-availability.ts` compares `surface`, and both scored as column guards
+until a human found them by hand. Names are unbounded; the vocabulary is not.
+
+`AgentRole` is `triage | executor | reviewer | merger`, and three of those four are never column
+ids. So an expression compared against `"executor"`/`"reviewer"`/`"merger"` nearby is being matched
+against ROLES whatever it is called. Structural, not nominal — and it generalises to receivers
+nobody has named yet. `triage` belonging to both vocabularies is the whole reason this exists.
+*/
+describe("a role comparison is recognised by the vocabulary it uses, not only by its name", () => {
+  it("classifies an unfamiliar receiver as a role when it is matched against role-only values", () => {
+    const source = [
+      `const usesRoleFallback = sessionPurpose === "triage"`,
+      `  || sessionPurpose === "executor"`,
+      `  || sessionPurpose === "reviewer";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals).toEqual({ column: 0, role: 1, deliberate: 0 });
+  });
+
+  it("recognises the single-line ternary form too", () => {
+    // tool-availability.ts's shape: `surface === "triage" ? A : B` with the union declared above.
+    const source = `return surface === "triage" ? TRIAGE_GUIDANCE : EXECUTOR_GUIDANCE;\nif (surface === "executor") return x;`;
+
+    expect(summarize(census(source)).totals.role).toBe(1);
+  });
+
+  it("does NOT reclassify a genuine column guard that merely sits near role code", () => {
+    // The signal is the RECEIVER being matched against a role-only value — not proximity alone.
+    // Otherwise one nearby role check would launder every column guard around it.
+    const source = [
+      `if (agentType === "executor") return;`,
+      `if (task.column === "triage") return;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.column).toBe(1);
+    expect(summary.totals.role).toBe(0);
+  });
+
+  it("still counts a column guard whose receiver is an unremarkable local", () => {
+    // `cli/src/commands/task.ts` compares `col` against the column ids for its board dots —
+    // an unfamiliar name, but the vocabulary is columns, so it stays in the backlog.
+    const source = [
+      `const dot = col === "triage" ? "●" :`,
+      `  col === "todo" ? "●" :`,
+      `  col === "in-review" ? "●" : "○";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.column).toBe(3);
+  });
+});
+
 describe("receiver extraction survives real call shapes", () => {
   it("reads through property access, optional chaining, and parentheses", () => {
     expect(receiverOf("if (task.column ")).toBe("column");
