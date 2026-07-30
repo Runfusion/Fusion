@@ -228,9 +228,15 @@ What actually finds these:
 1. **Run the instrument against the code it was written for, and read the hits by hand.** The Drizzle
    blindness was visible the moment someone asked "why is the merge-queue query, the reason this
    exists, not in the output?"
-2. **Prefer one unanchored pattern over a fast pre-filter plus a precise one.** Every false negative
-   above came from two patterns disagreeing about whether to even run the real check. A pre-filter is
-   a second, weaker specification of the thing you are testing.
+2. **Separate the two causes, because they have different fixes.** Only the first defect above is a
+   pre-filter problem: two patterns disagreeing about whether to run the real check, where the cheap
+   one is a second, weaker specification of the thing you are testing. Delete it and run the real
+   pattern everywhere. The other four — the anchored fragment, the raw-source scan, the missing `IN`,
+   the static-span join — are single-pattern defects: the pattern was the only specification and it
+   simply did not describe the shape. No amount of restructuring finds those; only running the
+   instrument against real code does (see 1). Conflating them is tempting because they all present as
+   "the guard is green and the site is there", and it sends you refactoring when you should be
+   reading output.
 3. **Treat a guard's own count as a claim to verify, not a result.** "14 sites" read as coverage for
    days; it was the subset one scanner happened to model.
 
