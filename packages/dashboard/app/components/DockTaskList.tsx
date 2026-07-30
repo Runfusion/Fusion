@@ -36,6 +36,22 @@ export function DockTaskList({
     onOpenTask?.(task);
   }, [onOpenTask]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-02-02:10 (batch-dashboard-app — SIZED, same blocker as
+  DevServerView's dock surface):
+  STILL LITERALS. These three decide what the right dock lists: completed cards are counted, archived
+  ones hidden, and done ones shown only behind `showDone`. On a renamed board none matches, so the
+  dock shows archived cards and never groups completed ones.
+
+  Not converted because this component mounts ONLY through `overflowViewRegistry`, and
+  `OverflowViewRenderProps` carries no per-task flags — there is no parent here to thread from, which
+  is the same gap that leaves DevServerView's dock surface unconverted. Adding an optional
+  `columnFlagsByTaskId` prop that the sole caller cannot supply would be inert.
+
+  ONE FIX CLOSES BOTH: add per-task flags to `OverflowViewRenderProps` and source them where
+  RightDock builds `renderProps`. Sized here so the pair is visible as one dock-wide change rather
+  than two component-shaped ones.
+  */
   const doneTasks = useMemo(() => tasks.filter((task) => task.column === "done"), [tasks]);
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     if (task.column === "archived") return false;

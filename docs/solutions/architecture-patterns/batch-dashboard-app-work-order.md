@@ -41,6 +41,23 @@ parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or Ma
     still falls back, because `OverflowViewRenderProps` carries no per-task flags. Guard count is 0
     for the file either way, so do not read it as done.
 
+BATCH CLOSE-OUT — 75 -> 6, and every remaining one is deliberate (u12, 2026-08-02-02:10)
+
+`packages/dashboard/app` is down to SIX guards across four files. None is an oversight; each is
+recorded at its site with the reason and what would actually unblock it:
+
+  3  DockTaskList.tsx        mounts ONLY through overflowViewRegistry, which carries no per-task
+                             flags. Same blocker as DevServerView's dock surface.
+  1  ResearchTaskActionModal fetches its OWN page, so a board-built flags map misses the archived
+                             rows this filter is about. Needs a data-fetch change.
+  1  TaskCard.tsx            left counted by an earlier pass on purpose, "so the census keeps
+                             pointing at the class"; not overridden from outside.
+  1  useTasks.ts             CROSS-BATCH — see below. Converting core's stall gate alone regresses.
+
+ONE FIX CLOSES TWO OF THEM: add per-task flags to `OverflowViewRenderProps` and source them where
+RightDock builds `renderProps`. That closes DockTaskList (3) and DevServerView's second surface in
+the same change — a dock-wide change, not two component-shaped ones.
+
 CROSS-BATCH COUPLING — for whoever owns batch-core (u12, 2026-08-01-22:40)
 
   packages/dashboard/app/hooks/useTasks.ts  <->  packages/core/src/in-review-stall.ts:179

@@ -5342,6 +5342,7 @@ export function TaskDetailContent({
           {activeTab === "workflow" ? (
             <div className="detail-section">
               <WorkflowResultsTab
+                columnFlags={detailColumnFlags}
                 taskId={task.id}
                 task={task}
                 results={workflowResults}
@@ -5416,6 +5417,7 @@ export function TaskDetailContent({
               */}
               {activitySegment === "current" ? (
                 <TaskChatTab
+                  columnFlags={detailColumnFlags}
                   task={workingTask}
                   projectId={projectId}
                   active={activeTab === "chat" && activitySegment === "current"}
