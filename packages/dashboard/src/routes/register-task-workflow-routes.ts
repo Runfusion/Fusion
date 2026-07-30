@@ -2670,7 +2670,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       let strandedSpecificationRetry = false;
       if (retrySpecificationStatus && !retrySpecification) {
         if (!workflowDeclaresColumnModel(workflowIr)) {
-          strandedSpecificationRetry = true;
+          /*
+          FNXC:ManualRetry 2026-07-30-03:10 (greptile #2621):
+          Still PRE-WIP ONLY. Admitting every column here was a real regression: a v1 workflow with a
+          planning/needs-replan status on an `in-progress` or `in-review` card would be admitted, and
+          the generic branch then clears worktree/branch/retry counters and rebounds the card — losing
+          live execution or review state that was never in question. A v1 IR yields no roles, so the
+          legacy pre-implementation ids are the only pre-WIP signal available.
+          */
+          strandedSpecificationRetry = task.column === "triage" || task.column === "todo";
         } else {
           const lifecycle = resolveLifecycleColumns(workflowIr);
           strandedSpecificationRetry = lifecycle !== undefined

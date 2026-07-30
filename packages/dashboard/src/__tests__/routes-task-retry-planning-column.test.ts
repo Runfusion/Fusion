@@ -325,6 +325,21 @@ describe("POST /api/tasks/:id/retry — specification retry follows the plan nod
     expect(statusPatchOf(updateTask)).toBe("needs-replan");
   });
 
+  /*
+  GREPTILE #2621: the v1 branch must stay PRE-WIP scoped like the v2 one. Admitting every column let a
+  planning-status card in `in-progress`/`in-review` through, and the generic branch then clears
+  worktree/branch/retry counters and rebounds it — destroying live execution or review state.
+  */
+  it.each(["in-progress", "in-review"])("refuses a v1 planning-status card parked in %s", async (column) => {
+    const { app } = buildApp({
+      task: mkTask({ column, status: "planning" as never, steps: [] as never }),
+      workflowId: "custom:v1-no-columns",
+      definition: { ir: { version: 1, id: "custom:v1-no-columns", name: "V1", steps: [] } },
+    });
+
+    expect((await retry(app)).status).toBe(400);
+  });
+
   it("applies to every status that reaches the branch, not just `failed`", async () => {
     for (const overrides of [
       { status: "planning" },
