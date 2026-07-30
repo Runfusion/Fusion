@@ -411,3 +411,80 @@ describe("no lifecycle GUARD resolves its lane synchronously", () => {
     expect(inlineGuards).toEqual([]);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-04:30 (PR #2703 review — coderabbit MAJOR, and it is my own rule
+turned back on me):
+
+THE INVARIANT: every classifier in one recovery shares ONE lane snapshot.
+
+`isBenignInReviewPauseAbort` takes its review lane as a parameter precisely because a fresh resolution
+inside a classifier can disagree with the snapshot the rest of `handleGraphFailure` uses. Four sibling
+classifiers were still calling `resolveResumeLanes()` with no memo — so a workflow edit landing mid-recovery
+could have one classifier admit a card on the new board while another rejects it on the old one, and the
+recovery would take a branch neither board justifies.
+
+STRUCTURAL, because the race needs a workflow edit between two awaits inside one call — reproducible only
+by instrumenting the resolver, which would pin the implementation rather than the rule. Counting
+memo-less calls in the pause-abort family is the property that actually has to hold, and it fails the
+moment someone adds a fifth classifier that resolves on its own.
+*/
+describe("one lane snapshot per recovery, across every classifier", () => {
+  it("has no memo-less resolveResumeLanes call inside the pause-abort classifiers", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    /*
+    The pause-abort family, by name. A memo-less call in any of them is the defect; the allowlist is
+    deliberately explicit rather than a regex over "classifier-looking" functions, so adding a new one
+    does not silently inherit an exemption.
+    */
+    const family = [
+      "isRetryableBenignMergePauseAbort",
+      "isBenignManualMergeHoldPauseAbort",
+      "handleStaleInReviewPlanPauseAbortReplay",
+      "handleStaleInReviewParsePauseAbortReplay",
+      "isReentrantPausedAbortedInFlightNode",
+      "routeUnusableWorktreeGraphFailureToRecovery",
+      "routeGraphFailureToExecutionResume",
+    ];
+
+    const offenders: string[] = [];
+    for (const name of family) {
+      const start = code.indexOf(`private async ${name}(`);
+      expect(start, `${name} not found — update this test, do not delete it`).toBeGreaterThan(-1);
+      /*
+      Bounded by the next `private ` declaration of ANY kind, not the next family member. My first version
+      bounded on the family and the last member's slice therefore ran to EOF — it reported
+      `isReentrantPausedAbortedInFlightNode` as an offender because of a memo-less call in an unrelated
+      method 1200 lines later. A ratchet whose window is wrong accuses the wrong function, which is worse
+      than not having it: I would have "fixed" a method that was already correct.
+      */
+      const next = code.indexOf("\n  private ", start + 1);
+      const body = code.slice(start, next === -1 ? code.length : next);
+      if (/resolveResumeLanes\(\s*[^,)]+\s*\)/.test(body)) offenders.push(name);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("threads the memo from handleGraphFailure into every one of them", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    // The call sites must pass it, not merely accept it — accepting an unused optional proves nothing.
+    for (const name of [
+      "isRetryableBenignMergePauseAbort",
+      "isBenignManualMergeHoldPauseAbort",
+      "handleStaleInReviewPlanPauseAbortReplay",
+      "handleStaleInReviewParsePauseAbortReplay",
+      "routeUnusableWorktreeGraphFailureToRecovery",
+      "routeGraphFailureToExecutionResume",
+    ]) {
+      const callSite = new RegExp(`this\\.${name}\\([^;]*resumeLanesMemo`);
+      expect(callSite.test(code), `${name} call site does not pass resumeLanesMemo`).toBe(true);
+    }
+  });
+});

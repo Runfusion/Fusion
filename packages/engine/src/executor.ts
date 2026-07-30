@@ -10019,6 +10019,8 @@ export class TaskExecutor {
     task: Task,
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     if (live.deletedAt) return false;
     if (live.paused || live.userPaused === true) return false;
@@ -10038,7 +10040,7 @@ export class TaskExecutor {
        skipped this auto-merge-off gate entirely, so an automatic recovery moved a human-review-terminal
        card backward. #2689 converted the terminal guard at the top of this method; this is the other half
        of the same decision. */
-    if (live.column === (await this.resolveResumeLanes(live.id)).review) {
+    if (live.column === (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) {
       const settings = await this.store.getSettings();
       if (!allowsAutoMergeProcessing(live, settings)) return false;
     }
@@ -10231,6 +10233,9 @@ export class TaskExecutor {
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
+     *  with the one the rest of `handleGraphFailure` uses. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-06-19-00:05:
@@ -10246,7 +10251,7 @@ export class TaskExecutor {
     these paths exist to avoid (FN-6796's benign in-review abort, the manual-merge-hold abort, the two
     stale-replay handlers, this retryable merge abort). The literal made the recovery inert, silently.
     */
-    if (live.column !== (await this.resolveResumeLanes(live.id)).review
+    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review
       || !this.isRetryableMergePauseAbortStatus(live.status) || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
     const failureValue = this.graphFailureValue(result);
@@ -10339,6 +10344,9 @@ export class TaskExecutor {
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
+     *  with the one the rest of `handleGraphFailure` uses. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-07-09-14:54:
@@ -10347,7 +10355,7 @@ export class TaskExecutor {
     if (!pausedAborted) return false;
     if (!isGenericAbortProvenance(abortProvenance)) return false;
     if (live.paused || live.userPaused === true) return false;
-    if (live.column !== (await this.resolveResumeLanes(live.id)).review) return false;
+    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
     if (this.isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
@@ -10372,6 +10380,9 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
+     *  with the one the rest of `handleGraphFailure` uses. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-06-28-21:05:
@@ -10380,7 +10391,7 @@ export class TaskExecutor {
     if (!pausedAborted) return false;
     if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
     if (userCanceled) return false;
-    if (live.column !== (await this.resolveResumeLanes(live.id)).review) return false;
+    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
     if (live.paused || live.userPaused === true) return false;
     if (live.autoMerge === false) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
@@ -10444,6 +10455,9 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
+     *  with the one the rest of `handleGraphFailure` uses. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-06-29-01:18:
@@ -10458,7 +10472,7 @@ export class TaskExecutor {
     still where it was when we admitted it?"), so resolving the board again inside the timeout callback
     would let a workflow edit make the two halves disagree.
     */
-    const replayLanes = await this.resolveResumeLanes(live.id);
+    const replayLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
     if (live.column !== replayLanes.review) return false;
     if (live.paused || live.userPaused === true) return false;
     if (live.autoMerge === false) return false;
@@ -10866,7 +10880,8 @@ export class TaskExecutor {
       is used-before-declared — which is how the two halves came to read different boards in the first
       place. The memo is seeded from this snapshot so the classifiers still share it.
       */
-      const failureLanes = await this.resolveResumeLanes(live.id);
+      const resumeLanesMemo: { lanes?: { hold: string; wip: string; review: string } } = {};
+      const failureLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
       /*
       FNXC:Lifecycle 2026-07-16-21:22:
       FN-8141 follow-up 1 — an honest `fn_task_done(outcome="blocked")` park (status="failed",
@@ -10939,7 +10954,7 @@ export class TaskExecutor {
       would otherwise retry the same stale worktree in place, and the terminal sink would park
       the task failed with the signature erased (FN-7996 looped dispatch→park all day).
       */
-      if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result)) {
+      if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result, resumeLanesMemo)) {
         await this.persistTokenUsage(task.id);
         return;
       }
@@ -11100,7 +11115,6 @@ export class TaskExecutor {
       creating this memo for the classifiers — so the classifiers read the board and the branches around
       them read the default names.
       */
-      const resumeLanesMemo: { lanes?: { hold: string; wip: string; review: string } } = { lanes: failureLanes };
       if (genuinePauseAbort && await this.isReentrantPausedAbortedInFlightNode(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
         if (await this.reenterPausedAbortedWorkflowNode(live, result, abortProvenance, resumeLanesMemo)) {
           return;
@@ -11124,12 +11138,12 @@ export class TaskExecutor {
           return;
         }
       }
-      if (genuinePauseAbort && await this.isRetryableBenignMergePauseAbort(live, result, abortProvenance, pausedAborted)) {
+      if (genuinePauseAbort && await this.isRetryableBenignMergePauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo)) {
         if (await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
           return;
         }
       }
-      if (genuinePauseAbort && await this.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted)) {
+      if (genuinePauseAbort && await this.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo)) {
         /*
         FNXC:WorkflowLifecycle 2026-07-09-14:56:
         FN-7749 / Runfusion#1979: auto-merge-off manual merge hold is terminal-until-human-merged, not an executor failure. Preserve the `in-review` row for Merge & Close, do not invoke merge retry, and clear only stale pause-abort status/error so FN-5147's no-backward-move/no-reenqueue contract stays intact.
@@ -11155,10 +11169,10 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (genuinePauseAbort && await this.handleStaleInReviewParsePauseAbortReplay(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id))) {
+      if (genuinePauseAbort && await this.handleStaleInReviewParsePauseAbortReplay(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
         return;
       }
-      if (genuinePauseAbort && await this.handleStaleInReviewPlanPauseAbortReplay(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id))) {
+      if (genuinePauseAbort && await this.handleStaleInReviewPlanPauseAbortReplay(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
         return;
       }
       if (genuinePauseAbort) {
@@ -11554,7 +11568,7 @@ export class TaskExecutor {
       if (await this.routeRetryableRemediationGraphFailureToPreMergeFix(live, failedNode, failureValue)) {
         return;
       }
-      if (await this.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue)) {
+      if (await this.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue, resumeLanesMemo)) {
         return;
       }
       /*
@@ -11799,6 +11813,8 @@ export class TaskExecutor {
     live: TaskDetail,
     failedNode: string,
     failureValue: string | undefined,
+    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
      * FNXC:WorkflowLifecycle 2026-06-29-11:08:
@@ -11837,7 +11853,7 @@ export class TaskExecutor {
     whose recovery was fully implemented, and nothing is logged as wrong. Same one-decision-two-boards
     defect, opposite direction, and the silent one.
     */
-    const resumeRouterLanes = await this.resolveResumeLanes(live.id);
+    const resumeRouterLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
     if (live.column !== resumeRouterLanes.review
       && !(incompleteSteps && live.column === resumeRouterLanes.hold)
       && !(prematureMergeWithIncompleteSteps && live.column === resumeRouterLanes.wip)) return false;
