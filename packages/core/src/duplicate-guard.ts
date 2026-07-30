@@ -1,7 +1,7 @@
 import type { Task } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
-import { resolveArchiveTargetForTask } from "./duplicate-intake.js";
+import { resolveArchiveTargetForTask } from "./workflow-lifecycle-traits.js";
 
 /*
 FNXC:TaskCreationDeduplication 2026-07-26-06:45:

@@ -2,8 +2,7 @@ import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "./types.js";
 import type { TaskStore } from "./store.js";
-import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
-import { columnsWithFlag } from "./workflow-lifecycle-traits.js";
+import { resolveArchiveTargetForTask } from "./workflow-lifecycle-traits.js";
 
 export interface SameAgentDuplicateInput {
   title?: string | null;
@@ -424,29 +423,3 @@ export async function flagTriageDuplicate(
   return sourceMetadataPatch;
 }
 
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-19:30 (census-invisible moveTask destinations):
-Resolve THIS task's archive lane, falling back to the legacy id.
-
-The destination of a `moveTask` is a call ARGUMENT, so the lifecycle-column census — an AST scan for
-comparisons — cannot see it. Both duplicate paths hardcoded `"archived"`, and since U12 hoisted the
-`workflowHasColumn` rejection out of its dead flag-gated branch, a board that does not declare that
-column now REJECTS the move rather than silently landing the card there.
-
-Consequence on such a board: the duplicate is never archived and keeps sitting on the operator's board
-as live work — and in `duplicate-guard` the row has ALREADY been stamped `deterministicDuplicateOf`, so
-it is marked as a duplicate while still occupying an active lane.
-
-Unioned with the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
-throwing; a board whose workflow cannot be read behaves exactly as before.
-*/
-export async function resolveArchiveTargetForTask(store: TaskStore, taskId: string): Promise<string> {
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    if (ir) {
-      const archived = columnsWithFlag(ir, "archived");
-      if (archived.length > 0) return archived[0];
-    }
-  } catch { /* degraded: legacy id */ }
-  return "archived";
-}

@@ -1,4 +1,5 @@
 import type { Task, TaskStore } from "@fusion/core";
+import { resolveReboundTargetForTask } from "@fusion/core";
 import type { TaskExecutor } from "./executor.js";
 import { createLogger } from "./logger.js";
 import { setImmediate as setImmediateCb } from "node:timers";
@@ -201,6 +202,7 @@ export class RestartRecoveryCoordinator {
       task.id,
       "Restart recovery: interrupted run had no step progress and no fn_task_done — requeued to todo for safe retry",
     );
-    await this.store.moveTask(task.id, "todo");
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+    await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id));
   }
 }

@@ -388,3 +388,45 @@ export async function resolveTaskLifecycleColumns(
     return undefined;
   }
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-20:50 (census-invisible moveTask destinations):
+MOVE-TARGET resolvers, kept beside `resolveTaskLifecycleColumns` because they answer the same question
+for the other half of a conversion.
+
+The lifecycle-column census is an AST scan for COMPARISONS, so a `moveTask` DESTINATION — a call
+argument — is invisible to it. 51 such destinations exist in production; 22 deliberately pass
+`recoveryRehome: true` (the #1411 legacy safe-landing escape, which must not be converted), and the rest
+are rejected outright on a board that does not declare the target now that U12 hoisted the
+`workflowHasColumn` check out of its dead flag-gated branch. See
+`docs/solutions/architecture-patterns/hardcoded-movetask-destinations-are-census-invisible.md`.
+
+Both fall back to the legacy id: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+throwing, so a board whose workflow cannot be read behaves exactly as before.
+
+ONE definition each, rather than a copy per call site — four sites already needed the rebound target and
+they must not drift apart.
+*/
+export async function resolveReboundTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const target = resolveReboundTarget(ir);
+      if (target) return target;
+    }
+  } catch { /* degraded: legacy id */ }
+  return "todo";
+}
+
+/** The archive lane this task's workflow declares, or the legacy id. See above. */
+export async function resolveArchiveTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const archived = columnsWithFlag(ir, "archived");
+      if (archived.length > 0) return archived[0];
+    }
+  } catch { /* degraded: legacy id */ }
+  return "archived";
+}
+

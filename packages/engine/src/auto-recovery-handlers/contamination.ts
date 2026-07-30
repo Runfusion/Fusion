@@ -1,4 +1,5 @@
 import type { TaskStore } from "@fusion/core";
+import { resolveReboundTargetForTask } from "@fusion/core";
 import { classifyForeignOnlyContamination } from "../branch-conflicts.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure, AutoRecoveryHandlers } from "../auto-recovery.js";
 import { createLogger, type Logger } from "../logger.js";
@@ -81,7 +82,8 @@ export class ContaminationAutoRecoveryHandler implements Pick<AutoRecoveryHandle
     }
 
     if (recoveryKind === "default") {
-      await this.deps.taskStore.moveTask(task.id, "todo", {
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+      await this.deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(this.deps.taskStore, task.id), {
         moveSource: "engine",
         preserveResumeState: true,
         preserveProgress: true,

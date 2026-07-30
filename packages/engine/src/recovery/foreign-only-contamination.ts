@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
+import { resolveReboundTargetForTask } from "@fusion/core";
 import { activeSessionRegistry } from "../active-session-registry.js";
 import {
   classifyForeignOnlyContamination,
@@ -72,7 +73,8 @@ export async function recoverForeignOnlyContamination(
       taskId: task.id,
     });
 
-    await deps.taskStore.moveTask(task.id, "todo", {
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+    await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
       moveSource: "engine",
       preserveResumeState: true,
       preserveProgress: true,
@@ -105,7 +107,8 @@ export async function recoverForeignOnlyContamination(
   await execAsync("git worktree prune", { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
   await execAsync(`git branch -D ${quote(task.branch)}`, { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
 
-  await deps.taskStore.moveTask(task.id, "todo", {
+  /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+  await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
     moveSource: "engine",
     preserveResumeState: true,
     preserveProgress: true,
