@@ -2205,7 +2205,7 @@ export function TaskDetailContent({
         setIsSaving(false);
       }
     }
-  }, [addToast, buildEditUpdates, confirm, onTaskUpdated, projectId, requestClose, task.column, task.executionMode, task.id]);
+  }, [addToast, buildEditUpdates, confirm, detailColumnFlags, onTaskUpdated, projectId, requestClose, task.column, task.executionMode, task.id]);
 
   const handleAutoSaveDescription = useCallback(async (_description: string) => {
     await persistEditChanges(true);
@@ -2329,7 +2329,15 @@ export function TaskDetailContent({
         setIsSavingInlineExecutionMode(false);
       }
     }
-  }, [task.id, task.column, task.executionMode, projectId, inlineExecutionMode, onTaskUpdated, addToast, confirm, requestClose]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (PR #2761 review — greptile):
+  `detailColumnFlags` is a DEPENDENCY, not a constant. It starts undefined on a task switch and
+  populates when the metadata lands, so a callback that captures it without listing it keeps applying
+  the pre-resolution answer — deciding the execution-mode replan from the legacy id on a custom hold or
+  WIP column. My narrowing introduced a value that changes over time into callbacks written for one
+  that did not.
+  */
+  }, [task.id, task.column, task.executionMode, detailColumnFlags, projectId, inlineExecutionMode, onTaskUpdated, addToast, confirm, requestClose]);
 
   const handleInlineNoCommitsExpectedToggle = useCallback(async () => {
     const nextValue = !inlineNoCommitsExpected;
@@ -3790,8 +3798,15 @@ export function TaskDetailContent({
     task,
     t,
     columnLabel,
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (PR #2761 review — greptile, and the finding is on my
+    own change): BOTH FIELDS OR NEITHER. Guarding `currentColumnFlags` alone left `moveColumns` coming
+    from the PREVIOUS task, so the action model mixed one task's roles with another's move targets —
+    an inconsistency my narrowing created, and arguably worse than leaving both unguarded, because the
+    menu then offers destinations from a card the operator is no longer looking at.
+    */
     currentColumnFlags: detailColumnFlags,
-    workflowMoveColumns: workflowMoveMetadata?.moveColumns,
+    workflowMoveColumns: detailFlagsAreForThisTask ? workflowMoveMetadata?.moveColumns : undefined,
     canRetryTask,
     hasDuplicateHandler: Boolean(onDuplicateTask),
     hasRetryHandler: Boolean(onRetryTask),
