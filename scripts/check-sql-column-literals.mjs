@@ -40,23 +40,13 @@ const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2
 
 /** The pre-workflow column ids. A query comparing a column to one of these is board-vocabulary-bound. */
 const LEGACY_IDS = ["todo", "in-progress", "in-review", "done", "archived", "triage"];
-const SQL_SHAPE = /\b(SELECT|UPDATE|DELETE|WHERE|FROM|JOIN)\b/i;
-/*
-CLAUSE FRAGMENTS have no SQL keyword of their own, and requiring one missed a real site.
-
-`team-analytics.ts` builds `const completedClauses = ["assignedAgentId IS NOT NULL",
-`"column" = 'done'`, ...]` and joins them into a WHERE later. That fragment is as
-vocabulary-bound as any full query, but the literal containing it holds no SELECT/WHERE, so a
-keyword requirement skipped it — my own gate's first blind spot, found while mutation-testing it.
-*/
-const BARE_CLAUSE = new RegExp(`^\\s*(?:"column"|column)\\s*(?:=|!=|<>)\\s*'(?:${LEGACY_IDS.join("|")})'\\s*$`, "i");
 /*
 GLOBAL, because the unit of measurement is the COMPARISON, not the literal — two legacy comparisons
 in one query must count as two. No file currently has that shape (every matching literal holds
 exactly one), so this is defensive rather than a recorded incident; it is the same class as the
 one-supplier floor the inert-seam gate had to fix, and cheaper to get right now than to discover.
 */
-const COMPARISON = new RegExp(`(?:"column"|\\bcolumn)\\s*(?:=|!=|<>)\\s*'(?:${LEGACY_IDS.join("|")})'`, "gi");
+export const COMPARISON = new RegExp(`(?:"column"|\\bcolumn)\\s*(?:=|!=|<>)\\s*'(?:${LEGACY_IDS.join("|")})'`, "gi");
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -67,26 +57,65 @@ function* walk(dir) {
   }
 }
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-19:10 (#2841 review — greptile x2 + coderabbit x2, one root cause):
+
+THE PRE-FILTERS WERE THE HOLE, SO THEY ARE GONE.
+
+Four findings arrived against three lines and all reduce to the same mistake: deciding whether to RUN
+the comparison regex, using cheaper patterns that disagree with it.
+
+  - A FILE-LEVEL `SQL_SHAPE.test(source)` short-circuit skipped whole files. A file holding only a
+    clause fragment (`"column" = 'done'`) has no SELECT/WHERE anywhere, so a new forbidden site could
+    be added to it and the gate passed. The exact shape the fragment carve-out below was added for,
+    reintroduced one level up.
+  - `BARE_CLAUSE` is anchored `^...$`, so a qualified or compound fragment — `t."column" = 'done'`,
+    `("column" = 'done' OR active = 1)` — matched neither it nor `SQL_SHAPE`, and the comparison never
+    ran.
+  - `node.getText()` returns SOURCE text, so a double-quoted TypeScript string spells the identifier
+    `\"column\"` with the backslashes intact, and every pattern here expects the decoded `"column"`.
+
+A gate whose false-NEGATIVES are this easy to construct is worse than no gate, because the baseline it
+prints reads as coverage. The fix is to stop pre-filtering: run `COMPARISON` — which is already
+unanchored and already the definition of a forbidden site — over the DECODED text of every string and
+template literal. One pattern, one answer, nothing to disagree with.
+
+THE FALSE-POSITIVE ARGUMENT SURVIVES INTACT, because it never depended on the pre-filters: comments
+are not AST nodes, so walking literals cannot match prose no matter how permissive the pattern is.
+That is what makes dropping them safe.
+
+`SQL_SHAPE` and `BARE_CLAUSE` are deleted rather than left unused — an unused pattern in a gate is an
+invitation to re-add a filter that uses it.
+*/
+
+/**
+ * The DECODED content of a string or template literal, or null for any other node.
+ *
+ * `.text` is decoded (`\"` becomes `"`); `.getText()` is not. For a template WITH interpolations the
+ * decoded content lives in `head` plus each span's literal, so those are concatenated with a space —
+ * the interpolated expression cannot be part of a matched comparison anyway, and joining with a space
+ * rather than nothing prevents two fragments from being spliced into a false match across the hole.
+ */
+export function literalText(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) {
+    return [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(" ");
+  }
+  return null;
+}
+
 /** Per-file counts of SQL literals comparing a task column to a legacy id. */
 function scan() {
   const counts = {};
   for (const file of walk(PACKAGES)) {
     const source = readFileSync(file, "utf8");
-    if (!SQL_SHAPE.test(source)) continue;
     const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     let hits = 0;
     const visit = (node) => {
-      const isLiteral = ts.isStringLiteral(node)
-        || ts.isNoSubstitutionTemplateLiteral(node)
-        || ts.isTemplateExpression(node);
-      if (isLiteral) {
-        const text = node.getText(sf);
-        /* Strip the surrounding quote/backtick so a fragment literal can be matched whole. */
-        const inner = text.replace(/^[`'"]|[`'"]$/g, "");
-        if (SQL_SHAPE.test(text) || BARE_CLAUSE.test(inner)) {
-          COMPARISON.lastIndex = 0;                       // a /g regex carries state between calls
-          hits += (text.match(COMPARISON) ?? []).length;
-        }
+      const text = literalText(node);
+      if (text !== null) {
+        COMPARISON.lastIndex = 0;                         // a /g regex carries state between calls
+        hits += (text.match(COMPARISON) ?? []).length;
       }
       ts.forEachChild(node, visit);
     };
