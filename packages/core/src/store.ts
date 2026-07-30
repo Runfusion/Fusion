@@ -126,7 +126,7 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
@@ -1754,8 +1754,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const withResolver: MergeQueueAcquireOptions = {
       ...opts,
       resolveReviewColumnsFor: opts.resolveReviewColumnsFor ?? (async (taskId: string) => {
+        /*
+        Three states, not two. `undefined` is "could not read"; an IR whose columns carry NO
+        lifecycle trait at all is a v1 graph upgraded by `synthesizeDefaultColumns`, whose
+        `in-review` column plainly exists and holds cards. Both take the legacy answer. Only a
+        board that expresses traits and still has no review lane is answering the question.
+        */
         const ir = await resolveWorkflowIrForTask(this, taskId).catch(() => undefined);
-        return ir ? new Set(resolveReviewColumns(ir)) : new Set(["in-review"]);
+        if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["in-review"]);
+        return new Set(resolveReviewColumns(ir));
       }),
     };
     return acquireMergeQueueLeaseImpl(this, workerId, withResolver);
