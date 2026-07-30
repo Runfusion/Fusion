@@ -11062,13 +11062,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
           wip: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? []),
         };
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-19:40 (#2891 review — greptile P1, "fallback workflow
+        rejects renamed lanes"): NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT.
+
+        `resolveWorkflowIrForTask` does not fail — it SUBSTITUTES the built-in IR. So a card whose
+        selection is missing or unreadable came back with `in-review`/`in-progress`, and the per-card
+        verdicts below then REJECTED the very card the project-scoped query had just admitted from a
+        renamed lane. The sweep found it and immediately disowned it.
+
+        Provenance separates "this card's board says X" from "nobody could say, here is the default".
+        Only the first is a per-card answer. When it is a substitution the card falls back to the
+        PROJECT sets that admitted it — which is broader than its own board but is exactly the
+        vocabulary this sweep already trusted to select it, and over-inclusion here costs at most a
+        contamination check on a card that did not need one.
+
+        The alternative — legacy ids only, as before — is the one shape that cannot be right: it
+        guarantees rejection for precisely the renamed cards the query was widened to find.
+        */
         try {
-          const ir = await resolveWorkflowIrForTask(this.store, task.id);
-          if (ir) {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          if (source === "default") {
+            for (const id of contaminationReviewColumns) lanes.review.add(id);
+            for (const id of contaminationWipColumns) lanes.wip.add(id);
+          } else {
             for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
             for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
           }
-        } catch { /* degraded: legacy ids above still answer */ }
+        } catch {
+          /* Unreadable is also "cannot say": same broad fallback, for the same reason. */
+          for (const id of contaminationReviewColumns) lanes.review.add(id);
+          for (const id of contaminationWipColumns) lanes.wip.add(id);
+        }
         contaminationLanes.set(task.id, lanes);
       }
       const contaminationLanesOf = (id: string) => contaminationLanes.get(id) ?? {
