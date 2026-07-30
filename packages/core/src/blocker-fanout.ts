@@ -75,6 +75,23 @@ export interface ComputeBlockerFanoutOptions {
   (task-priority's unblock weighting) and as the legacy default.
   */
   classify?: (task: Task) => { isHold: boolean; isTerminal: boolean };
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-05:00 (batch-core feed):
+  The lanes an ACTIVE blocker can occupy for escalation purposes — wip ∪ review.
+
+  This one was invisible to the census: the gate is a membership test against the exported
+  `BLOCKER_ESCALATION_COLUMNS` Set, and a Set literal is a DEFINITION, not a comparison, so nothing
+  in the backlog ever pointed here. The three converted options above sat directly beside a
+  hard-coded one.
+
+  Consequence on a renamed board: `shouldEscalate` was false for every blocker, so a stale blocker
+  holding up many cards NEVER escalated. No escalation looks exactly like nothing needing escalation
+  — the fan-out metric itself stayed correct, which makes it worse: the numbers say there is a
+  problem and the mechanism that acts on them is switched off.
+
+  Defaults to `BLOCKER_ESCALATION_COLUMNS` so unconverted callers are byte-identical.
+  */
+  escalationColumns?: ReadonlySet<string>;
 }
 
 export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress", "in-review"]);
@@ -143,6 +160,8 @@ export function computeBlockerFanoutMap(
     options.staleHighFanoutAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS;
 
   const terminalColumns = options.terminalColumns ?? LEGACY_TERMINAL_COLUMNS;
+  /* DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-05:00. */
+  const escalationColumns = options.escalationColumns ?? BLOCKER_ESCALATION_COLUMNS;
   const holdColumn = options.holdColumn ?? "todo";
   const reviewColumns = options.reviewColumns ?? LEGACY_REVIEW_COLUMNS;
 
@@ -237,7 +256,7 @@ export function computeBlockerFanoutMap(
     const shouldEscalate =
       blockerColumn !== undefined &&
       isHighFanout &&
-      BLOCKER_ESCALATION_COLUMNS.has(blockerColumn) &&
+      escalationColumns.has(blockerColumn) &&
       blockingAgeMs >= staleHighFanoutAgeThresholdMs;
 
     result.set(blockerId, {
