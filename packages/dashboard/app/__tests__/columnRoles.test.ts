@@ -20,7 +20,13 @@ LEGACY_….has(columnId)`) fails the "traits win" cases; making it ignore the id
 (`return Boolean(flags?.intake)`) fails the degraded cases.
 */
 import { describe, expect, it } from "vitest";
-import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
+import {
+  isHoldColumnRole,
+  isIntakeColumnRole,
+  isPlannerLaneColumnRole,
+  isPreExecutionHoldColumnRole,
+  isPreImplementationColumnRole,
+} from "../utils/columnRoles";
 
 describe("isIntakeColumnRole", () => {
   it("uses the intake TRAIT when the column resolved", () => {
@@ -69,5 +75,65 @@ describe("isPreImplementationColumnRole", () => {
     expect(isPreImplementationColumnRole(undefined, "todo")).toBe(true);
     expect(isPreImplementationColumnRole(undefined, "triage")).toBe(true);
     expect(isPreImplementationColumnRole(undefined, "in-review")).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+THE TWO ASYMMETRIC HELPERS. Both look like they should just delegate to
+`isPreImplementationColumnRole`, and both deliberately do not. Left undocumented and
+untested, the next reader "simplifies" them into it — so the difference is asserted here,
+with the failure mode in each name.
+*/
+describe("isPreExecutionHoldColumnRole (narrower FALLBACK than pre-implementation)", () => {
+  it("matches the pre-implementation helper once traits are resolved", () => {
+    expect(isPreExecutionHoldColumnRole({ hold: true }, "parked")).toBe(true);
+    expect(isPreExecutionHoldColumnRole({ intake: false, hold: false }, "todo")).toBe(false);
+  });
+
+  it("does NOT fall back to the legacy hold id, unlike the pre-implementation helper", () => {
+    /*
+    The asymmetry, and why: this gates the Plan ACTION rather than a prompt, and pre-U11
+    `todo` was the ready-to-execute lane. Guessing generously here offers a re-plan on a
+    card that is running; guessing generously in the prompt costs one confirmation.
+    Measured, not assumed — widening this failed the existing TaskContextMenu suite.
+    */
+    expect(isPreExecutionHoldColumnRole(undefined, "todo")).toBe(false);
+    expect(isPreImplementationColumnRole(undefined, "todo")).toBe(true);
+    // The intake id is still enough on its own.
+    expect(isPreExecutionHoldColumnRole(undefined, "triage")).toBe(true);
+  });
+});
+
+describe("isPlannerLaneColumnRole (a hold lane counts only while replanning)", () => {
+  it("treats an intake lane as the planner's lane regardless of replan state", () => {
+    expect(isPlannerLaneColumnRole({ intake: true }, "backlog", false)).toBe(true);
+  });
+
+  it("treats a plain hold lane as the planner's lane ONLY while replanning", () => {
+    /*
+    A parked hold card is waiting, not being worked on. Counting it as agent-active lights
+    the pulsing badge, the row border AND the column header's executing count on an idle
+    card — one predicate, three surfaces.
+    */
+    expect(isPlannerLaneColumnRole({ hold: true }, "parked", false)).toBe(false);
+    expect(isPlannerLaneColumnRole({ hold: true }, "parked", true)).toBe(true);
+  });
+
+  it("keeps the same replan condition in the no-metadata fallback", () => {
+    expect(isPlannerLaneColumnRole(undefined, "triage", false)).toBe(true);
+    expect(isPlannerLaneColumnRole(undefined, "todo", false)).toBe(false);
+    expect(isPlannerLaneColumnRole(undefined, "todo", true)).toBe(true);
+  });
+});
+
+describe("isHoldColumnRole", () => {
+  it("reads the hold trait, falling back to the legacy hold id", () => {
+    // The intake and hold fallbacks name DIFFERENT ids, because post-U11 `todo` carries
+    // both traits while `triage` was intake only. Neither derives from the other.
+    expect(isHoldColumnRole({ hold: true }, "parked")).toBe(true);
+    expect(isHoldColumnRole({ hold: false }, "todo")).toBe(false);
+    expect(isHoldColumnRole(undefined, "todo")).toBe(true);
+    expect(isHoldColumnRole(undefined, "triage")).toBe(false);
   });
 });

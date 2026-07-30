@@ -1,5 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getUnifiedTaskProgress } from "./taskProgress";
+import { isPlannerLaneColumnRole } from "./columnRoles";
 
 /** The shared status vocabulary for active task phases and lock/model policy. */
 export const ACTIVE_STATUSES = new Set([
@@ -23,7 +24,7 @@ export interface TaskAgentActivityOptions {
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The task's own column traits, when the caller has them. Fresh-planner-activity was
-  keyed on `column === "triage"`, so under U11 — merged planning column keeps the id
+  keyed on the legacy intake id, so under U11 — merged planning column keeps the id
   `todo`, `triage` deleted — a planning card with live planner logs stops reading as
   agent-active. That is not one badge: this predicate drives the pulsing status badge,
   the agent-active row border, and the column header's executing count, so the whole
@@ -84,9 +85,7 @@ export function isTaskAgentActive(
   "intake lane, or a hold lane that is replanning"; without them it falls back to the
   ids, which is the same shape the two lanes have today.
   */
-  const inPlannerLane = options.columnFlags
-    ? options.columnFlags.intake === true || (options.columnFlags.hold === true && isReplanning)
-    : task.column === "triage" || (task.column === "todo" && isReplanning);
+  const inPlannerLane = isPlannerLaneColumnRole(options.columnFlags, task.column, isReplanning);
   const hasFreshPlannerActivity = inPlannerLane
     && Number.isFinite(recentPlannerActivityAtMs)
     && nowMs - recentPlannerActivityAtMs >= 0

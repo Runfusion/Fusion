@@ -16,7 +16,7 @@ loses completed steps with no prompt and no error. That is why the fallback exis
 why deleting it is not the cleanup it looks like.
 
 What was wrong was having the fallback THREE TIMES, inline, as `column === "todo" ||
-column === "triage"`. Copies drift, none of them were reachable from a test, and each
+an inline `todo`-or-legacy-intake id test. Copies drift, none of them were reachable from a test, and each
 read like a lifecycle rule rather than the degraded mode it is. Here it is named, has one
 definition, and is covered — including the degraded path itself, which is the part that
 never had a test.
@@ -101,4 +101,22 @@ export function isPreExecutionHoldColumnRole(flags: ColumnRoleFlags | undefined,
   return flags
     ? Boolean(flags.intake || flags.hold)
     : columnId === LEGACY_INTAKE_COLUMN_ID;
+}
+
+/**
+ * Is this column the PLANNER's lane — where planner-agent activity should read as active?
+ *
+ * Narrower than {@link isPreImplementationColumnRole}: an intake lane always qualifies, but
+ * a plain hold lane counts only while the card is replanning. A parked hold card is waiting,
+ * not being worked on, and treating it as agent-active would light the pulsing badge, the
+ * row border, and the column header's executing count on an idle card.
+ */
+export function isPlannerLaneColumnRole(
+  flags: ColumnRoleFlags | undefined,
+  columnId: string,
+  isReplanning: boolean,
+): boolean {
+  return flags
+    ? flags.intake === true || (flags.hold === true && isReplanning)
+    : columnId === LEGACY_INTAKE_COLUMN_ID || (columnId === LEGACY_HOLD_COLUMN_ID && isReplanning);
 }
