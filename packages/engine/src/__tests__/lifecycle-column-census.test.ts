@@ -528,6 +528,32 @@ describe("mixed-vocabulary detection", () => {
     expect(mixedVocabularyFiles([["a.ts", 0]], read({ "a.ts": `resolveLifecycleColumns(ir)` }))).toEqual([]);
   });
 
+  it("does NOT count a resolver named only in a COMMENT", () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-22:10 (PR #2704 review — greptile):
+    This codebase's FNXC notes name these functions constantly, so counting prose made the false
+    positive structural rather than incidental. Measured: it over-reported 23 files / 311 guards
+    where the truth is 21 / 300. A review signal that cries wolf gets ignored, and then it is worth
+    nothing at all.
+    */
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `// was resolveLifecycleColumns(ir) once\nif (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("does NOT count a resolver named only in a STRING literal", () => {
+    /* An error message or a log line mentioning a resolver is not a call to one. */
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `throw new Error("use resolveLifecycleColumns instead"); if (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([]);
+  });
+
   it("does not match a resolver name embedded in a longer identifier", () => {
     /* Same trap the trait hints hit in #2677: `hold` matched inside `threshold`. */
     expect(mixedVocabularyFiles([["a.ts", 2]], read({ "a.ts": `myResolveLifecycleColumnsHelper()` }))).toEqual([]);
