@@ -2,6 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
 import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
@@ -44,6 +45,17 @@ export interface ColumnLifecycleClass {
   archived: boolean;
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-10:15 DELIBERATE-LITERAL:
+The named legacy default of the injected-classifier seam, and the only place these two ids remain in this
+file. It is the answer when no workflow can be resolved — the documented degraded mode — not an
+unconverted guard: `decideIssueAction`'s `classify` parameter defaults to it so a caller without an IR
+keeps today's mapping exactly.
+
+Marked deliberate only now that the production caller actually passes a RESOLVED classifier. Before that
+this default was the live path on every move, and exempting it would have hidden the real defect behind a
+marker — which is why the wiring change and this marker are in the same commit.
+*/
 export const legacyColumnLifecycleClass = (columnId: string): ColumnLifecycleClass => ({
   complete: columnId === "done",
   archived: columnId === "archived",
@@ -168,12 +180,34 @@ export class GitHubTrackingStateService {
   }
 
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
-    const decision = decideIssueAction(event.from, event.to);
-    if (!decision) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-10:15 (fleet phase — THE SEAM WAS NEVER WIRED):
+    `decideIssueAction` has taken an injectable `classify` since U12/R2, and the header above states the
+    defect it fixed: "a user-authored workflow whose terminal column is called something else never closed
+    its linked GitHub issue". But this — the ONLY production caller — passed no classifier, so every real
+    move fell through to `legacyColumnLifecycleClass` and the described bug was still live. The seam was
+    reachable from tests only.
+
+    That is the same shape as this branch's earlier finding on the tracking-comment guard: a conversion
+    that reads as done, with the resolved path unreachable in production. The lesson is that adding the
+    seam and wiring it are two changes, and only the second one fixes anything.
+
+    ORDER MATTERS, and it is inverted from the original. `decideIssueAction` ran FIRST here, before the
+    tracking-enabled check, because comparing two strings is free. Resolving a workflow is not, so the
+    cheap property read now short-circuits first and only tracked tasks resolve — the same ordering
+    `github-tracking-comments.ts` and its GitLab twin settled on. Behaviour is unchanged for untracked
+    tasks: they returned without acting before and still do.
+    */
+    if (event.task.githubTracking?.enabled !== true) {
       return;
     }
 
-    if (event.task.githubTracking?.enabled !== true) {
+    const lifecycle = await resolveTaskLifecycleColumns(store, event.task.id);
+    const decision = decideIssueAction(event.from, event.to, (columnId) => ({
+      complete: columnId === (lifecycle?.complete ?? "done"),
+      archived: columnId === (lifecycle?.archived ?? "archived"),
+    }));
+    if (!decision) {
       return;
     }
 
