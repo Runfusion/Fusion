@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveDefaultWorkflowIr, resolveWorkflowIrById } from "@fusion/core";
+import { resolveDefaultWorkflowIr, resolveLifecycleColumns, resolveWorkflowIrById } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import type { TaskColumn } from "./settings.js";
 
@@ -125,16 +125,49 @@ const LEGACY_CAPTURE_COLUMN_IDS: ReadonlySet<string> = new Set([
   "triage", "todo", "in-progress", "in-review", "done",
 ]);
 
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-08:50 (PR #2644 review, greptile P1 — the DEFAULT bypassed the
+same validation the request went through):
+
+THE CONFIGURED DEFAULT IS ALSO A COLUMN, and it was the one path that never got checked. A capture with
+no `column` returned the plugin SETTING verbatim — `todo` out of the box — so on a project whose default
+workflow does not declare `todo`, every voice capture created a card in an undeclared column. I fixed
+the requested-column path twice and left the far more common path (no column named at all) unvalidated.
+
+When the configured default is not declared, the honest destination is the workflow's own INTAKE column:
+that is where a new card belongs by definition, and it is resolved from the same snapshot as the
+validation. The setting is used only when it IS declared, or when nothing resolves at all.
+*/
 async function normalizeCaptureColumn(
   taskStore: PluginContext["taskStore"],
   value: unknown,
   fallback: TaskColumn,
 ): Promise<TaskColumn> {
+  const declared = await declaredCaptureColumnIds(taskStore);
   const raw = normalizeDescription(value);
-  if (raw && (await declaredCaptureColumnIds(taskStore)).has(raw)) {
+  if (raw && declared.has(raw)) {
     return raw as TaskColumn;
   }
-  return fallback;
+  if (declared.has(fallback)) return fallback;
+  const intake = await resolveCaptureIntakeColumn(taskStore);
+  return (intake ?? fallback) as TaskColumn;
+}
+
+/** The intake column of the workflow a new card lands on — where a capture belongs when the
+ *  configured default names a column that workflow does not declare. */
+async function resolveCaptureIntakeColumn(
+  taskStore: PluginContext["taskStore"],
+): Promise<string | undefined> {
+  try {
+    const store = taskStore as unknown as { getDefaultWorkflowId?: () => Promise<string | undefined> };
+    const workflowId = await store.getDefaultWorkflowId?.();
+    const ir = workflowId
+      ? await resolveWorkflowIrById(taskStore as never, workflowId)
+      : resolveDefaultWorkflowIr();
+    return resolveLifecycleColumns(ir as never)?.intake;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runQuickCapture(

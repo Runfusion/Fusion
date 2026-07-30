@@ -46,7 +46,16 @@ describe("quick-capture parsing", () => {
     expect(() => parseUtterance("   ")).toThrowError(/empty utterance/);
   });
 
-  it("creates task with default column and channel metadata", async () => {
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-09:00 (PR #2644 review): this case used to assert the card was
+  created in `triage` because that was the configured default. `triage` is the column #2515 DELETED from
+  the default lineage, so that assertion pinned a card being created into a column its own workflow does
+  not declare — the defect greptile flagged, encoded as an expectation.
+
+  The configured default is now validated like any other column: not declared -> fall to the workflow's
+  own INTAKE column, which is where a new card belongs. Hence `todo`.
+  */
+  it("creates task in the workflow's intake when the configured default is not declared", async () => {
     const createTask = vi.fn(async (input) => ({ id: "FN-1", ...input, title: "t", column: input.column }));
     await runQuickCapture(
       { text: "hey fusion, write docs" },
@@ -54,7 +63,7 @@ describe("quick-capture parsing", () => {
     );
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        column: "triage",
+        column: "todo",
         source: expect.objectContaining({
           sourceMetadata: expect.objectContaining({ channel: "glasses-quick-capture" }),
         }),
@@ -222,5 +231,71 @@ describe("quick capture accepts the columns of the workflow a new card lands on"
     await expect(runQuickCapture({ text: "ship it", column: "nonsense" }, deps({ defaultWorkflowId: "wf-custom" }))).rejects.toThrow(
       /invalid column/,
     );
+  });
+});
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-09:10 (PR #2644 review, greptile P1):
+
+THE CONFIGURED DEFAULT IS ALSO A COLUMN, and it was the one path that never got validated. A capture
+with no `column` returned the plugin SETTING verbatim, so on a project whose default workflow does not
+declare that column, every voice capture created a card in an undeclared column. I fixed the
+requested-column path twice and left the far more common path — no column named at all — unchecked.
+*/
+describe("the configured default column is validated too", () => {
+  const customIr = {
+    version: "v2", name: "Custom Board", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function deps(defaultColumn: string, workflowId?: string) {
+    const created: Array<Record<string, unknown>> = [];
+    return {
+      created,
+      taskStore: {
+        createTask: async (input: Record<string, unknown>) => {
+          created.push(input);
+          return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-31T00:00:00.000Z" };
+        },
+        getDefaultWorkflowId: async () => workflowId,
+        getWorkflowDefinition: async (id: string) => (id === "wf-custom" ? { id, ir: customIr } : undefined),
+      },
+      pluginId: "glasses",
+      defaultColumn,
+    } as never;
+  }
+
+  const columnOf = (d: unknown) => (d as { created: Array<{ column?: string }> }).created[0]?.column;
+
+  it("falls to the workflow's INTAKE when the configured default is not declared", async () => {
+    // Pre-fix: created the card in `todo`, which this board does not have.
+    const d = deps("todo", "wf-custom");
+
+    await runQuickCapture({ text: "capture this" }, d);
+
+    expect(columnOf(d)).toBe("backlog");
+  });
+
+  it("uses the configured default when the workflow DOES declare it", async () => {
+    // The paired positive: the operator's setting is honoured wherever it is valid, so this is not
+    // "always use intake".
+    const d = deps("building", "wf-custom");
+
+    await runQuickCapture({ text: "capture this" }, d);
+
+    expect(columnOf(d)).toBe("building");
+  });
+
+  it("keeps the configured default when no workflow resolves at all", async () => {
+    // Nothing to validate against is the legacy shape; refusing or rewriting here would break boards
+    // that have never had a workflow selected.
+    const d = deps("in-review");
+
+    await runQuickCapture({ text: "capture this" }, d);
+
+    expect(columnOf(d)).toBe("in-review");
   });
 });
