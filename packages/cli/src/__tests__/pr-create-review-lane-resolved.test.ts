@@ -160,12 +160,32 @@ describe("fn pr create resolves the board's own review lane", () => {
     expect(refusal).not.toContain("in-review");
   });
 
-  it("refuses WITHOUT naming a phantom lane when the workflow declares no review lane", async () => {
+  it("takes the legacy fallback when the resolved workflow declares no review lane", async () => {
     /*
-    #2775 review (greptile P2). My first pass fell back to `'in-review'` for BOTH the unresolvable
-    workflow and the resolved-but-empty case, so the refusal named a column this board does not have
-    — the very defect this change exists to fix, reintroduced one branch over. A resolved workflow
-    with no review-trait column is an ANSWER; only an unreadable workflow is a missing one.
+    FNXC:WorkflowLifecycleColumns 2026-07-31-03:10:
+    THIS TEST ASSERTED A DECISION THAT WAS SUPERSEDED BEFORE #2775 LANDED, and it went red on main
+    the moment it did.
+
+    Two review rounds on #2775 pushed `pr.ts` in opposite directions and the SECOND one won:
+
+      round 1 (greptile P2)  — a resolved workflow with no review-trait column is an ANSWER; do not
+                               invent `'in-review'`, say "no review lane". That is what this test
+                               was written against.
+      round 2 (greptile)     — refusing on an empty set rejects EVERY v1 workflow, because
+                               `synthesizeDefaultColumns` upgrades a v1 graph by emitting every
+                               column with `traits: []`. So a v1 board whose `in-review` column
+                               plainly exists resolves to an empty review set.
+
+    Round 2 is decisive and is what shipped: an empty set is indistinguishable from a v1 upgrade, so
+    it means UNEXPRESSED rather than absent and takes the same legacy fallback as an unreadable
+    workflow. `pr.ts:206-207` implements exactly that. The round-1 assertion could not pass against
+    it — there is no "no review lane" message in the shipped code at all, so `errors.find(...)`
+    returned undefined.
+
+    Re-pointed at the contract that actually shipped. The distinct-message behaviour is NOT
+    recoverable without a way to tell "v2 board that declares no review lane" from "v1 board whose
+    traits were synthesised empty", which the IR does not currently carry — flagged rather than
+    guessed at.
     */
     const noReviewIr = {
       ...RENAMED_IR,
@@ -176,9 +196,12 @@ describe("fn pr create resolves the board's own review lane", () => {
     await expect(runPrCreate("FN-001", { ai: false })).rejects.toThrow("process.exit:1");
 
     expect(store.updatePrInfo).not.toHaveBeenCalled();
-    const refusal = errors.find((e) => e.includes("no review lane"));
-    expect(refusal).toBeDefined();
-    expect(refusal).not.toContain("in-review");
+    // The legacy fallback, byte-identical to the pre-conversion single-lane message.
+    const refusal = errors.find((e) => e.includes("must be in"));
+    expect(refusal).toContain("'in-review'");
+    // And it must NOT name the renamed lanes this filtered board no longer declares.
+    expect(refusal).not.toContain("signoff");
+    expect(refusal).not.toContain("waiting-on-a-human");
   });
 
   it("keeps the legacy literal when the workflow cannot be resolved", async () => {
