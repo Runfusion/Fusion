@@ -52,7 +52,7 @@ import {
 import { WorkflowGraphTaskRunner, type WorkflowColumnBoundaryHooks } from "../workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "../workflow-column-boundary-hooks.js";
 import { runHoldReleaseSweep } from "../hold-release.js";
-import { DEFAULT_VOCAB, RENAMED_VOCAB, HOLD_STALENESS_MS, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
+import { DEFAULT_VOCAB, RENAMED_VOCAB, MERGED_VOCAB, MERGED_RENAMED_VOCAB, HOLD_STALENESS_MS, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { reconcileRecovery } from "../recovery-reconciler.js";
 
@@ -101,8 +101,8 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
    *  `createWorkflowDefinition` allocates its own `WF-###` and IGNORES the `id` in the input —
    *  binding a task to the id we passed in silently resolves to the DEFAULT builtin IR, which is
    *  exactly how a renamed-workflow fixture can pass while testing nothing. */
-  async function seedWorkflow(v: Vocabulary, key: string): Promise<{ workflowId: string; ir: WorkflowIr }> {
-    const ir = lifecycleIr(v, `custom:${key}`);
+  async function seedWorkflow(v: Vocabulary, key: string, merged = false): Promise<{ workflowId: string; ir: WorkflowIr }> {
+    const ir = lifecycleIr(v, `custom:${key}`, { mergedIntakeAndHold: merged });
     const created = await h.store().createWorkflowDefinition({
       name: `Lifecycle ${key}`,
       kind: "workflow",
@@ -195,8 +195,8 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
    * The full lifecycle, driven for one vocabulary. Returns everything observed so the two
    * vocabularies can be compared field-for-field rather than eyeballed.
    */
-  async function driveLifecycle(taskId: string, v: Vocabulary, key: string) {
-    const { workflowId } = await seedWorkflow(v, key);
+  async function driveLifecycle(taskId: string, v: Vocabulary, key: string, merged = false) {
+    const { workflowId } = await seedWorkflow(v, key, merged);
     await seedTask(taskId, v, workflowId);
 
     const events: WorkflowLifecycleEvent[] = [];
@@ -302,6 +302,47 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       for (const legacyId of Object.values(DEFAULT_VOCAB)) {
         expect(renamedColumns.has(legacyId)).toBe(false);
       }
+    });
+  });
+
+  /*
+  FNXC:MergedPlanningColumn 2026-07-30-00:20 (U9 E2E evidence — the merged board):
+  Scenarios 1 and 2 both drive a board where intake and hold are SEPARATE columns.
+  The operator's real default workflow no longer looks like that: U11 merged them into
+  one Planning column. The release path is where that matters — `runHoldReleaseSweep`
+  has to release a card FROM a column that is simultaneously the intake column, and a
+  resolver that treats "intake" and "hold" as mutually exclusive roles would leave the
+  card parked forever with no error.
+
+  Two variants: MERGED_VOCAB keeps legacy ids so a failure is attributable to the ROLE
+  merge alone, and MERGED_RENAMED_VOCAB moves ids too, which is what a custom workflow
+  author actually produces.
+  */
+  describe("scenario 3 — MERGED intake+hold column (U11's shape)", () => {
+    it("releases and completes a card whose hold column is ALSO the intake column", async () => {
+      const r = await driveLifecycle("FN-E2E-MERGED", MERGED_VOCAB, "merged-vocab", true);
+
+      expect(r.columnsObserved.atCreate).toBe(MERGED_VOCAB.hold);
+      // Planning runs IN PLACE on the merged column — it must not be treated as a
+      // pre-intake staging lane the card has to leave first.
+      expect(r.columnsObserved.afterPlanning).toBe(MERGED_VOCAB.hold);
+      // The claim this scenario exists for: capacity release works from a dual-role column.
+      expect(r.sweep.released).toContain("FN-E2E-MERGED");
+      expect(r.columnsObserved.afterRelease).toBe(MERGED_VOCAB.wip);
+      expect(r.columnsObserved.afterRun).toBe(MERGED_VOCAB.complete);
+      expect(r.seamCalls).toEqual(["planning", "execute", "review", "merge"]);
+    });
+
+    it("does the same on a board that is BOTH merged and renamed", async () => {
+      const r = await driveLifecycle("FN-E2E-MR", MERGED_RENAMED_VOCAB, "merged-renamed", true);
+
+      expect(r.columnsObserved.atCreate).toBe(MERGED_RENAMED_VOCAB.hold);
+      expect(r.sweep.released).toContain("FN-E2E-MR");
+      expect(r.columnsObserved.afterRelease).toBe(MERGED_RENAMED_VOCAB.wip);
+      expect(r.columnsObserved.afterRun).toBe(MERGED_RENAMED_VOCAB.complete);
+      // No leg may touch a legacy id on this board.
+      const legacy = new Set(["triage", "todo", "in-progress", "in-review", "done", "archived"]);
+      for (const observed of Object.values(r.columnsObserved)) expect(legacy.has(observed)).toBe(false);
     });
   });
 

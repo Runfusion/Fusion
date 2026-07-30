@@ -53,7 +53,40 @@ export interface LifecycleIrOptions {
      suite's IR stays byte-identical to what it was written against — a shared
      fixture must not silently change an existing suite's subject. */
   readonly mergeOrchestration?: boolean;
+  /* FNXC:MergedPlanningColumn 2026-07-29-23:50 (U9 E2E evidence — the merged board):
+     Adds the `intake` trait to the HOLD column, so ONE column carries intake + hold —
+     which is exactly the shape U11 shipped on the default lineage (Planning, id `todo`,
+     no `triage` column at all). Until now every E2E here drove a board with intake and
+     hold as SEPARATE columns, so nothing proved the merged shape end-to-end; a guard
+     that silently keys on "the column that is only a hold" passes on the default and
+     renamed vocabularies and goes wrong only here.
+
+     OPT-IN for the same reason as `mergeOrchestration`: a shared fixture must not
+     silently change an existing suite's subject. */
+  readonly mergedIntakeAndHold?: boolean;
 }
+
+/**
+ * The MERGED board: intake and hold are one column, as on the operator's real default
+ * workflow after U11. Ids deliberately overlap the legacy enum (`todo` is genuinely the
+ * merged Planning id there) so this is not a rename test — it isolates the merge of two
+ * ROLES onto one column from any change of vocabulary.
+ */
+export const MERGED_VOCAB: Vocabulary = {
+  hold: "todo",
+  wip: "in-progress",
+  review: "in-review",
+  complete: "done",
+};
+
+/** A merged board that ALSO renames: both variables move at once, which is the shape a
+ *  custom workflow author actually produces. */
+export const MERGED_RENAMED_VOCAB: Vocabulary = {
+  hold: "planning",
+  wip: "building",
+  review: "checking",
+  complete: "shipped",
+};
 
 export function lifecycleIr(v: Vocabulary, id: string, options: LifecycleIrOptions = {}): WorkflowIr {
   return {
@@ -64,7 +97,10 @@ export function lifecycleIr(v: Vocabulary, id: string, options: LifecycleIrOptio
       {
         id: v.hold,
         name: "Hold",
-        traits: [{ trait: "hold", config: { release: "capacity" } }],
+        traits: [
+          ...(options.mergedIntakeAndHold ? [{ trait: "intake" }] : []),
+          { trait: "hold", config: { release: "capacity" } },
+        ],
         /* U4 workflow-declared recovery policy (#2478). Declared on the HOLD column of both
            vocabularies from the one builder, so the reconciler's role resolution is exercised
            against a renamed column with nothing else differing. */

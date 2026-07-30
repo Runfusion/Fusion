@@ -41,7 +41,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { finalizeProvenAutoMergeTask } from "../auto-merge-finalization.js";
-import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
+import { DEFAULT_VOCAB, RENAMED_VOCAB, MERGED_VOCAB, MERGED_RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live merge safeguards E2E: real store, real refusals", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -55,11 +55,11 @@ pgDescribe("live merge safeguards E2E: real store, real refusals", () => {
 
   /** The store allocates its own `WF-###` and ignores the id in the input; binding to
    *  the one we passed would silently resolve to the DEFAULT builtin IR instead. */
-  async function seedWorkflow(v: Vocabulary, key: string): Promise<string> {
+  async function seedWorkflow(v: Vocabulary, key: string, merged = false): Promise<string> {
     const created = await h.store().createWorkflowDefinition({
       name: `Merge safeguards ${key}`,
       kind: "workflow",
-      ir: lifecycleIr(v, `custom:${key}`, { mergeOrchestration: true }),
+      ir: lifecycleIr(v, `custom:${key}`, { mergeOrchestration: true, mergedIntakeAndHold: merged }),
     } as never);
     return (created as { id: string }).id;
   }
@@ -257,4 +257,57 @@ pgDescribe("live merge safeguards E2E: real store, real refusals", () => {
     expect(column).toBe(RENAMED_VOCAB.review);
     expect(["todo", "in-progress", "in-review", "done", "archived"]).not.toContain(column);
   });
+  /* ── The MERGED board — U11's actual shape ────────────────────────────────────
+     Every case above drives a board where intake and hold are SEPARATE columns. The
+     operator's real default workflow no longer looks like that: U11 merged them into
+     one Planning column (id `todo`, no `triage` at all). A guard that keys on "the
+     column that is only a hold" passes on the default AND renamed vocabularies and
+     goes wrong only here, which is precisely why this needed its own family rather
+     than another row in an existing one.
+
+     Two variants on purpose: MERGED_VOCAB keeps the legacy ids (so a failure is
+     attributable to the ROLE merge alone), MERGED_RENAMED_VOCAB moves both variables
+     at once (the shape a custom workflow author actually produces). */
+  it("finalizes a proven-merged card on a MERGED intake+hold board", async () => {
+    const wf = await seedWorkflow(MERGED_VOCAB, "merged", true);
+    await seedProvenMergedTask("FN-SG-MERGED", MERGED_VOCAB, wf);
+
+    const result = await finalize("FN-SG-MERGED");
+
+    expect(result.outcome).toBe("done");
+    expect(await persistedColumn("FN-SG-MERGED")).toBe(MERGED_VOCAB.complete);
+  });
+
+  it("refuses a proofless card on a MERGED board, with the same reason", async () => {
+    const wf = await seedWorkflow(MERGED_VOCAB, "merged-noproof", true);
+    await seedProvenMergedTask("FN-SG-MERGED-NOPROOF", MERGED_VOCAB, wf, { mergeDetails: null });
+
+    const result = await finalize("FN-SG-MERGED-NOPROOF");
+
+    expect({ outcome: result.outcome, reason: (result as { reason?: string }).reason })
+      .toEqual({ outcome: "blocked", reason: "missing-merge-confirmation" });
+    expect(await persistedColumn("FN-SG-MERGED-NOPROOF")).toBe(MERGED_VOCAB.review);
+  });
+
+  it("finalizes on a board that is BOTH merged and renamed, landing no legacy id", async () => {
+    const wf = await seedWorkflow(MERGED_RENAMED_VOCAB, "merged-renamed", true);
+    await seedProvenMergedTask("FN-SG-MR", MERGED_RENAMED_VOCAB, wf);
+
+    const result = await finalize("FN-SG-MR");
+
+    expect(result.outcome).toBe("done");
+    const column = await persistedColumn("FN-SG-MR");
+    expect(column).toBe(MERGED_RENAMED_VOCAB.complete);
+    expect(["todo", "triage", "in-progress", "in-review", "done", "archived"]).not.toContain(column);
+  });
+
+  it("at-most-once holds on a merged+renamed board too", async () => {
+    const wf = await seedWorkflow(MERGED_RENAMED_VOCAB, "merged-once", true);
+    await seedProvenMergedTask("FN-SG-MR-ONCE", MERGED_RENAMED_VOCAB, wf);
+
+    expect((await finalize("FN-SG-MR-ONCE")).outcome).toBe("done");
+    expect((await finalize("FN-SG-MR-ONCE")).outcome).toBe("already-done");
+    expect(await persistedColumn("FN-SG-MR-ONCE")).toBe(MERGED_RENAMED_VOCAB.complete);
+  });
+
 });
