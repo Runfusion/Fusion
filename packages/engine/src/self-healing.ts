@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -981,7 +981,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async isFalseCompletionHandoffExhaustionWhileMergeOwned(task: Task): Promise<boolean> {
-    return task.column === "in-review"
+    // FNXC:WorkflowResolvedColumns 2026-07-30-22:25 (batch-engine): resolved review MEMBERSHIP, legacy id unioned in.
+    const reviewColumns = await this.resolveReviewColumnsFor(task.id, new Map());
+    return reviewColumns.has(task.column)
       && task.status === "failed"
       && typeof task.error === "string"
       && task.error.includes("Completion handoff limbo recovery exhausted")
@@ -2981,6 +2983,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (batch-engine — the review sibling of `resolvePreWipColumns`):
+  MEMBERSHIP, deliberately — a `ReadonlySet`, not a single id. `resolveLifecycleColumns` returns the FIRST
+  column carrying each trait, and a workflow may declare a merge-orchestration lane and a separate human
+  sign-off lane; first-per-role silently ignores the second. That arity trap has been hit four times in this
+  program (the routes review resolver, the FN-7720 bypass guard, dependency satisfaction, the continuation
+  drain) and every time the correct version was the membership one, so membership is the shape here from
+  the start.
+
+  Unioned with the legacy id for the same reason `resolveTerminalColumnsFor` unions: a missing or corrupt
+  custom workflow does not throw — `resolveWorkflowIrForTask` hands back the BUILT-IN IR — so a renamed
+  board in that degraded state would otherwise resolve a review set that excludes its own review lane and
+  every guard keyed on it would go inert.
+  */
+  private async resolveReviewColumnsFor(
+    taskId: string,
+    cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<ReadonlySet<string>> {
+    const columns = new Set<string>(["in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId, cache);
+      if (ir) {
+        for (const id of columnsWithFlag(ir, "mergeOrchestration")) columns.add(id);
+        for (const id of columnsWithFlag(ir, "mergeBlocker")) columns.add(id);
+        for (const id of columnsWithFlag(ir, "humanReview")) columns.add(id);
+      }
+    } catch {
+      /* degraded: the legacy id alone, matching resolvePreWipColumns' catch */
+    }
+    return columns;
+  }
+
   /** True when the task's own column fills its workflow's intake or hold role. */
   private async isPreWipColumn(task: Task): Promise<boolean> {
     const columns = await this.resolvePreWipColumns(
@@ -3249,7 +3283,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      if (task && task.column !== "in-review") {
+      // FNXC:WorkflowResolvedColumns 2026-07-30-22:25 (batch-engine): resolved review MEMBERSHIP, legacy id unioned in.
+      const wedgedReviewColumns = task ? await this.resolveReviewColumnsFor(task.id, new Map()) : undefined;
+      if (task && !wedgedReviewColumns!.has(task.column)) {
         const aborted = this.options.abortActiveMerge?.(activeId, "wedged-active-merge-left-in-review") ?? false;
         if (aborted) {
           log.warn(`Force-aborted wedged active merge ${activeId}: task column is ${task.column}`);
@@ -3443,7 +3479,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
-      if (task.column === "in-review") {
+      // FNXC:WorkflowResolvedColumns 2026-07-30-22:25 (batch-engine): resolved review MEMBERSHIP, legacy id unioned in.
+      if ((await this.resolveReviewColumnsFor(task.id, new Map())).has(task.column)) {
         const proof = await this.evaluateBackwardMoveTripleProof(task, {
           stage: "reclaim-pr-conflict",
           graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
