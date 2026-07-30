@@ -1,3 +1,5 @@
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+
 /*
 FNXC:WakeDeltaMultiAssign 2026-07-13-12:15:
 Permanent agents can own many tasks via assignedAgentId while agent.taskId is singular.
@@ -53,8 +55,23 @@ function titleSnippet(task: AssignedTaskLike, max = 72): string {
   return `${raw.slice(0, max - 1)}…`;
 }
 
-function isTerminalColumn(column: string): boolean {
-  return column === "done" || column === "archived";
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+"Finished either way" comes from core's role helper, not from a local copy of the two ids.
+
+`isTerminalColumnRole` already encodes exactly this union AND its legacy-id degraded mode, so passing
+`undefined` flags reproduces this function's previous behaviour byte for byte — there is no bespoke
+fallback to get wrong here, which is the point of routing through the helper rather than adding
+another optional set to this module.
+
+Keyed on the literals, the Wake Delta inventory counted a FINISHED card on a renamed board as open
+assigned work, so a coordinator was asked to unblock or reassign tasks that had already shipped.
+*/
+function isTerminalColumn(
+  column: string,
+  flagsByColumnId?: ReadonlyMap<string, ColumnRoleTraitFlags>,
+): boolean {
+  return isTerminalColumnRole(flagsByColumnId?.get(column), column);
 }
 
 /*
@@ -120,10 +137,12 @@ export function rankAssignedTasksForWakeDelta(
     cap?: number;
     /** Resolved lifecycle roles; omitted keeps the legacy builtin ids. */
     roles?: AssignedTaskRankRoles;
+    /** Resolved trait flags per column id; omitted keeps the legacy builtin ids. */
+    flagsByColumnId?: ReadonlyMap<string, ColumnRoleTraitFlags>;
   },
 ): RankAssignedTasksForWakeDeltaResult {
   const cap = options.cap ?? WAKE_DELTA_ASSIGNED_TASKS_CAP;
-  const open = tasks.filter((t) => !t.deletedAt && !isTerminalColumn(t.column));
+  const open = tasks.filter((t) => !t.deletedAt && !isTerminalColumn(t.column, options.flagsByColumnId));
 
   const titled: RankedAssignedTaskLine[] = [];
   let notActionableCount = 0;
