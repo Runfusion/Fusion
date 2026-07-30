@@ -8244,3 +8244,67 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:20 (PR #2688 review — greptile P2):
+LATE-ARRIVING FLAGS must reconcile the steps section.
+
+`taskColumnFlags` arrives after first paint. A `useState` initializer runs once, so on a custom board
+whose WIP lane is renamed it captured the pre-load fallback (`isWipColumn === false`) and never
+updated — the progress section stayed collapsed on a running card the operator never collapsed.
+
+Not a pre-existing bug: before the conversion `task.column === "in-progress"` was stable across
+renders, so reading it once was safe. A trait-derived value is not stable.
+
+REVERT CHECK: delete the reconciliation effect and the first case fails — the section stays closed
+after the flags resolve.
+*/
+describe("TaskCard reconciles late-arriving workflow flags", () => {
+  const wipTask = () => makeTask({
+    column: "building" as never,
+    steps: [{ id: "s1", title: "step one", status: "done" } as never],
+  });
+
+  /*
+  Asserted on the toggle's `aria-expanded`, not on step text. That attribute IS the section's state —
+  it is what the control reports to assistive tech — so it cannot pass because some unrelated text
+  happens to render, and it does not couple the test to the steps markup.
+  */
+  const expanded = () => screen.getByRole("button", { name: /steps/i }).getAttribute("aria-expanded");
+
+  it("opens the steps section when flags reveal the card is WIP after first paint", () => {
+    const { rerender } = render(<TaskCard task={wipTask()} onOpenDetail={noop} addToast={noop} />);
+    /*
+    Pre-load the whole progress section is absent, not merely collapsed: `showProgressSection` is
+    itself gated on `isWipColumn`, and `building` is not the legacy WIP id. That is the exact
+    sequence the review described — the section appears later, and the bug was that it appeared
+    COLLAPSED because the `useState` initializer had already captured the pre-load answer.
+    */
+    expect(screen.queryByRole("button", { name: /steps/i })).not.toBeInTheDocument();
+
+    rerender(
+      <TaskCard task={wipTask()} taskColumnFlags={{ countsTowardWip: true } as never} onOpenDetail={noop} addToast={noop} />,
+    );
+    // It arrives, and it arrives OPEN.
+    expect(expanded()).toBe("true");
+  });
+
+  it("does NOT reopen a section the operator collapsed", () => {
+    /*
+    The half that makes the reconciliation safe. Without the touched-ref, resolving workflow metadata
+    would undo a deliberate collapse — a UI fighting the user, which is worse than the bug it fixes.
+    */
+    const { rerender } = render(
+      <TaskCard task={wipTask()} taskColumnFlags={{ countsTowardWip: true } as never} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(expanded()).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /steps/i }));
+    expect(expanded()).toBe("false");
+
+    rerender(
+      <TaskCard task={wipTask()} taskColumnFlags={{ countsTowardWip: true } as never} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(expanded()).toBe("false");
+  });
+});

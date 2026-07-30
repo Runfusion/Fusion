@@ -1044,10 +1044,31 @@ function TaskCardComponent({
   const isReviewColumn = isReviewColumnRole(taskColumnFlags, task.column);
 
   const [isSaving, setIsSaving] = useState(false);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:15 (PR #2688 review — greptile P2):
+  A `useState` INITIALIZER runs once, so on a custom board this captured the pre-load fallback
+  answer — `isWipColumn === false` because `taskColumnFlags` had not arrived — and never reconciled.
+  The progress section then stayed collapsed on a running card even though the operator never
+  collapsed it.
+
+  This is a consequence of the conversion rather than a pre-existing bug: before, `task.column ===
+  "in-progress"` was stable across renders, so a once-only read was safe. A trait-derived value is
+  not stable — it flips when the workflows fetch resolves.
+
+  The effect below reconciles ONE-WAY and only while untouched: it opens the section when the card
+  turns out to be WIP after all, and `stepsTouchedRef` makes it stop as soon as the operator toggles
+  it, so we never fight a deliberate collapse. Auto-collapsing on the reverse transition is
+  deliberately not done — closing a section a user is reading is worse than leaving it open.
+  */
   const [showSteps, setShowSteps] = useState(
     isWipColumn ||
     (isIntakeColumn && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
+  const stepsTouchedRef = useRef(false);
+  useEffect(() => {
+    if (stepsTouchedRef.current) return;
+    if (isWipColumn) setShowSteps(true);
+  }, [isWipColumn]);
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1706,7 +1727,7 @@ function TaskCardComponent({
     }
 
     return true;
-  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt]);
+  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, isWipColumn, isReviewColumn]);
 
   const timeIndicatorNowMs = useLiveTimeTicker(wantsLiveTimeIndicator);
 
@@ -1790,7 +1811,7 @@ function TaskCardComponent({
       title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
       ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
     };
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs, isWipColumn]);
 
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));
@@ -1800,7 +1821,7 @@ function TaskCardComponent({
       ? formatCompactLifecycleDate(completionSource, locale, new Date(lifecycleNowMs))
       : null;
     return { created, completed };
-  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs]);
+  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs, isDoneColumn, isArchived]);
 
   const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 
@@ -1847,7 +1868,7 @@ function TaskCardComponent({
     const landedFilesCount = task.mergeDetails?.landedFiles?.length ?? "";
     const filesChanged = task.mergeDetails?.filesChanged ?? "";
     return `${landedFilesCount}:${filesChanged}`;
-  }, [task.column, task.mergeDetails?.landedFiles?.length, task.mergeDetails?.filesChanged]);
+  }, [task.column, task.mergeDetails?.landedFiles?.length, task.mergeDetails?.filesChanged, isDoneColumn]);
 
   // Viewport-gated diff stats fetching - only fetch when card is visible
   const { stats: diffStats, loading: diffLoading } = useTaskDiffStats(
@@ -2907,6 +2928,9 @@ function TaskCardComponent({
 
   const handleToggleSteps = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    // Marks the section operator-controlled, so the late-flags reconciliation above stops
+    // reopening it. Without this, resolving workflow metadata would undo a deliberate collapse.
+    stepsTouchedRef.current = true;
     setShowSteps((current) => !current);
   }, []);
 
