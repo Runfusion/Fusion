@@ -2780,11 +2780,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (!recoverFn) return 0;
 
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /* Guard AND source query: filtering the board by the WIP ROLE keeps this sweep alive on a
+         board that renamed its implementation lane. Converting only the predicate below would
+         leave the query naming a column such a board does not declare. */
+      const tasks = await this.filterByWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const stuckCompleted = tasks.filter((t) =>
-        t.column === "in-progress" &&
         !t.paused &&
         !executingIds.has(t.id) &&
         t.steps.length > 0 &&
@@ -3020,6 +3025,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   That is the defect #2560 repaired two hundred lines above this, and the reason the repair there is
   described as "read the board and filter by role" rather than as a predicate change.
   */
+  /** The WIP (implementation) lane for one task, resolved from its own workflow. Same fallback
+   *  discipline as `resolvePreWipColumns`: a recovery sweep whose IR cannot be read keeps its
+   *  current behaviour rather than dropping the card. */
+  private async resolveWipColumn(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
+    try {
+      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache));
+      return lifecycle?.wip ?? "in-progress";
+    } catch {
+      return "in-progress";
+    }
+  }
+
+  /** Sibling of `filterByPreWipRole` for the WIP lane — see `filterByReviewRole` for why the
+   *  SOURCE QUERY must be converted alongside the guard it feeds. */
+  private async filterByWipRole(
+    tasks: Task[],
+    cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<Task[]> {
+    const kept: Task[] = [];
+    for (const task of tasks) {
+      if (task.column === await this.resolveWipColumn(task.id, cache)) kept.push(task);
+    }
+    return kept;
+  }
+
   private async filterByReviewRole(
     tasks: Task[],
     cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,

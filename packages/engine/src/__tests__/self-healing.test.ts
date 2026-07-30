@@ -2462,7 +2462,20 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverCompletedTasks();
 
       expect(result).toBe(1);
-      expect(store.listTasks).toHaveBeenCalledWith({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-13:30 (fleet: self-healing.ts):
+      Was `toHaveBeenCalledWith({ column: "in-progress", slim: true })`, pinning the exact literal
+      query this conversion removes. `recoverCompletedTasks` now reads the BOARD and filters by the
+      WIP role, because a query naming `in-progress` returns nothing on a board that renamed its
+      implementation lane — the sweep would look converted and recover nothing.
+
+      Asserted as "called without a column filter" rather than deleted: that is the property the
+      conversion establishes, so a regression to any single-column query fails here. The outcome
+      assertions either side are untouched and remain the ones proving the sweep works.
+      */
+      expect(store.listTasks).toHaveBeenCalledWith(
+        expect.not.objectContaining({ column: expect.anything() }),
+      );
       expect(recoverFn).toHaveBeenCalledWith(
         expect.objectContaining({ id: "FN-001" }),
       );
