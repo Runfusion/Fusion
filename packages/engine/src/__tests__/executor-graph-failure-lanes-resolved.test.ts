@@ -1,0 +1,199 @@
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-08:10 (fleet: executor.ts graph-failure recovery family):
+
+THE INVARIANT: every lifecycle question the graph-failure recovery family asks is answered from the
+task's OWN workflow, and the halves of one decision answer it from ONE snapshot.
+
+Two of the conversions in this family fix behaviour rather than vocabulary, and both are the
+half-conversion shape — a gate that reads the wrong board is not merely inert, it ADMITS work the
+gate existed to refuse:
+
+  1. `isReentrantPausedAbortedInFlightNode` resolved lanes at the END, for its return value, while its
+     four `in-review` eligibility gates were literals. On a renamed board those gates all read false,
+     so a card in review skipped the global-pause recheck, the `autoMerge === false` refusal, the
+     shared-branch-member arbitration and the merge-confirmed refusal — and then the lane-resolved
+     final line answered "re-entrant". FN-7214's own comment says an auto-merge-off review row must
+     stay terminal, so this was the documented invariant failing silently on any renamed board.
+
+  2. `routeUnusableWorktreeGraphFailureToRecovery` asked "already finished?" and "in review?" as three
+     literals. On a renamed board it read not-finished AND not-in-review, so recovery proceeded with
+     the FN-5147 gate skipped: an automatic recovery moving a human-review-terminal card backward.
+
+WHY THE RENAMED BOARD IS THE FIXTURE. On the default lineage every one of these guards is correct by
+coincidence — the literals ARE the board. A test on the default board passes before and after the
+change and proves nothing, which is how this class of defect survived every previous suite.
+
+REVERT PROOF, measured: restore either literal and the matching case here fails (`autoMerge:false`
+review row is admitted as re-entrant; the finished card is admitted into worktree recovery).
+*/
+import { describe, expect, it, vi } from "vitest";
+import "./executor-test-helpers.js";
+import { TaskExecutor } from "../executor.js";
+import { createMockStore } from "./executor-test-helpers.js";
+import type { WorkflowIr } from "@fusion/core";
+
+/** A board whose lifecycle columns share NO id with the default lineage. */
+const RENAMED_IR = {
+  version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+    { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
+  ],
+} as unknown as WorkflowIr;
+
+function harness(ir: WorkflowIr | undefined, task: Record<string, unknown>, settingsOverride: Record<string, unknown> = {}) {
+  const store = createMockStore();
+  const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+  const widened = store as unknown as Record<string, unknown>;
+  widened.getTaskWorkflowSelection = () => (ir ? selection : undefined);
+  widened.getTaskWorkflowSelectionAsync = async () => (ir ? selection : undefined);
+  widened.getWorkflowDefinition = async () => (ir ? { ir } : undefined);
+  widened.getTask = async () => task;
+  widened.getSettings = async () => ({ maxConcurrent: 4, maxWorktrees: 4, pollIntervalMs: 1000, autoMerge: true, globalPause: false, enginePaused: false, ...settingsOverride });
+  store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+
+  const executor = new TaskExecutor(store as never, "/repo");
+  return { store, executor };
+}
+
+const pauseAbortResult = {
+  interruptedAbortKind: "engine-pause",
+  interruptedNodeId: "execute",
+  visitedNodeIds: ["execute"],
+  context: {},
+} as never;
+
+function reentrant(executor: TaskExecutor, live: unknown): Promise<boolean> {
+  return (executor as unknown as {
+    isReentrantPausedAbortedInFlightNode: (
+      live: unknown, result: unknown, provenance: string, pausedAborted: boolean, userCanceled: boolean,
+    ) => Promise<boolean>;
+  }).isReentrantPausedAbortedInFlightNode(live, pauseAbortResult, "engine-abort", true, false);
+}
+
+describe("FN-7214: an auto-merge-off review row stays terminal on a RENAMED board", () => {
+  it("refuses re-entry for a review-lane card with autoMerge:false", async () => {
+    /*
+    The measured pre-fix behaviour: the four `in-review` gates compared against the literal, `checking`
+    is not `in-review`, so every refusal was skipped — and the final lane-resolved line then matched
+    `resumeLanes.review` and returned TRUE. The card was re-entered behind a human review gate.
+    */
+    const live = { id: "FN-1", column: "checking", autoMerge: false, graphResumeRetryCount: 0 };
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await reentrant(executor, live)).toBe(false);
+  });
+
+  it("still admits a review-lane card whose auto-merge is ON, so the fix is not 'refuse review rows'", async () => {
+    // The paired positive. A gate that returns false unconditionally would pass the case above.
+    const live = { id: "FN-2", column: "checking", autoMerge: true, graphResumeRetryCount: 0 };
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await reentrant(executor, live)).toBe(true);
+  });
+
+  it("keeps the same answers on the DEFAULT board, where the literals happened to be right", async () => {
+    // The conversion must not change behaviour where the old spelling was already correct.
+    const offLive = { id: "FN-3", column: "in-review", autoMerge: false, graphResumeRetryCount: 0 };
+    const onLive = { id: "FN-4", column: "in-review", autoMerge: true, graphResumeRetryCount: 0 };
+
+    expect(await reentrant(harness(undefined, offLive).executor, offLive)).toBe(false);
+    expect(await reentrant(harness(undefined, onLive).executor, onLive)).toBe(true);
+  });
+
+  it("refuses a card in the board's COMPLETE column — and this one passes either way", async () => {
+    /*
+    HONEST LABEL, because I checked: reverting the terminal-pair literal here does NOT redden this case.
+    The method's final line already answers "is the card in a resume lane", and `shipped` is not one, so
+    the terminal guard is redundant *in this method*. Kept as the paired negative — it pins that a
+    finished card is refused however the refusal is reached — but it is not evidence for the conversion.
+    The terminal conversions that DO change behaviour are proven in the worktree-recovery block below.
+    */
+    const live = { id: "FN-5", column: "shipped", autoMerge: true, graphResumeRetryCount: 0 };
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await reentrant(executor, live)).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-08:40:
+ASSERT THE CALL, NOT THE RETURN VALUE. My first version of this block asserted
+`routeUnusableWorktreeGraphFailureToRecovery(...) === false` and passed with the literals restored —
+the pre-fix path ran the whole recovery and then returned false for an unrelated reason (the mock's
+outcome is not `requeue-todo`). A revert check that stays green is the signal I keep re-learning to
+respect: the assertion was not touching the behaviour it claimed to cover.
+
+Spying on `recoverMissingWorktreeSessionStartFailure` asks the question the guard actually decides —
+was recovery ATTEMPTED on this card? — and it discriminates in both directions.
+*/
+describe("FN-5147: unusable-worktree recovery does not run on a finished or human-review card (RENAMED board)", () => {
+  const SESSION_FAILURE = "Refusing to start coding agent in missing worktree: /gone";
+
+  function harnessWithSpy(live: Record<string, unknown>, settingsOverride: Record<string, unknown> = {}) {
+    const { executor, store } = harness(RENAMED_IR, live, settingsOverride);
+    const recover = vi.fn().mockResolvedValue("requeue-todo");
+    (executor as unknown as Record<string, unknown>).recoverMissingWorktreeSessionStartFailure = recover;
+    return { executor, store, recover };
+  }
+
+  function route(executor: TaskExecutor, live: Record<string, unknown>): Promise<boolean> {
+    return (executor as unknown as {
+      routeUnusableWorktreeGraphFailureToRecovery: (task: unknown, live: unknown, result: unknown) => Promise<boolean>;
+    }).routeUnusableWorktreeGraphFailureToRecovery({ id: live.id }, live, {
+      context: { "node:execute:error": SESSION_FAILURE },
+      visitedNodeIds: ["execute"],
+    });
+  }
+
+  it("does not attempt recovery for a card in the board's COMPLETE column", async () => {
+    // Pre-fix: `shipped` is neither `done` nor `archived`, so recovery ran on a finished card.
+    const live = { id: "FN-7", column: "shipped", worktree: "/gone" };
+    const { executor, recover } = harnessWithSpy(live);
+
+    expect(await route(executor, live)).toBe(false);
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it("does not attempt recovery for a card in the board's ARCHIVED column", async () => {
+    const live = { id: "FN-8", column: "filed", worktree: "/gone" };
+    const { executor, recover } = harnessWithSpy(live);
+
+    expect(await route(executor, live)).toBe(false);
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it("applies the FN-5147 auto-merge gate to the board's REVIEW lane", async () => {
+    /*
+    The half-conversion in its most consequential form: pre-fix the `in-review` literal did not match
+    `checking`, so the auto-merge-off refusal never ran and an automatic recovery moved a
+    human-review-terminal card backward. `allowsAutoMergeProcessing` is what must be consulted, and it
+    can only be reached once the review lane is resolved.
+    */
+    /*
+    THE GATE KEYS ON THE GLOBAL SETTING, not on `task.autoMerge`: `allowsAutoMergeProcessing` is
+    `(settings.autoMerge !== false || task.autoMerge === true) && no manual open PR`. My first fixture
+    set only `task.autoMerge: false` and the case failed — the recovery ran, correctly, because a
+    per-task false does not withdraw a card from automatic processing. Correcting the fixture rather
+    than the assertion: FN-5147 is about the OPERATOR turning auto-merge off for the project.
+    */
+    const live = { id: "FN-9", column: "checking", worktree: "/gone" };
+    const { executor, recover } = harnessWithSpy(live, { autoMerge: false });
+
+    expect(await route(executor, live)).toBe(false);
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it("STILL recovers a wip-lane card, so the fix is not 'never recover'", async () => {
+    // The paired positive: the guards above must not have turned the recovery path off wholesale.
+    const live = { id: "FN-10", column: "building", worktree: "/gone" };
+    const { executor, recover } = harnessWithSpy(live);
+
+    expect(await route(executor, live)).toBe(true);
+    expect(recover).toHaveBeenCalledTimes(1);
+  });
+});
