@@ -1128,7 +1128,15 @@ describe("ScheduleForm", () => {
                 type: "create-task",
                 name: "Create Task Schedule",
                 taskDescription: "Check npm dependencies for security vulnerabilities",
-                taskColumn: "triage",
+                /*
+                FNXC:Automations 2026-07-30-23:55 (greptile #2652 — this pinned the defect):
+                Was `taskColumn: "triage"`. U11 deletes that column from the default workflow, and an
+                EXPLICIT column bypasses the workflow entry-column resolution used for column-less
+                creates, so the old default seeded tasks into a column the board does not declare.
+                The corrected invariant is that the form sends NO column and each workflow resolves
+                its own intake.
+                */
+                taskColumn: undefined,
               }),
             ]),
           }),
