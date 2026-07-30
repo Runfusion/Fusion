@@ -7,6 +7,14 @@ const maxWorkers = computeMaxWorkers();
 export default defineConfig({
   resolve: {
     alias: {
+      /*
+      FNXC:VitestAliases 2026-07-30-13:10:
+      Must precede the broader `@fusion/core` alias: Vite string aliases match by PREFIX, so that key
+      rewrites this subpath to `index.ts/task-delete-attribution` and resolution fails. Reached here
+      transitively — this project aliases `@fusion/dashboard`, and `app/api/client.ts` imports the
+      browser-safe delete-attribution leaf.
+      */
+      "@fusion/core/task-delete-attribution": resolve(__dirname, "../core/src/task-delete-attribution.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "../core/src/__test-utils__/workspace.ts"),
       "@fusion/engine": resolve(__dirname, "./src/index.ts"),

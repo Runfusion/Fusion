@@ -45,6 +45,14 @@ export default defineConfig({
         find: /^@fusion-plugin-examples\/compound-engineering$/,
         replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
       },
+      /*
+      FNXC:VitestAliases 2026-07-30-13:10:
+      Must precede the broader `@fusion/core` alias: Vite string aliases match by PREFIX, so that key
+      rewrites this subpath to `index.ts/task-delete-attribution` and resolution fails. Reached here
+      transitively — this project aliases `@fusion/dashboard`, and `app/api/client.ts` imports the
+      browser-safe delete-attribution leaf.
+      */
+      { find: "@fusion/core/task-delete-attribution", replacement: fileURLToPath(new URL("../../packages/core/src/task-delete-attribution.ts", import.meta.url)) },
       { find: "@fusion/core", replacement: fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)) },
       {
         find: "@fusion/test-utils/pg-test-harness",
