@@ -70,7 +70,21 @@ export function GraphTaskNode({
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
   const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
-  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-03:40 (U11 #2515 audit):
+  Keyed on `column === "triage"`, this went permanently FALSE for default-lineage
+  cards once U11 merged Todo into Planning and dropped the `triage` id — an
+  awaiting-approval card sits in `todo` now. The node then stopped showing the
+  awaiting-approval state AND fell through to `isActive`, rendering a card that is
+  blocked on a human as if it were running.
+
+  The column condition is DELETED rather than converted, because it was always
+  redundant: `awaiting-approval` is written only by the plan-approval gate and the
+  replan-cap park, both of which act on a card in the planning lane, so the status
+  alone is the signal. Deleting it is also the only option that needs no resolution —
+  this is a synchronous React render, where an IR lookup is not available.
+  */
+  const isAwaitingApproval = task.status === "awaiting-approval";
   const isActive =
     !globalPaused &&
     !isFailed &&
