@@ -2671,7 +2671,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (retrySpecificationStatus && !retrySpecification) {
         if (!workflowDeclaresColumnModel(workflowIr)) {
           /*
-          FNXC:ManualRetry 2026-07-30-03:10 (greptile #2621):
+          FNXC:ManualRetry 2026-07-30-03:10 (greptile #2621) DELIBERATE-LITERAL:
+          This branch runs ONLY when the IR declares no columns and no nodes (a v1 workflow), so there
+          is no role to resolve — `resolveLifecycleColumns` returns nothing and the legacy
+          pre-implementation ids are the only pre-WIP signal in existence here. Converting it is not
+          possible, not merely unfinished; the sibling `else` two lines down is the trait path for every
+          IR that CAN answer.
+
+          Marked because this raised the census count 22 -> 23 when #2621 merged, leaving `--strict`
+          red on main. A rise that is genuinely correct belongs at the site, not in the baseline.
+
           Still PRE-WIP ONLY. Admitting every column here was a real regression: a v1 workflow with a
           planning/needs-replan status on an `in-progress` or `in-review` card would be admitted, and
           the generic branch then clears worktree/branch/retry counters and rebounds the card — losing
