@@ -50,7 +50,20 @@ describe("Linear import normalization", () => {
 
   it("builds triage task create input with durable metadata", () => {
     const input = buildLinearTaskCreateInput(issue);
-    expect(input.column).toBe("triage");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:35:
+    The import names NO column, so `createTask` resolves the workflow's intake lane.
+
+    This assertion used to demand `"triage"` — a column U11 DELETED — which is how the defect
+    survived: the test pinned the bug. An explicit `column` overrides `createTask`'s own intake
+    resolution, so every Linear import landed in a lane no workflow declares, with a 200 and a task
+    id and no card on the board.
+
+    Absence is asserted rather than a resolved id, because absence is precisely the property that
+    hands the decision to `createTask`. It is also what fails on revert.
+    */
+    expect(input.column).toBeUndefined();
+    expect(Object.keys(input)).not.toContain("column");
     expect(input.source?.sourceType).toBe("api");
     expect(input.source?.sourceMetadata).toEqual(expect.objectContaining({ provider: "linear", issueId: "lin-issue-1" }));
   });
