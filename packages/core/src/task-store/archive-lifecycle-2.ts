@@ -397,7 +397,7 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
     }
 
     const preArchiveColumn = task.preArchiveColumn ?? "todo";
-    const toColumn = store.resolveUnarchiveTargetColumn(preArchiveColumn);
+    const toColumn = await store.resolveUnarchiveTargetColumn(preArchiveColumn, id);
 
     /*
      * FNXC:SqliteFinalRemoval 2026-06-25:
