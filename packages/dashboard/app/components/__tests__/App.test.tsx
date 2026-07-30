@@ -639,6 +639,8 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 // Mock useViewportMode so tests can simulate mobile viewport without
 // depending on window.matchMedia in jsdom.
 const mockUseViewportMode = vi.fn(() => "desktop");
+/* `(max-height: 480px)` in production — independent of the width-driven mode. See the note below. */
+const mockIsShortViewport = vi.fn(() => false);
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
   isTabletTouchViewport: (mode?: string) => mode === "tablet",
@@ -651,10 +653,25 @@ vi.mock("../../hooks/useViewportMode", () => ({
   An INCOMPLETE module mock does not fail where the export is missing — it throws inside whichever
   component imports it, and the nearest ErrorBoundary swallows that into "This section encountered an
   error". NewTaskModal adopted `isShortViewport`, this mock did not, and the test failed on a MISSING
-  HEADING with a healthy-looking DOM. The real function reads the short-viewport media query, so
-  keying it to the mobile mode matches how the siblings above are stubbed.
+  HEADING with a healthy-looking DOM.
+
+  FNXC:TestViewportMock 2026-07-30-19:50 (#2846 review — greptile P2, "viewport predicates are conflated"):
+  SHORT-VIEWPORT IS ITS OWN CONTROL, because in production it is its own MEDIA QUERY.
+
+  The first version keyed it to `mode === "mobile"`, matching how the siblings above are stubbed. The
+  siblings are width predicates and the mode IS their answer; this one is not. `isShortViewport()`
+  reads `(max-height: 480px)` alone, while the mobile mode is the OR of width and height — so an
+  ordinary PORTRAIT PHONE (narrow, tall) is mobile and NOT short, and the mock claimed it was both.
+
+  What that silently mis-tested: `FloatingWindow` suspends geometry PERSISTENCE on a short viewport,
+  and `PlanningModeModal` picks its compact interview layout and hides the session list from it. Every
+  mobile test here took those branches, so the ordinary phone case — the most common real viewport —
+  was never actually exercised, and a regression in the non-short mobile path would have passed.
+
+  Defaults to FALSE rather than to the mode: a test that means "short" now has to say so, which is the
+  only spelling that can distinguish the two.
   */
-  isShortViewport: () => mockUseViewportMode() === "mobile",
+  isShortViewport: () => mockIsShortViewport(),
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
@@ -833,6 +850,9 @@ beforeEach(() => {
   });
   mockUseViewportMode.mockReset();
   mockUseViewportMode.mockReturnValue("desktop");
+  /* Reset alongside the mode: it is a SEPARATE predicate, so a suite that sets it must not leak. */
+  mockIsShortViewport.mockReset();
+  mockIsShortViewport.mockReturnValue(false);
   mockAgentStats.todoTaskCount = 0;
   mockAgentStats.idleNonEphemeralCount = 1;
 });
