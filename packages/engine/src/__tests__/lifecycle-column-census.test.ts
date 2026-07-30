@@ -475,3 +475,100 @@ describe("the baseline can always be re-recorded", () => {
     expect(cliSource().split("writeFileSync(").length - 1).toBe(1);
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-02-45 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
+
+A DROP NOW TIGHTENS THE BASELINE INSTEAD OF FAILING. Failing hard was defensible in isolation — a stale
+allowance is a hole, since those guards can return up to the old count while the check stays green. What it
+missed is that the drop is almost never the author's to fix: eleven files dropped during one merge wave, none
+of those PRs re-recorded, and none of their authors did anything wrong.
+
+Measured three times since CI began gating this: `columnRoles.ts` 0 -> 1, then `executor.ts` twice. A
+permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then nothing is
+guarded at all. The RISE check — the actual purpose — is untouched and still fails hard.
+
+Driven end to end through the real CLI with an isolated baseline (`FUSION_CENSUS_BASELINE`), because the exit
+code and the file rewrite ARE the contract and no source-level assertion can prove them. All four transitions
+were exercised by hand first:
+  drop, --strict            exit 0, "TIGHTENED", baseline rewritten 9 -> 6
+  drop, --strict --exact    exit 1, baseline untouched
+  rise, --strict            exit 1
+  clean                     exit 0
+*/
+describe("the ratchet follows the count down", () => {
+  const repoRoot = new URL("../../../../", import.meta.url).pathname;
+  const cliPath = `${repoRoot}scripts/lifecycle-column-census.mjs`;
+  const realBaseline = `${repoRoot}scripts/lib/lifecycle-column-census-baseline.json`;
+
+  async function run(mutate: (baseline: any) => string, args: string[]) {
+    const { mkdtemp, writeFile, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFile } = await import("node:child_process");
+
+    const baseline = JSON.parse(await readFile(realBaseline, "utf8"));
+    const file = mutate(baseline);
+    const dir = await mkdtemp(join(tmpdir(), "fusion-census-tighten-"));
+    const path = join(dir, "baseline.json");
+    await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`);
+
+    const result = await new Promise<{ code: number; out: string }>((resolve) => {
+      execFile(
+        process.execPath, [cliPath, ...args],
+        { cwd: repoRoot, env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: path }, maxBuffer: 32 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ code: (error as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` }),
+      );
+    });
+    const after = JSON.parse(await readFile(path, "utf8"));
+    return {
+      ...result,
+      file,
+      inflatedFrom: baseline.byFile[file] as number,
+      allowedAfter: after.byFile[file] as number,
+    };
+  }
+
+  /** Inflate one file's allowance, which is a DROP from the CLI's point of view. */
+  const inflate = (baseline: any): string => {
+    const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
+    baseline.byFile[file as string] = (count as number) + 3;
+    return file as string;
+  };
+
+  it("TIGHTENS on a drop and exits 0, so somebody else's merge cannot redden the gate", async () => {
+    const run1 = await run(inflate, ["--strict"]);
+
+    expect(run1.code).toBe(0);
+    expect(run1.out).toContain("TIGHTENED");
+    /*
+    The WRITE is the point, so assert it directly against the inflated value rather than against itself — my
+    first version compared `allowedAfter` to `4 + allowedAfter`, which is true for every number and proved
+    nothing. Recording that here because it is the same vacuous-assertion trap this file keeps documenting,
+    and I walked into it while writing the case that guards against it.
+    */
+    expect(run1.allowedAfter).toBe(run1.inflatedFrom - 3);
+    expect(run1.out).toContain("COMMIT IT");
+  }, 30_000);
+
+  it("still FAILS on a drop under --exact, and leaves the baseline alone", async () => {
+    // The pinned end state: when the count is meant to be fixed, any divergence is a real event.
+    const run1 = await run(inflate, ["--strict", "--exact"]);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("baseline is STALE");
+  }, 30_000);
+
+  it("still FAILS on a rise, which is the check's actual purpose", async () => {
+    const deflate = (baseline: any): string => {
+      const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
+      baseline.byFile[file as string] = (count as number) - 1;
+      return file as string;
+    };
+
+    const run1 = await run(deflate, ["--strict"]);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("column-guard count ROSE");
+  }, 30_000);
+});

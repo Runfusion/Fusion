@@ -125,11 +125,20 @@ the vocabulary its siblings use). That is why the four classes are reported sepa
 netted — a wrong classification stays visible instead of silently moving the bar.
 
 `--json` emits the machine-readable form. `--strict` compares per-file counts against
-`scripts/lib/lifecycle-column-census-baseline.json` and fails when any file's column-guard count
-**rises** — the ratchet shape. It is deliberately **not** wired into the merge gate: a
-thousand-site backlog cannot be a blocking check the day it is first measured, and a guard nobody
-can pass is a guard everyone disables. Owners tightening their own area should re-record the
-baseline in the same PR that lowers it.
+`scripts/lib/lifecycle-column-census-baseline.json`:
+
+- a **rise** fails hard — that is the ratchet's purpose, "no new guards";
+- a **drop** TIGHTENS the baseline automatically, reports what it lowered, and exits 0.
+
+<!-- FNXC:LifecycleColumnCensus 2026-08-01-03:05: the drop behaviour was a hard failure and is not any more,
+because the drop is almost never the failing author's to fix. Eleven files dropped in one merge wave, none of
+those PRs re-recorded, and none of their authors did anything wrong; measured three times since CI began
+gating this. A permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then
+nothing is guarded at all. -->
+The tightened file must be **committed** — in CI the write is discarded with the runner, which is why the gate
+goes green rather than silently passing a stale allowance. `--strict --exact` restores hard failure on a drop,
+for the end state where the count is pinned and any divergence is a real event. `--strict --update-baseline`
+re-records unconditionally and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
 
 The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
 each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
