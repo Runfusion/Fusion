@@ -65,7 +65,7 @@ function* walk(dir) {
 }
 
 const declared = new Map();
-const maxArgs = new Map();
+const callSites = new Map();
 
 /*
 CALL SITES ARE COLLECTED FROM EVERY FILE, DECLARATIONS ONLY FROM CANDIDATES.
@@ -83,6 +83,30 @@ for (const file of walk(PACKAGES)) {
   const source = readFileSync(file, "utf8");
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declares = PREFILTER.test(source);
+
+  /*
+  LOCAL SHADOWS ARE NOT CALLS TO THE SEAM. Matching call sites by NAME conflates same-named functions
+  in different modules, and this repo has at least two such pairs: `sortTasksForDisplayColumn`
+  (core/task-priority + dashboard/taskSorting) and `resolveEffectiveExecutor`
+  (effective-model-resolution + a 2-arg private one inside ModelSelectorTab). Both produced false
+  reports that cost real investigation, and one nearly produced a wrong "fix" that tsc rejected.
+
+  It can also mask a REAL omission in the other direction: a locally-defined same-named function
+  called with more arguments raises the global max and makes an under-supplied seam look supplied.
+
+  So a file that declares its own function with that name has its calls attributed to the local one.
+  */
+  const locallyDeclared = new Set();
+  const collectLocal = (node) => {
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) locallyDeclared.add(node.name.text);
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+      locallyDeclared.add(node.name.text);
+    }
+    ts.forEachChild(node, collectLocal);
+  };
+  collectLocal(sf);
+
   const visit = (node) => {
     if (declares && ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
       /* `exported` matches this file's stated contract; a module-private helper is not a seam
@@ -96,17 +120,37 @@ for (const file of walk(PACKAGES)) {
     if (ts.isCallExpression(node)) {
       const callee = ts.isIdentifier(node.expression) ? node.expression.text
         : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : null;
-      if (callee) maxArgs.set(callee, Math.max(maxArgs.get(callee) ?? 0, node.arguments.length));
+      /*
+      Record the call WITH the file it came from; whether a local shadow disqualifies it cannot be
+      decided here, because the seam's declaring file is not known until every file is scanned.
+      Deciding it inline used a file-level "mentions a flag name" flag, which any COMMENT sets — so a
+      shadow in a file that merely discussed flags still counted, and the probe test caught that.
+      */
+      if (callee) {
+        if (!callSites.has(callee)) callSites.set(callee, []);
+        callSites.get(callee).push({ file: relative(REPO, file), args: node.arguments.length, shadowed: locallyDeclared.has(callee) });
+      }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
 }
 
+/*
+A call in a file that declares its OWN function of the same name belongs to that local one, unless the
+file is where the seam itself is declared. Resolved here, once the declaring file for each seam is
+known.
+*/
+const bestArgsFor = (fn, declaringFile) => {
+  const sites = callSites.get(fn) ?? [];
+  const relevant = sites.filter((site) => !site.shadowed || site.file === declaringFile);
+  return relevant.reduce((best, site) => Math.max(best, site.args), 0);
+};
+
 const offenders = [];
 const stale = [];
 for (const [fn, { file, arity }] of declared) {
-  const best = maxArgs.get(fn) ?? 0;
+  const best = bestArgsFor(fn, file);
   const unsupplied = best < arity;
   if (ALLOWED.has(fn)) {
     /*
