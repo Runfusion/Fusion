@@ -303,7 +303,19 @@ export function summarize(findings) {
     }
     totals[finding.kind] += 1;
     if (finding.kind === "deliberate") {
-      deliberateByFile.set(finding.file, (deliberateByFile.get(finding.file) ?? 0) + 1);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2661 review — greptile P1, same class again):
+      Keyed by FILE **and COLUMN ID**, not a per-file integer. A per-file aggregate is offset within a
+      single file: remove one reviewed `todo` exemption, add a `in-review` one beside it, and the
+      number never moves — so a fresh guard hides inside an existing marker.
+
+      That is the third time this instrument has been defeated by an aggregate (repo total -> per file
+      -> per file per column). Each step narrows what can offset silently. The residual is a same-file
+      SAME-COLUMN swap, and that one is deliberate: two `todo` exemptions in one file are
+      interchangeable by definition, so there is nothing a reviewer could act on.
+      */
+      const key = `${finding.file}\u0000${finding.columnId}`;
+      deliberateByFile.set(key, (deliberateByFile.get(key) ?? 0) + 1);
     }
     if (finding.kind !== "column") continue;
     byColumnId[finding.columnId] = (byColumnId[finding.columnId] ?? 0) + 1;

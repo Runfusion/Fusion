@@ -179,17 +179,32 @@ which is NOT the same as "every marked file had zero" — comparing against an a
 every existing marker as a fresh rise and demand people convert literals that were already reviewed.
 Seed it on the next `--update-baseline` instead, and start comparing once it is present.
 */
-const deliberateTracked = baseline.deliberateByFile !== undefined;
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-10:05:
+The key SHAPE changed (file -> file\u0000columnId), and a shape change is the same migration hazard
+as a missing field: comparing new keys against old ones reports every existing marker as a fresh
+rise and demands people convert already-reviewed literals. I hit exactly that on the first run here
+(`TaskCard (DELIBERATE-LITERAL: triage): 0 -> 2`), and hit the same wall one shape earlier in #2661.
+
+Detect by the delimiter rather than by a version field: old keys have none. Re-seeds on the next
+`--update-baseline`, then compares normally.
+*/
+const deliberateKeysAreCurrentShape = Object.keys(baseline.deliberateByFile ?? {}).every((k) => k.includes("\u0000"));
+const deliberateTracked = baseline.deliberateByFile !== undefined && deliberateKeysAreCurrentShape;
 const baselineDeliberateByFile = new Map(Object.entries(baseline.deliberateByFile ?? {}));
 const currentDeliberateByFile = new Map(summary.deliberateByFile ?? []);
 for (const [file, count] of deliberateTracked ? currentDeliberateByFile : []) {
   const allowed = baselineDeliberateByFile.get(file) ?? 0;
-  if (count > allowed) regressions.push({ file: `${file} (DELIBERATE-LITERAL)`, count, allowed });
-  else if (count < allowed) stale.push({ file: `${file} (DELIBERATE-LITERAL)`, count, allowed });
+  // Keys are `file\u0000columnId`; render them readably in the report.
+  const [f, columnId] = file.split("\u0000");
+  const label = `${f} (DELIBERATE-LITERAL: ${columnId})`;
+  if (count > allowed) regressions.push({ file: label, count, allowed });
+  else if (count < allowed) stale.push({ file: label, count, allowed });
 }
 for (const [file, allowed] of deliberateTracked ? baselineDeliberateByFile : []) {
   if (!currentDeliberateByFile.has(file) && allowed > 0) {
-    stale.push({ file: `${file} (DELIBERATE-LITERAL)`, count: 0, allowed });
+    const [f, columnId] = file.split("\u0000");
+    stale.push({ file: `${f} (DELIBERATE-LITERAL: ${columnId})`, count: 0, allowed });
   }
 }
 
