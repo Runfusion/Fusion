@@ -117,6 +117,21 @@ export function useTaskDiffStats(
   const pollIntervalMs = options.pollIntervalMs;
   const mergeSignature = options.mergeSignature;
   const columnFlags = options.columnFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:15 (PR #2731 review — coderabbit, and I dismissed this
+  twice before checking):
+  DERIVED OUTSIDE THE EFFECT SO THEY CAN BE DEPENDENCIES. `columnFlags` arrives from a board-workflows
+  fetch, so it is `undefined` on first paint and populated later. The effect read it but the dependency
+  array did not list it, so the poll kept the PRE-RESOLUTION answer: on a renamed board a card in a
+  custom complete/wip/review lane never started fetching diff stats at all.
+
+  The booleans rather than the object: `columnFlags` is a prop object whose identity a parent may change
+  every render, which would restart the poll continuously. These are primitives, so they change exactly
+  when the answer changes — which is the dependency the effect actually has.
+  */
+  const shouldFetchDoneTask = isCompleteColumnRole(columnFlags, column);
+  const shouldFetchActiveTask = isWipColumnRole(columnFlags, column)
+    || isReviewColumnRole(columnFlags, column);
   const [stats, setStats] = useState<DiffStats | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -127,10 +142,6 @@ export function useTaskDiffStats(
       setLoading(false);
       return;
     }
-
-    const shouldFetchDoneTask = isCompleteColumnRole(columnFlags, column);
-    const shouldFetchActiveTask = isWipColumnRole(columnFlags, column)
-      || isReviewColumnRole(columnFlags, column);
 
     if (!taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
       setStats(null);
@@ -210,7 +221,7 @@ export function useTaskDiffStats(
         clearInterval(timer);
       }
     };
-  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, mergeSignature, pollIntervalMs]);
+  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, mergeSignature, pollIntervalMs, shouldFetchDoneTask, shouldFetchActiveTask]);
 
   return { stats, loading };
 }
