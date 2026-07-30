@@ -317,8 +317,35 @@ async function aggregateTeamAnalyticsAsync(
   query: TeamAnalyticsQuery,
   laneStore?: ProjectLaneVocabularyStore,
 ): Promise<TeamAnalytics> {
-  /* Bound as arrays, never interpolated: these ids come from workflow definitions, which are
-     operator-authored data. `= ANY($n)` keeps them parameters rather than SQL text. */
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-30-20:10 (#2864 review — greptile P1, "project-wide lane
+  union misclassifies tasks"): ACCEPTED IMPRECISION, RECORDED RATHER THAN LEFT SILENT.
+
+  These are PROJECT-scoped unions — every column any workflow declares for the role. On a project
+  where two workflows reuse one column id with DIFFERENT traits (`done` as complete in one, an
+  ordinary lane in another), a task from the second is counted by the first's semantics and the
+  totals inflate.
+
+  WHY THE UNION STAYS. The rule this program applies is that a union is safe where over-inclusion is
+  invisible — a query, a candidate set something else narrows — and unsafe where it drives an ACTION.
+  Nothing is routed or notified here, so no card is mishandled; the cost is a number an operator
+  reads. That is real, and it is still the better trade: per-task resolution means one workflow read
+  per task and moving the aggregation out of PostgreSQL into JS, turning an indexed
+  `COUNT ... WHERE column IN (...)` into an N-read loop on an analytics endpoint. The board-load path
+  reverted exactly that change once for exactly that reason.
+
+  SCOPE OF THE DEFECT, because "analytics are wrong on renamed boards" would be the wrong reading: the
+  union is EXACT for any project running a single workflow, and degrades only where two workflows
+  disagree about the same column id.
+
+  THE REAL FIX is making a task's resolved lane roles QUERYABLE — a column or joinable projection
+  maintained beside the task row — so the aggregate filters on the role instead of an id set assembled
+  in application code. That closes this class everywhere at once and is a schema change with an owner,
+  not a batch conversion.
+
+  Bound as arrays, never interpolated: these ids come from workflow definitions, which are
+  operator-authored data. `= ANY($n)` keeps them parameters rather than SQL text.
+  */
   const completeLanes = laneStore
     ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
     : ["done"];
