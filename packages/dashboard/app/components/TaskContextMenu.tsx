@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
-import { isIntakeColumnRole } from "../utils/columnRoles";
+import { isIntakeColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 // `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
 // the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
 // the note at `moveTransitions`); every workflow-resolved path now reads the payload's
@@ -462,6 +462,9 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   resurrecting intentionally archived work into a planner lane. Check both the semantic
   workflow trait and legacy id so every menu host omits this dead affordance.
   */
+  /* DELIBERATE-LITERAL — belt-and-braces, and the comment above says so: this checks BOTH the
+     resolved trait and the legacy id on purpose, so a host that supplies no flags still omits the
+     dead affordance. Dropping the literal would re-open it for exactly those hosts. */
   if (task.column !== "archived" && currentColumnFlags?.archived !== true) {
     actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
   }
@@ -479,7 +482,14 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   it never renders as an empty/dead affordance for tasks blocked by other
   reasons or already recovered.
   */
-  if (hasBypassReviewHandler && task.column === "in-review" && hasFailedPreMergeReviewStep(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-23:50 (batch-dashboard-app):
+  REVIEW role, resolved from `currentColumnFlags` — which this function already receives and already
+  uses for the archived check ~15 lines up. Keyed on the literal, the "Bypass failed review" action
+  never appeared on a renamed board, so an operator with a genuinely failed pre-merge review step had
+  no way to clear it from the menu and the card stayed merge-blocked with no affordance.
+  */
+  if (hasBypassReviewHandler && isReviewColumnRole(currentColumnFlags, task.column) && hasFailedPreMergeReviewStep(task)) {
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),

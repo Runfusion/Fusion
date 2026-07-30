@@ -158,6 +158,22 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   );
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-08-02-00:30 (batch-dashboard-app):
+Does this column offer "Archive all done"? The COMPLETE trait, matching the sibling spreads that
+already resolve `intake` and `mergeBlocker`/`humanReview` from the same `columnDef.flags`. The id
+check was the odd one out, so on a renamed board the action vanished from the completed column while
+its neighbouring affordances rendered correctly — an inconsistency inside one props spread, which is
+how it survived review.
+
+`archived` is excluded: that lane is also complete-ish and must not offer to archive its own
+contents. Hoisted to a named predicate because both render sites need it and a JSX attribute
+position cannot carry the explanation.
+*/
+function columnDefOffersArchiveAllDone(columnDef: { flags: { complete?: boolean; archived?: boolean } }): boolean {
+  return columnDef.flags.complete === true && columnDef.flags.archived !== true;
+}
+
 export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
@@ -992,7 +1008,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                   {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask: handleAggregateWorkflowNewTask, onSubtaskBreakdown } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-                  {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
+                  {...(columnDefOffersArchiveAllDone(columnDef) ? { onArchiveAllDone } : {})}
                   {...(isDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
                   {...(columnDef.flags.archived ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived: onLoadMoreArchivedTasks } : {})}
                 />
@@ -1077,7 +1093,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                 {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask: handleSelectedWorkflowNewTask, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-                {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
+                {...(columnDefOffersArchiveAllDone(columnDef) ? { onArchiveAllDone } : {})}
                 {...(isWorkflowDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
               />
             );

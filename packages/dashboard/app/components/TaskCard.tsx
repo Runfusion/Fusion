@@ -1025,6 +1025,8 @@ function TaskCardComponent({
   const isIntakeColumn = taskColumnFlags
     ? taskColumnFlags.intake === true
     : task.column === "triage";
+  /* DELIBERATE-LITERAL — the no-metadata fallback for the pre-load window, matching `isIntakeColumn`
+     directly above. Deleting it makes the card answer "no role" during first paint. */
   const isHoldColumn = taskColumnFlags
     ? taskColumnFlags.hold === true
     : task.column === "todo";
@@ -2742,6 +2744,8 @@ function TaskCardComponent({
           if (moveTransitions.some((transition) => transition.column === column)) continue;
           moveTransitions.push({
             column,
+            /* DELIBERATE-LITERAL — `column` is the loop variable over the literal
+               `["done", "triage"] as const` two lines up, not a board column being classified. */
             label: column === "done"
               ? t("tasks.doneNoMerge", "Done (no merge)")
               : t("taskDetail.move.moveTo", "Move to {{column}}", { column: taskActionColumnLabel(column) }),
