@@ -58,6 +58,8 @@ jobs:
         run: pnpm check:lifecycle-columns
       - name: SQL-column ratchet
         run: pnpm check:sql-column-literals
+      - name: Inert lane/flag seams
+        run: pnpm check:inert-flag-seams
 
   typecheck:
     name: Typecheck
