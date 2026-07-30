@@ -70,8 +70,19 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
     FNXC:MissingWorktreeRetry 2026-07-10-18:45:
     Dashboard route tests mock @fusion/engine wholesale; the retry route must still exercise the upstream #1992 classifier so merge-active unusable-worktree failures are admitted while unrelated merging rows remain rejected.
     */
-    isInReviewMissingWorktreeSessionStartFailure: vi.fn((task: { column?: string; error?: unknown }) => (
-      task.column === "in-review"
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-07:00 DELIBERATE-LITERAL: a test double mirroring production's own fallback.
+
+    Production's `isInReviewMissingWorktreeSessionStartFailure` is `(isReviewColumn ?? task.column ===
+    "in-review") && ...` — the literal IS its documented degraded path for a caller that has not
+    resolved the lane. A double must reproduce that, not improve on it.
+
+    FIDELITY FIX while marking it: this ignored the second parameter entirely, so a route test that
+    passed a resolved `isReviewColumn` got the literal answer anyway and would have reported a pass
+    for a renamed board the real classifier handles. Now threaded exactly as production does.
+    */
+    isInReviewMissingWorktreeSessionStartFailure: vi.fn((task: { column?: string; error?: unknown }, isReviewColumn?: boolean) => (
+      (isReviewColumn ?? task.column === "in-review")
       && typeof task.error === "string"
       && (task.error.includes("Refusing to start coding agent in missing worktree:")
         || task.error.includes("Refusing to start coding agent in incomplete worktree:")

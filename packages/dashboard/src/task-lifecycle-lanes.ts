@@ -126,3 +126,27 @@ export async function wipColumnsForTask(
     return new Set(["in-progress"]);
   }
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (batch-core):
+PRE-WIP lanes — intake and hold together, the columns a card sits in before work starts. Kept as one
+helper because every caller so far asks "is this queued", not "is it specifically intake": splitting
+them would push that distinction onto callers that do not have it.
+*/
+export async function preWipColumnsForTask(
+  store: Pick<TaskStore, "getTask">,
+  taskId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<Set<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(
+      store as unknown as Parameters<typeof resolveWorkflowIrForTask>[0],
+      taskId,
+      irCache,
+    );
+    const preWip = [...columnsWithFlag(ir, "intake"), ...columnsWithFlag(ir, "hold")];
+    return new Set(preWip.length > 0 ? preWip : ["todo"]);
+  } catch {
+    return new Set(["todo"]);
+  }
+}
