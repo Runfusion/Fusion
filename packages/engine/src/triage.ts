@@ -119,7 +119,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, LEGACY_PLANNER_LANE } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -1462,7 +1462,7 @@ export class TriageProcessor {
     const releasedToTodo = holdColumn !== undefined
       && freshTask.column === holdColumn
       && !planningStageStatus;
-    if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
+    if (hasAdvancedPastPlanning(freshTask, this.plannerLaneFor(freshTask.id)) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
         `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}, status=${freshTask.status ?? "null"}) — preserving released state (${context})`,
@@ -4182,7 +4182,9 @@ export class TriageProcessor {
       `triage`?" for a workflow whose intake is named something else, and answered
       "it has advanced" for a card that had not moved at all.
       */
-      const plannerLane = lifecycleColumns?.intake ? { intake: lifecycleColumns.intake } : undefined;
+      const plannerLane = lifecycleColumns?.intake
+        ? { intake: lifecycleColumns.intake }
+        : LEGACY_PLANNER_LANE;
       const release = await moveTaskIf.call(
         this.store,
         task.id,

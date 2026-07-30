@@ -102,6 +102,23 @@ export interface PlannerLaneColumns {
  * regress a workflow that never renamed anything. It is deliberately NOT a second
  * source of truth: every caller that can resolve roles should pass them.
  */
+/**
+ * The pre-U11 planner lane, for callers that genuinely cannot resolve the task's
+ * workflow.
+ *
+ * FNXC:PlannerLanePredicate 2026-07-29-22:10 (PR #2551 review — greptile P1):
+ * `plannerLane` is REQUIRED rather than defaulted, and this constant is the explicit
+ * opt-out. greptile's finding was that a DEFAULT of `triage` silently misclassifies
+ * a card in any renamed intake column as "advanced past planning" — which refuses
+ * planning writes, deletion, discovery and recovery for it — and that a caller can
+ * fall into that by simply not passing the argument.
+ *
+ * Defaults make forgetting invisible. Requiring the parameter turns every omission
+ * into a compile error, so a caller that cannot resolve the lane has to name this
+ * constant and, in naming it, accept the legacy answer on the record. The wrong
+ * behavior is unchanged for those sites; what changes is that it can no longer
+ * happen by accident.
+ */
 export const LEGACY_PLANNER_LANE: PlannerLaneColumns = { intake: "triage" };
 
 export function hasAdvancedPastPlanning(
@@ -110,7 +127,7 @@ export function hasAdvancedPastPlanning(
     // the execution-stamp branch). Optional so existing narrowed callers still compile; absent, the
     // branch keeps its prior "stamps mean advanced" answer.
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
-  plannerLane: PlannerLaneColumns = LEGACY_PLANNER_LANE,
+  plannerLane: PlannerLaneColumns,
 ): boolean {
   if (
     task.column === "in-progress"
@@ -220,7 +237,7 @@ the "not advanced" answer, and TypeScript could not flag it.
 export function isTaskStillInPlanningStage(
   task: Pick<Task, "column" | "worktree" | "steps" | "status">
     & Partial<Pick<Task, "firstExecutionAt" | "executionStartedAt" | "columnMovedAt">>,
-  plannerLane: PlannerLaneColumns = LEGACY_PLANNER_LANE,
+  plannerLane: PlannerLaneColumns,
 ): boolean {
   return !hasAdvancedPastPlanning(task, plannerLane);
 }

@@ -33,7 +33,7 @@ Flagging rather than assuming: if U5 has this in flight, this is the conflict.
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolveReplanTargetColumn } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, LEGACY_PLANNER_LANE, resolveReplanTargetColumn } from "../replan-target.js";
 
 const WF = "custom:replan-vocab";
 
@@ -196,7 +196,7 @@ describe("the planner-lane predicate resolves the intake column", () => {
   } as unknown as Parameters<typeof hasAdvancedPastPlanning>[0]);
 
   it("reports NOT advanced for a card in the default intake column (no-regression half)", () => {
-    expect(hasAdvancedPastPlanning(card("triage"))).toBe(false);
+    expect(hasAdvancedPastPlanning(card("triage"), LEGACY_PLANNER_LANE)).toBe(false);
   });
 
   it("reports NOT advanced for a card in a RENAMED intake column, when told the lane", () => {
@@ -211,15 +211,29 @@ describe("the planner-lane predicate resolves the intake column", () => {
     expect(hasAdvancedPastPlanning(card("in-progress"), { intake: "backlog" })).toBe(true);
   });
 
-  it("keeps the legacy answer when no lane is supplied (strictly additive)", () => {
-    // A caller with no resolved roles gets byte-identical behavior: `triage` is the
-    // lane, and a renamed intake column reads as advanced exactly as it did before.
-    expect(hasAdvancedPastPlanning(card("backlog"))).toBe(true);
-    expect(hasAdvancedPastPlanning(card("triage"))).toBe(false);
+  it("keeps the legacy answer for a caller that explicitly opts out", () => {
+    /*
+    FNXC:PlannerLanePredicate 2026-07-29-22:10 (PR #2551 review — greptile P1):
+    The lane is REQUIRED, not defaulted. greptile's finding was that a default of
+    `triage` silently misclassifies a card in a renamed intake column as advanced —
+    refusing planning writes, deletion, discovery and recovery — and that a caller
+    can fall into it by simply not passing the argument. Defaults make forgetting
+    invisible; requiring the parameter turns every omission into a COMPILE ERROR.
+
+    Making it required surfaced exactly five call sites that had been taking the
+    wrong default silently. Four are now wired to a resolved lane; the three
+    self-healing sweeps name this constant explicitly, so the legacy answer is on
+    the record at the call site rather than implied by a signature.
+
+    The behavior of an opted-out caller is unchanged — including the WRONG answer for
+    a renamed column, asserted here so nobody mistakes the constant for a fix.
+    */
+    expect(hasAdvancedPastPlanning(card("backlog"), LEGACY_PLANNER_LANE)).toBe(true);
+    expect(hasAdvancedPastPlanning(card("triage"), LEGACY_PLANNER_LANE)).toBe(false);
   });
 
   it("isTaskStillInPlanningStage is the inverse, and threads the lane through", () => {
     expect(isTaskStillInPlanningStage(card("backlog"), { intake: "backlog" })).toBe(true);
-    expect(isTaskStillInPlanningStage(card("backlog"))).toBe(false);
+    expect(isTaskStillInPlanningStage(card("backlog"), LEGACY_PLANNER_LANE)).toBe(false);
   });
 });

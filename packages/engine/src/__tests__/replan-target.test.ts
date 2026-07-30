@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
 import { resolveWorkflowIrForTask } from "@fusion/core";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, LEGACY_PLANNER_LANE, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:55:
@@ -248,8 +248,8 @@ const planningGuardCases: PlanningGuardCase[] = [
 
 describe("planning-stage guard", () => {
   it.each(planningGuardCases)("recognizes $label", ({ task, stillPlanning }) => {
-    expect(isTaskStillInPlanningStage(task)).toBe(stillPlanning);
-    expect(hasAdvancedPastPlanning(task)).toBe(!stillPlanning);
+    expect(isTaskStillInPlanningStage(task, LEGACY_PLANNER_LANE)).toBe(stillPlanning);
+    expect(hasAdvancedPastPlanning(task, LEGACY_PLANNER_LANE)).toBe(!stillPlanning);
   });
 });
 

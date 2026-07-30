@@ -62,7 +62,19 @@ import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, ty
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./auto-merge-finalization.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
-import { isTaskStillInPlanningStage } from "./replan-target.js";
+/*
+FNXC:PlannerLanePredicate 2026-07-29-22:10 (PR #2551 review — greptile P1):
+`LEGACY_PLANNER_LANE` is named EXPLICITLY here rather than taken as a default. These
+three sweeps have no resolved workflow in scope, so they keep the pre-U11 answer —
+which is WRONG for a renamed intake column, exactly as greptile described: such a
+card reads as "advanced past planning" and the sweep skips it.
+
+Recording it at the call site instead of hiding it behind a default is the point.
+Wiring these three properly means threading lifecycle resolution through the
+self-healing sweeps, which is that file owner's slice under the drift-review split —
+not something to smuggle in from the planning lane.
+*/
+import { isTaskStillInPlanningStage, LEGACY_PLANNER_LANE } from "./replan-target.js";
 import { getPromptPath } from "./spec-staleness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation } from "./plan-review-continuation.js";
 /*
@@ -12123,7 +12135,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Narrow test/legacy adapters can return an unrelated fixture row; only use a
         // re-read when it identifies the requested candidate.
         const recoveryTask = live?.id === task.id ? live : task;
-        if (!isTaskStillInPlanningStage(recoveryTask)) continue;
+        if (!isTaskStillInPlanningStage(recoveryTask, LEGACY_PLANNER_LANE)) continue;
         log.log(`Recovering specified triage task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(recoveryTask);
         if (success) recovered++;
@@ -12445,13 +12457,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           let applied = false;
           if (typeof this.store.updateTaskAtomic === "function") {
             await this.store.updateTaskAtomic(task.id, (live) => {
-              if (!isTaskStillInPlanningStage(live)) return null;
+              if (!isTaskStillInPlanningStage(live, LEGACY_PLANNER_LANE)) return null;
               applied = true;
               return { status: null };
             });
           } else {
             const live = await this.store.getTask(task.id);
-            if (live && isTaskStillInPlanningStage(live)) {
+            if (live && isTaskStillInPlanningStage(live, LEGACY_PLANNER_LANE)) {
               await this.store.updateTask(task.id, { status: null });
               applied = true;
             }
