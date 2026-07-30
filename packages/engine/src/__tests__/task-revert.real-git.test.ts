@@ -1,5 +1,5 @@
 import { execSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -259,7 +259,13 @@ describeIfGit("task-revert real-git scenarios", { timeout: 30_000 }, () => {
       revertableColumns: new Set(["shipped", "attic"]),
     });
 
-    expect(result).not.toMatchObject({ needsHuman: true, reason: expect.stringContaining("revertable") });
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (#2766 review — a negative assertion proved too little):
+    `not.toMatchObject({ needsHuman })` passes for ANY other outcome, including a failed revert. It proved
+    the guard did not refuse, not that the revert happened. Asserting the clean-revert result proves both.
+    */
+    expect(result).toMatchObject({ mode: "git", clean: true });
+    expect(readFileSync(join(repo, "foo.ts"), "utf8")).toBe("line1\n");
   });
 
   it("resolved columns still REFUSE a live lane, so the gate is not simply widened", async () => {

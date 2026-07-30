@@ -133,6 +133,50 @@ describeIfGit("task-revert workspace real-git scenarios", { timeout: 30_000 }, (
     expect(attribution["repo-b"]).toEqual({ commits: [shaBUnrecorded], source: "lineage" });
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (#2766 review — the SECOND changed surface):
+  `revertWorkspaceTask` has the same terminal guard as `performTaskRevert` and I changed both, but the
+  regression case covered only the single-repo path. AGENTS' Surface Enumeration rule is explicit that a
+  fix must assert the invariant across every surface, not the one reproduction — and the two entry points
+  are exactly "different branches of the same failure" it names. Covering one would have let the workspace
+  path regress to refusing renamed terminal lanes while the suite stayed green.
+
+  REVERT CHECK, measured: making this service ignore `revertableColumns` fails here with the workspace task
+  refused as non-revertable.
+  */
+  it("a renamed terminal lane is revertable on the WORKSPACE path too", async () => {
+    const { workspaceRoot, repoA, repoB } = workspaceFixture();
+    const shaA = landTaskCommit(repoA, "a.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-a");
+    const shaB = landTaskCommit(repoB, "b.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-b");
+
+    const task = makeWorkspaceTask(shaA, shaB, { column: "shipped" as never });
+    const result = await revertWorkspaceTask({
+      task,
+      workspaceRootDir: workspaceRoot,
+      settings: {},
+      revertableColumns: new Set(["shipped", "attic"]),
+    });
+
+    expect(result.mode).toBe("git");
+    expect(result.clean).toBe(true);
+  });
+
+  it("the workspace guard still REFUSES a live lane under a resolved set", async () => {
+    const { workspaceRoot, repoA, repoB } = workspaceFixture();
+    const shaA = landTaskCommit(repoA, "a.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-a");
+    const shaB = landTaskCommit(repoB, "b.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-b");
+
+    const task = makeWorkspaceTask(shaA, shaB, { column: "building" as never });
+    const result = await revertWorkspaceTask({
+      task,
+      workspaceRootDir: workspaceRoot,
+      settings: {},
+      revertableColumns: new Set(["shipped", "attic"]),
+    });
+
+    expect(result).toMatchObject({ mode: "git", needsHuman: true });
+  });
+
   it("clean all-or-nothing: reverts both sub-repos with a Fusion-Task-Id-trailered commit on each (Symptom Verification)", async () => {
     const { workspaceRoot, repoA, repoB } = workspaceFixture();
     const shaA = landTaskCommit(repoA, "a.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-a");
