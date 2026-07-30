@@ -37,6 +37,7 @@ import {
   resolveTaskLifecycleColumns,
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
+  resolveWipTargetForTask,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
 import { execFile } from "node:child_process";
@@ -4491,7 +4492,8 @@ export class ProjectEngine {
                 error: null,
                 verificationFailureCount: nextBounces,
               });
-              await store.moveTask(taskId, "in-progress");
+              /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
+              await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
               await store.logEntry(
                 taskId,
                 `Deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved back to in-progress with status=merging-fix for remediation`,
@@ -4607,7 +4609,8 @@ export class ProjectEngine {
                       error: null,
                       mergeConflictBounceCount: nextBounces,
                     });
-                    await store.moveTask(taskId, "in-progress");
+                    /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
+                    await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
                     await store.logEntry(
                       taskId,
                       `Auto-merge conflicts unresolved (${maxAutoMergeRetriesOnErr}/${maxAutoMergeRetriesOnErr}) — bounced to in-progress for re-rebase (bounce ${nextBounces}/${bounceCap})`,

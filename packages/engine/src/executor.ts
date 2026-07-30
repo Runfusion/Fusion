@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -4482,7 +4482,8 @@ export class TaskExecutor {
         }
         // Now in `todo` (non-mergeable) — safe to clear prior gate failures.
         await this.clearTerminalStepFailuresForRetry(taskId);
-        await this.store.moveTask(taskId, "in-progress");
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
+        await this.store.moveTask(taskId, await resolveWipTargetForTask(this.store, taskId));
         return "bounced";
       }
 
@@ -4495,7 +4496,8 @@ export class TaskExecutor {
         }
         // Already in `todo` (non-mergeable) — safe to clear prior gate failures.
         await this.clearTerminalStepFailuresForRetry(taskId);
-        await this.store.moveTask(taskId, "in-progress");
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
+        await this.store.moveTask(taskId, await resolveWipTargetForTask(this.store, taskId));
         return "bounced";
       }
 
@@ -17125,8 +17127,10 @@ export class TaskExecutor {
             undefined,
             this.getRunContextFor(taskId),
           );
-          await store.moveTask(taskId, "in-progress");
-          latestColumn = "in-progress";
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION, and `latestColumn` must be set from the SAME resolved value or the check below it compares against a lane the card is not in. */
+          const wipTarget = await resolveWipTargetForTask(store, taskId);
+          await store.moveTask(taskId, wipTarget);
+          latestColumn = wipTarget;
         }
 
         if (latestColumn === "in-progress" && !hardPauseActive) {

@@ -16,7 +16,7 @@ REVERT CHECK, measured: replacing either body with a bare `return "<legacy id>"`
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import type { WorkflowIrResolverStore } from "../workflow-ir-resolver.js";
-import { resolveReboundTargetForTask, resolveArchiveTargetForTask } from "../workflow-lifecycle-traits.js";
+import { resolveReboundTargetForTask, resolveArchiveTargetForTask, resolveWipTargetForTask } from "../workflow-lifecycle-traits.js";
 
 function storeWith(ir: WorkflowIr | undefined): WorkflowIrResolverStore {
   return {
@@ -84,5 +84,23 @@ describe("resolveArchiveTargetForTask", () => {
 
   it("falls back to the legacy id when the lookup throws", async () => {
     await expect(resolveArchiveTargetForTask(throwingStore, "FN-1")).resolves.toBe("archived");
+  });
+});
+
+describe("resolveWipTargetForTask", () => {
+  it("resolves the board's own wip lane", async () => {
+    await expect(resolveWipTargetForTask(storeWith(RENAMED), "FN-1")).resolves.toBe("building");
+  });
+
+  it("does NOT return the legacy id for a board that declares no such column", async () => {
+    await expect(resolveWipTargetForTask(storeWith(RENAMED), "FN-1")).resolves.not.toBe("in-progress");
+  });
+
+  it("falls back to the legacy id when no workflow resolves", async () => {
+    await expect(resolveWipTargetForTask(storeWith(undefined), "FN-1")).resolves.toBe("in-progress");
+  });
+
+  it("falls back to the legacy id when the lookup throws", async () => {
+    await expect(resolveWipTargetForTask(throwingStore, "FN-1")).resolves.toBe("in-progress");
   });
 });

@@ -418,6 +418,24 @@ export async function resolveReboundTargetForTask(store: WorkflowIrResolverStore
   return "todo";
 }
 
+/**
+ * The WIP lane this task's workflow declares, or the legacy id. See above.
+ *
+ * FIRST `countsTowardWip` column, deliberately: this answers "where does a card go when it re-enters
+ * execution?", which is a single destination, not a membership test. Callers asking "is this card in
+ * WIP?" want `columnsWithFlag(ir, "countsTowardWip")` instead — a board may declare several.
+ */
+export async function resolveWipTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const wip = columnsWithFlag(ir, "countsTowardWip");
+      if (wip.length > 0) return wip[0];
+    }
+  } catch { /* degraded: legacy id */ }
+  return "in-progress";
+}
+
 /** The archive lane this task's workflow declares, or the legacy id. See above. */
 export async function resolveArchiveTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
   try {
