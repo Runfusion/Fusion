@@ -95,6 +95,9 @@ export type { PromptConditionEvaluationResult } from "./plugin-prompt-condition.
 export { computePlanApprovalFingerprint, resolvePlanApprovalRequired } from "./plan-approval.js";
 export type { PlanApprovalMode } from "./plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
+/* FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8): column ROLE resolution — traits first, legacy ids only as the documented no-metadata fallback. */
+export type { ColumnRoleFlags } from "./column-roles.js";
+export { isHoldColumnRole, isIntakeColumnRole, isPlannerLaneColumnRole, isPreExecutionHoldColumnRole, isPreImplementationColumnRole } from "./column-roles.js";
 export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
 export { formatGitLabTrackedItemRef, isGitLabTrackingStale } from "./gitlab-tracking.js";
 export * from "./planner-intervention.js";

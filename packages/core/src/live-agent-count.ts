@@ -3,6 +3,7 @@ import type { TraitFlags } from "./trait-types.js";
 import type { Task } from "./types.js";
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { columnHasFlag } from "./workflow-lifecycle-traits.js";
+import { isPreImplementationColumnRole } from "./column-roles.js";
 
 export type RunningAgentCountSource = (projectIds: readonly string[]) => Promise<Record<string, number>> | Record<string, number>;
 
@@ -81,7 +82,7 @@ export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskS
   return {
     ...task,
     columnTerminalKind: flags?.archived ? "archived" : flags?.complete ? "complete" : "none",
-    columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : task.column === "triage" || task.column === "todo",
+    columnIsIntakeOrHold: isPreImplementationColumnRole(flags, task.column),
     columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === "in-progress",
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-23:10:
@@ -140,7 +141,13 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
 /** Exact footer waiting membership: unpaused, non-terminal intake/hold work that is not live. */
 export function isWaitingAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none" || isRunningAgentTask(task)) return false;
-  return task.columnIsIntakeOrHold ?? (task.column === "triage" || task.column === "todo");
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The precomputed flag when the caller resolved one, else the shared role fallback. Both
+  arms used to inline the legacy id pair; they now agree by construction rather than by
+  someone remembering to edit both.
+  */
+  return task.columnIsIntakeOrHold ?? isPreImplementationColumnRole(undefined, task.column);
 }
 
 export function countRunningAgentTasks(tasks: readonly RunningAgentTaskShape[]): number {
