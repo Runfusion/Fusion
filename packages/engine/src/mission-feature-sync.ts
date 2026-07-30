@@ -1,5 +1,5 @@
 import type { MissionFeature, Task, TaskStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 
 export type MissionFeatureSyncTargetStatus = "done" | "in-progress" | "triaged";
@@ -24,26 +24,46 @@ async function resolvePreImplementationColumns(
   task: Task,
 ): Promise<ReadonlySet<string>> {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-08:45 (triage-guard census — why this entry stays open):
-  The legacy pair is UNIONED with the resolved lanes, not replaced by them, and that is a
-  deliberate stop short of the census goal rather than an oversight.
+  FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (triage-guard census; PR #2609 review — greptile):
+  INTAKE, plus the legacy ids ONLY where the workflow does not use them for something else.
 
-  A store that cannot name the task's workflow resolves to the default builtin, whose merged
-  Planning lane is `todo` alone — so replacing the pair would silently stop rolling back a card
-  sitting in `triage` under `builtin:legacy-coding`, which still declares that column. The failure
-  is invisible in the worst way: the mission feature stays `in-progress` while the task is queued
-  for re-planning, so the roadmap reports work in flight that nobody is doing.
+  Two corrections, both from review, both cases where a wider set silently erases roadmap state:
 
-  Union fixes the real defect — a RENAMED planner column now rolls the feature back where before
-  it did not — without regressing legacy. Closing the entry properly needs this function to know
-  whether a resolution is a real selection or a default guess, which is a resolver change, not a
-  call-site change.
+  - `hold` is NOT pre-implementation. A workflow may carry the trait on a mid-pipeline capacity or
+    manual-release wait; a card parked there is downstream of implementation, and rolling its
+    feature back to `triaged` erases work that really happened. (Same mistake I had already fixed
+    in the usage-limit lane — worth stating rather than quietly repeating.)
+  - The legacy union must not OVERRIDE a workflow's own roles. A custom workflow is free to name
+    its implementation or completion column `todo`, and unconditionally treating that id as
+    pre-implementation would reset an active feature mid-flight.
+
+  The legacy ids survive only as compat for a workflow that does not claim them, which is what a
+  `{ getTask }`-only store resolving to the default builtin needs: post-merge the default declares
+  `todo` as its Planning lane and no `triage` at all, so `builtin:legacy-coding` cards would
+  otherwise stop rolling back.
   */
-  const legacy = ["triage", "todo"];
-  const columns = await resolveTaskLifecycleColumns(taskStore as never, task.id).catch(() => undefined);
-  const lanes = new Set<string>(legacy);
+  const ir = await resolveWorkflowIrForTask(taskStore as never, task.id).catch(() => undefined);
+  const columns = ir ? resolveLifecycleColumns(ir) : undefined;
+  const order = (ir && "columns" in ir ? ir.columns ?? [] : []).map((column: { id: string }) => column.id);
+  const lanes = new Set<string>();
   if (columns?.intake) lanes.add(columns.intake);
-  if (columns?.hold) lanes.add(columns.hold);
+  /*
+  A hold column is pre-implementation only when it sits BEFORE the implementation column in the
+  workflow's declared order — `ir.columns` is ordered and that order IS the lifecycle order (see
+  the graph entry contract). That is what separates a planning queue from a mid-pipeline wait:
+  both carry `hold`, and the trait alone cannot tell them apart.
+  */
+  if (columns?.hold) {
+    const holdIndex = order.indexOf(columns.hold);
+    const wipIndex = columns.wip ? order.indexOf(columns.wip) : -1;
+    if (holdIndex !== -1 && (wipIndex === -1 || holdIndex < wipIndex)) lanes.add(columns.hold);
+  }
+  const claimedElsewhere = new Set(
+    [columns?.wip, columns?.review, columns?.complete, columns?.archived].filter((id): id is string => typeof id === "string"),
+  );
+  for (const legacyId of ["triage", "todo"]) {
+    if (!claimedElsewhere.has(legacyId)) lanes.add(legacyId);
+  }
   return lanes;
 }
 

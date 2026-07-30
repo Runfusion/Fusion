@@ -80,3 +80,49 @@ describe("mission feature rollback resolves the planner lane from the task's wor
     )).resolves.toMatchObject({ kind: "noop" });
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:25 (PR #2609 review — greptile):
+Both directions of over-inclusion erase roadmap state, so both are pinned.
+*/
+describe("mission feature rollback does not over-claim lanes", () => {
+  const WF = "custom:roles";
+  const store = (columns: unknown[]) => ({
+    getTask: async () => undefined,
+    getTaskWorkflowSelection: () => ({ workflowId: WF, stepIds: [] }),
+    getTaskWorkflowSelectionAsync: async () => ({ workflowId: WF, stepIds: [] }),
+    getWorkflowDefinition: async () => ({ id: WF, ir: { version: "v2", id: WF, nodes: [], edges: [], columns } }),
+  }) as never;
+
+  it("does NOT roll back from a MID-PIPELINE hold column", async () => {
+    /* `hold` is not a synonym for planning: this one is a manual wait AFTER implementation. */
+    const s = store([
+      { id: "inbox", traits: [{ trait: "intake" }] },
+      { id: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "awaiting-signoff", traits: [{ trait: "hold", config: { release: "manual" } }] },
+      { id: "shipped", traits: [{ trait: "complete" }] },
+    ]);
+    await expect(reconcileMissionFeatureState(s, { id: "FN-1", column: "awaiting-signoff" } as never, { id: "F-1", status: "in-progress" } as never))
+      .resolves.toMatchObject({ kind: "noop" });
+  });
+
+  it("does NOT treat a legacy id the workflow uses for IMPLEMENTATION as pre-implementation", async () => {
+    /* A workflow may legitimately name its wip column `todo`; the compat arm must yield to it. */
+    const s = store([
+      { id: "inbox", traits: [{ trait: "intake" }] },
+      { id: "todo", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", traits: [{ trait: "complete" }] },
+    ]);
+    await expect(reconcileMissionFeatureState(s, { id: "FN-1", column: "todo" } as never, { id: "F-1", status: "in-progress" } as never))
+      .resolves.toMatchObject({ kind: "noop" });
+  });
+
+  it("still rolls back from a legacy id the workflow does not claim", async () => {
+    const s = store([
+      { id: "inbox", traits: [{ trait: "intake" }] },
+      { id: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ]);
+    await expect(reconcileMissionFeatureState(s, { id: "FN-1", column: "triage" } as never, { id: "F-1", status: "in-progress" } as never))
+      .resolves.toMatchObject({ kind: "update", status: "triaged" });
+  });
+});
