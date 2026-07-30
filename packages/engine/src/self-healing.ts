@@ -4705,9 +4705,24 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inProgressTasks = await readDependentBucket(completedWipColumns);
       const inReviewTasks = (await readDependentBucket(completedReviewColumns)).filter((t) => !t.paused);
 
-      const dependents = [...todoTasks, ...inProgressTasks, ...inReviewTasks].filter(
-        (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
-      );
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (#2883 review — greptile P1, "duplicate dependent
+      reconciliation"; same class as #2879 one sweep over):
+      DEDUPED ACROSS THE BUCKETS, NOT JUST WITHIN EACH.
+
+      `readDependentBucket` dedupes by id inside ONE role's read. A custom workflow may put two queried
+      roles on ONE column, which two reads then return, so the dependent landed in two buckets and was
+      reconciled twice from the same stale snapshot — the second pass deciding against `blockedBy` state
+      the first pass had already cleared.
+
+      Order is preserved (first bucket wins), so `todoTaskIds` below still classifies the dependent by
+      the read that found it first and role precedence is unchanged.
+      */
+      const dependents = [
+        ...new Map(
+          [...todoTasks, ...inProgressTasks, ...inReviewTasks].map((t) => [t.id, t] as const),
+        ).values(),
+      ].filter((t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId);
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
       for (const dependent of dependents) {
         try {
@@ -4730,6 +4745,24 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             try {
               const ir = await resolveWorkflowIrForTask(this.store, depId);
               if (ir) {
+                /*
+                FNXC:WorkflowResolvedColumns 2026-07-31-02:50 (#2883 review — greptile P1, "overbroad
+                dependency satisfaction"): THE BREADTH IS THE LEGACY CONTRACT, NOT AN ACCIDENT.
+
+                The concern is that a `mergeOrchestration`-only lane reads as satisfying a dependency
+                while the scheduler wants a terminal, merge-blocking state. Measured against what this
+                replaced: the legacy set was `done` / `in-review` / `archived`, and `in-review` carries
+                `mergeOrchestration` on every builtin — so a dependency parked in review has ALWAYS
+                released its dependents. Including the review roles reproduces that exactly.
+
+                Narrowing to terminal-only would be a BEHAVIOUR CHANGE in the deadlock direction: every
+                dependent currently released by a dependency sitting in review would stay blocked, on a
+                sweep whose entire purpose is unblocking them. That is a scheduler-contract decision
+                about when a dependency counts as done, not a vocabulary conversion, and it belongs in a
+                change that can argue it on its own terms.
+
+                Recorded rather than silently kept, so the breadth reads as a decision.
+                */
                 for (const role of ["complete", "archived", ...REVIEW_ROLES] as const) {
                   for (const id of columnsWithFlag(ir, role)) lanes.add(id);
                 }
