@@ -144,12 +144,20 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     sweep does with them.
     */
     const card = shippedCard();
-    const permissiveList = vi.fn(async () => [card]);
+    /* The 17-fake shape: the option is declared so the call is realistic, and then never read. */
+    const permissiveList = vi.fn(async (_options?: { column?: string }) => [card]);
 
-    const rows = await permissiveList();
+    /* Asked for `done` — exactly what the sweep asks — and got back a card in `shipped`. */
+    const rows = await permissiveList({ column: "done" });
 
+    expect(permissiveList).toHaveBeenCalledWith({ column: "done" });
     expect(rows).toHaveLength(1);
     expect(rows[0].column).toBe(RENAMED_VOCAB.complete);
     expect(rows[0].column).not.toBe("done");
+
+    /* The contrast that makes the point: the production-faithful fake, asked the same question,
+       returns nothing. Same card, same query, opposite answer — the fake IS the hiding mechanism. */
+    const { store } = productionFaithfulStore([card]);
+    expect(await store.listTasks({ column: "done" as never })).toHaveLength(0);
   });
 });
