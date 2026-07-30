@@ -218,6 +218,17 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
         });
       }
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-14:40 (rebase onto main's extraction):
+      Main extracted the two inner column checks into `resolvePostCommentRetriageDecision`,
+      which takes `column` and DOES NOT USE IT — the column decision now lives entirely in the
+      outer planner-lane gate above, which this branch converts. So the inner half of this
+      conversion is dropped as obsolete rather than re-applied on top.
+
+      Worth flagging for that extraction's author: the unused `column` parameter reads as though
+      a column decision is still being made there. It is not, and a future reader adding one
+      back would silently double-gate.
+      */
       const { invalidateApproval: shouldInvalidateAwaitingApproval, retriagePlanned: shouldRetriagePlannedTask } =
         resolvePostCommentRetriageDecision({ column: task.column, status: task.status, hasRealPrompt });
 
