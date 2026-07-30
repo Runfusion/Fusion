@@ -223,3 +223,27 @@ export function summarize(findings) {
 export function censusFiles(files, readFile = (f) => readFileSync(f, "utf8")) {
   return files.flatMap((file) => findComparisons(file, readFile(file)));
 }
+
+const ROLE_RESOLVER_NAMES = [
+  "resolveLifecycleColumns", "resolveTaskLifecycleColumns", "resolveTerminalColumns", "resolveCompleteColumn",
+  "resolveMergeOrchestrationColumn", "resolveReboundTarget", "columnsWithFlag", "workflowHasColumn",
+  "isIntakeColumnRole", "isHoldColumnRole", "isWipColumnRole", "isReviewColumnRole", "isCompleteColumnRole",
+  "isArchivedColumnRole", "isPreImplementationColumnRole", "resolveColumnFlags", "columnHasFlag",
+];
+
+/** Files where a role resolver is used AND legacy literals remain — both vocabularies live at once. */
+export function mixedVocabularyFiles(byFile, readFile) {
+  const mixed = [];
+  for (const [file, count] of byFile) {
+    if (count === 0) continue;
+    let source;
+    try {
+      source = readFile(file);
+    } catch {
+      continue; // Unreadable file is not evidence of anything.
+    }
+    const resolvers = ROLE_RESOLVER_NAMES.filter((name) => new RegExp(`\\b${name}\\b`).test(source));
+    if (resolvers.length > 0) mixed.push({ file, count, resolvers: resolvers.length });
+  }
+  return mixed.sort((a, b) => b.count - a.count);
+}

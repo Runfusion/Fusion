@@ -21,6 +21,7 @@ import {
   receiverOf,
   stripComments,
   summarize,
+  mixedVocabularyFiles,
 } from "../../../../scripts/lib/lifecycle-column-census.mjs";
 
 function census(source: string) {
@@ -496,6 +497,47 @@ were exercised by hand first:
   rise, --strict            exit 1
   clean                     exit 0
 */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-21:00 (the half-conversion detector):
+A file holding BOTH vocabularies is where a resolved guard can end up feeding a literal one — the
+shape behind four separate review findings in a single day. Report-only by design: a partially
+converted file is the expected state mid-phase, so this must inform a reviewer, not fail a build.
+*/
+describe("mixed-vocabulary detection", () => {
+  const read = (contents: Record<string, string>) => (file: string) => {
+    const found = contents[file];
+    if (found === undefined) throw new Error(`no such file: ${file}`);
+    return found;
+  };
+
+  it("flags a file that uses a role resolver AND still holds legacy literals", () => {
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `const lanes = resolveLifecycleColumns(ir); if (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([{ file: "a.ts", count: 3, resolvers: 1 }]);
+  });
+
+  it("does NOT flag a file that is fully literal — nothing is half-converted there", () => {
+    /* The whole backlog would light up otherwise, and the signal would carry no information. */
+    expect(mixedVocabularyFiles([["a.ts", 9]], read({ "a.ts": `if (t.column === "done") return;` }))).toEqual([]);
+  });
+
+  it("does NOT flag a fully converted file — zero guards means nothing left to mismatch", () => {
+    expect(mixedVocabularyFiles([["a.ts", 0]], read({ "a.ts": `resolveLifecycleColumns(ir)` }))).toEqual([]);
+  });
+
+  it("does not match a resolver name embedded in a longer identifier", () => {
+    /* Same trap the trait hints hit in #2677: `hold` matched inside `threshold`. */
+    expect(mixedVocabularyFiles([["a.ts", 2]], read({ "a.ts": `myResolveLifecycleColumnsHelper()` }))).toEqual([]);
+  });
+
+  it("survives an unreadable file rather than reporting it", () => {
+    expect(mixedVocabularyFiles([["gone.ts", 4]], read({}))).toEqual([]);
+  });
+});
+
 describe("the ratchet follows the count down", () => {
   const repoRoot = new URL("../../../../", import.meta.url).pathname;
   const cliPath = `${repoRoot}scripts/lifecycle-column-census.mjs`;

@@ -42,6 +42,7 @@ import { censusFiles, summarize } from "./lib/lifecycle-column-census-ast.mjs";
 import {
   censusFiles as censusFilesText,
   summarize as summarizeText,
+  mixedVocabularyFiles,
 } from "./lib/lifecycle-column-census.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -129,6 +130,36 @@ if (json) {
   if (summary.byFile.length > 20) {
     // Never let a truncated list read as "that is all of it".
     console.log(`    … and ${summary.byFile.length - 20} more files`);
+  }
+}
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-21:00 (the half-conversion detector):
+MIXED VOCABULARY IS THE FLEET'S DOMINANT DEFECT. Four review findings in one day were the same
+shape: a guard converted to role resolution while the function it FEEDS still filters on the
+literal. The resolved guard admits a custom column, the literal collaborator then rejects it, and
+nothing errors — the endpoint just returns "repaired: 0" and looks converted.
+
+A file where both vocabularies are live is where that can happen, so this reports them. It is a
+REVIEW SIGNAL, not a verdict: a partially-converted file is the expected state during a conversion
+phase, and this is deliberately report-only for that reason. What it buys is that a reviewer of a
+file on this list knows to check the collaborators of anything converted, which is what the repo's
+Surface Enumeration rule already asks for and what these four PRs each missed.
+
+MEASURED when added: 23 of 134 guard-bearing files, holding 311 of 686 guards — and the top of the
+list is exactly where the four findings landed (self-healing.ts, executor.ts,
+register-task-workflow-routes.ts, TaskContextMenu.tsx).
+*/
+if (!json) {
+  const mixed = mixedVocabularyFiles(summary.byFile, (f) => readFileSync(f, "utf8"));
+  if (mixed.length > 0) {
+    const guardsInMixed = mixed.reduce((sum, entry) => sum + entry.count, 0);
+    console.log(`\n  MIXED-VOCABULARY files (a role resolver AND legacy literals): ${mixed.length}, holding ${guardsInMixed} guards`);
+    console.log("  Converting in these needs the collaborators checked too — a resolved guard feeding a literal one fails silently.");
+    for (const entry of mixed.slice(0, 10)) {
+      console.log(`    ${String(entry.count).padStart(4)}  ${entry.file}`);
+    }
+    if (mixed.length > 10) console.log(`    … and ${mixed.length - 10} more`);
   }
 }
 
