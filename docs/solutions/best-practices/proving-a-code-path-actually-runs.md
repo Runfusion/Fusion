@@ -10,6 +10,7 @@ applies_when:
   - "Writing a ratchet or guard that scans source text"
   - "Concluding from instrumentation that a code path was not reached"
   - "Converting a lifecycle guard and getting a green test on the first try"
+  - "About to report a tool, helper, or teammate's code as defective"
   - "Resolving a task's workflow when the store may not be able to name it"
 tags:
   - verification
@@ -25,10 +26,11 @@ related_components:
 
 # Proving a code path actually runs
 
-Five findings from U8 of the workflow-owned-lifecycle program. Each one is a case where code was
-correct, type-checked, tested, reviewed, merged — and never executed, or was verified by something
-that could not fail. They share a root: **we confirmed a property of the source rather than of the
-run.**
+Six findings from U8 of the workflow-owned-lifecycle program. Findings 1-5 are cases where code
+was correct, type-checked, tested, reviewed, merged — and never executed, or was verified by
+something that could not fail. They share a root: **we confirmed a property of the source rather
+than of the run.** Finding 6 is the mirror image, and the one this document's own author broke
+most: claiming someone else's code is wrong without reading it.
 
 ## 1. Two handlers exist for prompt nodes; only one runs
 
@@ -122,3 +124,41 @@ structurally identical. The resolver that knows must report it.
 **Rule:** when a resolver degrades to a default, say so in the return value. Callers deciding
 between "trust the workflow" and "keep legacy compat" need the difference, and every lifecycle
 call site eventually does.
+
+## 6. Read the implementation before claiming its output is wrong
+
+The other five findings are about proving a claim. This one is about the claims we make against
+*other people's* work, and it is the rule the author of this document broke three times in a
+single day while writing it.
+
+Each time the shape was identical: reconstruct a tool's behaviour from the outside, compare it to
+the tool's actual output, find a difference, and report the tool as defective — without first
+reading what the tool does.
+
+- **The census.** Its `summarize()` counts `byColumnId` only for `kind === "column"`. A locally
+  patched counter summed every finding carrying the literal, across `role`, `status` and
+  `deliberate` too. That produced "13 vs 10, the census undercounts by three" — reported as a
+  defect in the instrument the whole program had just adopted as authoritative. The three were
+  exactly the ones it classifies correctly. Ten lines of `summarize()` would have prevented it.
+
+- **`resolvePlannerLanesForTask`.** A probe with a `{ getTask }`-only store showed it returning
+  the default lineage's vocabulary for an unresolvable selection, which was escalated across four
+  messages as a live regression silently disabling two recovery paths. The file's own header had
+  already reasoned it through and documented why that answer is correct; and `TaskStore`
+  implements `getTaskWorkflowSelectionAsync`, which the resolver prefers — so real projects never
+  take the path the probe forced. **A fixture is not a measurement of production.**
+
+- **The `.column ===` census.** A receiver-specific grep reported a file as converted while guards
+  survived in it under `from` and `originColumn`. Same error a step earlier: trusting a
+  reconstruction of the thing rather than the thing.
+
+**Rules:**
+
+- Before reporting a tool, helper, or teammate's code as wrong, read its implementation and its
+  header comment. On this codebase the reasoning is usually already written down, and the FNXC
+  note frequently answers the exact objection.
+- When a probe and the real system disagree, suspect the probe first. Ask what the probe had to
+  stub to produce its result, and whether production ever supplies that shape.
+- Retract precisely and immediately when wrong. A false defect report against shared
+  infrastructure costs more than the bug would have: it sends other people to check something
+  that was already correct, and it spends the credibility needed for the next report that is real.
