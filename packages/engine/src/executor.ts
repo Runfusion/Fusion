@@ -1761,6 +1761,17 @@ resume state); the KTD-1 exhaustion parks (FN-8141 blocked, retry-exhausted) set
 `status:"failed"` in place WITHOUT a move and are intentionally untouched here.
 One IR resolution per rebound (a recovery path, not an enumeration loop); any
 resolution failure falls back to the legacy "todo" so a rebound is never stranded.
+
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (Phase C convergence):
+THE "ALREADY THERE?" GUARDS NOW COMPARE AGAINST THIS RESULT. Eight call sites read
+`X.column !== "todo"` before moving to the resolved column — so on a renamed board the
+guard was ALWAYS true and the engine issued a move into the column the card was already
+in. That is a real move: `moveTaskInternal` runs the reset-on-entry effects again. At the
+`preserveProgress: false` site (stale workflow parse pins) it reset step progress a second
+time on a card that had only been re-checked, and every site re-ran the status/error/pause
+clears. The move TARGET was converted here in U5b; the guards in front of it were not,
+which is the half-conversion shape: the correct target reached through a check that could
+not see it. Each site now resolves once and uses the same value for both.
 */
 async function resolveReboundColumnFor(store: TaskStore, taskId: string): Promise<string> {
   try {
@@ -4400,8 +4411,9 @@ export class TaskExecutor {
     FNXC:WorkflowLifecycle 2026-07-12-23:13:
     FN-7926: completed work with a persistent `getTaskCompletionBlocker` result must not self-requeue through the execute node. Re-running implementation cannot clear dependency/blockedBy state, so it only feeds FN-7863's generic no-progress backstop and misclassifies good work as `EXECUTION_DISPATCH_LOOP_EXHAUSTED`. Park in a scheduler-skipped todo state, preserve worktree/branch/steps, and reset the FN-7863 signature so the backstop remains reserved for genuinely incomplete no-progress loops.
     */
-    if (task.column !== "todo") {
-      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), {
+    const reboundColumn = await resolveReboundColumnFor(this.store, task.id);
+    if (task.column !== reboundColumn) {
+      await this.store.moveTask(task.id, reboundColumn, {
         preserveProgress: true,
         preserveResumeState: true,
         preserveWorktree: true,
@@ -11453,8 +11465,9 @@ export class TaskExecutor {
       status: null,
       error: null,
     }, this.getRunContextFor(live.id));
-    if (live.column !== "todo") {
-      await this.store.moveTask(live.id, await resolveReboundColumnFor(this.store, live.id), {
+    const reboundColumn = await resolveReboundColumnFor(this.store, live.id);
+    if (live.column !== reboundColumn) {
+      await this.store.moveTask(live.id, reboundColumn, {
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
@@ -11501,8 +11514,9 @@ export class TaskExecutor {
       error: null,
       graphResumeRetryCount: 0,
     }, this.getRunContextFor(live.id));
-    if (live.column !== "todo") {
-      await this.store.moveTask(live.id, await resolveReboundColumnFor(this.store, live.id), { preserveProgress: false });
+    const reboundColumn = await resolveReboundColumnFor(this.store, live.id);
+    if (live.column !== reboundColumn) {
+      await this.store.moveTask(live.id, reboundColumn, { preserveProgress: false });
     }
     const message = "Auto-recovered: cleared stale workflow parse pins after reset/retry — task requeued before execution";
     executorLog.warn(`${live.id}: ${message}`);
@@ -11658,8 +11672,9 @@ export class TaskExecutor {
     Workflow-graph and workflow-authoritative executor dispatches can be invoked outside the classic scheduler loop, so they must re-apply the shared scheduling dependency gate before graph routing, column-agent seams, or review handoff can run.
     Requeue with blockedBy instead of executing so missing or soft-deleted dependency residue keeps the scheduler helper's non-blocking semantics while live todo/queued/in-progress/triage dependencies block every dispatch surface.
     */
-    if (liveTask.column !== "todo") {
-      await this.store.moveTask(liveTask.id, await resolveReboundColumnFor(this.store, liveTask.id), {
+    const reboundColumn = await resolveReboundColumnFor(this.store, liveTask.id);
+    if (liveTask.column !== reboundColumn) {
+      await this.store.moveTask(liveTask.id, reboundColumn, {
         preserveProgress: true,
         preserveWorktree: true,
         preserveResumeState: true,
@@ -11701,8 +11716,9 @@ export class TaskExecutor {
     }
 
     const liveTask = (await this.store.getTask(task.id).catch(() => null)) ?? task;
-    if (liveTask.column !== "todo") {
-      await this.store.moveTask(liveTask.id, await resolveReboundColumnFor(this.store, liveTask.id), {
+    const reboundColumn = await resolveReboundColumnFor(this.store, liveTask.id);
+    if (liveTask.column !== reboundColumn) {
+      await this.store.moveTask(liveTask.id, reboundColumn, {
         preserveProgress: true,
         preserveWorktree: true,
         preserveResumeState: true,
@@ -12994,10 +13010,11 @@ export class TaskExecutor {
                   worktree: null,
                   branch: null,
                 });
-                if (latestTask.column !== "todo") {
+                const reboundColumn = await resolveReboundColumnFor(this.store, task.id);
+                if (latestTask.column !== reboundColumn) {
                   this.markGraphExecuteSelfRequeued(task.id);
-                  await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), preserveProgress ? { preserveProgress: true } : undefined);
-                  executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
+                  await this.store.moveTask(task.id, reboundColumn, preserveProgress ? { preserveProgress: true } : undefined);
+                  executorLog.log(`${task.id} moved to ${reboundColumn} for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
                 }
               }
             } catch (err: unknown) {
@@ -14923,16 +14940,17 @@ export class TaskExecutor {
                 status: null,
                 error: null,
               });
-              if (latestTask.column !== "todo") {
+              const continuationReboundColumn = await resolveReboundColumnFor(this.store, task.id);
+              if (latestTask.column !== continuationReboundColumn) {
                 this.markGraphExecuteSelfRequeued(task.id);
                 this.activeWorktrees.delete(task.id);
                 executingTaskLock.release(task.id);
                 cleanupLockHeld = false;
-                await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
+                await this.store.moveTask(task.id, continuationReboundColumn, { preserveResumeState: true });
               } else {
                 this.activeWorktrees.delete(task.id);
               }
-              executorLog.log(`${task.id} stale assistant-continuation session cleared — requeued to todo with progress preserved`);
+              executorLog.log(`${task.id} stale assistant-continuation session cleared — requeued to ${continuationReboundColumn} with progress preserved`);
             } else {
               executorLog.debug(`${task.id} stale assistant-continuation requeue skipped — task is now in '${latestTask.column}'`);
             }
@@ -15011,14 +15029,22 @@ export class TaskExecutor {
             // latestTask.column rather than the stale captured task.column —
             // the captured snapshot can be hours old and would race against
             // any concurrent recovery (see comment above).
-            if (latestTask.column !== "todo") {
+            const stuckReboundColumn = await resolveReboundColumnFor(this.store, task.id);
+            if (latestTask.column !== stuckReboundColumn) {
               this.markGraphExecuteSelfRequeued(task.id);
-              await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), preserveProgress ? { preserveProgress: true } : undefined);
-              // Audit trail: record task move (FN-1404)
-              await audit.database({ type: "task:move", target: task.id, metadata: { to: "todo" } });
-              executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
+              await this.store.moveTask(task.id, stuckReboundColumn, preserveProgress ? { preserveProgress: true } : undefined);
+              /*
+              Audit trail: record task move (FN-1404).
+              FNXC:WorkflowLifecycleColumns 2026-07-30-15:15: `to` records the column the card was
+              ACTUALLY moved to. It was hardcoded `"todo"` while the move target was already
+              resolved from the workflow, so on a renamed board the audit row named a column the
+              move never touched — a run-audit trail that disagrees with the move it describes is
+              worse than none, because it is the record an operator reaches for afterwards.
+              */
+              await audit.database({ type: "task:move", target: task.id, metadata: { to: stuckReboundColumn } });
+              executorLog.log(`${task.id} moved to ${stuckReboundColumn} for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
             } else {
-              executorLog.debug(`${task.id} already in todo — skipping redundant move`);
+              executorLog.debug(`${task.id} already in ${stuckReboundColumn} — skipping redundant move`);
             }
           }
           } catch (err: unknown) {
