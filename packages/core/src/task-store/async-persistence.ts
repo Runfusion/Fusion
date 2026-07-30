@@ -211,7 +211,20 @@ export async function resolveActiveTaskWedgeEpisodeRow(
   const rows = await layer.db
     .update(schema.project.tasks)
     .set({
-      wedgeNotification: sql`(${schema.project.tasks.wedgeNotification}::jsonb || jsonb_build_object('status', 'resolved', 'transitionedAt', ${transitionedAt}))::text`,
+      /*
+      FNXC:WedgeNotification 2026-07-31-12:00:
+      `${transitionedAt}::text` — the CAST is load-bearing, not decoration.
+
+      PostgreSQL cannot infer the type of a bare bind parameter used as a `jsonb_build_object` value:
+      the function is variadic `"any"`, so there is no signature to resolve $1 against and the planner
+      rejects the statement outright with `42P18: could not determine data type of parameter $1`.
+      That is a PARSE-time failure, so it fires on every call rather than on unusual data — wedge
+      notifications could never be resolved in PostgreSQL mode at all.
+
+      Surfaced by `store-wedge-resolution.pg.test.ts`, which has been failing on main; the failure is
+      the product query, not the test.
+      */
+      wedgeNotification: sql`(${schema.project.tasks.wedgeNotification}::jsonb || jsonb_build_object('status', 'resolved', 'transitionedAt', ${transitionedAt}::text))::text`,
       updatedAt: transitionedAt,
     })
     .where(and(
