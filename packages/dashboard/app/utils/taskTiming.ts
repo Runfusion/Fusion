@@ -1,4 +1,5 @@
 import type { Task, TaskLogEntry, WorkflowStepResult } from "@fusion/core";
+import { isWipColumnRole } from "./columnRoles";
 
 export interface TimingEvent {
   timestamp: string;
@@ -93,14 +94,23 @@ export function getEndToEndDurationMs(
   return Math.max(0, endMs - startedMs);
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+`columnFlags` resolves the WIP role; omitted -> the legacy id, i.e. today's behaviour.
+
+These two functions decide whether a card's runtime is still ACCRUING. Keyed on the literal, a card
+in a renamed wip lane reported only its persisted `cumulativeActiveMs` and never the in-flight
+segment, so every duration display froze at the last checkpoint while the agent kept working.
+*/
 export function getActiveRuntimeMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
   nowMs: number,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): number | null {
   const persisted = task.cumulativeActiveMs;
   const base = persisted ?? 0;
 
-  if (task.column === "in-progress") {
+  if (isWipColumnRole(columnFlags, task.column)) {
     const startedMs = parseTimestampToMs(task.executionStartedAt);
     if (startedMs != null) {
       return base + Math.max(0, nowMs - startedMs);
@@ -119,11 +129,12 @@ export function getActiveRuntimeMs(
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
   nowMs: number,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
 ): number | null {
-  const execution = getActiveRuntimeMs(task, nowMs) ?? 0;
+  const execution = getActiveRuntimeMs(task, nowMs, columnFlags) ?? 0;
   const planningStart = parseTimestampToMs(task.planningStartedAt);
   const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (task.column === "in-progress" && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
+  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
     ? execution + planning
     : null;
 }

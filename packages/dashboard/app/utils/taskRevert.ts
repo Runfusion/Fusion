@@ -1,3 +1,4 @@
+import { isArchivedColumnRole, isCompleteColumnRole } from "./columnRoles";
 import type { Task } from "@fusion/core";
 
 /**
@@ -65,7 +66,18 @@ export function getRevertOfId(
  * not normally happen given the route's own dedup guard, but the UI must stay
  * defensive), the most recently created one wins.
  */
-export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: string): Task | undefined {
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-11:30 (batch-dashboard-app):
+`columnFlags` is a per-task lookup supplied by the caller; omitted -> the legacy pair, i.e. today's
+behaviour. This searches for an OPEN undo task, so a finished one must be skipped. Keyed on the
+literals, a renamed board never skipped anything: a completed undo task counted as still open, and
+the UI offered to resume work that had already landed.
+*/
+export function findOpenUndoTaskForSource(
+  tasks: readonly Task[],
+  sourceTaskId: string,
+  columnFlags?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>,
+): Task | undefined {
   const trimmedSourceId = sourceTaskId.trim();
   if (trimmedSourceId.length === 0) {
     return undefined;
@@ -76,7 +88,9 @@ export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: 
     if (candidate.deletedAt) {
       continue;
     }
-    if (candidate.column === "done" || candidate.column === "archived") {
+    const candidateFlags = columnFlags?.get(candidate.id);
+    if (isCompleteColumnRole(candidateFlags, candidate.column)
+      || isArchivedColumnRole(candidateFlags, candidate.column)) {
       continue;
     }
     if (getRevertOfId(candidate.sourceMetadata) !== trimmedSourceId) {
