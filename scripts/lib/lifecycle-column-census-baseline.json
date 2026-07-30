@@ -47,7 +47,6 @@
     "packages/dashboard/src/server.ts": 2,
     "packages/engine/src/agent-reflection.ts": 2,
     "packages/engine/src/auto-merge-finalization.ts": 2,
-    "packages/engine/src/merger-scope-auto-widen.ts": 2,
     "packages/engine/src/worktree-pool.ts": 2,
     "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts": 2,
     "plugins/fusion-plugin-reports/src/store/report-store.ts": 2,
