@@ -20,6 +20,26 @@ import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
 import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
 
+/*
+FNXC:PostCommentRetriage 2026-07-29-19:10:
+Extracted VERBATIM from addCommentImpl so the decision is unit-testable without a
+real TaskStore. Behaviour is byte-identical to the inlined form, including the
+`triage` literals; the conversion is a separate commit.
+*/
+export function resolvePostCommentRetriageDecision(input: {
+  column: string;
+  status?: string | null;
+  hasRealPrompt: boolean;
+}): { invalidateApproval: boolean; retriagePlanned: boolean } {
+  const invalidateApproval = input.column === "triage" && input.status === "awaiting-approval";
+  const retriagePlanned = input.hasRealPrompt
+    && (
+      input.column === "todo"
+      || (input.column === "triage" && input.status !== "awaiting-approval")
+    );
+  return { invalidateApproval, retriagePlanned };
+}
+
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
     {
       const layer = store.asyncLayer!;
@@ -152,13 +172,8 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
         });
       }
 
-      const shouldInvalidateAwaitingApproval =
-        task.column === "triage" && task.status === "awaiting-approval";
-      const shouldRetriagePlannedTask = hasRealPrompt
-        && (
-          task.column === "todo"
-          || (task.column === "triage" && task.status !== "awaiting-approval")
-        );
+      const { invalidateApproval: shouldInvalidateAwaitingApproval, retriagePlanned: shouldRetriagePlannedTask } =
+        resolvePostCommentRetriageDecision({ column: task.column, status: task.status, hasRealPrompt });
 
       if (shouldInvalidateAwaitingApproval || shouldRetriagePlannedTask) {
         const phase = shouldInvalidateAwaitingApproval
