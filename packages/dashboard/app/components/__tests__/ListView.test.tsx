@@ -1254,6 +1254,63 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:45 (fleet phase — evidence for the ListView row-menu conversion):
+  The Archive and Revert row entries were gated on `task.column === "done"` / `=== "archived"`, so on a
+  board whose terminal lanes are RENAMED they simply did not render. No error, no log — the operator just
+  has no way to archive or revert from the list.
+
+  Driven through the real `fetchBoardWorkflows` seam with a renamed vocabulary rather than by poking
+  flags in, so the assertion covers the whole path the component actually uses: payload -> listColumns ->
+  columnFlagsById -> row menu.
+
+  REVERT CHECK, measured. Restoring the id comparisons makes the renamed case fail — the menu renders
+  with neither entry ("Unable to find ... name Archive"). The DEFAULT-vocabulary case passes either way,
+  which is why the renamed one exists.
+  */
+  it("offers Archive and Revert on a RENAMED complete lane, which the id comparisons could not see", async () => {
+    const RENAMED_LANE_PAYLOAD = {
+      flagEnabled: true,
+      defaultWorkflowId: "custom:renamed",
+      workflows: [
+        {
+          id: "custom:renamed",
+          name: "Renamed",
+          columns: [
+            { id: "backlog", name: "Backlog", flags: { hold: true } },
+            { id: "building", name: "Building", flags: { countsTowardWip: true } },
+            { id: "checking", name: "Checking", flags: { mergeBlocker: true } },
+            { id: "shipped", name: "Shipped", flags: { complete: true } },
+            { id: "attic", name: "Attic", flags: { archived: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: { "FN-090": "custom:renamed" },
+    };
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(RENAMED_LANE_PAYLOAD as never);
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, RENAMED_LANE_PAYLOAD as never);
+
+    const shipped = createMockTask({
+      id: "FN-090",
+      title: "Shipped row",
+      column: "shipped" as never,
+      mergeDetails: { commitSha: "abc1234" } as never,
+    });
+
+    renderListView({
+      tasks: [shipped],
+      onOpenDetail: vi.fn(),
+      onArchiveTask: vi.fn(),
+      onRevertTask: vi.fn(),
+    });
+
+    await waitFor(() => expect(document.querySelector('.list-row[data-id="FN-090"]')).toBeTruthy());
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-090"]') as HTMLElement, { clientX: 40, clientY: 50 });
+
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Revert" })).toBeInTheDocument();
+  });
+
   it("enables GitHub tracking from desktop and mobile list context menus without selecting rows", async () => {
     const desktopViewportSpy = mockDesktopViewport();
     const onOpenDetail = vi.fn();
