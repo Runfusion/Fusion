@@ -5420,6 +5420,23 @@ export class TaskExecutor {
       retries-exhausted branch above: visibly failed, with an operator-readable
       error, and the recovery counters cleared so nothing retries into the same wall.
       */
+      /*
+      FNXC:ReplanTargetR7 2026-07-30-06:10 (PR #2598 review, second P1 — greptile):
+      RE-READ before parking. `resolveReplanTargetColumn` awaits a workflow
+      resolution, so the `task` snapshot this branch holds can be arbitrarily stale by
+      the time it writes — and writing `status: "failed"` from a stale snapshot
+      clobbers a row that became completed, archived, paused or human-controlled while
+      we were resolving. The two adjacent recovery branches already guard with
+      `isRequiredArtifactRecoveryProtected` on a FRESH read (5295, 5349); this one was
+      the odd branch out, which is exactly the drift that guard exists to prevent.
+
+      Bailing without the park is correct when protection applies: a completed or
+      operator-parked card does not need an artifact-recovery failure stamped over it,
+      and the caller's `true` is then honest — nothing further is owed on a row that
+      has left this lane.
+      */
+      const liveForPark = await this.store.getTask(task.id).catch(() => null);
+      if (!liveForPark || this.isRequiredArtifactRecoveryProtected(liveForPark)) return;
       const error = `REQUIRED_ARTIFACT_RECOVERY_UNROUTABLE: ${artifactKeys.join(", ")} missing, and this task's workflow declares no intake or hold column to replan in.`;
       executorLog.warn(`${task.id}: ${error}`);
       await this.store.logEntry(task.id, error, undefined, context);
