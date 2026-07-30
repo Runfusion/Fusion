@@ -146,16 +146,53 @@ export class BranchWorktreeAutoRecoveryHandler {
         if (resolvedWip.length > 0) wipColumns = new Set<string>(resolvedWip);
         reboundTarget = resolveReboundTarget(ir) ?? "todo";
       }
-    } catch { /* degraded: legacy ids */ }
+    } catch { /* resolution failed — see the guard below */ }
+
+
     if (wipColumns.has(task.column)) {
       await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null });
     }
-    await this.deps.taskStore.moveTask(task.id, reboundTarget, {
-      moveSource: "engine",
-      preserveResumeState: true,
-      preserveProgress: true,
-      preserveWorktree: false,
-    });
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:45 (#2797 review — greptile):
+    THE REQUEUE MUST NOT DIE ON A DESTINATION THE BOARD DOES NOT DECLARE.
+
+    The review flagged the `catch` above retaining `reboundTarget = "todo"`. Tracing it, the exposure
+    is wider than that branch: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+    throwing, so a task whose custom workflow cannot be read resolves a target from the DEFAULT board
+    — also `todo` — without the catch ever running. Guarding only the throw path would have looked
+    like a fix and changed almost nothing.
+
+    What actually bites is the move: `moveTaskInternal` REJECTS a destination the workflow does not
+    declare (`TransitionRejectionError: unknown-column`). Unhandled, that throws out of the recovery
+    handler whose whole job is to unstick the task — so the recovery became a second way for it to stay
+    stuck, with no audit row to explain it.
+
+    Catching at the move covers every route to a wrong destination, resolved or guessed. A task left
+    parked WITH a record beats one parked by an exception nobody sees.
+    */
+    try {
+      await this.deps.taskStore.moveTask(task.id, reboundTarget, {
+        moveSource: "engine",
+        preserveResumeState: true,
+        preserveProgress: true,
+        preserveWorktree: false,
+      });
+    } catch (err) {
+      await this.deps.runAudit.database({
+        type: "branch-worktree:auto-requeue-skipped",
+        target: task.id,
+        metadata: {
+          class: failure.class,
+          reason: "rebound-target-rejected",
+          rationale,
+          reboundTarget,
+          column: task.column,
+          error: err instanceof Error ? err.message : String(err),
+          evidence,
+        },
+      });
+      return;
+    }
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",
       target: task.id,

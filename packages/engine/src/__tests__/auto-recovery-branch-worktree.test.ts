@@ -102,6 +102,41 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:45 (#2797 review — greptile):
+
+  THE REQUEUE MUST NOT DIE ON A DESTINATION THE BOARD DOES NOT DECLARE.
+
+  The review pointed at the `catch` retaining `reboundTarget = "todo"`. Writing the test for that
+  branch DISPROVED it as the main route: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather
+  than throwing, so a task whose custom workflow cannot be read still resolves `todo` from the DEFAULT
+  board and the catch never runs. A guard on the throw path alone would have passed review and fixed
+  almost nothing.
+
+  What actually bites is the move. `moveTaskInternal` REJECTS a column the workflow does not declare,
+  and unhandled that throws out of the recovery handler whose entire job is to unstick the task — so
+  the recovery became a second way to stay stuck, with no audit row explaining it.
+
+  This drives the rejection itself, which is the behaviour every route ends at.
+  */
+  it("records a skip instead of throwing when the rebound destination is rejected", async () => {
+    const f = createFixtures({ column: "building" }, "programmatic");
+    f.taskStore.moveTask.mockRejectedValue(
+      new Error("Invalid transition: 'building' -> 'todo'. Unknown column for this workflow."),
+    );
+    branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
+
+    /* The handler must not propagate — that is the regression. */
+    await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
+
+    expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "branch-worktree:auto-requeue-skipped",
+      metadata: expect.objectContaining({ reason: "rebound-target-rejected", reboundTarget: "todo" }),
+    }));
+    /* And the success audit must NOT be written for a move that did not happen. */
+    expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
+  });
+
   it("does not clear the branch when a RENAMED board's card is not in its wip lane", async () => {
     /*
     Non-vacuous companion: without it, a guard that cleared unconditionally would pass the case above.
