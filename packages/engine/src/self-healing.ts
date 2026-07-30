@@ -10086,7 +10086,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       The VERDICT stays conservative: this sweep mutates a task's column and status, and guessing a lane
       is worse than leaving one unrescued. What provenance buys is that the unrescued card is REPORTED.
       */
-      const inOwnReviewLane = async (task: Task): Promise<boolean> => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:50 (widening this sweep's query ACTIVATED a guard below):
+      Returns the card's OWN review lanes rather than a boolean, so ONE resolution feeds BOTH consumers —
+      this sweep's lane test and the `getTaskHardMergeBlocker` call in its recovery loop.
+
+      That blocker was unwired and UNREACHABLE while this sweep's query was a literal. Widening the read
+      made it reachable: the sweep now finds renamed-board cards, and unwired it would decline every one,
+      so the conversion would have looked complete and delivered nothing. Found by scanning this file for
+      sweeps holding BOTH a literal query and an unwired lane guard — six of them, this one included.
+      */
+      const ownReviewLanesForAlreadyMerged = async (task: Task): Promise<ReadonlySet<string>> => {
         const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, reviewIrCache)
           .catch(() => undefined);
         const own = resolved
@@ -10095,8 +10105,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         /* A THROW is unresolvable too — the rarer path where the resolver raises rather than substitutes. */
         if (!resolved || resolved.source === "default") unresolvedReviewCards.push(task.id);
         /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-18:50. */
-        return own.length > 0 ? own.includes(task.column) : task.column === "in-review";
+        return own.length > 0 ? new Set(own) : new Set(["in-review"]);
       };
+      const inOwnReviewLane = async (task: Task): Promise<boolean> =>
+        (await ownReviewLanesForAlreadyMerged(task)).has(task.column);
       const shortlist = [...byId.values()].filter((task) =>
         !task.deletedAt &&
         allowsAutoMergeProcessing(task, settings) &&
@@ -10193,11 +10205,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeTargetSource: mergeTarget.source,
           };
 
+          /* Wired with THIS card's review lanes — see the note on `ownReviewLanesForAlreadyMerged` above. */
           const hardBlocker = getTaskHardMergeBlocker({
             ...task,
             steps: task.steps ?? [],
             workflowStepResults: task.workflowStepResults,
-          });
+          }, { reviewColumns: await ownReviewLanesForAlreadyMerged(task) });
           if (hardBlocker) {
             await this.store.updateTask(task.id, {
               status: "failed",

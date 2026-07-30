@@ -349,8 +349,20 @@ export function getLatestFailedPreMergeReviewStep(
     })[0];
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-20:50:
+`reviewColumns` threads straight through to `getTaskMergeBlocker`, for the same reason that helper takes
+it: omitted, the identity check falls back to the literal `in-review` and refuses a card sitting in its
+own board's review lane.
+
+This wrapper was the blind spot behind a whole class: its callers are self-healing sweeps whose column
+QUERY was also a literal, so the unwired check was unreachable and therefore unnoticed. Widening a
+sweep's query ACTIVATES it — the sweep starts finding renamed-board cards and this then declines every
+one. Optional, so no caller changes behaviour until it passes the set.
+*/
 export function getTaskHardMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
+  options: { reviewColumns?: ReadonlySet<string> } = {},
 ): string | undefined {
   return getTaskMergeBlocker({
     ...task,
@@ -358,7 +370,7 @@ export function getTaskHardMergeBlocker(
     paused: false,
     status: task.status === "failed" ? undefined : task.status,
     error: undefined,
-  });
+  }, { reviewColumns: options.reviewColumns });
 }
 
 export function getTaskDoneBypassBlocker(
