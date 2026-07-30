@@ -239,4 +239,68 @@ pgTest("TaskStore addSteeringComment (PostgreSQL)", () => {
     expect(final.comments).toHaveLength(2);
     expect(final.comments!.map((c) => c.text).sort()).toEqual(["Comment A", "Comment B"]);
   });
+
+  /*
+  FNXC:PostCommentRetriage 2026-07-30-00:20 (renamed intake column):
+  #2608 fixed the awaiting-approval invalidation by dropping the INNER column re-checks, keeping the
+  outer caller gate as `column === "todo" || column === "triage"` on the grounds that it "covers BOTH
+  vocabularies".
+
+  It covers both LEGACY vocabularies. It does not cover a RENAMED one. `builtin:coding-ideas` places
+  its intake in `ideas`, which matches neither literal, so an operator comment on an Ideas card
+  awaiting spec approval still invalidates nothing: the approval stands and the task proceeds on the
+  spec the operator was correcting. Same defect as the reported one, one workflow over.
+
+  The caller DOES have what it needs to ask (`store` + `id`), so the gate resolves the intake/hold
+  roles rather than listing ids.
+  */
+  it("invalidates approval on a RENAMED intake column (Coding (Ideas) → \"ideas\")", async () => {
+    const store = h.store();
+    const task = await store.createTask({
+      description: "ideas awaiting approval",
+      workflowId: "builtin:coding-ideas",
+    });
+    expect(task.column, "Ideas' intake role is `ideas` — matching neither legacy literal").toBe("ideas");
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+
+    await store.addTaskComment(task.id, "Narrow this to the import path only", "user");
+
+    const after = await store.getTask(task.id);
+    expect(
+      after.status,
+      "a renamed intake column must invalidate the approval too, not leave it standing",
+    ).not.toBe("awaiting-approval");
+  });
+
+  it("re-triages an already-planned card in the hold column when the operator comments", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "planned card needing respec" });
+    await store.moveTask(task.id, "todo");
+    // A real (non-bootstrap) PROMPT.md is what distinguishes "planned" from "not yet specified".
+    const { writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await writeFile(
+      join(store.taskDir(task.id), "PROMPT.md"),
+      `# ${task.id}\n\n## Context\nA real planned spec.\n\n## Steps\n1. Do the thing\n`,
+      "utf-8",
+    );
+
+    await store.addTaskComment(task.id, "The approach changed — replan this", "user");
+
+    const after = await store.getTask(task.id);
+    expect(after.status, "a planned hold-column card must be re-specified").toBe("needs-replan");
+  });
+
+  it("does NOT re-triage when the comment is not from the user", async () => {
+    // The role conversion must not widen the gate to non-user authors.
+    const store = h.store();
+    const task = await store.createTask({ description: "agent comment target" });
+    await store.moveTask(task.id, "todo");
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+
+    await store.addTaskComment(task.id, "progress note from the agent", "agent");
+
+    const after = await store.getTask(task.id);
+    expect(after.status, "an agent comment must not invalidate the operator's approval").toBe("awaiting-approval");
+  });
 });

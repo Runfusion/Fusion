@@ -17,6 +17,8 @@ import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResu
 import {validateDocumentKey} from "../types.js";
 import {ArchivedTaskDocumentPublicationRejectedError, validateArchivedTaskDocumentAddition, validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
 import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
 
@@ -170,7 +172,37 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
     // Note: The `task` returned above reflects the state BEFORE this
     // transition. Callers that need the post-transition status should
     // re-read the task (e.g., via getTask).
-    if (author === "user" && (task.column === "todo" || task.column === "triage")) {
+    /*
+    FNXC:PostCommentRetriage 2026-07-30-00:30 (renamed intake column):
+    This gate previously listed the two LEGACY ids (`todo`, `triage`). That covers both legacy
+    vocabularies but NOT a renamed one: `builtin:coding-ideas` places its intake in `ideas`, matching
+    neither, so an operator comment on an Ideas card awaiting spec approval invalidated nothing — the
+    approval stood and the task proceeded on the spec being corrected. Identical defect to the one
+    #2608 fixed for default cards, one workflow over, and it stayed green because no test drove a
+    non-default workflow through here.
+
+    Resolved from the card's own workflow rather than listing ids. The earlier note here said
+    narrowing this "needs an IR the caller does not have" — the caller has `store` and `id`, which is
+    all `resolveWorkflowIrForTask` needs.
+
+    Two deliberate choices:
+      - The IR is only resolved for a USER comment, so agent/system comment traffic pays nothing.
+      - An unresolvable workflow falls back to the legacy pair. This is a best-effort re-triage whose
+        failure mode is a MISSED re-spec, so keeping the old behaviour beats dropping the card out of
+        the branch. Note `resolveLifecycleColumns` throws on a missing IR, so the null-check is
+        load-bearing, not defensive decoration.
+    */
+    const retriageColumns = author === "user"
+      ? await (async () => {
+        const workflowIr = await resolveWorkflowIrForTask(store, id).catch(() => undefined);
+        const lifecycle = workflowIr ? resolveLifecycleColumns(workflowIr) : undefined;
+        return {
+          intake: lifecycle?.intake ?? "triage",
+          hold: lifecycle?.hold ?? "todo",
+        };
+      })()
+      : undefined;
+    if (retriageColumns && (task.column === retriageColumns.hold || task.column === retriageColumns.intake)) {
       let hasRealPrompt = false;
       try {
         const promptPath = join(store.taskDir(id), "PROMPT.md");
