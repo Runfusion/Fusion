@@ -11,7 +11,9 @@
  */
 
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns, type WorkflowIr } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: `agentType` is an AGENT ROLE, not a column.
+// The planner lane is named `triage` and keeps that name; only the COLUMN was removed by U11.
+import { PLANNER_AGENT_ROLE, resolveTaskLifecycleColumns, type WorkflowIr } from "@fusion/core";
 import {
   resolveExecutorSessionModel,
   resolveMergerSessionModel,
@@ -141,7 +143,7 @@ export class UsageLimitPauser {
     vocabulary conversion, not to this fix.
     */
     const isPreImplementation = preImplementationColumns?.has(task.column) === true;
-    const providersByActiveLane = agentType === "triage"
+    const providersByActiveLane = agentType === PLANNER_AGENT_ROLE
       ? (isPreImplementation ? [
           resolvePlanningSessionModel(task.planningModelProvider, task.planningModelId, settings).provider,
           resolveValidatorSessionModel(task.validatorModelProvider, task.validatorModelId, settings).provider,
@@ -204,7 +206,7 @@ export class UsageLimitPauser {
     */
     const irCache = new Map<string, WorkflowIr>();
     const preImplementationByTask = new Map<string, ReadonlySet<string>>();
-    if (agentType === "triage") {
+    if (agentType === PLANNER_AGENT_ROLE) {
       await Promise.all(tasks.map(async (task) => {
         const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
         /*
