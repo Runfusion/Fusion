@@ -34,36 +34,60 @@ works rather than to something that refuses.
 */
 const LEGACY_PLANNING_IDS = new Set(["triage", "todo"]);
 
-async function isInPlanningLane(
-  taskStore: AgentActionDeps["taskStore"],
-  task: TaskRecord,
-): Promise<boolean> {
-  const column = String((task as { column?: unknown }).column ?? "");
-  let lanes: { intake?: string; hold?: string } | undefined;
-  try {
-    lanes = await resolveTaskLifecycleColumns(taskStore as never, String(task.id));
-  } catch {
-    /* narrowed plugin store cannot resolve a workflow */
-  }
-  if (column === lanes?.intake || column === lanes?.hold) return true;
-  /*
-  ADDITIVE, not a fallback. `resolveTaskLifecycleColumns` is TOTAL — every failure
-  path returns the default coding IR rather than throwing — so an "else legacy" branch
-  is dead code and a pre-U11 row in `triage` would simply be refused. Learned the same
-  way twice on this program: the resolver never says "I don't know".
+/** Legacy destination ids, used only when the workflow declares no such role. */
+const LEGACY_DESTINATIONS = { hold: "todo", wip: "in-progress", review: "in-review" } as const;
 
-  KNOWN LIMITATION, stated rather than faked: this only resolves intake/hold, so it
-  cannot tell "the workflow does not use `triage`" from "the workflow uses `triage` as
-  its REVIEW lane". A custom workflow doing the latter would have a review-lane card
-  accepted here. I wrote a guard for that and it reduced to `&& false` — it cannot be
-  written without resolving every role, which needs a wider store surface than
-  `PluginContext["taskStore"]` exposes. Left as a limitation in the same spirit as the
-  two `Intentional v1 limitation` notes already in this file, rather than shipped as a
-  check that does nothing. Blast radius is a plugin-surface action on a workflow that
-  reuses a legacy id for a non-planning role; the engine-side equivalents (#2593,
-  #2602) do scope it, because there the whole IR is in reach.
-  */
-  return LEGACY_PLANNING_IDS.has(column);
+type Lanes = {
+  intake?: string; hold?: string; wip?: string; review?: string; complete?: string; archived?: string;
+};
+
+/**
+ * FNXC:PluginLifecycleColumns 2026-07-30-05:10 (PR #2607 review — greptile P1 x2):
+ * Resolve the task's lanes ONCE per action, so gates AND destinations come from the
+ * same answer.
+ *
+ * The first version resolved only the GATES and left `moveTask` pointing at
+ * `in-progress` / `todo` literally. On a renamed workflow that is worse than the bug
+ * it replaced: the gate now admits the card and then moves it into a column the
+ * workflow does not declare (R7). Half a conversion moved the failure from "refuses
+ * valid work" to "puts work somewhere nothing renders it".
+ */
+async function resolveLanes(
+  taskStore: AgentActionDeps["taskStore"],
+  taskId: string,
+): Promise<Lanes | undefined> {
+  try {
+    return await resolveTaskLifecycleColumns(taskStore as never, taskId) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every column id the workflow assigns to a role. */
+function declaredIds(lanes?: Lanes): Set<string> {
+  return new Set(Object.values(lanes ?? {}).filter((v): v is string => typeof v === "string"));
+}
+
+/**
+ * FNXC:PluginLifecycleColumns 2026-07-30-05:10 (PR #2607 review — greptile P1):
+ * Is the card in its workflow's PRE-IMPLEMENTATION lane?
+ *
+ * The legacy acceptance is SCOPED: a legacy id counts only when the workflow does not
+ * assign it to ANY role. Unscoped, a workflow that names its review or wip lane
+ * `triage`/`todo` would have those cards authorized as planning work — greptile's
+ * finding, and the same over-reach caught on #2593 and #2602. Scoping needs the whole
+ * lane set, which is why `resolveLanes` returns all of it rather than intake/hold only;
+ * the earlier version could not express this and said so as a known limitation.
+ */
+function isInPlanningLane(lanes: Lanes | undefined, column: string): boolean {
+  if (column === lanes?.intake || column === lanes?.hold) return true;
+  return LEGACY_PLANNING_IDS.has(column) && !declaredIds(lanes).has(column);
+}
+
+/** A move target from the resolved role, falling back to the legacy id ONLY when the
+ *  workflow declares no such role — never over a column it assigned elsewhere. */
+function destination(lanes: Lanes | undefined, role: keyof typeof LEGACY_DESTINATIONS): string {
+  return lanes?.[role] ?? LEGACY_DESTINATIONS[role];
 }
 
 
@@ -103,11 +127,12 @@ async function toResult(taskStore: PluginContext["taskStore"], taskId: string): 
 export async function startWork(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  if (!(await isInPlanningLane(deps.taskStore, task)) || START_WORK_BLOCKED_STATUSES.has(String(task.status))) {
+  const startLanes = await resolveLanes(deps.taskStore, taskId);
+  if (!isInPlanningLane(startLanes, String(task.column)) || START_WORK_BLOCKED_STATUSES.has(String(task.status))) {
     conflict("start-work", task);
   }
   // Intentional v1 limitation: plugin cannot import engine allocator, so moveTask runs without allocateWorktree.
-  await deps.taskStore.moveTask(taskId, "in-progress");
+  await deps.taskStore.moveTask(taskId, destination(startLanes, "wip"));
   return toResult(deps.taskStore, taskId);
 }
 
@@ -124,10 +149,11 @@ export async function requestReview(input: AgentActionInput, deps: AgentActionDe
 export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  if (!(await isInPlanningLane(deps.taskStore, task)) || task.status !== "awaiting-approval") {
+  const approveLanes = await resolveLanes(deps.taskStore, taskId);
+  if (!isInPlanningLane(approveLanes, String(task.column)) || task.status !== "awaiting-approval") {
     conflict("approve-plan", task);
   }
-  await deps.taskStore.moveTask(taskId, "todo");
+  await deps.taskStore.moveTask(taskId, destination(approveLanes, "hold"));
   await deps.taskStore.updateTask(taskId, { status: undefined });
   return toResult(deps.taskStore, taskId);
 }
@@ -166,8 +192,9 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
     return toResult(deps.taskStore, taskId);
   }
 
+  const retryLanes = await resolveLanes(deps.taskStore, taskId);
   if (
-    (await isInPlanningLane(deps.taskStore, task)) &&
+    isInPlanningLane(retryLanes, String(task.column)) &&
     (RETRYABLE_TRIAGE_STATUSES.has(String(task.status)) || (typeof task.stuckKillCount === "number" && task.stuckKillCount > 0))
   ) {
     // Intentional v1 limitation: does not delete on-disk PROMPT.md or run dashboard step-reset/branch-inspection logic.
