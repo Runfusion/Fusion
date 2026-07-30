@@ -31,7 +31,6 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
-  LEGACY_COLUMN_IDS_BY_ROLE,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -99,7 +98,7 @@ import {
   type NtfyNotifier,
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
-import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
+import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, resolveDependencySatisfactionColumns, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweeps.js";
 /* U4 substrate PR1: the git-evidence readers and their helpers now live in
    self-healing-git-evidence.ts. Imported back here because call sites remain. */
@@ -4725,6 +4724,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const entry of [...todoTasks, ...inProgressTasks, ...inReviewTasks]) {
         if (!dependentById.has(entry.id)) dependentById.set(entry.id, entry);
       }
+      /* One IR cache for the whole reconcile, so a board spanning three workflows reads three IRs, not one per dependency row. */
+      const depSatisfactionIrCache = new Map<string, WorkflowIr>();
       const dependents = [...dependentById.values()].filter(
         (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
       );
@@ -4738,48 +4739,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           `resolveWorkflowIrForTask` returns the built-in IR for a missing workflow and without the union
           a degraded board reads a finished dependency as unmet — the exact stall being cleared here.
           */
-          const depLaneCache = new Map<string, Set<string>>();
-          const satisfiedLanesFor = async (depId: string): Promise<Set<string>> => {
-            const cached = depLaneCache.get(depId);
-            if (cached) return cached;
-            const lanes = new Set<string>([
-              ...(LEGACY_COLUMN_IDS_BY_ROLE.complete ?? []),
-              ...(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
-              ...(LEGACY_COLUMN_IDS_BY_ROLE.archived ?? []),
-            ]);
-            try {
-              const ir = await resolveWorkflowIrForTask(this.store, depId);
-              if (ir) {
-                /*
-                FNXC:WorkflowResolvedColumns 2026-07-31-02:50 (#2883 review — greptile P1, "overbroad
-                dependency satisfaction"): THE BREADTH IS THE LEGACY CONTRACT, NOT AN ACCIDENT.
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-31-05:00 (#2883 review — greptile P1, "overbroad
+          dependency satisfaction"): REUSE THE SCHEDULER'S RESOLVER, DO NOT RE-DERIVE IT.
 
-                The concern is that a `mergeOrchestration`-only lane reads as satisfying a dependency
-                while the scheduler wants a terminal, merge-blocking state. Measured against what this
-                replaced: the legacy set was `done` / `in-review` / `archived`, and `in-review` carries
-                `mergeOrchestration` on every builtin — so a dependency parked in review has ALWAYS
-                released its dependents. Including the review roles reproduces that exactly.
+          The first version unioned all three review roles, which counts a `mergeOrchestration`-only
+          column as satisfied. `resolveDependencySatisfactionColumns` — the shared answer the scheduler
+          already uses for exactly this question — defines review as `mergeBlocker ∪ humanReview` and
+          deliberately excludes merge orchestration. Two readers of one fact disagreeing is how this
+          program has already gone wrong; the fix is to call the existing one, not to match it by hand.
 
-                Narrowing to terminal-only would be a BEHAVIOUR CHANGE in the deadlock direction: every
-                dependent currently released by a dependency sitting in review would stay blocked, on a
-                sweep whose entire purpose is unblocking them. That is a scheduler-contract decision
-                about when a dependency counts as done, not a vocabulary conversion, and it belongs in a
-                change that can argue it on its own terms.
-
-                Recorded rather than silently kept, so the breadth reads as a decision.
-                */
-                for (const role of ["complete", "archived", ...REVIEW_ROLES] as const) {
-                  for (const id of columnsWithFlag(ir, role)) lanes.add(id);
-                }
-              }
-            } catch { /* degraded: legacy ids above still answer */ }
-            depLaneCache.set(depId, lanes);
-            return lanes;
-          };
+          Its contract also covers the degraded case: an unresolvable dependency is left UNMAPPED, and
+          the literal fallback below then answers, so a dependency whose workflow cannot be read does not
+          silently read as never-satisfied and block its dependent forever.
+          */
+          const depRows = dependent.dependencies
+            .map((depId) => taskById.get(depId))
+            .filter((dep): dep is Task => Boolean(dep));
+          const depSatisfaction = await resolveDependencySatisfactionColumns(this.store, depRows, depSatisfactionIrCache);
           const unresolvedDeps: string[] = [];
           for (const depId of dependent.dependencies) {
             const dep = taskById.get(depId);
-            if (dep && !(await satisfiedLanesFor(depId)).has(dep.column)) unresolvedDeps.push(depId);
+            if (!dep) continue;
+            const columns = depSatisfaction.get(depId);
+            const satisfied = columns
+              ? columns.terminal.has(dep.column) || columns.review.has(dep.column)
+              /* DELIBERATE-LITERAL — the no-metadata fallback, matching isLegacyDependencySatisfied. */
+              : dep.column === "done" || dep.column === "archived" || dep.column === "in-review";
+            if (!satisfied) unresolvedDeps.push(depId);
           }
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
