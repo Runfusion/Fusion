@@ -702,23 +702,6 @@ function emitSecretAudit(
  * Rejects unknown agents and ephemeral/runtime-managed agents — mirrors fn_delegate
  * so callers can't park hallucinated or task-worker IDs in `task.assignedAgentId`.
  */
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (#2843 review):
-Has this task's board made a statement about its lifecycle at all?
-
-Separates "traits expressed, and this role is absent" — an answer — from "no column declares any
-trait", which is a v1 graph upgraded by `synthesizeDefaultColumns` and means the legacy vocabulary
-still applies. Unreadable resolves to `false` for the same reason: absence of evidence is not the
-board declaring anything.
-*/
-async function taskBoardDeclaresLifecycleTraits(
-  store: Parameters<typeof resolveWorkflowIrForTask>[0],
-  taskId: string,
-): Promise<boolean> {
-  const ir = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
-  return ir ? declaresAnyLifecycleTrait(ir) : false;
-}
-
 async function validateAssignableAgentId(
   cwd: string,
   agentId: string,
@@ -5371,7 +5354,18 @@ export default function kbExtension(pi: ExtensionAPI) {
         const substituted = resolved.source !== "selection";
         if (substituted && holdColumn && holdColumn !== task.column) {
           landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
-        } else if (!holdColumn && await taskBoardDeclaresLifecycleTraits(store, task.id)) {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:35 (#2843 review — greptile P1, "lifecycle snapshot
+        race persists"):
+        THE SAME SNAPSHOT, NOT A SECOND RESOLVE.
+
+        This read the traits through a helper that resolved the workflow AGAIN, so a selection changing
+        in between combined the hold column from one board with the trait state of another — the exact
+        two-reads-of-one-fact defect the round above removed, surviving in the branch I added to fix a
+        different one. `resolved.ir` is already in hand and is the only snapshot anything here should
+        consult.
+        */
+        } else if (!holdColumn && declaresAnyLifecycleTrait(resolved.ir)) {
           landingError = "this workflow declares no hold (ready-to-pick-up) lane";
         } else if (holdColumn && holdColumn !== task.column) {
           try {
