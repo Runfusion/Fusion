@@ -163,15 +163,22 @@ Two are fixed here (`agent-heartbeat` ×2 call sites, `task-agent-sync.resolveLi
 rest are recorded for per-site classification, since some are legitimately ordered tuples rather than
 membership sets:
 
-```text
-  core/src/workflow-lifecycle-traits.ts:231     (a returned tuple — probably fine)
-  core/src/default-workflow-hooks.ts:274, 280
-  dashboard/src/routes/register-task-workflow-routes.ts:304
-  engine/src/executor.ts:3041, 12535
-  engine/src/scheduler.ts:1593
-  engine/src/triage.ts:833
-  engine/src/planner-lane-resolution.ts:70, 84  (ordering-sensitive — check before converting)
-```
+| site | disposition |
+| --- | --- |
+| `engine/src/agent-heartbeat.ts` ×2 | **fixed** |
+| `engine/src/task-agent-sync.ts:62-63` | **fixed** |
+| `engine/src/executor.ts:12535` | **fixed** — a card in a second wip lane read as INACTIVE and its prompt file as reclaimable |
+| `engine/src/executor.ts:3041` | **blocked** — reads `resolvePlannerLanes`, i.e. the sync IR reader, which returns the default workflow for every task in production. Converting the arity here changes nothing until that is fixed. |
+| `engine/src/scheduler.ts:1593` | **blocked** — same, via `resolveTaskParkedColumnsSync` |
+| `core/src/workflow-lifecycle-traits.ts:231` | **not a membership use** — a returned 2-tuple |
+| `engine/src/planner-lane-resolution.ts:70, 84` | **ordering-sensitive** — a precedence list, not a set; converting would change which lane wins |
+| `core/src/default-workflow-hooks.ts:274, 280` | unclassified — needs a per-site read |
+| `dashboard/src/routes/register-task-workflow-routes.ts:304` | unclassified |
+| `engine/src/triage.ts:833` | unclassified |
+
+So of twelve: **four fixed, two blocked on the sync reader, three not defects, three still to classify.**
+That spread is the point — a sweep converting all twelve would have broken the ordering-sensitive pair and
+delivered nothing at the two sync-blocked ones.
 
 Re-measure with: for each file importing a lifecycle resolver, flag lines containing **two or more**
 `.hold`/`.intake`/`.review`/`.wip`/`.complete`/`.archived` reads **and** an array or `new Set(`.

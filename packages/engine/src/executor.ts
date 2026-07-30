@@ -12557,10 +12557,23 @@ export class TaskExecutor {
     throwing when a definition is missing or corrupt, so a degraded resolution must not NARROW this
     set — narrowing it re-opens the interruption this fixes.
     */
-    const activeLifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id));
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:10 (the arity trap, seventh site):
+    MEMBERSHIP, not first-per-role. `activeColumns` is a `.has()` test, but was filled from
+    `resolveLifecycleColumns`, which returns the FIRST column carrying each trait — so a workflow with two
+    wip lanes, or a review lane plus a second merge-blocking one, had only one of each recognised as
+    active. A card in the second read as INACTIVE and its prompt file was treated as reclaimable.
+
+    The IR is already in hand one line up; `columnsWithFlag` returns every column carrying the trait.
+    The legacy trio stays unioned in — this predicate is about liveness, and under-reporting active is
+    the destructive direction.
+    */
+    const activeIr = await resolveWorkflowIrForTask(this.store, task.id);
     const activeColumns = new Set<string>(["in-progress", "in-review", "done"]);
-    for (const lane of [activeLifecycle?.wip, activeLifecycle?.review, activeLifecycle?.complete]) {
-      if (lane !== undefined) activeColumns.add(lane);
+    if (activeIr) {
+      for (const flag of ["countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
+        for (const lane of columnsWithFlag(activeIr, flag)) activeColumns.add(lane);
+      }
     }
     const activeMergeStatuses = new Set(["merging", "merging-pr", "merging-fix"]);
     const isActiveTask = activeColumns.has(task.column) || activeMergeStatuses.has(task.status ?? "");
