@@ -458,18 +458,59 @@ export async function aggregateWorkflowAnalytics(
  * returns it parsed) so it is re-stringified to feed the shared
  * countModifiedFiles helper unchanged.
  */
+/* The legacy active ids are always retained: the classifier's fallback recognises them, so they can
+   never be the "selected but unclassifiable" case this filter exists to prevent. */
+const LEGACY_ACTIVE_LANES: readonly string[] = ["in-progress", "in-review"];
+
 async function aggregateWorkflowAnalyticsAsync(
   layer: AsyncDataLayer,
   query: WorkflowAnalyticsQuery,
   defaultWorkflowId: string,
   laneStore?: ProjectLaneVocabularyStore,
 ): Promise<WorkflowAnalytics> {
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-30-21:20 (#2866 review — greptile P1 x2, and the second
+  one is a self-contradiction rather than an imprecision):
+
+  THE SQL FILTER AND THE ROW CLASSIFIER MUST DROP THE SAME COLUMNS.
+
+  `resolveProjectColumnsForRoles` unions every column any workflow gives the role, so a column id two
+  workflows reuse with DIFFERENT traits stays in the filter. `columnFlagsByName` — built by the
+  Command Center route and consumed ~200 lines below — deliberately DROPS such an id as conflicting,
+  on the argument that a merged entry double-counts (see its own note, #2803 review).
+
+  The two together produce rows that are SELECTED and then classified by nothing:
+  `columnFlagsByName.get("checking")` is undefined, so `isWipColumnRole` and `isReviewColumnRole` both
+  fall back to the legacy ids, `checking` matches neither, and the count silently evaporates. Worse
+  than either half alone — the filter says the lane counts, the classifier says it cannot say, and the
+  operator sees a workflow sitting at zero.
+
+  Aligning on the CLASSIFIER's answer is the conservative direction: a column it refuses to judge is
+  removed from the filter too, so the rows are never selected rather than selected and discarded. The
+  totals are unchanged (they were already lost); what changes is that the two halves now agree, and a
+  reader is not left hunting for where the rows went.
+
+  CONSEQUENTLY THIS IS UNCOVERED, AND THAT IS INHERENT, NOT AN OMISSION. Mutating the filter away
+  leaves the renamed-lane suite green, because the counts were already zero on both sides — the only
+  observable difference is whether a workflow with no other rows appears with zeros or is absent.
+  A test pinning THAT would be asserting an artifact of , not the invariant. The
+  invariant worth covering is the one the first finding names, and it needs the per-workflow map.
+
+  The FIRST finding — a project-wide union admitting one workflow's rows into another's completed
+  count — is real and NOT fixed here: unlike `team-analytics`, these rows carry a workflow id, so a
+  per-workflow lane map is feasible and is the right fix. It needs the lane resolution keyed by
+  workflow rather than by project, which changes this function's contract with its caller. Recorded on
+  the PR rather than folded into a review-response commit.
+  */
+  const droppedAsConflicting = (lane: string): boolean =>
+    query.columnFlagsByName !== undefined && !query.columnFlagsByName.has(lane);
   const completeLanes = laneStore
     ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
     : ["done"];
-  const activeLanes = laneStore
+  const activeLanes = (laneStore
     ? [...await resolveProjectColumnsForRoles(laneStore, ["countsTowardWip", "humanReview"])]
-    : ["in-progress", "in-review"];
+    : ["in-progress", "in-review"]
+  ).filter((lane) => LEGACY_ACTIVE_LANES.includes(lane) || !droppedAsConflicting(lane));
   /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
      into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
   const inList = (lanes: readonly string[]) => sql.join(lanes.map((lane) => sql`${lane}`), sql`, `);
