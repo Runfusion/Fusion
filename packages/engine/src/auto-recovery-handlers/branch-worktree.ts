@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -122,10 +123,34 @@ export class BranchWorktreeAutoRecoveryHandler {
 
   private async requeueAfterRecovery(task: Task, failure: AutoRecoveryFailure, rationale: string, evidence: RecoveryEvidence): Promise<void> {
     if (task.userPaused) return;
-    if (task.column === "in-progress") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:40 (batch-engine tail):
+    TWO defects here, and fixing only the counted one would have been half a fix.
+
+    1. The WIP test was the id `in-progress`, so on a renamed board the stale branch/baseCommitSha were
+       never cleared and the requeued card carried a dead branch back into execution.
+    2. The requeue DESTINATION was the hardcoded `todo` — census-invisible, because the census scores
+       comparisons and this is a call argument. A board without a `todo` column was requeued into a lane
+       that does not exist. `resolveReboundTarget` is the shared helper for exactly this (KTD-10 ordering:
+       hold -> intake -> first column), and it is why the destination is resolved rather than guessed.
+
+    Both fall back to the legacy ids: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+    throwing, so a degraded board behaves exactly as before.
+    */
+    let wipColumns = new Set<string>(["in-progress"]);
+    let reboundTarget = "todo";
+    try {
+      const ir = await resolveWorkflowIrForTask(this.deps.taskStore, task.id);
+      if (ir) {
+        const resolvedWip = columnsWithFlag(ir, "countsTowardWip");
+        if (resolvedWip.length > 0) wipColumns = new Set<string>(resolvedWip);
+        reboundTarget = resolveReboundTarget(ir) ?? "todo";
+      }
+    } catch { /* degraded: legacy ids */ }
+    if (wipColumns.has(task.column)) {
       await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null });
     }
-    await this.deps.taskStore.moveTask(task.id, "todo", {
+    await this.deps.taskStore.moveTask(task.id, reboundTarget, {
       moveSource: "engine",
       preserveResumeState: true,
       preserveProgress: true,
