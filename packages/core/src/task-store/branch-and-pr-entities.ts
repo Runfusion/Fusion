@@ -22,6 +22,8 @@ import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, Merg
 import { validateNodeOverrideChange } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
+import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import type { WorkflowIr } from "../workflow-ir-types.js";
 import { WorkflowSettingDefinition } from "../workflow-ir-types.js";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
@@ -493,12 +495,36 @@ export async function getTasksByAssignedAgentImpl(store: TaskStore,
      * In backend mode, use listTasks and filter in-memory instead of raw SQL.
      */
         const allTasks = await store.listTasks();
-    return allTasks.filter((task) => {
+    const assigned = allTasks.filter((task) => {
       if (task.assignedAgentId !== agentId) return false;
       if (options?.pausedOnly && !task.paused) return false;
-      if (options?.excludeArchived && task.column === "archived") return false;
       return true;
     });
+    if (options?.excludeArchived !== true) return assigned;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+    `excludeArchived` asks each card's OWN workflow, not the literal id.
+
+    Found by auditing an unwired optional parameter one level up: `rankAssignedTasksForWakeDelta`
+    gained a resolved terminal answer that no caller passed, and reading the caller showed the real
+    gap was HERE — on a renamed board `column === "archived"` matched nothing, so archived cards were
+    returned as open assigned work and the Wake Delta inventory asked a coordinator to unblock or
+    reassign tasks that had already been archived.
+
+    That is the fourth unwired parameter in this sweep whose CALLER held the larger defect.
+
+    Resolution runs only over the rows that already matched `agentId` — a handful — not the whole
+    board, and shares one IR cache. A card whose workflow will not resolve keeps the literal.
+    */
+    const archivedIrCache = new Map<string, WorkflowIr>();
+    const live: Task[] = [];
+    for (const task of assigned) {
+      const lanes = await resolveTaskLifecycleColumns(store, task.id, archivedIrCache).catch(() => undefined);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-13:40. */
+      const isArchived = lanes === undefined ? task.column === "archived" : task.column === lanes.archived;
+      if (!isArchived) live.push(task);
+    }
+    return live;
 }
 
 export function resolveWorkflowMoveActorImpl(store: TaskStore,
