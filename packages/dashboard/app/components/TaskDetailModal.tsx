@@ -937,7 +937,7 @@ export function TaskDetailContent({
   and fall back to the legacy id when it does not match, which is the same safe answer they use
   before any fetch has landed.
   */
-  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<(Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> & { taskId: string }) | null>(null);
+  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<(Partial<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags">> & { taskId: string }) | null>(null);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: TaskDetailModal.tsx):
@@ -1118,13 +1118,23 @@ export function TaskDetailContent({
           setCustomFieldDefs(metadata?.fields ?? null);
         }
         setTaskWorkflowBadge(metadata ? { id: metadata.id, name: metadata.name, icon: metadata.icon } : null);
-        setWorkflowMoveMetadata(metadata ? {
-          // Tagged so consumers can tell "resolved" from "resolved for THIS task" — see the note at
-          // the state declaration.
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-06:00 (PR #2698 review — greptile P1, fifth form):
+        SETTLED-EMPTY IS STILL SETTLED. Writing `null` when the lookup returns no metadata is
+        indistinguishable from "has not resolved yet", so the reconciliation effects returned
+        forever and an invalid tab stayed active indefinitely — the exact failure the identity guard
+        was added to prevent, arrived at from the other end.
+
+        Resolution has three states, not two: unresolved (null), resolved-with-flags, and
+        resolved-empty. The last one still identifies the task, so consumers know the answer has
+        landed and the roles should fall back to the legacy id — which is a real answer, not a
+        placeholder.
+        */
+        setWorkflowMoveMetadata({
           taskId: task.id,
-          moveColumns: metadata.moveColumns,
-          currentColumnFlags: metadata.currentColumnFlags,
-        } : null);
+          moveColumns: metadata?.moveColumns,
+          currentColumnFlags: metadata?.currentColumnFlags,
+        });
       })
       .catch(() => {
         if (!cancelled) {
@@ -1811,7 +1821,7 @@ export function TaskDetailContent({
   // Check if task can be edited
   const canEdit = isTaskFieldEditableColumn(task.column, workflowMoveMetadata?.currentColumnFlags) && !isSaving;
   /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
-  const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns.find((column) => column.id === task.column)?.label;
+  const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
