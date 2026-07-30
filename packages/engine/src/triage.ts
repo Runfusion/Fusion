@@ -1601,7 +1601,7 @@ export class TriageProcessor {
     below needs, and taking it from the same resolution keeps the cost identical
     (same call, same `irCache`, same bounded window) rather than adding a read.
     */
-    const lifecycleByTaskId = new Map<string, { intake?: string; hold?: string; declared: ReadonlySet<string> }>();
+    const lifecycleByTaskId = new Map<string, { intake?: string; hold?: string; declared: ReadonlySet<string>; manualIntake?: boolean }>();
     const RESOLUTION_CONCURRENCY = 8;
     for (let offset = 0; offset < candidates.length; offset += RESOLUTION_CONCURRENCY) {
       const window = candidates.slice(offset, offset + RESOLUTION_CONCURRENCY);
@@ -1610,8 +1610,21 @@ export class TriageProcessor {
           try {
             const ir = await resolveWorkflowIrForTask(this.store, t.id, irCache);
             const roles = resolveLifecycleColumns(ir);
-            const columns = (ir as { columns?: { id: string }[] }).columns ?? [];
-            return { ...roles, declared: new Set(columns.map((c) => c.id)) };
+            const columns = (ir as { columns?: Array<{ id: string; traits?: Array<{ trait: string; config?: Record<string, unknown> }> }> }).columns ?? [];
+            /*
+            FNXC:ManualIntakeAdmission 2026-07-31-04:20:
+            The intake trait's `autoTriage: false` comes from the SAME resolution, not a second read —
+            it is the only durable signal that separates a parked card from one an operator released.
+            */
+            const intakeTraitConfig = columns
+              .find((column) => column.id === roles?.intake)
+              ?.traits?.find((trait) => trait.trait === "intake")
+              ?.config;
+            return {
+              ...roles,
+              declared: new Set(columns.map((c) => c.id)),
+              manualIntake: intakeTraitConfig?.autoTriage === false,
+            };
           } catch {
             return undefined;
           }
@@ -1628,7 +1641,31 @@ export class TriageProcessor {
     // An unresolved task id means the card was filtered out before resolution, so it is not a
     // candidate and both predicates are correctly false for it.
     const isAtHoldColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.hold === t.column;
-    const isAtIntakeColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.intake === t.column;
+    /*
+    FNXC:ManualIntakeAdmission 2026-07-31-04:25 (live bug — FN-7596's rule was broken by the trait conversion):
+    A MANUAL intake (`autoTriage: false`) is never auto-admitted. Coding (Ideas) exists so an operator
+    can park a card without the engine planning it; the operator promotes it into Planning when ready.
+
+    HOW IT BROKE. The rule used to be enforced accidentally, by this predicate naming `triage`: an
+    `ideas` card matched no branch. Converting the predicate to resolve intake BY TRAIT made `ideas`
+    the resolved intake column for that workflow — so discovery started specifying parked ideas. The
+    conversion widened admission, which is the same shape as every other half-conversion in this
+    program: the guard became correct in vocabulary and wrong in effect.
+
+    ITS GUARDING TEST COULD NOT CATCH IT. `triage.test.ts`'s "excludes a parked ideas-column task"
+    uses a mock store with no workflow readers, so lifecycle resolution falls back to
+    `triage`/`todo` and an `ideas` card matches neither branch — it passes for a reason unrelated to
+    the rule, and kept passing after the rule broke. Its own comment still describes the old
+    mechanism ("which only matches column === triage"), which is the tell.
+
+    The hold branch is deliberately NOT gated on this: a card in the hold column was RELEASED there,
+    by an operator or by finalize, and a manual intake says nothing about a card that already left it.
+    */
+    const isAtIntakeColumn = (t: Task): boolean => {
+      const lifecycle = lifecycleByTaskId.get(t.id);
+      if (lifecycle?.intake !== t.column) return false;
+      return lifecycle.manualIntake !== true;
+    };
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
     A card in a column its OWN workflow does not declare is unowned by construction:
