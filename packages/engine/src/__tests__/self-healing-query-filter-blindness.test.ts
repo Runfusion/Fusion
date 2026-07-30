@@ -327,4 +327,34 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* Accepted as a candidate: the sweep reached `getSettings`, which it only does with a non-empty list. */
     expect(store.getSettings).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (the query-filter class, second sweep):
+  `recoverAlreadyMergedReviewTasks` rescues a card whose merge ACTUALLY SUCCEEDED but is parked in review
+  with `status: "failed"`. Its read was `listTasks({ column: "in-review" })`, which returns nothing on a
+  renamed board — so the rescue never ran and that card stayed stuck permanently.
+
+  Asserts the QUERY, like the done-integrity case above and for the same reason: the outcome is 0 either
+  way, so only the question asked distinguishes fixed from broken. The per-card verdict uses the pattern
+  already revert-proven for the other sweep.
+
+  REVERT CHECK, measured: restoring `listTasks({ column: "in-review" })` fails this — the board's own
+  review lane is never asked for.
+  */
+  it("the already-merged rescue asks for the board's OWN review lane", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-STUCK",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      mergeRetries: 99,
+    } as unknown as Task;
+    const { store, listTasks } = productionFaithfulStore([parked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverAlreadyMergedReviewTasks();
+
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
+    /* The legacy id is still asked for — the project union keeps mid-rename rows reachable. */
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
+  });
 });

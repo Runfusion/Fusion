@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   resolveProjectColumnsForRoles,
+  REVIEW_ROLES,
 } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
@@ -9909,16 +9910,45 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
-      const candidates = tasks.filter((task) =>
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (the query-filter class, second sweep):
+      THE QUERY WAS THE BUG. `listTasks({ column: "in-review" })` returns EMPTY on a board whose review
+      lane is renamed, so this sweep never ran — and it is the one that rescues a card whose merge
+      ACTUALLY SUCCEEDED but is parked in review with `status: "failed"`. Unrun, that card stays stuck
+      permanently with a merge nobody reconciles.
+
+      Read widened via the project union (a read happens before any task is in hand); the per-card verdict
+      below is resolved against THAT CARD's own workflow, because this sweep mutates. Widening the read
+      and widening the verdict are different decisions — see `reconcileDoneTaskIntegrity`.
+      */
+      const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const byId = new Map<string, Task>();
+      for (const column of reviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+      }
+      const reviewIrCache = new Map<string, WorkflowIr>();
+      const inOwnReviewLane = async (task: Task): Promise<boolean> => {
+        const ir = await resolveWorkflowIrForTask(this.store, task.id, reviewIrCache).catch(() => undefined);
+        const own = ir
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(ir, role)))]
+          : [];
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-18:20. */
+        return own.length > 0 ? own.includes(task.column) : task.column === "in-review";
+      };
+      const shortlist = [...byId.values()].filter((task) =>
         !task.deletedAt &&
-        task.column === "in-review" &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
         task.mergeDetails?.mergeConfirmed !== true &&
         !executingIds.has(task.id),
       );
+
+      /* The per-card lane verdict is async, so it cannot live in the filter above. */
+      const candidates: Task[] = [];
+      for (const task of shortlist) {
+        if (await inOwnReviewLane(task)) candidates.push(task);
+      }
 
       if (candidates.length === 0) return 0;
 
