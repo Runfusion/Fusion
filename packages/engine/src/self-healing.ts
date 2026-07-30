@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  LEGACY_COLUMN_IDS_BY_ROLE,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -5435,9 +5436,51 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
-      const todoTasks = await this.store.listTasks({ column: "todo" });
-      const inProgressTasks = await this.store.listTasks({ column: "in-progress" });
-      const inReviewTasks = await this.store.listTasks({ column: "in-review" });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (the query-filter class, eleventh sweep):
+      THREE lane reads whose downstream treatment DIFFERS — hold cards seed the queued-dependency pass,
+      review cards are exempted when paused — so this cannot collapse into one union. Read the project's
+      columns for all three role groups, dedupe into one map, then classify each card against ITS OWN
+      workflow. On a renamed board all three reads returned empty, so no stale `blockedBy` was ever cleared
+      and the cards stayed blocked behind dependencies that had long since finished.
+      */
+      /* `hold` only, NOT `intake`: the original read asked for `todo`. Adding intake would newly scan `triage` cards — a behavior change riding along in a conversion. */
+      const blockedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
+      const blockedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const blockedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const blockedCandidates = new Map<string, Task>();
+      for (const column of new Set([...blockedHoldColumns, ...blockedWipColumns, ...blockedReviewColumns])) {
+        for (const task of await this.store.listTasks({ column })) blockedCandidates.set(task.id, task);
+      }
+      /* Per-card classification: a card the union pulled in must land in the bucket ITS workflow says. */
+      const todoTasks: Task[] = [];
+      const inProgressTasks: Task[] = [];
+      const inReviewTasks: Task[] = [];
+      const unresolvedBlockedCards: string[] = [];
+      for (const task of blockedCandidates.values()) {
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        if (source === "default") unresolvedBlockedCards.push(task.id);
+        /*
+        Legacy ids UNIONED into each bucket rather than compared separately: `resolveWorkflowIrForTask`
+        returns the BUILT-IN IR for a missing or corrupt workflow, and a board mid-rename still has rows
+        under the old id. This mirrors `lanesOf` below, which unions the same way for referenced tasks.
+        */
+        const bucket = (roles: readonly string[], legacy: readonly string[]): boolean => {
+          const lanes = new Set<string>(legacy);
+          for (const role of roles) {
+            for (const id of columnsWithFlag(ir, role as Parameters<typeof columnsWithFlag>[1])) lanes.add(id);
+          }
+          return lanes.has(task.column);
+        };
+        if (bucket(["hold"], LEGACY_COLUMN_IDS_BY_ROLE.hold ?? [])) todoTasks.push(task);
+        if (bucket(["countsTowardWip"], LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? [])) inProgressTasks.push(task);
+        if (bucket(REVIEW_ROLES, LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? [])) inReviewTasks.push(task);
+      }
+      if (unresolvedBlockedCards.length > 0) {
+        log.warn(
+          `stale blockedBy cleanup: ${unresolvedBlockedCards.length} card(s) classified against the built-in workflow (${unresolvedBlockedCards.slice(0, 5).join(", ")})`,
+        );
+      }
       const blockedTasks = [
         ...todoTasks,
         ...inProgressTasks,
