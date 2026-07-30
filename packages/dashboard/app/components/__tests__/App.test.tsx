@@ -646,6 +646,15 @@ vi.mock("../../hooks/useViewportMode", () => ({
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   isFullScreenSheetViewport: () => mockUseViewportMode() === "mobile",
+  /*
+  FNXC:TestViewportMock 2026-07-30-11:20:
+  An INCOMPLETE module mock does not fail where the export is missing — it throws inside whichever
+  component imports it, and the nearest ErrorBoundary swallows that into "This section encountered an
+  error". NewTaskModal adopted `isShortViewport`, this mock did not, and the test failed on a MISSING
+  HEADING with a healthy-looking DOM. The real function reads the short-viewport media query, so
+  keying it to the mobile mode matches how the siblings above are stubbed.
+  */
+  isShortViewport: () => mockUseViewportMode() === "mobile",
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom

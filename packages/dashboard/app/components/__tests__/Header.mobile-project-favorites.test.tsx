@@ -14,6 +14,10 @@ vi.mock("../../api", async (importOriginal) => ({
 vi.mock("../../hooks/useViewportMode", () => ({
   isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
+  /* FNXC:TestViewportMock 2026-07-30-11:30: keep this mock's surface complete. A missing export does
+     not fail here — it throws inside the importing component and the nearest ErrorBoundary turns it
+     into a missing element, which is how App.test.tsx stayed red for five days. */
+  isShortViewport: () => false,
 }));
 
 function makeProject(id: string, name: string): ProjectInfo {
