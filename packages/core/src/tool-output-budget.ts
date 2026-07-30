@@ -22,13 +22,13 @@ export const TOOL_OUTPUT_UNLIMITED_SETTING_VALUE = 0;
 const DEFAULT_TRUNCATION_HINT = "narrow your query or use limit/offset for more";
 
 /**
- * FNXC:ToolOutputBudget 2026-08-06-12:00:
+ * FNXC:ToolOutputBudget 2026-07-30-12:00:
  * FN-8614 bounds the total text returned by each engine-injected tool result so a
  * large log, document, or JSON response cannot consume an agent's context window.
  * 16,000 characters remains the default while operators can use
  * `agentToolOutputMaxChars` to select a positive cap or the explicit no-limit value.
  *
- * FNXC:ToolOutputBudget 2026-08-06-16:00:
+ * FNXC:ToolOutputBudget 2026-07-30-16:00:
  * FN-8616 requires an operator-controlled opt-out without making an unset or invalid
  * value unbounded. Only the `0` setting sentinel disables this shared wrapper.
  */
