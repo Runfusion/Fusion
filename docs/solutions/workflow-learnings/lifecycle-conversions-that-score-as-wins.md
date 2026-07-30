@@ -116,6 +116,41 @@ If the guard asks about task B while the flags describe task A, supplying them i
 them. An omission degrades to the legacy id, which is at least the OLD behaviour. Wrong flags are new
 behaviour that nobody chose.
 
+## A fifth shape: the consumer is converted and the PRODUCER passes a literal
+
+Found in MY OWN shipped fix, by the operator reviewing it — the sharpest instance in this document
+because every instrument here reported it as done.
+
+`clearNearDuplicateReferencesTo` was converted to resolve the canonical's column flags, and its test
+proved that by supplying `column: "shipped"`. Both production call sites in `moves.ts` gated on the
+RESOLVED complete lane and then passed the literal `column: "done"`. The consumer was correct, the
+producer was never converted, and the hand-supplied fixture value is exactly what hid it.
+
+Why nothing caught it:
+
+- the **census** counts comparisons, and a value passed as an argument is not a comparison;
+- the **seam check** asks whether callers SUPPLY the argument — these did, with a literal;
+- the **test** supplied the interesting value itself, so it exercised the consumer and never the
+  producer.
+
+Worse, driving the flow end to end still did not distinguish them: the consumer looks the passed
+column up in the canonical's IR, finds nothing for `done` on a renamed board, and falls through to
+the LEGACY predicate where `done` IS terminal. Right answer, wrong reason. It only bites on a board
+that DECLARES a `done` column WITHOUT the complete trait — then the literal resolves real flags,
+learns `done` is not terminal there, and strands every marker.
+
+**The rule: a differential test must vary the value the PRODUCTION code computes, not one the test
+hands in.** If your fixture passes the lane name, you have tested the consumer. Ask separately who
+computes that argument in production, and whether they compute it or spell it.
+
+MEASURED, so nobody builds the wrong instrument: an AST probe for a call argument
+`{ column: "<legacy id>" }` finds **79 sites** across `packages/`. It flags the two real `moves.ts`
+offenders, but most of the rest are legitimate — `set({ column: "archived" })` writing the archive
+state, `listTasks({ column: "todo" })` filtering a query. A blocking gate on this shape needs a
+curated list of consumers that interpret the column as a ROLE (as opposed to storing or filtering
+it), which is a judgment call per consumer rather than a mechanical check. Recorded rather than
+built.
+
 ## Guards start catching other people's work, not just yours
 
 Every guard in this lane was written after a defect I had shipped, so for a long time they only
