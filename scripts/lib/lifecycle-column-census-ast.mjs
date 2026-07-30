@@ -278,6 +278,16 @@ export function summarize(findings) {
   `totals.column`. Growing that object would move a number people are mid-way through driving to
   zero. The property-assignment counts are a second, independent instrument and live beside it.
   */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (PR #2661 review — greptile P1):
+  DELIBERATE counts are tracked PER FILE, not only as a repo total. A total lets an addition in one
+  marked construct be offset by a removal in another and stay flat, and because deliberate findings
+  are excluded from `byFile`, the newly exempt guard is invisible there too — so the gate passes with
+  a new lifecycle-column guard. Per-file is the same shape `byFile` already uses for columns, and it
+  makes offsetting edits visible because they land in different files.
+  */
+  const deliberateByFile = new Map();
+
   const properties = { query: 0, definition: 0 };
   const queryByFile = new Map();
   const queryByColumnId = {};
@@ -292,6 +302,9 @@ export function summarize(findings) {
       continue;
     }
     totals[finding.kind] += 1;
+    if (finding.kind === "deliberate") {
+      deliberateByFile.set(finding.file, (deliberateByFile.get(finding.file) ?? 0) + 1);
+    }
     if (finding.kind !== "column") continue;
     byColumnId[finding.columnId] = (byColumnId[finding.columnId] ?? 0) + 1;
     byFile.set(finding.file, (byFile.get(finding.file) ?? 0) + 1);
@@ -301,6 +314,7 @@ export function summarize(findings) {
     totals,
     byColumnId,
     byFile: [...byFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    deliberateByFile: [...deliberateByFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     properties,
     queryByColumnId,
     queryByFile: [...queryByFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),

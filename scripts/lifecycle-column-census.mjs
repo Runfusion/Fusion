@@ -157,23 +157,41 @@ Measured rather than argued, on the marker in register-task-workflow-routes.ts:
 The review's stated mechanism (the marker attaching to the enclosing conditional) does not hold;
 the narrower hole does, and it applies to every marker in the codebase rather than just this one.
 
-Pinning `totals.deliberate` closes it: growing a marked expression moves that number, so it must be
-re-recorded like any other change, which puts it in the diff where a reviewer sees it.
+Pinning it per FILE closes it. An earlier version of this check compared the repo-wide TOTAL, which a
+REMOVAL in one marked construct offsets against an ADDITION in another — the total stays flat, the
+check passes, and the new guard is invisible to `byFile` too because deliberate findings are excluded
+from it (PR #2661 review, greptile P1). Same high-water failure this whole PR is about, one field
+over. Per-file makes offsetting edits visible, because they land in different files.
 */
-if (baseline.totals && typeof baseline.totals.deliberate === "number"
-    && summary.totals.deliberate > baseline.totals.deliberate) {
-  console.error(
-    `\nlifecycle-column-census --strict: DELIBERATE-LITERAL count ROSE ` +
-    `(${baseline.totals.deliberate} -> ${summary.totals.deliberate})\n\n` +
-    "A marker exempts everything inside the construct it is attached to, so a comparison added to an\n" +
-    "already-marked expression is invisible to the per-file counts. Either convert it, or re-record\n" +
-    "the baseline in this PR and say in the body which marked site grew and why.\n",
-  );
-  process.exit(1);
-}
 
 const regressions = [];
 const stale = [];
+
+/*
+DELIBERATE-LITERAL counts, compared per file alongside the column counts above. A marker excuses the
+construct it is attached to AND everything inside it (`hasDeliberateMarker` walks ancestors by
+design), so a comparison appended to an already-marked expression inherits the exemption and never
+reaches the column counts. Tracking the exemptions themselves is what makes that visible.
+*/
+/*
+FIRST-RUN MIGRATION. A baseline recorded before this field existed has no `deliberateByFile` at all,
+which is NOT the same as "every marked file had zero" — comparing against an absent map would report
+every existing marker as a fresh rise and demand people convert literals that were already reviewed.
+Seed it on the next `--update-baseline` instead, and start comparing once it is present.
+*/
+const deliberateTracked = baseline.deliberateByFile !== undefined;
+const baselineDeliberateByFile = new Map(Object.entries(baseline.deliberateByFile ?? {}));
+const currentDeliberateByFile = new Map(summary.deliberateByFile ?? []);
+for (const [file, count] of deliberateTracked ? currentDeliberateByFile : []) {
+  const allowed = baselineDeliberateByFile.get(file) ?? 0;
+  if (count > allowed) regressions.push({ file: `${file} (DELIBERATE-LITERAL)`, count, allowed });
+  else if (count < allowed) stale.push({ file: `${file} (DELIBERATE-LITERAL)`, count, allowed });
+}
+for (const [file, allowed] of deliberateTracked ? baselineDeliberateByFile : []) {
+  if (!currentDeliberateByFile.has(file) && allowed > 0) {
+    stale.push({ file: `${file} (DELIBERATE-LITERAL)`, count: 0, allowed });
+  }
+}
 
 for (const [file, count] of currentByFile) {
   const allowed = baselineByFile.get(file) ?? 0;
@@ -240,7 +258,7 @@ if (regressions.length > 0) {
   process.exit(1);
 }
 
-if (stale.length > 0) {
+if (stale.length > 0 || (!deliberateTracked && updateBaseline)) {
   if (updateBaseline) {
     writeFileSync(
       BASELINE_PATH,
@@ -249,6 +267,7 @@ if (stale.length > 0) {
         totals: summary.totals,
         byColumnId: summary.byColumnId,
         byFile: Object.fromEntries(summary.byFile),
+        deliberateByFile: Object.fromEntries(summary.deliberateByFile ?? []),
         properties: summary.properties,
         queryByColumnId: summary.queryByColumnId,
         queryByFile: Object.fromEntries(summary.queryByFile),
