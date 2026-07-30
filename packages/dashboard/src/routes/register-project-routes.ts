@@ -12,6 +12,8 @@ import {
   writeProjectIdentity,
   resolveWorkflowIrForTask,
   columnsWithFlag,
+  resolveTaskLifecycleColumns,
+  isTerminalColumnRole,
 } from "@fusion/core";
 import type { CentralCore as CentralCoreApi, WorkflowIr } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
@@ -920,8 +922,34 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
         // Compute live task counts from the project-specific store
         const tasks = await projectStore.listTasks({ slim: true });
-        const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
-        const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+        Project-health "active tasks" is the negation of each card's OWN terminal lanes.
+
+        CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison. On a renamed board it
+        matched nothing, so project health reported **0 active tasks** beside an in-flight agent
+        count that was still correct — the same silent-zero shape as the analytics tallies fixed in
+        #2780. A zero next to a populated neighbour reads as "this project is idle", not as "this
+        number is broken".
+
+        Note the set also listed `triage`, a column U11 deleted, so one of its four entries had been
+        dead on every board since that cutover.
+
+        Resolved per card through one shared IR cache; a card whose workflow will not resolve keeps
+        the legacy answer via `isTerminalColumnRole`'s own degraded mode.
+        */
+        const activeIrCache = new Map<string, never>();
+        const terminalByTaskId = new Map<string, boolean>();
+        for (const t of tasks) {
+          const lanes = await resolveTaskLifecycleColumns(projectStore, t.id, activeIrCache as never).catch(() => undefined);
+          terminalByTaskId.set(
+            t.id,
+            lanes === undefined
+              ? isTerminalColumnRole(undefined, t.column)
+              : t.column === lanes.complete || t.column === lanes.archived,
+          );
+        }
+        const activeTaskCount = tasks.filter((t) => !terminalByTaskId.get(t.id)).length;
         /*
          * FNXC:GlobalConcurrencyControls 2026-06-26-23:46:
          * Project health In-Flight Agents is a live read-layer count, not persisted slot bookkeeping.
