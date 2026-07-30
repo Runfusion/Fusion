@@ -46,7 +46,36 @@ in one query must count as two. No file currently has that shape (every matching
 exactly one), so this is defensive rather than a recorded incident; it is the same class as the
 one-supplier floor the inert-seam gate had to fix, and cheaper to get right now than to discover.
 */
-export const COMPARISON = new RegExp(`(?:"column"|\\bcolumn)\\s*(?:=|!=|<>)\\s*'(?:${LEGACY_IDS.join("|")})'`, "gi");
+const COLUMN_REF = `(?:"column"|\\bcolumn)`;
+const LEGACY_ID = `'(?:${LEGACY_IDS.join("|")})'`;
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-20:20 (#2841 review, second round — greptile P1 "IN predicates
+bypass the gate"):
+
+`IN (...)` IS A COMPARISON, AND EACH ELEMENT IS ONE.
+
+The operator list was `=`, `!=`, `<>`, so `"column" IN ('in-progress', 'in-review')` contributed
+nothing and a second predicate in that form could be added while the baseline stayed green. It is the
+same false-negative class as the pre-filters removed in the first round — a shape the pattern simply
+did not describe.
+
+The IN arm counts its LEGACY ELEMENTS, not the predicate: two ids in one list is two vocabulary-bound
+sites, the same accounting the `=` arm uses when a query holds two comparisons. The list body is
+matched loosely (`[^)]*`) so a mixed list — a legacy id beside a resolved one — is still caught, and
+the per-element count is taken from the matched text afterwards.
+*/
+export const COMPARISON = new RegExp(
+  `${COLUMN_REF}\\s*(?:(?:=|!=|<>)\\s*${LEGACY_ID}|(?:NOT\\s+)?IN\\s*\\([^)]*${LEGACY_ID}[^)]*\\))`,
+  "gi",
+);
+/** Legacy ids inside one matched predicate — an `IN` list can hold several. */
+const LEGACY_ID_GLOBAL = new RegExp(LEGACY_ID, "gi");
+
+/** How many vocabulary-bound sites one matched predicate represents. */
+export function comparisonWeight(match) {
+  LEGACY_ID_GLOBAL.lastIndex = 0;
+  return (match.match(LEGACY_ID_GLOBAL) ?? []).length;
+}
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -91,15 +120,41 @@ invitation to re-add a filter that uses it.
 /**
  * The DECODED content of a string or template literal, or null for any other node.
  *
- * `.text` is decoded (`\"` becomes `"`); `.getText()` is not. For a template WITH interpolations the
- * decoded content lives in `head` plus each span's literal, so those are concatenated with a space —
- * the interpolated expression cannot be part of a matched comparison anyway, and joining with a space
- * rather than nothing prevents two fragments from being spliced into a false match across the hole.
+ * `.text` is decoded (`\"` becomes `"`); `.getText()` is not.
+ *
+ * FNXC:LifecycleColumnCensus 2026-07-30-20:35 (#2841 review, second round — greptile P1
+ * "interpolated columns disappear during scanning"):
+ *
+ * A DRIZZLE COLUMN REFERENCE IS AN INTERPOLATION, AND DROPPING IT DROPPED THE WHOLE PREDICATE.
+ *
+ * The first version joined only the STATIC spans, on the reasoning that an interpolated expression
+ * cannot be part of a matched comparison. That is exactly backwards for the dominant production
+ * shape: a Drizzle template puts the COLUMN in the hole and the legacy id in the static text, so
+ * `${schema.project.tasks.column} != VALUE` joined to text with no column identifier in it and
+ * matched nothing. The merge-queue and self-healing queries this gate exists to freeze are written
+ * this way, so it was blind on its primary target.
+ *
+ * An interpolation that NAMES a column is therefore rendered as the literal token `"column"` — the
+ * spelling the pattern already looks for — and every other interpolation becomes a NUL sentinel.
+ * A space would not do: `\`"column" = ${expr}'done'\`` joins to `"column" =  'done'`, a comparison
+ * that is not in the source. NUL cannot appear inside any pattern here, so it breaks the splice.
+ *
+ * The test is the expression's TRAILING property, not a resolved type: this is a standalone script
+ * with no type-checker, and an AST gate earns its place by staying cheap. A false positive costs one
+ * baseline entry; the false NEGATIVE it replaces cost the gate its meaning on its own target files.
  */
+const COLUMN_PROPERTY = /(?:^|\.)column$/;
+
 export function literalText(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isTemplateExpression(node)) {
-    return [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(" ");
+    const parts = [node.head.text];
+    for (const span of node.templateSpans) {
+      const expression = span.expression.getText().trim();
+      parts.push(COLUMN_PROPERTY.test(expression) ? '"column"' : "\u0000");
+      parts.push(span.literal.text);
+    }
+    return parts.join("");
   }
   return null;
 }
@@ -115,7 +170,7 @@ function scan() {
       const text = literalText(node);
       if (text !== null) {
         COMPARISON.lastIndex = 0;                         // a /g regex carries state between calls
-        hits += (text.match(COMPARISON) ?? []).length;
+        for (const match of text.match(COMPARISON) ?? []) hits += comparisonWeight(match);
       }
       ts.forEachChild(node, visit);
     };
@@ -125,53 +180,65 @@ function scan() {
   return counts;
 }
 
-const found = scan();
-
-if (process.argv.includes("--update-baseline")) {
-  writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
-  const total = Object.values(found).reduce((a, b) => a + b, 0);
-  console.log(`[check-sql-column-literals] baseline written: ${total} site(s) in ${Object.keys(found).length} file(s)`);
-  process.exit(0);
-}
-
-let baseline;
-try {
-  baseline = JSON.parse(readFileSync(BASELINE, "utf8"));
-} catch {
-  console.error("[check-sql-column-literals] missing baseline; run with --update-baseline");
-  process.exit(1);
-}
-
-const problems = [];
-for (const [file, count] of Object.entries(found)) {
-  const allowed = baseline[file] ?? 0;
-  if (count > allowed) {
-    problems.push(`  ${file}: ${count} SQL column literal(s), baseline allows ${allowed}`);
-  }
-}
 /*
-A count that DROPPED is also a failure, deliberately. A migrated site that leaves its baseline entry
-behind is a slot the surface can silently regrow into later — the same rot as an allow-list entry for
-a deleted function, which this repo hit once already.
+FNXC:LifecycleColumnCensus 2026-07-30-21:00 (#2841 review, second round):
+GUARDED ENTRY POINT, so importing this module does not RUN the gate.
+
+`check-sql-column-literals.test.mjs` imports `COMPARISON` and `literalText` to test the matcher
+directly. Without this guard the import executed the whole scan, printed the gate's report, and called
+`process.exit(1)` — so the test file failed for the gate's reasons rather than its own, and while the
+gate happened to be green it passed for reasons unrelated to what it asserts. A test that can be made
+to pass or fail by unrelated repo state is not a test.
 */
-for (const [file, allowed] of Object.entries(baseline)) {
-  const count = found[file] ?? 0;
-  if (count < allowed) {
-    problems.push(`  ${file}: ${count} site(s) now, baseline still allows ${allowed} — re-record it (--update-baseline)`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const found = scan();
+
+  if (process.argv.includes("--update-baseline")) {
+    writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
+    const total = Object.values(found).reduce((a, b) => a + b, 0);
+    console.log(`[check-sql-column-literals] baseline written: ${total} site(s) in ${Object.keys(found).length} file(s)`);
+    process.exit(0);
   }
-}
 
-if (problems.length > 0) {
-  console.error("\n[check-sql-column-literals] SQL column-literal population changed:\n");
-  for (const line of problems.sort()) console.error(line);
-  console.error(
-    "\nA legacy column id inside a query string is invisible to the lifecycle census and to the\n"
-    + "inert-seam gate. Resolve the lane instead — `resolveProjectColumnsForRoles(store, roles)` in\n"
-    + "core/src/project-lane-vocabulary.ts returns the column set for a role across all workflows.\n"
-    + "If a count went DOWN, re-record the baseline in the same commit.\n",
-  );
-  process.exit(1);
-}
+  let baseline;
+  try {
+    baseline = JSON.parse(readFileSync(BASELINE, "utf8"));
+  } catch {
+    console.error("[check-sql-column-literals] missing baseline; run with --update-baseline");
+    process.exit(1);
+  }
 
-const total = Object.values(found).reduce((a, b) => a + b, 0);
-console.log(`[check-sql-column-literals] ${total} known SQL column literal(s), none added.`);
+  const problems = [];
+  for (const [file, count] of Object.entries(found)) {
+    const allowed = baseline[file] ?? 0;
+    if (count > allowed) {
+      problems.push(`  ${file}: ${count} SQL column literal(s), baseline allows ${allowed}`);
+    }
+  }
+  /*
+  A count that DROPPED is also a failure, deliberately. A migrated site that leaves its baseline entry
+  behind is a slot the surface can silently regrow into later — the same rot as an allow-list entry for
+  a deleted function, which this repo hit once already.
+  */
+  for (const [file, allowed] of Object.entries(baseline)) {
+    const count = found[file] ?? 0;
+    if (count < allowed) {
+      problems.push(`  ${file}: ${count} site(s) now, baseline still allows ${allowed} — re-record it (--update-baseline)`);
+    }
+  }
+
+  if (problems.length > 0) {
+    console.error("\n[check-sql-column-literals] SQL column-literal population changed:\n");
+    for (const line of problems.sort()) console.error(line);
+    console.error(
+      "\nA legacy column id inside a query string is invisible to the lifecycle census and to the\n"
+      + "inert-seam gate. Resolve the lane instead — `resolveProjectColumnsForRoles(store, roles)` in\n"
+      + "core/src/project-lane-vocabulary.ts returns the column set for a role across all workflows.\n"
+      + "If a count went DOWN, re-record the baseline in the same commit.\n",
+    );
+    process.exit(1);
+  }
+
+  const total = Object.values(found).reduce((a, b) => a + b, 0);
+  console.log(`[check-sql-column-literals] ${total} known SQL column literal(s), none added.`);
+}

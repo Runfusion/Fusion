@@ -21,7 +21,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import ts from "typescript";
 
-import { COMPARISON, literalText } from "../check-sql-column-literals.mjs";
+import { COMPARISON, comparisonWeight, literalText } from "../check-sql-column-literals.mjs";
 
 /** Count forbidden comparisons the way the scanner does: over decoded literal text. */
 function hits(source) {
@@ -31,7 +31,8 @@ function hits(source) {
     const text = literalText(node);
     if (text !== null) {
       COMPARISON.lastIndex = 0;
-      total += (text.match(COMPARISON) ?? []).length;
+      /* Weighted exactly as the scanner counts: an IN list of two legacy ids is two sites. */
+      for (const match of text.match(COMPARISON) ?? []) total += comparisonWeight(match);
     }
     ts.forEachChild(node, visit);
   };
@@ -83,4 +84,52 @@ test("prose in a comment is never matched, whatever the pattern permits", () => 
   repo, which is what the AST approach exists to avoid.
   */
   assert.equal(hits(`// this note mentions "column" = 'done' in prose\nconst x = 1;`), 0);
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-20:50 (#2841 review, SECOND round — two more false negatives):
+
+The first round removed pre-filters that disagreed with the pattern. These two are shapes the pattern
+never described at all, and the second is the more serious: it was blind on the gate's own primary
+target.
+*/
+
+test("an IN list is a comparison, and each legacy element counts", () => {
+  /*
+  greptile: the operator list was `=`, `!=`, `<>`, so `"column" IN ('in-progress', 'in-review')`
+  contributed nothing and a second predicate in that form could be added with the baseline green.
+  Two ids in one list is two vocabulary-bound sites — the same accounting the `=` arm uses for two
+  comparisons in one query. `team-analytics.ts` and `workflow-analytics.ts` each held one, unseen.
+  */
+  assert.equal(hits("const q = `WHERE \"column\" IN ('in-progress', 'in-review')`;"), 2);
+});
+
+test("a NOT IN list is caught too", () => {
+  assert.equal(hits("const q = `WHERE \"column\" NOT IN ('done')`;"), 1);
+});
+
+test("an IN list MIXING a legacy id with a resolved one still counts the legacy one", () => {
+  /* The list body is matched loosely so a partially-migrated predicate is not silently exempted. */
+  assert.equal(hits("const q = `WHERE \"column\" IN ('shipped', 'done')`;"), 1);
+});
+
+test("a Drizzle template whose COLUMN is interpolated is caught", () => {
+  /*
+  greptile, and the finding that mattered most: production writes
+  `sql\`${schema.project.tasks.column} != 'archived'\``, putting the column in the interpolation hole
+  and the legacy id in the static text. Joining only the static spans produced ` != 'archived'` — no
+  column identifier, no match. The merge-queue and self-healing queries this gate was built to freeze
+  are written exactly this way, so it was blind on its own primary target; enabling this shape
+  revealed five previously-invisible files.
+  */
+  const src = "const q = sql`${schema.project.tasks.column} != 'archived'`;";
+  assert.equal(hits(src), 1);
+});
+
+test("a NON-column interpolation does not splice two fragments into a false match", () => {
+  /*
+  The paired negative for the join. Non-column holes become a SPACE rather than nothing, so the text
+  on either side cannot be glued into a comparison that is not in the source.
+  */
+  assert.equal(hits("const q = sql`WHERE \"column\" = ${someExpr}'done'`;"), 0);
 });
