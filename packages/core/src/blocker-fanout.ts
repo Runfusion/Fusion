@@ -92,6 +92,21 @@ export interface ComputeBlockerFanoutOptions {
   Defaults to `BLOCKER_ESCALATION_COLUMNS` so unconverted callers are byte-identical.
   */
   escalationColumns?: ReadonlySet<string>;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-18:00:
+  PER-TASK escalation, and it takes precedence over the flat set above.
+
+  Added by applying a rule I had just written for myself on another review: *if a caveat describes a
+  wrong answer the code can actually produce, it is a bug with good documentation, not a documented
+  trade-off.* I shipped `escalationColumns` as a board-wide union with a note saying it
+  over-approximates on a multi-workflow board — which is a wrong answer, just a cheap one: a blocker
+  can be labelled `long-lived` because ANOTHER workflow calls its column active.
+
+  Same reasoning and same shape as `classify` above, which this module already documents as the only
+  correct option when a board spans workflows. The flat set stays for single-vocabulary callers and
+  as the legacy default.
+  */
+  escalationClassify?: (task: Task) => boolean;
 }
 
 export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress", "in-review"]);
@@ -162,6 +177,10 @@ export function computeBlockerFanoutMap(
   const terminalColumns = options.terminalColumns ?? LEGACY_TERMINAL_COLUMNS;
   /* DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-05:00. */
   const escalationColumns = options.escalationColumns ?? BLOCKER_ESCALATION_COLUMNS;
+  /* Per-task wins over the board-wide set, which wins over the legacy default. */
+  const isEscalationLane = (task: Task | undefined): boolean =>
+    task !== undefined
+    && (options.escalationClassify ? options.escalationClassify(task) : escalationColumns.has(task.column));
   const holdColumn = options.holdColumn ?? "todo";
   const reviewColumns = options.reviewColumns ?? LEGACY_REVIEW_COLUMNS;
 
@@ -256,7 +275,7 @@ export function computeBlockerFanoutMap(
     const shouldEscalate =
       blockerColumn !== undefined &&
       isHighFanout &&
-      escalationColumns.has(blockerColumn) &&
+      isEscalationLane(blocker) &&
       blockingAgeMs >= staleHighFanoutAgeThresholdMs;
 
     result.set(blockerId, {

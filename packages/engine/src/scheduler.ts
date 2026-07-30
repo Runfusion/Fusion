@@ -1466,6 +1466,9 @@ export class Scheduler {
     One IR cache for the sweep, per the caller-owned-cache contract.
     */
     const escalationIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    /* Per-task, keyed by id — see the `escalationClassify` note in blocker-fanout.ts. The flat set is
+       still built alongside it as the legacy fallback for tasks whose workflow will not resolve. */
+    const escalationByTaskId = new Map<string, boolean>();
     const escalationColumns = new Set<string>();
     const holdByTaskId = new Map<string, boolean>();
     const terminalByTaskId = new Map<string, boolean>();
@@ -1476,6 +1479,12 @@ export class Scheduler {
       for (const id of columnsWithFlag(ir, "mergeOrchestration")) escalationColumns.add(id);
       for (const id of columnsWithFlag(ir, "mergeBlocker")) escalationColumns.add(id);
       for (const id of columnsWithFlag(ir, "humanReview")) escalationColumns.add(id);
+      escalationByTaskId.set(task.id, [
+        ...columnsWithFlag(ir, "countsTowardWip"),
+        ...columnsWithFlag(ir, "mergeOrchestration"),
+        ...columnsWithFlag(ir, "mergeBlocker"),
+        ...columnsWithFlag(ir, "humanReview"),
+      ].includes(task.column));
       holdByTaskId.set(task.id, columnsWithFlag(ir, "hold").includes(task.column));
       terminalByTaskId.set(
         task.id,
@@ -1484,6 +1493,8 @@ export class Scheduler {
     }
     const fanoutMap = computeBlockerFanoutMap(tasks, 3, {
       ...(escalationColumns.size > 0 ? { escalationColumns } : {}),
+      /* Per-task answer where the workflow resolved; the flat set above covers the rest. */
+      escalationClassify: (task: Task) => escalationByTaskId.get(task.id) ?? escalationColumns.has(task.column),
       /*
       `classify` is PER TASK, which this module documents as the only correct option on a board
       spanning workflows — and it is required here for a reason the escalation half alone would have
