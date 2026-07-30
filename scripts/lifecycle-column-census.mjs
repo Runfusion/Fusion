@@ -9,6 +9,7 @@ regression suite that pins each form this census must catch lives in
 Report-only by default:
   node scripts/lifecycle-column-census.mjs            # human table
   node scripts/lifecycle-column-census.mjs --json     # machine-readable
+  node scripts/lifecycle-column-census.mjs --compare  # cross-check AST vs text classifier
   node scripts/lifecycle-column-census.mjs --strict   # fail if any file DIVERGES from baseline
   node scripts/lifecycle-column-census.mjs --strict --update-baseline   # re-record after lowering it
 
@@ -24,7 +25,17 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { censusFiles, summarize } from "./lib/lifecycle-column-census.mjs";
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:50: the AST classifier is the instrument. Three people
+measured this backlog with three greps and got three answers, so the number is taken from a parse.
+The text classifier stays beside it as an independent second implementation — `--compare` runs both
+and fails if they disagree, which is the only evidence available that either is right.
+*/
+import { censusFiles, summarize } from "./lib/lifecycle-column-census-ast.mjs";
+import {
+  censusFiles as censusFilesText,
+  summarize as summarizeText,
+} from "./lib/lifecycle-column-census.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BASELINE_PATH = join(HERE, "lib", "lifecycle-column-census-baseline.json");
@@ -54,6 +65,7 @@ const findings = censusFiles(files);
 const summary = summarize(findings);
 const json = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
+const compare = process.argv.includes("--compare");
 const updateBaseline = process.argv.includes("--update-baseline");
 
 if (json) {
@@ -76,6 +88,34 @@ if (json) {
     // Never let a truncated list read as "that is all of it".
     console.log(`    … and ${summary.byFile.length - 20} more files`);
   }
+}
+
+if (compare) {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-23:05:
+  THE CONTRACT IS SUPERSET, NOT EQUALITY. The text classifier is knowingly weaker — it matches per
+  line, `===`/`!==` only, and literal-on-the-right only — so the parser legitimately finds MORE
+  (measured: 6 more, all real; `data.to !== "archived"` and multi-line `||` chains in scheduler.ts).
+  Demanding equality would just force the parser down to the regex's blind spots.
+
+  What must NEVER happen is the other direction: a site the REGEX found and the parser missed means
+  the parser has a hole, and then its number cannot be the bar. That is the failure this checks.
+  */
+  const text = summarizeText(censusFilesText(files));
+  console.log(`\n  text classifier:  ${JSON.stringify(text.totals)}`);
+  console.log(`  AST classifier:   ${JSON.stringify(summary.totals)}`);
+  const regressions = ["column", "role", "status", "deliberate"].filter(
+    (kind) => text.totals[kind] > summary.totals[kind],
+  );
+  if (regressions.length > 0) {
+    console.error(
+      `\nlifecycle-column-census --compare: the regex found MORE than the parser for ${regressions.join(", ")}.\n` +
+      "The parser has a blind spot; its count cannot be the bar until this is closed.",
+    );
+    process.exit(1);
+  }
+  const extra = summary.totals.column - text.totals.column;
+  console.log(`  parser is a superset (+${extra} column guards the regex cannot see).`);
 }
 
 if (!strict) process.exit(0);

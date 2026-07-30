@@ -110,6 +110,20 @@ unbounded and a name list was already wrong twice (`sessionPurpose`, `surface`).
 the members that are NEVER column ids (`executor`/`reviewer`/`merger`, `pending`/`skipped`) identify
 which vocabulary an expression belongs to whatever its variable is called.
 
+**The classifier is AST-based** (`scripts/lib/lifecycle-column-census-ast.mjs`, `ts.createSourceFile`),
+because three people measured this backlog with three greps and got three different answers for the
+role bucket (6, 8, 12). A regex cannot tell a column guard from an agent role, a session purpose, a
+surface name, a step status, or a comment. The parser also sees shapes no per-line pattern can:
+multi-line comparisons, literal-on-the-left, loose equality, and JSX. The text classifier is kept
+beside it as an independent second implementation — `--compare` asserts the parser is a strict
+SUPERSET of the regex (measured +6, all real) and FAILS if the regex ever finds something the parser
+misses, which would mean the parser has a blind spot and its count cannot be the bar.
+
+What the parser still cannot do, stated rather than implied: without a full type-checker program it
+cannot prove a receiver is column-typed, so classification remains evidence-based (receiver name plus
+the vocabulary its siblings use). That is why the four classes are reported separately and never
+netted — a wrong classification stays visible instead of silently moving the bar.
+
 `--json` emits the machine-readable form. `--strict` compares per-file counts against
 `scripts/lib/lifecycle-column-census-baseline.json` and fails when any file's column-guard count
 **rises** — the ratchet shape. It is deliberately **not** wired into the merge gate: a
