@@ -114,8 +114,30 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     const assignedTasks = tasks.filter((task) => task.assignedAgentId === agentId);
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet phase; #2739 review — greptile P2):
+    The dispatcher's OWN lane filters, resolved for this agent's tasks only. On a renamed board both
+    matched nothing, so an agent asking for work was told there was none with its own assigned tasks
+    sitting in the list it just fetched — no error, no log, the agent simply idles.
+
+    Scoped to `assignedTasks` deliberately: an earlier version walked the whole board before filtering, so
+    a 400-card board paid 400 resolutions to dispatch one agent that owns three. `assignedAgentId` is a
+    plain property read and was already the next filter, so hoisting it costs nothing.
+
+    Shares `satisfiedIrCache` with the dependency resolution below — one IR read per distinct workflow
+    across both passes rather than one per pass.
+    */
+    const dispatchIrCache = new Map<string, WorkflowIr>();
+    const lifecycleByTaskId = new Map<string, Awaited<ReturnType<typeof resolveTaskLifecycleColumns>>>();
+    for (const task of assignedTasks) {
+      if (lifecycleByTaskId.has(task.id)) continue;
+      lifecycleByTaskId.set(task.id, await resolveTaskLifecycleColumns(store, task.id, dispatchIrCache));
+    }
+    const isWipTask = (task: Task) => task.column === (lifecycleByTaskId.get(task.id)?.wip ?? "in-progress");
+    const isHoldTask = (task: Task) => task.column === (lifecycleByTaskId.get(task.id)?.hold ?? "todo");
+
     const inProgress = assignedTasks
-      .filter((task) => task.column === "in-progress" && isBindCompatible(task))
+      .filter((task) => isWipTask(task) && isBindCompatible(task))
       .sort(sortByOldestColumnMove);
     if (inProgress.length > 0) {
       return {
@@ -151,7 +173,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     /** FNXC:TaskDispatch 2026-07-19-14:40: remembered ownership must not reselect an operator-parked task when `userPaused` remains true but legacy `paused` is false. */
     const todoCandidates = roleCompatibleAssignedTasks.filter(
-      (task) => task.column === "todo" && task.paused !== true && task.userPaused !== true,
+      (task) => isHoldTask(task) && task.paused !== true && task.userPaused !== true,
     );
 
     const readyTodo = todoCandidates
@@ -236,7 +258,17 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
       }
       // When pausing an in-progress/in-review task, set status so the UI can show the state.
       // When unpausing, clear the "paused" status.
-      if (task.column === "in-progress" || task.column === "in-review") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet phase):
+      One task in hand, so one resolution — the "is this card mid-flight or in review" test that decides
+      whether pausing shows a `paused` status. On a renamed board neither literal matched, so pausing a
+      running card left its status untouched and the UI kept showing it as working.
+      */
+      const pauseLifecycle = await resolveTaskLifecycleColumns(store, id);
+      if (
+        task.column === (pauseLifecycle?.wip ?? "in-progress")
+        || task.column === (pauseLifecycle?.review ?? "in-review")
+      ) {
         task.status = paused ? "paused" : undefined;
       }
       const now = new Date().toISOString();
