@@ -1,4 +1,5 @@
 import { createLogger } from "../logger.js";
+import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
 
 const severityAuditLog = createLogger("core-task-mutation-ops");
 /**
@@ -650,6 +651,7 @@ export async function setCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
 
 export async function reconcileLegacyAutoMergeStampsImpl(store: TaskStore, options?: { apply?: boolean }): Promise<LegacyAutoMergeStampReconcileResult[]> {
     const candidates = await store.listLegacyAutoMergeStampCandidates();
+    const stampReviewColumns = await resolveLegacyStampReviewColumns(store);
     const results: LegacyAutoMergeStampReconcileResult[] = [];
 
     if (options?.apply !== true) {
@@ -658,7 +660,14 @@ export async function reconcileLegacyAutoMergeStampsImpl(store: TaskStore, optio
 
     for (const candidate of candidates) {
       const current = await store.getTask(candidate.id);
-      if (!current || !store.isLegacyAutoMergeStampCandidate(current)) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+      Re-check the freshly read row against the SAME resolved review vocabulary the candidate list
+      used. Left on the literal, this second check discarded every candidate the widened query had
+      just found on a renamed board — a half-converted pair where the read is resolved and the
+      re-check is not, which is the shape that makes a fix look applied and behave as before.
+      */
+      if (!current || !store.isLegacyAutoMergeStampCandidate(current, stampReviewColumns)) {
         continue;
       }
 
