@@ -320,3 +320,46 @@ describe("TaskContextMenu shared task action model", () => {
     expect(pause).toHaveFocus();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-10:20 (PR #2626 review — greptile P2):
+The intake-only vs intake+hold distinction, covered per workflow SHAPE rather than per column id.
+
+`shouldShowActionsMenu` suppresses the menu only for a PURE intake lane. That distinction is the
+whole point of the conversion and it was asserted only through the legacy `triage` id, which cannot
+express either post-U11 shape: a merged Planning column carries both traits, and Coding (Ideas)
+carries intake alone on a non-legacy id. A later predicate change could restore the unwanted Ideas
+menu or hide actions on Planning cards with nothing failing.
+*/
+describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
+  const model = (column: string, flags: Record<string, boolean>) =>
+    buildTaskActionMenuModel({
+      task: makeTask({ column: column as never }),
+      t,
+      columnLabel: columnLabel as never,
+      currentColumnFlags: flags as never,
+    }).shouldShowActionsMenu;
+
+  it("SUPPRESSES the menu on a Coding (Ideas) capture — intake with no hold, non-legacy id", () => {
+    // `ideas` is not the legacy intake id, so only the trait can answer. A bare captured idea has
+    // no actions worth offering yet, which is the case the original guard existed for.
+    expect(model("ideas", { intake: true })).toBe(false);
+  });
+
+  it("SHOWS the menu on a merged Planning column — intake AND hold", () => {
+    // Post-U11 the default Planning column carries both traits. Cards rest here waiting for
+    // capacity and do have real actions, so suppressing would remove affordances that existed
+    // when this was the separate `todo` lane.
+    expect(model("todo", { intake: true, hold: true })).toBe(true);
+  });
+
+  it("SHOWS the menu on a hold-only lane, as the pre-merge `todo` column did", () => {
+    expect(model("todo", { hold: true })).toBe(true);
+  });
+
+  it("SUPPRESSES on a RENAMED pure-intake lane, proving no id is consulted", () => {
+    // The assertion that fails if anyone reintroduces an id comparison: `backlog` matches no
+    // legacy literal, so a correct answer here can only come from the trait.
+    expect(model("backlog", { intake: true })).toBe(false);
+  });
+});
