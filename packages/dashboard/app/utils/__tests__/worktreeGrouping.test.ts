@@ -147,3 +147,59 @@ describe("groupByWorktree", () => {
     expect(upNext!.queuedTasks).toEqual([queued]);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+The upcoming-work list must find the HOLD lane by trait, not by the id `todo`.
+
+WHY THIS ONE HID. On the default board the id and the role coincide — U11 gave `todo` the
+hold trait — so every existing case here passed and the site looked healthy. Rename the
+hold column and the filter matched nothing: the worktree view showed no upcoming work at
+all and read as idle. A whole panel silently empty, nothing thrown.
+
+Board resolves the hold ids across ALL workflows on the board (a card in another
+workflow's hold lane is still upcoming work); Lane passes nothing and keeps the legacy
+fallback, which is why the default case below omits the argument entirely.
+
+REVERT CHECK, measured: dropping the parameter back to `t.column === "todo"` fails the
+renamed case with an empty queue.
+*/
+describe("upcoming-work queue resolves the hold lane by trait", () => {
+  const mkTask = (id: string, column: string, extra: Record<string, unknown> = {}) =>
+    ({
+      id, title: id, description: "", column, dependencies: [], steps: [], currentStep: 0,
+      log: [], createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+      ...extra,
+    } as never);
+
+  it("finds waiting cards in a RENAMED hold column when the ids are supplied", () => {
+    const waiting = mkTask("FN-50", "backlog");
+    const groups = groupByWorktree([], [waiting], 3, new Set(["backlog"]));
+    const queued = groups.flatMap((group) => group.queuedTasks ?? []);
+    expect(queued.map((task: { id: string }) => task.id)).toContain("FN-50");
+  });
+
+  it("finds nothing in a renamed hold column when the ids are NOT supplied", () => {
+    /*
+    Pins the fallback's real limit rather than pretending it covers custom boards: with no
+    resolved ids the legacy guess is all there is, and it cannot know about `backlog`. This
+    is the case that used to be the ONLY behaviour, on every board.
+    */
+    const groups = groupByWorktree([], [mkTask("FN-51", "backlog")], 3);
+    const queued = groups.flatMap((group) => group.queuedTasks ?? []);
+    expect(queued.map((task: { id: string }) => task.id)).not.toContain("FN-51");
+  });
+
+  it("still finds legacy `todo` cards with no ids supplied, so Lane is unaffected", () => {
+    const groups = groupByWorktree([], [mkTask("FN-52", "todo")], 3);
+    const queued = groups.flatMap((group) => group.queuedTasks ?? []);
+    expect(queued.map((task: { id: string }) => task.id)).toContain("FN-52");
+  });
+
+  it("does not treat a non-hold column as waiting even when ids are supplied", () => {
+    // The narrowing guard: a set-based lookup that ignored its set would pass the first case.
+    const groups = groupByWorktree([], [mkTask("FN-53", "building")], 3, new Set(["backlog"]));
+    const queued = groups.flatMap((group) => group.queuedTasks ?? []);
+    expect(queued.map((task: { id: string }) => task.id)).not.toContain("FN-53");
+  });
+});

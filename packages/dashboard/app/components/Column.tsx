@@ -197,6 +197,12 @@ interface ColumnProps {
   /** True when the board is in multi-lane workflow mode (flag ON). Switches
    *  column behavior (label, bulk actions, archived detection) from legacy
    *  literals to trait-flag predicates. Flag OFF leaves all behavior legacy. */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Every HOLD-trait column id on the board, for the worktree grouping's upcoming-work list.
+  Board resolves it; Lane does not pass it and keeps the legacy-id fallback.
+  */
+  holdColumnIds?: ReadonlySet<string>;
   workflowMode?: boolean;
   /** Workflow id for column-aware task creation in workflow mode. */
   workflowId?: string;
@@ -230,7 +236,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdColumnIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -543,8 +549,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
 
   const worktreeGroups = useMemo(() => {
     if (!showWorktreeGroups) return [];
-    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent);
-  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent]);
+    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent, holdColumnIds);
+    // `holdColumnIds` IS a dependency: the board resolves it after the workflows fetch, so
+    // omitting it would pin the first-paint value and the upcoming-work list would keep
+    // using the legacy-id fallback for the rest of the session. This repo has no
+    // react-hooks/exhaustive-deps rule, so nothing catches that but reading it.
+  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent, holdColumnIds]);
 
   const visibleTasks = useMemo(() => {
     if (!shouldPaginate) return tasks;
