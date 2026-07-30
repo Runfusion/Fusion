@@ -2228,7 +2228,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
 /** Update or clear Issue information for a task. */
-  async applyPrMergedTransition( taskId: string, ctx?: { agentId?: string; runId?: string }, ): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" }> {
+  async applyPrMergedTransition( taskId: string, ctx?: { agentId?: string; runId?: string }, ): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     return applyPrMergedTransitionImpl(this, taskId, ctx);
   }
   async updateIssueInfo( id: string, issueInfo: import("./types.js").IssueInfo | null, ): Promise<Task> {

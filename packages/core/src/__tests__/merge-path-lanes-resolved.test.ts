@@ -98,3 +98,58 @@ describe("the PR-merged transition follows the board's own lanes", () => {
     expect(moveTask.mock.calls[0]?.[1]).toBe("done");
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-14:30 (PR #2733 review — greptile P1, and my comment had contradicted
+my code):
+
+A WORKFLOW WITH A REVIEW LANE AND NO COMPLETE LANE REFUSES, rather than moving to an undeclared `done`.
+
+I wrote `?? "done"` under a comment claiming the transition refuses rather than inventing a column. The
+reviewer read the code and was right: `moveTask` rejects an unknown column, so the merged card would have been
+left in review — the exact failure the conversion exists to prevent, reintroduced by a two-character default.
+
+The distinction this pins is the contract the whole program keeps re-learning:
+  - NO lane information (v1 IR, unresolvable store) → the legacy ids ARE the answer.
+  - Lanes resolved, complete ABSENT → the board has no completion column; substituting one invents a
+    destination, so refuse and make it visible in the return value.
+
+Both halves are asserted, because a fix that refuses in BOTH cases would pass a test written only for the
+second and would break every legacy board.
+*/
+describe("a board with no complete column refuses rather than inventing one", () => {
+  const NO_COMPLETE_IR = {
+    version: "v2", id: "wf-no-complete", name: "no complete",
+    nodes: [{ id: "start", kind: "start", column: "backlog" }],
+    edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
+    ],
+  } as unknown as WorkflowIr;
+
+  it("skips with no-complete-column instead of moving to an undeclared `done`", async () => {
+    const { store, moveTask } = harness("signoff", NO_COMPLETE_IR);
+
+    const result = await applyPrMergedTransitionImpl(store, "FN-1");
+
+    expect(result.skipped).toBe("no-complete-column");
+    expect(result.moved).toBe(false);
+    // The point: no move was attempted at all, so nothing was written for moveTask to reject.
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("STILL uses the legacy `done` when the workflow has no column vocabulary at all", async () => {
+    /*
+    The other half of the contract, and the case a blanket refusal would break: a v1 IR (or an unresolvable
+    store) has told us nothing, so today's behaviour is correct and the legacy id is the answer.
+    */
+    const { store, moveTask } = harness("in-review", undefined);
+
+    const result = await applyPrMergedTransitionImpl(store, "FN-1");
+
+    expect(result.moved).toBe(true);
+    expect(moveTask.mock.calls[0]?.[1]).toBe("done");
+  });
+});

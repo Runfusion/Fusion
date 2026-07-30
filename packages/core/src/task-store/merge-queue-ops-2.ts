@@ -183,7 +183,7 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
     };
   }
 
-export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" }> {
+export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     const task = await store.getTask(taskId);
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
@@ -201,9 +201,28 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     move it to a column the board does not declare, which is the half-conversion this program keeps paying
     for. A board with no complete column refuses the transition instead of inventing one.
     */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-14:10 (PR #2733 review — greptile P1, and my COMMENT contradicted
+    my CODE):
+    A WORKFLOW THAT DECLARES COLUMNS BUT NO COMPLETE LANE REFUSES, it does not fall back to `done`. My first
+    version wrote `?? "done"` while the comment above it claimed the transition refuses rather than inventing
+    a column — the reviewer read the code, not the prose, and was right. `moveTask` would have rejected the
+    undeclared `done` and left the merged card in review, which is the exact failure this conversion exists to
+    prevent, reintroduced by a two-character default.
+
+    The distinction is `PlannerLanes`' contract, and it is the one the whole program keeps re-learning:
+      - NO LANE INFORMATION AT ALL (v1 IR, unresolvable store) -> the legacy ids ARE the answer; nothing has
+        told us otherwise and today's behaviour is correct.
+      - LANES RESOLVED, complete ABSENT -> the board genuinely has no completion column. Substituting one
+        invents a destination; refusing is the honest outcome and is visible in the return value.
+    */
     const prMergedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
-    const completeColumn = prMergedLifecycle?.complete ?? "done";
     const reviewColumn = prMergedLifecycle?.review ?? "in-review";
+    const completeColumn = prMergedLifecycle ? prMergedLifecycle.complete : "done";
+    if (completeColumn === undefined) {
+      storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: workflow declares no complete column`);
+      return { moved: false, skipped: "no-complete-column" };
+    }
     if (task.column === completeColumn) {
       return { moved: false, skipped: "already-done" };
     }
@@ -233,6 +252,18 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
       return { moved: false, skipped: "wrong-column" };
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-14:20 (PR #2733 review — greptile P1, the resolve/move race):
+    THE RACE IS REAL AND `moveTask` IS THE BACKSTOP. If the task's workflow selection changes between the
+    resolution above and this call, `completeColumn` describes the old board while `moveTask` validates against
+    the new one — and it REJECTS an unknown column rather than writing it. So the failure mode is a thrown
+    move and `moved: false`, not a card in a column that does not exist.
+
+    Narrowing the window further (resolve inside the move, or take a workflow lock) is a store-level change:
+    every converted move in this program has the same shape, and moveTask's validation is what makes them all
+    safe. Named here rather than left implicit, because "resolved then moved" reads racy and the reason it is
+    acceptable lives in a different file.
+    */
     const movedTask = await store.moveTask(taskId, completeColumn as Column, {
       moveSource: "engine",
       preserveProgress: true,
