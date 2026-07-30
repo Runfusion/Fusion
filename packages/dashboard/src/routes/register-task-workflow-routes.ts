@@ -229,6 +229,49 @@ async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promis
   }
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (fleet: register-task-workflow-routes.ts):
+The three roles this file needed and did not have, following the idiom its own
+`resolveIntakeColumnForTask` / `resolveWipColumnForTask` / `resolveReboundColumnForTask` already
+established: resolve the column ID from the task's workflow, fall back to the legacy id when the IR
+cannot be read.
+
+Deliberately NOT the `columnRoles` predicate helpers used in `packages/dashboard/app`. Those take
+resolved trait flags, which a route handler does not have — it has a store and a task id, and must
+do an async lookup. Importing them here would mean fetching flags per request to answer a question
+this file already answers a simpler way. One idiom per layer.
+
+`resolveReviewColumnForTask` accepts EITHER trait, matching `isReviewColumnRole` on the app side: a
+lane can block merges without a human in it and vice versa, and every caller here asks "is this card
+in review".
+*/
+async function resolveReviewColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "mergeBlocker")[0] ?? columnsWithFlag(ir, "humanReview")[0] ?? "in-review";
+  } catch {
+    return "in-review";
+  }
+}
+
+async function resolveCompleteColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "complete")[0] ?? "done";
+  } catch {
+    return "done";
+  }
+}
+
+async function resolveArchivedColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "archived")[0] ?? "archived";
+  } catch {
+    return "archived";
+  }
+}
+
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
 }
@@ -797,7 +840,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     task: Task,
     wake: InReviewUserCommentReengagementInput,
   ): Promise<InReviewUserCommentReengagementResult> {
-    if (task.column !== "in-review") {
+    const reviewGateColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+    if (task.column !== reviewGateColumn) {
       return { task, reengaged: false, suppressedReason: "not-in-review" };
     }
     if (task.sessionFile) {
@@ -2063,7 +2107,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      if (task.column !== "done" && task.column !== "archived") {
+      const terminalCompleteColumn = await resolveCompleteColumnForTask(scopedStore, task.id);
+      const terminalArchivedColumn = await resolveArchivedColumnForTask(scopedStore, task.id);
+      if (task.column !== terminalCompleteColumn && task.column !== terminalArchivedColumn) {
         throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
       }
 
@@ -2699,8 +2745,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             && (task.column === lifecycle.intake || task.column === lifecycle.hold);
         }
       }
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-04:15 (fleet: register-task-workflow-routes.ts):
+      Resolved ONCE for the whole retry handler and reused by all three review checks below, so they
+      cannot disagree about which column is the review lane.
+      */
+      const retryReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
       const isInReviewStatusNone =
-        task.column === "in-review" && (task.status === null || task.status === undefined);
+        task.column === retryReviewColumn && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -2733,13 +2785,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
       const isStaleMergeActiveRetry =
-        task.column === "in-review" &&
+        task.column === retryReviewColumn &&
         isStaleMergeActiveStatus(task, {
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
         });
       const isInReviewRetry =
-        task.column === "in-review" &&
+        task.column === retryReviewColumn &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
@@ -3780,7 +3832,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      if (task.column !== "in-review") {
+      const prStatusReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column !== prStatusReviewColumn) {
         throw badRequest("Task must be in 'in-review' column to recover branch binding");
       }
 
@@ -4098,7 +4151,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggerDetail: "task-comment",
       };
       if (normalizedAuthor === "user") {
-        if (task.column === "in-review" && !task.sessionFile) {
+        const diffReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+        if (task.column === diffReviewColumn && !task.sessionFile) {
           const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
           res.json(reengagedTask);
           return;
@@ -4665,7 +4719,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
       };
-      if (task.column === "in-review" && !task.sessionFile) {
+      const artifactReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column === artifactReviewColumn && !task.sessionFile) {
         const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
         res.json(reengagedTask);
         return;
@@ -4804,7 +4859,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const currentColumn = "columns" in workflowIr
         ? workflowIr.columns.find((column) => column.id === task.column)
         : undefined;
-      const isArchived = task.column === "archived" || (currentColumn != null && resolveColumnFlags(currentColumn).archived);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-04:00 (fleet: register-task-workflow-routes.ts):
+      FLAGS-FIRST, id only as the fallback. This ORed the legacy id with the resolved trait
+      unconditionally, so a column merely NAMED `archived` counted as archived even when its own
+      workflow says otherwise — the same inversion pattern found in TaskContextMenu and
+      isPreExecutionHoldColumn. When the column resolves, its traits are the answer; the id is only
+      for when it does not resolve at all.
+      */
+      const isArchived = currentColumn != null
+        ? resolveColumnFlags(currentColumn).archived === true
+        : task.column === "archived";
       if (isArchived) {
         throw badRequest("Respecify is not available for archived tasks; unarchive first.");
       }
@@ -5768,7 +5833,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-03:45 (fleet: register-task-workflow-routes.ts):
+      Resolved once for this handler and reused by both arms below, so the review/WIP decision cannot
+      be made from two different answers.
+      */
+      const steeringReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const steeringWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
+
+      if (task.column === steeringReviewColumn) {
         updatedTask = (await reengageInReviewTaskForUserComment(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: steeringCommentId ? [steeringCommentId] : undefined,
@@ -5776,7 +5849,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         })).task;
       } else {
         const hasActiveSession = Boolean(updatedTask.sessionFile);
-        if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+        if (steeringCommentId && updatedTask.column === steeringWipColumn && updatedTask.assignedAgentId && !hasActiveSession) {
           await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
             triggeringCommentType: "steering",
             triggeringCommentIds: [steeringCommentId],
@@ -5803,7 +5876,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!prInfo) {
         throw badRequest("Task must have a linked pull request before PR feedback can be addressed");
       }
-      if (task.column !== "in-review" && task.column !== "in-progress") {
+      const prFeedbackReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const prFeedbackWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
+      if (task.column !== prFeedbackReviewColumn && task.column !== prFeedbackWipColumn) {
         throw badRequest("PR feedback can only be addressed for in-review or in-progress tasks");
       }
 
@@ -5826,7 +5901,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      const reengageReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column === reengageReviewColumn) {
         await scopedStore.updateTask(task.id, {
           status: null,
           error: null,
@@ -5844,7 +5920,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const hasActiveSession = Boolean(updatedTask.sessionFile);
-      if (updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+      const wakeWipColumn = await resolveWipColumnForTask(scopedStore, updatedTask.id);
+      if (updatedTask.column === wakeWipColumn && updatedTask.assignedAgentId && !hasActiveSession) {
         await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: [steeringCommentId],
