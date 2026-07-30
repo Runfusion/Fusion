@@ -270,6 +270,13 @@ export async function enqueueMergeQueue(
 export async function cleanupStaleMergeQueueRowsInTransaction(
   tx: DbTransaction,
   now: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  Per-task review lanes, supplied by the caller. This runs inside an open transaction with only a
+  `tx` handle, so it cannot resolve a workflow itself — and the lanes are genuinely per task, because
+  queued tasks can run different workflows.
+  */
+  resolveReviewColumnsFor?: (taskId: string) => Promise<ReadonlySet<string>>,
 ): Promise<void> {
   const staleRows = await tx
     .select({
@@ -287,7 +294,30 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
       ),
     );
 
-  if (staleRows.length === 0) return;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  THE SQL PREDICATE IS A SUPERSET NOW, NOT THE VERDICT.
+
+  `column IS DISTINCT FROM 'in-review'` is evaluated by PostgreSQL, which cannot know a task's
+  workflow — so on a board whose review lane is named anything else, EVERY queued row matched and was
+  deleted at the start of lease acquisition. The merge queue filled (enqueue resolves lanes) and was
+  then emptied a moment later by this sweep, so nothing was ever merged and no error was raised: the
+  audit rows even claimed `reason: "not-in-review"` for tasks sitting in their board's review lane.
+
+  Deleting is the destructive direction, so the SQL now only proposes CANDIDATES and each one is
+  verified against its own workflow before removal. Rows whose task is gone are stale regardless and
+  skip the check.
+  */
+  const verifiedStale = resolveReviewColumnsFor === undefined
+    ? staleRows
+    : (await Promise.all(staleRows.map(async (row) => {
+        if (row.column === null) return row;
+        const reviewLanes = await resolveReviewColumnsFor(row.taskId).catch(() => undefined);
+        if (reviewLanes === undefined) return row;
+        return reviewLanes.has(row.column) ? undefined : row;
+      }))).filter((row): row is typeof staleRows[number] => row !== undefined);
+
+  if (verifiedStale.length === 0) return;
 
   // FNXC:TaskStoreMergeCoordination 2026-06-26-10:10:
   // Batch the cleanup to avoid an N+1: previously each stale row cost 2
@@ -296,12 +326,12 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
   // acquired. Now the deletes are a single bulk DELETE ... WHERE IN (...) and
   // the audit events are a single bulk INSERT ... VALUES (...). Each metadata
   // payload is still per-row (the column/lease context differs per task).
-  const staleTaskIds = staleRows.map((row) => row.taskId);
+  const staleTaskIds = verifiedStale.map((row) => row.taskId);
   await tx
     .delete(schema.project.mergeQueue)
     .where(inArray(schema.project.mergeQueue.taskId, staleTaskIds));
 
-  const auditValues = staleRows.map((row) => ({
+  const auditValues = verifiedStale.map((row) => ({
     id: randomUUID(),
     timestamp: now,
     taskId: row.taskId,
@@ -366,7 +396,7 @@ export async function acquireMergeQueueLease(
   return layer.transactionImmediate(async (tx) => {
     const now = opts.now ?? new Date().toISOString();
     const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
-    await cleanupStaleMergeQueueRowsInTransaction(tx, now);
+    await cleanupStaleMergeQueueRowsInTransaction(tx, now, opts.resolveReviewColumnsFor);
 
     if (opts.targetTaskId) {
       // ── Targeted acquire: lease this specific task or fail ──────────────

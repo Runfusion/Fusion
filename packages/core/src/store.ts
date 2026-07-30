@@ -1746,7 +1746,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * FNXC:RuntimeLifecycleAsync 2026-06-24-11:20:
    */
   async acquireMergeQueueLease(workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
-    return acquireMergeQueueLeaseImpl(this, workerId, opts);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+    Supplies the per-task review-lane resolver for the stale-row sweep. This is the production path,
+    so wiring it here is what makes the option live rather than one only tests fill.
+    */
+    const withResolver: MergeQueueAcquireOptions = {
+      ...opts,
+      resolveReviewColumnsFor: opts.resolveReviewColumnsFor ?? (async (taskId: string) => {
+        const ir = await resolveWorkflowIrForTask(this, taskId).catch(() => undefined);
+        return ir ? new Set(resolveReviewColumns(ir)) : new Set(["in-review"]);
+      }),
+    };
+    return acquireMergeQueueLeaseImpl(this, workerId, withResolver);
   }
 
   /**
