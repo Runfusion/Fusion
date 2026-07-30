@@ -82,17 +82,47 @@ describe("the census fails readably on a corrupt baseline", () => {
   });
 
   it("still succeeds against the repo's real baseline", () => {
-    // Guards against the diagnosis firing on a healthy file — a guard that always fails is no guard.
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-11:20:
+    ASSERTS A HEALTHY OUTCOME, NOT PERMANENT EXACT SYNC.
+
+    This required the output to contain "every file matches its baseline exactly", which demands the
+    COMMITTED baseline be byte-in-step with the tree at all times. It is not: a conversion PR that
+    removes guards makes the tree hold FEWER than the baseline allows, and the CLI treats that as the
+    good case — it tightens the pin and exits 0. So every legitimate conversion that did not also
+    re-record the baseline turned this green test red on main.
+
+    Measured: that is not hypothetical. It is the mechanism behind four separate main reds in a
+    single day (#2783's markers, #2837's query split, and two more), and it collided three ways
+    between workers racing to re-record the same file.
+
+    The guard's own stated job is narrower — "a guard that always fails is no guard", i.e. prove the
+    CORRUPTION diagnosis does not fire on a healthy file. A tightened baseline IS healthy. So this
+    now asserts what that intent actually needs:
+
+      - the run SUCCEEDS (execFileSync throws on a non-zero exit, so a RISE still fails here — a rise
+        is real debt and must stay loud)
+      - the corruption diagnosis is ABSENT
+      - the outcome is one of the two healthy shapes the CLI can report
+
+    A rise, a corrupt file, and an unreadable file all still fail. Only "somebody converted guards and
+    has not re-recorded the pin yet" stops being a red, which is the case that was never a defect.
+    */
     scratch = mkdtempSync(join(tmpdir(), "fusion-census-guard-"));
     const baselinePath = join(scratch, "baseline.json");
     copyFileSync(REAL_BASELINE, baselinePath);
 
+    /* Throws on a non-zero exit, so a RISE (exit 1) fails this test before any assertion runs. */
     const result = execFileSync("node", [SCRIPT, "--strict"], {
       cwd: REPO_ROOT,
       env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
       encoding: "utf8",
     });
 
-    expect(result).toContain("every file matches its baseline exactly");
+    expect(result).not.toContain("is not valid JSON");
+    expect(result).not.toContain("could not be read");
+    const healthy = result.includes("every file matches its baseline exactly")
+      || result.includes("baseline TIGHTENED");
+    expect(healthy, `census reported neither healthy outcome:\n${result}`).toBe(true);
   });
 });
