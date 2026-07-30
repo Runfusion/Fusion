@@ -152,6 +152,27 @@ describe("board surfaces resolve column roles per column, not per board", () => 
       unionReadsForATask,
       "a per-task flag lookup must go through getTaskColumnFlags, not the cross-workflow union",
     ).toBeNull();
+
+    /*
+    ROUND THREE OF THE SAME DEFECT, so the rule is restated at the level that actually holds.
+
+    Round one forbade `isXColumnRole(columnFlagsById.get(task.column))` — an inline read. Round two
+    widened it to the LOOKUP wherever its result goes, after a local variable walked through it.
+    Round three: thirteen call sites reached the union through the COLUMN-LEVEL callbacks
+    (`isCompleteColumn(task.column)`), which contain no lookup of their own at the call site at all.
+
+    The invariant is not about syntax. It is: a question asked ABOUT A TASK must be answered from
+    that task's own workflow. So passing `task.column` to a predicate that takes a bare column id is
+    the violation, regardless of how the union is reached.
+    */
+    const columnLevelPredicatesAskedPerTask = outsideAccessor.match(
+      /\bis(?:Complete|Archived|Intake|Review|Wip)Column\(\s*task\.column\s*\)/g,
+    );
+    expect(
+      columnLevelPredicatesAskedPerTask,
+      "a per-task question must use the per-task predicate (isTaskCompleteColumn/isTaskArchivedColumn), "
+        + "not the column-level one — the column-level pair reads the cross-workflow union",
+    ).toBeNull();
   });
 
   /*

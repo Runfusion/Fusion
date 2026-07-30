@@ -933,9 +933,28 @@ export function ListView({
     return isArchivedColumnRole(columnFlagsById.get(column), column);
   }, [columnFlagsById]);
 
-  const isCompleteColumn = useCallback((column: ColumnId): boolean => {
-    return isCompleteColumnRole(columnFlagsById.get(column), column);
-  }, [columnFlagsById]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:00 (PR #2738 review — greptile P1):
+  PER-TASK twins of the two column-level predicates above.
+
+  The column-level pair answers "is this whole list SECTION the archive?", where the cross-workflow
+  union is harmless. Thirteen call sites were passing `task.column` into them — a per-TASK question —
+  so on a board where two workflows reuse a column id with different traits, bulk select-all, delete,
+  archive, pause, unpause and model updates classified each card by a NEIGHBOURING workflow's
+  semantics: cards silently skipped, or the wrong branch of a destructive action taken.
+
+  These evaded the ratchet I added for the same defect one round ago, because that guard forbade
+  reading `columnFlagsById.get(task.column)` DIRECTLY and these reach the union through a callback.
+  The guard is widened accordingly — the rule is the QUESTION being asked (per task), not the syntax
+  used to ask it.
+  */
+  const isTaskCompleteColumn = useCallback((task: Task): boolean => {
+    return isCompleteColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
+
+  const isTaskArchivedColumn = useCallback((task: Task): boolean => {
+    return isArchivedColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
 
   const selectedWorkflowTaskIds = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow || isAllWorkflowsSelected) return null;
@@ -1260,20 +1279,12 @@ export function ListView({
       if (!group || group.length === 0) continue;
       const windowed = listSectionWindows[column]?.tasks ?? group;
       for (const task of windowed) {
-        if (isArchivedColumn(task.column)) continue; // Can't bulk edit archived
+        if (isTaskArchivedColumn(task)) continue; // Can't bulk edit archived
         ids.push(task.id);
       }
     }
     return ids;
-  }, [
-    listColumns,
-    selectedColumn,
-    hideDoneTasks,
-    collapsedSections,
-    groupedTasks,
-    listSectionWindows,
-    isArchivedColumn,
-  ]);
+  }, [collapsedSections, groupedTasks, hideDoneTasks, isTaskArchivedColumn, listColumns, listSectionWindows, selectedColumn]);
 
   // Toggle every rendered (windowed) task
   const toggleSelectAll = useCallback(() => {
@@ -1348,16 +1359,16 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const archivedTasks = selectedTasks.filter((task) => isArchivedColumn(task.column));
-    const deletableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column));
+    const archivedTasks = selectedTasks.filter((task) => isTaskArchivedColumn(task));
+    const deletableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task));
 
     if (deletableTasks.length === 0) {
       addToast(t("listView.bulkDeleteNoTasks", "No selected tasks can be deleted (archived tasks are excluded)"), "error");
       return;
     }
 
-    const doneTasks = deletableTasks.filter((task) => isCompleteColumn(task.column));
-    const otherTasks = deletableTasks.filter((task) => !isCompleteColumn(task.column));
+    const doneTasks = deletableTasks.filter((task) => isTaskCompleteColumn(task));
+    const otherTasks = deletableTasks.filter((task) => !isTaskCompleteColumn(task));
 
     let shouldDeleteAll = false;
     let shouldArchiveDoneInstead = false;
@@ -1545,7 +1556,7 @@ export function ListView({
       : t("listView.bulkDeleteSummary", { count: deletedIds.length, skipped: skippedIds.length, failed: failedIds.length, defaultValue_one: "Deleted {{count}} task · {{skipped}} archived skipped · {{failed}} failed", defaultValue_other: "Deleted {{count}} tasks · {{skipped}} archived skipped · {{failed}} failed" });
 
     addToast(summaryMessage, failedIds.length > 0 ? "error" : "success");
-  }, [addToast, confirm, confirmWithChoice, isArchivedColumn, isCompleteColumn, onArchiveTask, onDeleteTask, selectedTaskIds, tasks]);
+  }, [addToast, confirm, confirmWithChoice, isTaskArchivedColumn, isTaskCompleteColumn, onArchiveTask, onDeleteTask, selectedTaskIds, tasks]);
 
   const handleBulkPause = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1557,7 +1568,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column) && task.paused !== true);
+    const actionableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task) && task.paused !== true);
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1596,7 +1607,7 @@ export function ListView({
       t("listView.bulkPauseSummary", "Paused {{paused}} · {{skipped}} skipped · {{failed}} failed", { paused: pausedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, isArchivedColumn, onPauseTask, selectedTaskIds, tasks]);
+  }, [addToast, isTaskArchivedColumn, onPauseTask, selectedTaskIds, tasks]);
 
   const handleBulkUnpause = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1608,7 +1619,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => !isArchivedColumn(task.column) && task.paused === true);
+    const actionableTasks = selectedTasks.filter((task) => !isTaskArchivedColumn(task) && task.paused === true);
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1647,7 +1658,7 @@ export function ListView({
       t("listView.bulkUnpauseSummary", "Unpaused {{unpaused}} · {{skipped}} skipped · {{failed}} failed", { unpaused: unpausedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, isArchivedColumn, onUnpauseTask, selectedTaskIds, tasks]);
+  }, [addToast, isTaskArchivedColumn, onUnpauseTask, selectedTaskIds, tasks]);
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
@@ -1659,7 +1670,7 @@ export function ListView({
     const selectedTasks = Array.from(selectedTaskIds)
       .map((id) => tasks.find((task) => task.id === id))
       .filter((task): task is Task => Boolean(task));
-    const actionableTasks = selectedTasks.filter((task) => isCompleteColumn(task.column));
+    const actionableTasks = selectedTasks.filter((task) => isTaskCompleteColumn(task));
     const skippedCount = selectedTasks.length - actionableTasks.length;
 
     if (actionableTasks.length === 0) {
@@ -1733,14 +1744,14 @@ export function ListView({
       t("listView.bulkArchiveSummary", "Archived {{archived}} · {{skipped}} skipped · {{failed}} failed", { archived: archivedIds.length, skipped: skippedCount, failed: failedIds.length }),
       failedIds.length > 0 ? "error" : "success",
     );
-  }, [addToast, confirm, isCompleteColumn, onArchiveTask, selectedTaskIds, tasks]);
+  }, [addToast, confirm, isTaskCompleteColumn, onArchiveTask, selectedTaskIds, tasks]);
 
   const handleApplyBulkUpdate = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
 
     const taskIds = Array.from(selectedTaskIds).filter((id) => {
       const task = tasks.find((t) => t.id === id);
-      return task && !isArchivedColumn(task.column);
+      return task && !isTaskArchivedColumn(task);
     });
 
     if (taskIds.length === 0) {
@@ -1837,7 +1848,7 @@ export function ListView({
     } finally {
       setIsApplying(false);
     }
-  }, [selectedTaskIds, tasks, executorModel, validatorModel, bulkThinkingLevel, nodeOverride, projectId, addToast, clearSelection, isArchivedColumn, onTasksUpdated]);
+  }, [addToast, bulkThinkingLevel, clearSelection, executorModel, isTaskArchivedColumn, nodeOverride, onTasksUpdated, projectId, selectedTaskIds, tasks, validatorModel]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenuState(null);
@@ -3017,7 +3028,7 @@ export function ListView({
                         <div className="list-empty-cell list-card-empty">{t("listView.noTasks", "No tasks")}</div>
                       ) : (
                         windowedTasks.map((task) => {
-                          const isDoneColumn = isCompleteColumn(task.column);
+                          const isDoneColumn = isTaskCompleteColumn(task);
                           const visualStatus = isDoneColumn ? "done" : task.status;
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
@@ -3074,7 +3085,7 @@ export function ListView({
                                       toggleTaskSelection(task.id);
                                     }}
                                     onClick={(e) => e.stopPropagation()}
-                                    disabled={isArchivedColumn(task.column)}
+                                    disabled={isTaskArchivedColumn(task)}
                                     aria-label={t("listView.selectTask", "Select {{taskId}}", { taskId: task.id })}
                                   />
                                 </label>
@@ -3280,7 +3291,7 @@ export function ListView({
                           </tr>
                         ) : (
                           windowedTasks.map((task) => {
-                            const isDoneColumn = isCompleteColumn(task.column);
+                            const isDoneColumn = isTaskCompleteColumn(task);
                             const visualStatus = isDoneColumn ? "done" : task.status;
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
@@ -3332,7 +3343,7 @@ export function ListView({
                                         toggleTaskSelection(task.id);
                                       }}
                                       onClick={(e) => e.stopPropagation()}
-                                      disabled={isArchivedColumn(task.column)}
+                                      disabled={isTaskArchivedColumn(task)}
                                       aria-label={t("listView.selectTask", "Select {{taskId}}", { taskId: task.id })}
                                     />
                                   </td>
