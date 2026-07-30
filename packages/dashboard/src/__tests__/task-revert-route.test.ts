@@ -158,6 +158,14 @@ function createMockStore(
     autoMerge?: boolean;
     aiUndoTaskWorkflowId?: string;
     knownWorkflowIds?: string[];
+    /*
+    FNXC:TaskRevert 2026-07-30-18:05 (PR #2766 review — greptile "cover every changed revert surface"):
+    Opt-in renamed board for the route. Supplying this stubs the two selection readers
+    `resolveWorkflowIrForTask` consults, so `resolveTerminalColumnsForTask` resolves the task's OWN
+    lanes instead of taking the `["done","archived"]` legacy fallback every other test in this file
+    rides on. Only the forwarding tests below pass it, so no existing expectation moves.
+    */
+    workflowIr?: unknown;
     rootDir?: string;
   },
 ): TaskStore {
@@ -180,10 +188,18 @@ function createMockStore(
   // FN-7556: `getWorkflowDefinition` backs the route's validation of a
   // configured (non-builtin) `aiUndoTaskWorkflowId`; default to "unknown" so
   // tests must explicitly declare a custom id as known via `knownWorkflowIds`.
-  const getWorkflowDefinition = vi.fn().mockImplementation(async (id: string) =>
-    (opts?.knownWorkflowIds ?? []).includes(id) ? { id, name: id, ir: {} } : undefined,
-  );
+  const getWorkflowDefinition = vi.fn().mockImplementation(async (id: string) => {
+    if (opts?.workflowIr && id === "wf-renamed") return { id, name: id, ir: opts.workflowIr };
+    return (opts?.knownWorkflowIds ?? []).includes(id) ? { id, name: id, ir: {} } : undefined;
+  });
+  const selectionReaders = opts?.workflowIr
+    ? {
+        getTaskWorkflowSelection: () => ({ workflowId: "wf-renamed", stepIds: [] }),
+        getTaskWorkflowSelectionAsync: async () => ({ workflowId: "wf-renamed", stepIds: [] }),
+      }
+    : {};
   return {
+    ...selectionReaders,
     getSettings: vi.fn().mockResolvedValue({}),
     getSettingsFast: vi.fn().mockResolvedValue({
       autoMerge: opts?.autoMerge ?? true,
@@ -334,6 +350,80 @@ describe("POST /tasks/:id/revert", () => {
     expect(res.status).toBe(409);
     expect((res.body as { details?: { code?: string } }).details?.code ?? (res.body as { error?: string }).error).toBeTruthy();
     expect(performTaskRevertMock).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:TaskRevert 2026-07-30-18:05 (PR #2766 review — greptile "cover every changed revert surface"):
+
+  THE ROUTE MUST HAND ITS RESOLVED TERMINAL LANES TO THE SERVICE.
+
+  This change made the route resolve terminal lanes by role AND forward that set to the service so
+  the service's defence-in-depth guard answers the same question. Before it, the route admitted a
+  revert on a renamed board and the service refused it with its own hardcoded `done`/`archived` —
+  a dead end reached from an affordance both the UI and the route offer.
+
+  WHY THESE TESTS EXIST. The engine-side tests drive `performTaskRevert`/`revertWorkspaceTask`
+  directly, so they pass their own `revertableColumns` and can never observe whether the ROUTE
+  supplies it. Deleting `revertableColumns: terminalColumns` from either call site left all 26
+  engine tests green and `tsc` clean — measured, not assumed. These are the tests that fail.
+
+  Both call sites are covered because they are separate literals in separate branches: the
+  single-repo one and the workspace one can regress independently.
+  */
+  const RENAMED_TERMINAL_IR = {
+    version: "v2",
+    id: "wf-renamed",
+    name: "renamed",
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
+    ],
+  };
+
+  it("forwards the route's RESOLVED terminal lanes to performTaskRevert (single-repo, renamed board)", async () => {
+    const task = makeTask({ column: "shipped" });
+    const store = createMockStore(task, { workflowIr: RENAMED_TERMINAL_IR });
+    performTaskRevertMock.mockResolvedValue({ mode: "git", clean: true, revertCommitSha: "abc123" });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+
+    expect(res.status).toBe(200);
+    expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
+    const forwarded = (performTaskRevertMock.mock.calls[0] as unknown[]).find(
+      (arg): arg is { revertableColumns?: Iterable<string> } =>
+        typeof arg === "object" && arg !== null && "revertableColumns" in arg,
+    );
+    /*
+    The set itself, not merely its presence: a forwarding that hands over the legacy pair would
+    still refuse this card, which is the bug. `shipped` and `attic` must both be in it, since the
+    roles resolve independently and can fail independently.
+    */
+    expect(forwarded).toBeDefined();
+    expect([...(forwarded?.revertableColumns ?? [])].sort()).toEqual(["attic", "shipped"]);
+  });
+
+  it("forwards the route's RESOLVED terminal lanes to revertWorkspaceTask (workspace, renamed board)", async () => {
+    const task = makeWorkspaceTask({ column: "shipped" });
+    const store = createMockStore(task, { workflowIr: RENAMED_TERMINAL_IR });
+    revertWorkspaceTaskMock.mockResolvedValue({
+      mode: "git",
+      clean: true,
+      workspace: { repos: [{ repo: "repo-a", classification: "clean", revertCommitSha: "rev-a" }] },
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+
+    expect(res.status).toBe(200);
+    expect(revertWorkspaceTaskMock).toHaveBeenCalledTimes(1);
+    const forwarded = (revertWorkspaceTaskMock.mock.calls[0] as unknown[]).find(
+      (arg): arg is { revertableColumns?: Iterable<string> } =>
+        typeof arg === "object" && arg !== null && "revertableColumns" in arg,
+    );
+    expect(forwarded).toBeDefined();
+    expect([...(forwarded?.revertableColumns ?? [])].sort()).toEqual(["attic", "shipped"]);
   });
 
   it("dispatches a done workspace task to revertWorkspaceTask and returns the per-repo breakdown (clean)", async () => {
