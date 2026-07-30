@@ -73,7 +73,23 @@ describe("resolveWorkflowIrForTask", () => {
       defs: { "wf-gone": undefined },
     });
     const ir = await resolveWorkflowIrForTask(store, "t1");
-    expect(ir).toBe(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-18:40 (identity -> equality on the FALLBACK paths only):
+    A FALLBACK CARRIES ITS OWN OBJECT. `markFellBack` used to brand the returned IR in place, and
+    `resolveDefaultWorkflowIr()` hands back a SHARED module constant — so one fallback anywhere marked
+    the singleton for the rest of the process, and every later resolution of the real `builtin:coding`
+    was reported as `source: "default"`, including tasks that genuinely selected it. It brands a
+    shallow COPY now.
+
+    So `toBe` cannot hold on this path, and re-asserting it would force the singleton-poisoning back.
+    The copy is deep-equal to the canonical IR — the brand is non-enumerable — so `toEqual` states what
+    the contract actually guarantees: the caller gets the canonical default's CONTENT. Identity was
+    never part of that guarantee; it was an artefact of handing back the shared object.
+
+    NOTE the five OTHER `toBe` assertions in this file are untouched and still pass: they cover paths
+    that return the shared IR legitimately, and weakening them would hide a future regression.
+    */
+    expect(ir).toEqual(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
   });
 
   it("falls back to the default when there is no selection", async () => {
@@ -130,7 +146,9 @@ describe("resolveWorkflowIrById", () => {
   it("falls back to the canonical IR for an unknown built-in id", async () => {
     const store = makeStore({});
     const ir = await resolveWorkflowIrById(store, "builtin:missing");
-    expect(ir).toBe(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
+    /* Same as the case above: an unregistered builtin id is a fallback, so it carries a branded copy
+       rather than the shared canonical object. Equality is the guarantee here, not identity. */
+    expect(ir).toEqual(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR);
     expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
   });
 
