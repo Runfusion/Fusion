@@ -131,3 +131,101 @@ describe("the task routes resolve the board's own review column", () => {
     expect(await refusal(store)).toContain(COLUMN_REFUSAL);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-21:40 (PR #2701 review — greptile P1):
+
+THE INVARIANT: an open PR blocks the in-review user-comment re-engagement on ANY board.
+
+THE THIRD FORM OF THIS PROGRAM'S DEFECT, and the most interesting one. The guard was deliberately left
+on the legacy `COLUMNS.indexOf` enum, with a comment justifying it: "this whole function is gated on the
+literal `task.column !== "in-review"` above and re-engages to the literal `"in-progress"`, so both
+endpoints are legacy ids by construction". That was TRUE when written.
+
+Then U5 converted the re-engage target to `resolveWipColumnForTask`, and this PR converted the entry gate
+to the resolved review lane. Both halves of the premise are now false, so on a renamed board the enum
+scores -1 for both endpoints — and `isBackwardMoveBlockedByOpenPr` treats a negative index as "cannot
+tell -> allow". A user comment on a review card with an OPEN PR resumed execution behind that PR.
+
+Nobody edited the guard or the comment. The comment's correctness argument depended on literals
+elsewhere, and someone else converted them. When you convert a lane, grep for comments justifying a
+nearby legacy path by "the surrounding literals" — they are load-bearing.
+
+REVERT PROOF, measured: restore `COLUMNS.indexOf` and the renamed-board case fails — the task is moved
+to the wip lane despite the open PR.
+*/
+describe("the re-engage open-PR guard survives a renamed board", () => {
+  function buildReengageStore(column: string, workflowId: string | undefined, prState: string | null) {
+    const task = {
+      id: "FN-002", column, dependencies: [], steps: [], currentStep: 0, sessionFile: null,
+    };
+    const moveTask = vi.fn(async (_id: string, to: string) => ({ ...task, column: to }));
+    const logEntry = vi.fn(async () => undefined);
+
+    const store = {
+      getRootDir: vi.fn(() => process.cwd()),
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
+      getTask: vi.fn(async () => task),
+      getSettings: vi.fn(async () => ({})),
+      getTaskWorkflowSelection: vi.fn(() => (workflowId ? { workflowId } : undefined)),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => (workflowId ? { workflowId } : undefined)),
+      getWorkflowDefinition: vi.fn(async (id: string) =>
+        id === "wf-renamed" ? { id, name: "Renamed Flow", kind: "workflow", ir: RENAMED_IR } : null,
+      ),
+      getActivePrEntityBySource: vi.fn(async () =>
+        prState ? { id: "PR-1", state: prState, sourceType: "task", sourceId: "FN-002" } : null,
+      ),
+      /* The route calls `addTaskComment` and re-engages the TASK IT RETURNS, so the mock must return the
+         task row — returning a bare comment made the whole block vacuous: the route threw before reaching
+         the guard, `moveTask` was never called, and both negative cases "passed" for the wrong reason.
+         Caught it because the paired POSITIVE case failed; without that case this suite would have looked
+         green and proven nothing. */
+      addTaskComment: vi.fn(async () => ({ ...task, comments: [{ id: "c1", text: "please fix", author: "user" }] })),
+      updateTask: vi.fn(async () => task),
+      updateStep: vi.fn(async () => undefined),
+      logEntry,
+      moveTask,
+      recordRunAuditEvent: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+
+    return { store, moveTask, logEntry };
+  }
+
+  async function comment(store: TaskStore) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return REQUEST(app, "POST", "/api/tasks/FN-002/comments", JSON.stringify({ text: "please fix", author: "user" }), {
+      "content-type": "application/json",
+    });
+  }
+
+  it("does NOT re-engage a renamed board's review card while a PR is open", async () => {
+    // Pre-fix: both endpoints scored -1 on the legacy enum, a negative index means "allow", and the card
+    // was moved into the wip lane behind an open PR.
+    const { store, moveTask } = buildReengageStore("signoff", "wf-renamed", "open");
+
+    await comment(store);
+
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("DOES re-engage a renamed board's review card once no PR is active", async () => {
+    // The paired positive: the guard must not block re-engagement outright.
+    const { store, moveTask } = buildReengageStore("signoff", "wf-renamed", null);
+
+    await comment(store);
+
+    expect(moveTask).toHaveBeenCalledTimes(1);
+    expect(moveTask.mock.calls[0]?.[1]).toBe("building");
+  });
+
+  it("still blocks on the DEFAULT board with an open PR", async () => {
+    // The case the legacy enum already handled; it must keep working.
+    const { store, moveTask } = buildReengageStore("in-review", undefined, "open");
+
+    await comment(store);
+
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+});

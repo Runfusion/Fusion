@@ -833,19 +833,35 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         ? await scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
         : null);
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-27-16:20 (U10 / R8):
-    Deliberately still on the legacy enum, unlike the move route's copy of this guard. This whole
-    function is gated on the literal `task.column !== "in-review"` above and re-engages to the
-    literal `"in-progress"`, so both endpoints are legacy ids by construction and the enum resolves
-    them correctly. Swapping in the task's workflow order here would make the guard WEAKER, not
-    stronger: a workflow declaring `in-review` but not `in-progress` would score -1 for the target
-    and disable the guard entirely. Convert this site when its surrounding literals are converted
-    (U5 owns the re-engage lane), not before.
+    FNXC:WorkflowResolvedColumns 2026-07-27-16:20 (U10 / R8) — SUPERSEDED, kept for the reasoning:
+    this guard stayed on the legacy enum because "this whole function is gated on the literal
+    `task.column !== "in-review"` above and re-engages to the literal `"in-progress"`, so both endpoints
+    are legacy ids by construction". That premise held when it was written.
+
+    FNXC:WorkflowLifecycleColumns 2026-08-01-21:20 (PR #2701 review — greptile P1):
+    BOTH HALVES OF THAT PREMISE ARE NOW FALSE, and the guard silently stopped existing. U5 converted the
+    re-engage TARGET to `resolveWipColumnForTask`, and this PR converted the entry GATE to the resolved
+    review lane — so on a renamed board the enum scores -1 for both endpoints, and
+    `isBackwardMoveBlockedByOpenPr` treats a negative index as "cannot tell -> allow". A user comment on a
+    review card with an OPEN PR resumed execution behind that PR.
+
+    This is the third form of the same defect this program keeps finding: not a literal answering wrongly,
+    but a guard whose CORRECTNESS ARGUMENT depended on literals elsewhere that someone else has since
+    converted. The comment was accurate and became false without being touched. When you convert a lane,
+    grep for comments that justify a nearby legacy path by "the surrounding literals" — they are load-bearing.
+
+    Ordering now comes from the same `resolveMoveOrderIndices` the move route uses, with the workflow
+    authoritative only when it can place BOTH endpoints (U10/R8's rule), and the target is the SAME value
+    the move below uses rather than a second resolution.
     */
+    const reengageColumn = await resolveWipColumnForTask(scopedStore, task.id);
+    const reengageIr = await resolveWorkflowIrForTask(scopedStore, task.id).catch(() => undefined);
+    const { fromIndex: reengageFromIndex, toIndex: reengageToIndex } =
+      resolveMoveOrderIndices(reengageIr, task.column, reengageColumn);
     if (
       isBackwardMoveBlockedByOpenPr({
-        fromIndex: COLUMNS.indexOf(task.column as Column),
-        toIndex: COLUMNS.indexOf("in-progress"),
+        fromIndex: reengageFromIndex,
+        toIndex: reengageToIndex,
         activePrEntity,
       })
     ) {
@@ -870,7 +886,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
     }
 
-    const reengageColumn = await resolveWipColumnForTask(scopedStore, task.id);
     const reengagedTask = await scopedStore.moveTask(task.id, reengageColumn, { preserveProgress: true });
     await triggerCommentWakeForAssignedAgent(scopedStore, reengagedTask, wake);
     return { task: reengagedTask, reengaged: true };
@@ -2782,8 +2797,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
         });
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-21:10 (PR #2701 review — greptile P1, and it is right):
+         `isInReviewStatusNone` and `isStaleMergeActiveRetry` above already read the RESOLVED lane, so
+         leaving this one literal made the retry decision internally inconsistent: every input said the
+         card was in review, and the combining gate said it was not. On a renamed board
+         `POST /tasks/:id/retry` rejected a legitimate failed/stalled review card with "Task is not in a
+         retryable state". One decision, one lane. */
       const isInReviewRetry =
-        task.column === "in-review" &&
+        task.column === reviewLane &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
