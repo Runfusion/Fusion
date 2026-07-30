@@ -43,6 +43,25 @@ FNXC:WorkflowResolvedColumns 2026-07-31-04:40:
 object cannot intercept it under ESM — the binding is already resolved. Only the other named exports are
 passed through, so the sweeps in this file that use `inspectBranchConflict` are unaffected.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-05:45:
+The sweep logs through `createLogger("self-healing")`, which writes to console.error. Spying on
+console.error does NOT work here — vitest installs its own console interceptor above the spy, so the
+line appears in the run output while the spy records nothing (it did, and read as "no warn emitted").
+Mocking the logger module captures the call itself, one level below the console.
+*/
+const selfHealingWarn = vi.fn();
+vi.mock("../logger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../logger.js")>();
+  return {
+    ...actual,
+    createLogger: (prefix: string) => {
+      const real = actual.createLogger(prefix);
+      return prefix === "self-healing" ? { ...real, warn: (...args: unknown[]) => { selfHealingWarn(...args); real.warn(...args as [string]); } } : real;
+    },
+  };
+});
+
 const classifyForeignOnlyContamination = vi.fn(async () => ({ kind: "clean" as const }));
 vi.mock("../branch-conflicts.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../branch-conflicts.js")>();
@@ -835,5 +854,41 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-05:50 (#2891 review P1 — the card the sweep disowned):
+  `resolveWorkflowIrForTask` does not fail; it SUBSTITUTES the built-in IR. So a card whose workflow
+  selection is missing or unreadable came back measured against `in-review`/`in-progress`, and the
+  per-card verdicts then REJECTED the very card the project-scoped query had just admitted from a renamed
+  lane. The sweep found it and immediately disowned it.
+
+  The fix falls back to the PROJECT sets that admitted the card, so it is CLASSIFIED rather than dropped.
+  This asserts that outcome rather than a log line — the observable is stronger and does not depend on
+  wording.
+
+  REVERT CHECK, measured: with the fallback narrowed back to the legacy ids, this fails — the classifier
+  is never called for a card whose own workflow cannot be read.
+  */
+  it("still classifies a renamed-lane card whose own workflow cannot be resolved", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-NOWORKFLOW",
+      column: RENAMED_VOCAB.review,
+      branch: "fusion/FN-NOWORKFLOW",
+      worktree: "/tmp/worktrees/FN-NOWORKFLOW",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([parked]);
+    /* The PROJECT's definitions still resolve (so the card is listed); the CARD's own selection does not. */
+    Object.assign(store, {
+      getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+    });
+    classifyForeignOnlyContamination.mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
+
+    expect(classifyForeignOnlyContamination).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-NOWORKFLOW" }));
   });
 });
