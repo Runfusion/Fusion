@@ -123,7 +123,7 @@ pgDescribe("planner lanes: the sync twin against the async twin, on a live store
     expect(async_.intake).toBe(MERGED_VOCAB.intake);
   });
 
-  it("CHARACTERIZATION — on a RENAMED board the sync twin returns the LEGACY lanes", async () => {
+  it("CHARACTERIZATION — on a RENAMED board the sync twin returns the DEFAULT-WORKFLOW lanes", async () => {
     /*
     The async twin resolves the board the card is actually on. The sync twin answers with the ids of
     a board this task has nothing to do with — and every one of the nine production call sites is on
@@ -151,11 +151,15 @@ pgDescribe("planner lanes: the sync twin against the async twin, on a live store
     expect(sync.intake).not.toBe(async_.intake);
   });
 
-  it("CHARACTERIZATION — and it labels those legacy lanes `resolvedFromWorkflow: true`", async () => {
+  it("CHARACTERIZATION — and it labels those default-workflow lanes `resolvedFromWorkflow: true`", async () => {
     /*
     The sharpest half. `resolvedFromWorkflow: false` would be honest — "no basis to decide, the
-    legacy names ARE the answer". `true` tells the caller the opposite of the truth, so a caller that
-    correctly checks the flag before trusting the lanes is misled precisely by checking it.
+    fallback names ARE the answer". `true` tells the caller the opposite of the truth, so a caller
+    that correctly checks the flag before trusting the lanes is misled precisely by checking it.
+
+    (Named DEFAULT-WORKFLOW rather than LEGACY throughout, per review: these are the merged builtin
+    default's ids, and `LEGACY_PLANNER_LANES` is a different shape that is never reached here. The
+    header already made that distinction; the case titles contradicted it.)
     */
     const store = h.store();
     const taskId = await taskOn(store, RENAMED_VOCAB, "wf-renamed-flag");
