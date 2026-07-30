@@ -1,3 +1,14 @@
+import { createLogger } from "./logger.js";
+
+/*
+FNXC:EngineDiagnostics 2026-07-31-04:00:
+FN-8603 requires production diagnostics to route through the shared logger rather than bare console
+output, so severity markers and FUSION_DEBUG gating survive. This file had a bare `console.warn` on
+the invalid-override path, which `log-severity-spam-contract` flags as a contract violation. Kept at
+`warn` — an invalid operator-supplied budget is a real misconfiguration, not routine chatter.
+*/
+const log = createLogger("tool-output-budget");
+
 /** Default maximum model-visible characters in one engine-injected tool result. */
 export const DEFAULT_TOOL_OUTPUT_MAX_CHARS = 16_000;
 
@@ -113,7 +124,7 @@ export function resolveToolOutputBudget(
 
   const error = new Error(`Invalid tool output budget for ${toolName}; overrides must be finite positive integers.`);
   if (process.env.NODE_ENV === "production") {
-    console.warn(error.message);
+    log.warn(error.message);
     return defaultMaxChars;
   }
   throw error;

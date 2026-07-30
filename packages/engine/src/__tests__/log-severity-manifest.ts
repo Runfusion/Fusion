@@ -41,7 +41,13 @@ export const logSeverityManifest: SeverityManifestEntry[] = [
   { pkg: "engine", file: "pty-native.ts", anchor: "dlopen pre-load failed (continuing)", priorSeverity: "console", severity: "debug" },
   { pkg: "engine", file: "goal-anchoring-audit.ts", anchor: "goal retrieval audit emission skipped", priorSeverity: "console", severity: "debug" },
   { pkg: "engine", file: "runtimes/child-process-worker.ts", anchor: "Child process worker starting", priorSeverity: "log", severity: "debug" },
-  { pkg: "core", file: "central-core.ts", anchor: "local reattached project ${project.id}", priorSeverity: "console", severity: "debug" },
+  /*
+  FNXC:EngineDiagnostics 2026-07-31-04:00:
+  REMOVED: the `local reattached project ${project.id}` demotion in central-core.ts. Its call site was
+  deleted by 5ae6332563 ("collapse dead SQLite dual-path code") — verified absent from all of
+  packages/core/src, not merely moved — so the entry pinned a demotion that no longer exists and the
+  contract test could only ever fail on it. A manifest row for deleted code cannot ratchet anything.
+  */
   { pkg: "core", file: "docker-provisioning.ts", anchor: "Pulling image ${imageRef}", priorSeverity: "console", severity: "debug" },
   { pkg: "core", file: "docker-provisioning.ts", anchor: "provisioned successfully in ${durationMs}ms", priorSeverity: "console", severity: "debug" },
   { pkg: "core", file: "docker-provisioning.ts", anchor: "deprovisioned", priorSeverity: "console", severity: "debug" },

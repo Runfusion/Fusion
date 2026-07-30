@@ -373,6 +373,22 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
     return rows[0]?.id;
 }
 
+/*
+FNXC:TaskCreationDeduplication 2026-07-31-04:20:
+The duplicate-guard WINDOW POLICY as a pure function, extracted so it can be asserted without a
+TaskStore. Byte-identical to the expression that was inlined below.
+
+Why extracted: the three tests that own this policy drove it through a store fake modelling the
+deleted SQLite path (`db.prepare().all()`), and read the window back out of a captured cutoff string.
+That fake broke when the query moved to `asyncLayer` + Drizzle (TypeError on `layer.projectId`), and
+rebuilding it would have meant reconstructing a Drizzle chain to recover a number this function
+already returns. Narrow seam over mock-the-world, per docs/testing.md.
+*/
+export function resolveFingerprintWindowMs(requestedWindowMs?: number): number {
+  const requested = requestedWindowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
+  return Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requested)));
+}
+
 export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     fingerprint: string,
     options?: { windowMs?: number; includeArchived?: boolean },
@@ -389,8 +405,7 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     window at five minutes and made its ceiling unreachable — the guard asked for ten minutes
     and silently got five. One policy, one pair of bounds.
     */
-    const requestedWindowMs = options?.windowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
-    const windowMs = Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requestedWindowMs)));
+    const windowMs = resolveFingerprintWindowMs(options?.windowMs);
     const cutoffIso = new Date(Date.now() - windowMs).toISOString();
     const includeArchived = options?.includeArchived ?? false;
 

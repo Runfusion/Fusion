@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Column, Task } from "../types.js";
 import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "../duplicate-detection.js";
-import { findRecentTasksByContentFingerprintImpl } from "../task-store/branch-and-pr-entities.js";
+import { resolveFingerprintWindowMs } from "../task-store/branch-and-pr-entities.js";
 import {
   FINGERPRINT_WINDOW_DEFAULT_MS,
   FINGERPRINT_WINDOW_MAX_MS,
@@ -325,50 +325,41 @@ describe("reconcileDeterministicDuplicate", () => {
 FNXC:TaskCreationDeduplication 2026-07-26-07:40:
 The store query owns a SECOND clamp on the same window. Code review found that widening only
 duplicate-guard.ts capped the effective window at the store's own 5-minute ceiling, and no test
-caught it because the guard tests stub the query. These assertions pin the real cutoff the SQL
-receives, so the two clamps cannot drift apart again.
+caught it because the guard tests stub the query. The second clamp now lives in ONE exported policy
+function that both the guard and the store query call, so the two cannot drift apart again — and it is
+asserted directly rather than recovered from a stubbed query's cutoff string.
 */
-describe("findRecentTasksByContentFingerprintImpl window", () => {
-  function stubStore(): { store: TaskStore; cutoffs: string[] } {
-    const cutoffs: string[] = [];
-    const store = {
-      backendMode: false,
-      getTaskSelectClause: () => "t.*",
-      rowToTask: (row: unknown) => row as Task,
-      db: {
-        prepare: () => ({
-          all: (_fingerprint: string, cutoffIso: string) => {
-            cutoffs.push(cutoffIso);
-            return [];
-          },
-        }),
-      },
-    } as unknown as TaskStore;
-    return { store, cutoffs };
-  }
+describe("duplicate-guard fingerprint window policy", () => {
 
-  it("defaults to the shared 10-minute window, not the store's old 60s/5m pair", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp");
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeGreaterThanOrEqual(FINGERPRINT_WINDOW_DEFAULT_MS - 5_000);
-    expect(windowMs).toBeLessThanOrEqual(FINGERPRINT_WINDOW_DEFAULT_MS + 5_000);
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-31-04:20:
+  Asserted on the pure policy function instead of through a store fake. These three drove
+  `findRecentTasksByContentFingerprintImpl` against a fake modelling the DELETED SQLite path
+  (`db.prepare().all()`) and recovered the window by parsing a captured cutoff string; that fake broke
+  when the query moved to `asyncLayer` + Drizzle ("Cannot read properties of undefined (reading
+  'projectId')").
+
+  Rebuilding a Drizzle chain to recover a number the policy already returns would be mock-the-world
+  for no gain. Targeting `resolveFingerprintWindowMs` also removes the +/-5s timing tolerance the old
+  shape needed, so these now assert exact values.
+  */
+  it("defaults to the shared 10-minute window, not the store's old 60s/5m pair", () => {
+    expect(resolveFingerprintWindowMs()).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    expect(FINGERPRINT_WINDOW_DEFAULT_MS).toBeGreaterThan(300_000);
   });
 
-  it("honors an explicit window above the old 5-minute ceiling", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp", { windowMs: 20 * 60_000 });
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeGreaterThan(300_000);
+  it("honors an explicit window above the old 5-minute ceiling", () => {
+    expect(resolveFingerprintWindowMs(20 * 60_000)).toBe(20 * 60_000);
+    expect(resolveFingerprintWindowMs(20 * 60_000)).toBeGreaterThan(300_000);
   });
 
-  it("still clamps to the shared ceiling", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp", { windowMs: 24 * 60 * 60_000 });
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeLessThanOrEqual(FINGERPRINT_WINDOW_MAX_MS + 5_000);
+  it("still clamps to the shared ceiling", () => {
+    expect(resolveFingerprintWindowMs(24 * 60 * 60_000)).toBe(FINGERPRINT_WINDOW_MAX_MS);
+  });
+
+  it("floors at 1ms so a zero or negative request cannot produce a future cutoff", () => {
+    // The `Math.max(1, ...)` half of the policy, which the old cutoff-parsing shape could not see.
+    expect(resolveFingerprintWindowMs(0)).toBe(1);
+    expect(resolveFingerprintWindowMs(-5_000)).toBe(1);
   });
 });
