@@ -371,6 +371,40 @@ describe("timing hooks honour EVERY lane carrying the role", () => {
     expect(task.cumulativeActiveMs).toBeGreaterThan(0);
   });
 
+  it("runs the review enter-effects for a humanReview-ONLY lane", () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (PR #2734 review — greptile, on my own code):
+    The producer built this set from `mergeOrchestration` alone, so a workflow hosting review on a
+    `humanReview`- or `mergeBlocker`-only lane skipped `applyInReviewEnterEffects` entirely — the
+    recovery counters it clears stayed set for a card plainly in review.
+
+    Fixed by using core's `resolveReviewColumns` (#2730) rather than a fifth inline union. That is the
+    BROAD set, which is right here: these hooks ASK the question and move nothing on the answer. A
+    caller that admits and then MOVES wants the narrow single lane — #2750 documents the split.
+    */
+    const task = {
+      id: "FN-HR",
+      column: "signoff",
+      columnMovedAt: "2026-07-30T00:00:00.000Z",
+      recoveryRetryCount: 3,
+      steps: [],
+      dependencies: [],
+      workflowStepResults: [],
+    } as unknown as Task;
+
+    applyInReviewEnterEffects({
+      task,
+      fromColumn: "building",
+      toColumn: "signoff",
+      movedAt: "2026-07-30T00:00:00.000Z",
+      lifecycleColumns: { wip: "building" },
+      lifecycleColumnSets: { review: ["signoff"] },
+      resetSteps: () => {},
+    } as never);
+
+    expect(task.recoveryRetryCount).toBeUndefined();
+  });
+
   it("treats an EMPTY set as 'no lane carries this role', not as a missing answer", () => {
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-10:40 (PR #2734 review — greptile):

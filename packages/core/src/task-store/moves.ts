@@ -26,7 +26,7 @@ import {
   evaluateTransitionInvariants,
 } from "../workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../default-workflow-hooks.js";
-import {columnsWithFlag, resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
@@ -873,7 +873,20 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           : {
               wip: columnsWithFlag(workflowIr, "countsTowardWip"),
               complete: columnsWithFlag(workflowIr, "complete"),
-              review: columnsWithFlag(workflowIr, "mergeOrchestration"),
+              /*
+              FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (PR #2734 review — greptile, on my own
+              code): `mergeOrchestration` ALONE was the wrong set. A workflow may host review on a
+              `humanReview`- or `mergeBlocker`-only lane, and entering it then skipped
+              `applyInReviewEnterEffects` entirely — the enter-effects simply did not run for a card
+              plainly in review.
+
+              `resolveReviewColumns` (core, merged in #2730) is the shared answer to exactly this
+              question, so this becomes the first consumer to use it instead of a fifth inline union.
+              Note it is the BROAD set — correct here, because these hooks ASK "is this card in a review
+              lane" and do not move anything on the answer. A caller that ADMITS and then MOVES wants the
+              narrow single lane instead; #2750 documents that split at the helper.
+              */
+              review: resolveReviewColumns(workflowIr),
             },
       };
       /*
