@@ -15,9 +15,11 @@ asserted.
   skill-resolver     `sessionPurpose === "triage"` is an AGENT ROLE. Same argument:
                      a role does not move when a board renames a column.
 
-  cli task list      the glyph chain distinguished TERMINAL columns from active
-                     ones and nothing else — all four non-terminal ids mapped to
-                     the same "●".
+  (The CLI task-list glyph was a third case here. #2627 landed its own conversion on
+  main first, using the inverse `done || archived` form; that PR documents the same
+  divergence outside the six legacy ids that my equivalence test found, so there was
+  nothing left to add and this PR's version was dropped during rebase rather than
+  contested.)
 
 The distinction matters beyond tidiness: a future auditor working the census will
 reach these and needs to know at a glance that they are out of scope, rather than
@@ -49,49 +51,5 @@ describe("agent-lane vocabulary is not board-column vocabulary", () => {
     */
     expect(getResearchGuidanceForSurface("triage")).toBe(getResearchGuidanceForSurface("triage"));
     expect(() => getResearchGuidanceForSurface("executor")).not.toThrow();
-  });
-});
-
-describe("terminal-vs-active glyph selection (CLI task list)", () => {
-  /*
-  The refactor replaced a four-way literal chain with one terminal test. Equivalence
-  is asserted over ALL six ids rather than trusted, because the chain's fallthrough
-  ("everything else gets ○") is the part a rewrite can silently widen.
-  */
-  const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
-
-  const before = (col: string): string =>
-    col === "triage" ? "●"
-      : col === "todo" ? "●"
-        : col === "in-progress" ? "●"
-          : col === "in-review" ? "●" : "○";
-
-  /* The shipped implementation: an explicit ACTIVE set, mirroring the chain's
-     fallthrough. NOT the inverse `done || archived` form — see below. */
-  const ACTIVE = new Set(["triage", "todo", "in-progress", "in-review"]);
-  const after = (col: string): string => (ACTIVE.has(col) ? "●" : "○");
-
-  it("is byte-identical to the replaced chain for every lifecycle column", () => {
-    for (const col of COLUMNS) {
-      expect(after(col)).toBe(before(col));
-    }
-  });
-
-  it("agrees on an UNKNOWN column id, which is where the obvious rewrite diverged", () => {
-    /*
-    This assertion earned its place. The first rewrite was the inverse form,
-    `col === "done" || col === "archived" ? "○" : "●"` — equivalent across all six
-    lifecycle ids and NOT equivalent for anything else, because the original chain
-    fell through to "○" while the inverse renders an unknown id as active.
-
-    The loop only walks the six `COLUMNS` today, so nothing would have caught it in
-    practice; a renamed workflow reaching this code later would have silently
-    changed how its columns render. A refactor claimed to be equivalent should be
-    tested at its edges, not only where it is currently exercised.
-    */
-    for (const col of ["drafting", "inbox", "shipped"]) {
-      expect(after(col)).toBe(before(col));
-      expect(after(col)).toBe("○");
-    }
   });
 });
