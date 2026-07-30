@@ -8,7 +8,7 @@ applies_when: converting lifecycle-column literals in React components that read
 
 # Converting a column literal to a role turns a stable value into an async one
 
-Recorded 2026-07-30 while converting `TaskCard.tsx` and `TaskDetailModal.tsx`. Four separate review
+Recorded 2026-07-30 while converting `TaskCard.tsx` and `TaskDetailModal.tsx`. Five separate review
 rounds each found a real defect in those two files. None was in the conversion itself — every one
 came from the same property change, and they are cheap to prevent and expensive to find one at a
 time.
@@ -93,13 +93,35 @@ const columnFlags = flagsAreForThisTask ? metadata?.currentColumnFlags : undefin
 Apply it to the **role bindings**, not only the effects. Reordering effects fixes the call sites you
 noticed and leaves the bindings resolving from stale data for everything else.
 
+### 5. Settled-empty mistaken for unresolved — the fix for form 4 introduces this one
+
+Guarding on identity means writing `null` when a lookup returns nothing, or fails — which is
+indistinguishable from *"has not resolved yet"*. The guard then never opens, the reconciliation never
+runs, and the invalid state persists **forever**. Trading "acts on stale data" for "never acts" is
+not a fix.
+
+Resolution has **three** states, not two:
+
+| state | value |
+|---|---|
+| unresolved | `null` |
+| resolved with data | `{ entityId, …payload }` |
+| **resolved empty** | `{ entityId }` |
+
+The third still identifies the entity, so consumers know the answer landed and should fall back to
+the legacy id — a real answer for a workflow that declares nothing, not a placeholder. Settle the
+**failure** path the same way, or a lost fetch leaves the UI waiting on it indefinitely.
+
+**Every fix in this list can introduce the opposite failure. Check that both directions terminate.**
+
 ## Checklist for a component conversion
 
 1. Every hook whose body reads a role lists that role in its dependency array.
 2. No `useState` initializer reads a role without a reconciliation path.
 3. No effect *mutates* state from a role before the flags resolve.
 4. If the component persists across entity changes, roles are guarded on **identity**, not on
-   non-null.
+   non-null — and "resolved empty" is distinguishable from "unresolved", including on the failure
+   path.
 5. Where a role gates both *whether something shows* and *whether it stays*, convert both together
    — a half-converted pair makes the UI contradict itself, which is worse than either state alone.
 
