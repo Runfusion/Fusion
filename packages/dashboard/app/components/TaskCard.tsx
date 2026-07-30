@@ -34,7 +34,15 @@ import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import { isTaskStuck } from "../utils/taskStuck";
-import { isFieldEditableColumnRole } from "../utils/columnRoles";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isHoldColumnRole,
+  isIntakeColumnRole,
+  isFieldEditableColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+} from "../utils/columnRoles";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import { getRevertOfId, isTaskReverted } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
@@ -376,7 +384,18 @@ function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
 }
 
 function getInReviewCompletionMs(task: Task): number | null {
-  return task.column === "done" ? getDoneCompletionMs(task) : null;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:30 (fleet: TaskCard.tsx):
+  CENTRALISED, not trait-resolved — stated plainly because the difference matters. This is a
+  module-scope helper taking only `task`, so no column flags are in scope; passing `undefined`
+  selects the shared fallback and yields behaviour identical to the literal it replaces.
+
+  What it buys is that the legacy id lives in ONE place, and that this site is greppable as "still
+  needs its flags threaded" rather than looking already converted. Threading them means giving every
+  caller of this helper a flags argument, which is a signature change across the card's duration
+  helpers — a separate unit of work, not a vocabulary edit.
+  */
+  return isCompleteColumnRole(undefined, task.column) ? getDoneCompletionMs(task) : null;
 }
 
 function getMergeElapsedMs(task: Task, nowMs: number): number | null {
@@ -1009,16 +1028,24 @@ function TaskCardComponent({
   and in that state there is nothing to resolve FROM. Deleting it does not remove a guard, it picks a
   different guess ("not intake") and silently drops planning affordances during first paint.
   */
-  const isIntakeColumn = taskColumnFlags
-    ? taskColumnFlags.intake === true
-    : task.column === "triage";
-  const isHoldColumn = taskColumnFlags
-    ? taskColumnFlags.hold === true
-    : task.column === "todo";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:15 (fleet: TaskCard.tsx):
+  The card's ROLES, all four resolved the same way — traits when the board has loaded, the documented
+  legacy id only for the pre-load window and for a card in a column its workflow no longer declares.
+
+  The intake/hold pair were already flags-first but written inline; routed through the helpers so this
+  file has ONE definition of each role rather than an expression per site. The wip/review pair are new
+  bindings for the same reason: nine `in-progress` and seven `in-review` comparisons below collapse
+  onto them.
+  */
+  const isIntakeColumn = isIntakeColumnRole(taskColumnFlags, task.column);
+  const isHoldColumn = isHoldColumnRole(taskColumnFlags, task.column);
+  const isWipColumn = isWipColumnRole(taskColumnFlags, task.column);
+  const isReviewColumn = isReviewColumnRole(taskColumnFlags, task.column);
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSteps, setShowSteps] = useState(
-    task.column === "in-progress" ||
+    isWipColumn ||
     (isIntakeColumn && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
@@ -1381,7 +1408,13 @@ function TaskCardComponent({
     }
   }, [onOpenDetail, addToast]);
 
-  const isDoneColumn = task.column === "done";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:00 (fleet: TaskCard.tsx):
+  The card's TERMINAL role, from its own column's traits. `taskColumnFlags` is already threaded into
+  this component, so this is a trait read with the documented id fallback for the pre-load window —
+  not a rename.
+  */
+  const isDoneColumn = isCompleteColumnRole(taskColumnFlags, task.column);
   const visualStatus = isDoneColumn ? "done" : task.status;
   const hasPendingRecovery = hasPendingAutomaticRecovery(task, lastFetchTimeMs);
   const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingRecovery;
@@ -1397,7 +1430,7 @@ function TaskCardComponent({
   const PriorityBadgeIcon = getPriorityIcon(normalizedPriority);
   const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
   const stalledReview = getStalledReviewSignal(task);
-  const showStalledReview = Boolean(stalledReview && task.column === "in-review" && !isPaused);
+  const showStalledReview = Boolean(stalledReview && isReviewColumn && !isPaused);
   const hasInReviewStall = shouldShowInReviewStallBadge(task);
   /*
   FNXC:TaskCardPlanReviewBadge 2026-07-11-12:05:
@@ -1437,7 +1470,7 @@ function TaskCardComponent({
   const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
-  const isArchived = task.column === "archived";
+  const isArchived = isArchivedColumnRole(taskColumnFlags, task.column);
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
   Pass the card's column traits. Without them the planner-lane clause falls back to the
@@ -1547,8 +1580,8 @@ function TaskCardComponent({
    */
   const showNearDuplicateChip = Boolean(task.sourceMetadata?.nearDuplicateOf)
     && task.sourceMetadata?.nearDuplicateDismissed !== true
-    && task.column !== "archived"
-    && task.column !== "done"
+    && !isArchived
+    && !isDoneColumn
     && nearDuplicateCanonicalInactive !== true;
   /**
    * FNXC:TaskRevert 2026-07-04-00:00:
@@ -1579,7 +1612,7 @@ function TaskCardComponent({
    * preserves the done/archived invariant without adding a view-specific badge.
    */
   const showRevertedChip = isTaskReverted(task.sourceMetadata)
-    && (task.column === "done" || task.column === "archived");
+    && (isDoneColumn || isArchived);
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
@@ -1634,7 +1667,7 @@ function TaskCardComponent({
   FN-7676 — cards in the Planning/`triage` column must not surface the steps breakdown (progress bar, active badge, step-count toggle, expandable list); enumerated implementation steps are premature planning artifacts, not execution progress. The affordance now appears only after the task leaves Planning (`in-progress` / `executing`), matching `ListView.shouldShowTaskProgress`. FN-7831 adds a separate header "Reviewing" badge for a running Plan Review, but the progress breakdown itself remains hidden in Planning.
   */
   const showProgressSection =
-    unifiedProgress.total > 0 && (task.status === "executing" || task.column === "in-progress");
+    unifiedProgress.total > 0 && (task.status === "executing" || isWipColumn);
 
   /*
   FNXC:BoardPerformance 2026-07-26-09:46:
@@ -1648,14 +1681,14 @@ function TaskCardComponent({
   old effect used, so cadence, formatting, and which cards animate are unchanged.
   */
   const wantsLiveTimeIndicator = useMemo(() => {
-    if (task.column !== "in-progress" && task.column !== "in-review") {
+    if (!isWipColumn && !isReviewColumn) {
       return false;
     }
 
     const merging = task.status != null && ACTIVE_MERGE_STATUSES.has(task.status);
     const nowMs = Date.now();
 
-    if (task.column === "in-progress") {
+    if (isWipColumn) {
       const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
       const elapsedMs = getInProgressElapsedMs(task, nowMs);
       const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
@@ -1664,7 +1697,7 @@ function TaskCardComponent({
       }
     }
 
-    if (!merging && task.column === "in-review") {
+    if (!merging && isReviewColumn) {
       const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
       const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
       if (endToEndMs == null && instrumentedMs == null) {
@@ -1704,7 +1737,7 @@ function TaskCardComponent({
       }
     }
 
-    if (task.column === "in-progress") {
+    if (isWipColumn) {
       // Prefer the persistent execution start (set on first transition to
       // in-progress, never reset on retry-loop bounces). Fall back to the
       // columnMovedAt heuristic for legacy tasks predating the new field.
@@ -1762,8 +1795,8 @@ function TaskCardComponent({
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));
     const completionSource = task.executionCompletedAt
-      ?? (task.column === "archived" ? task.archivedAt : undefined);
-    const completed = (task.column === "done" || task.column === "archived")
+      ?? (isArchived ? task.archivedAt : undefined);
+    const completed = (isDoneColumn || isArchived)
       ? formatCompactLifecycleDate(completionSource, locale, new Date(lifecycleNowMs))
       : null;
     return { created, completed };
@@ -1801,13 +1834,13 @@ function TaskCardComponent({
   }, [hasGitHubBadgeSource, isInViewport, subscribeToBadge, task.id, unsubscribeFromBadge]);
 
   // Compute step version for diff stats refresh when steps change
-  const isActiveColumn = task.column === "in-progress" || task.column === "in-review";
+  const isActiveColumn = isWipColumn || isReviewColumn;
   const stepVersion = useMemo(
     () => task.steps.map((s) => `${s.name}:${s.status}`).join("|"),
     [task.steps],
   );
   const mergeSignature = useMemo(() => {
-    if (task.column !== "done") {
+    if (!isDoneColumn) {
       return undefined;
     }
 
@@ -1961,7 +1994,7 @@ function TaskCardComponent({
    * is unaffected and continues to render per its own gate.
    */
   const showCreatePrQuickAction =
-    task.column === "in-review"
+    isReviewColumn
     && !effectiveAutoMerge
     && !livePrInfo
     && prAuthAvailable === true
@@ -2147,7 +2180,7 @@ function TaskCardComponent({
   time. This mirrors the parent FN-7501 issue's "undo a change" framing: only
   tasks that actually changed the tree are revertable.
   */
-  const isRevertable = (task.column === "done" || task.column === "archived")
+  const isRevertable = (isDoneColumn || isArchived)
     && Boolean(task.mergeDetails?.commitSha);
 
   /*
@@ -2652,10 +2685,10 @@ function TaskCardComponent({
       return [];
     }
     const actions = [...taskActionMenuModel.actions];
-    if (task.column === "done" && onArchiveTask) {
+    if (isDoneColumn && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: handleTaskActionArchive });
     }
-    if (task.column === "archived" && onUnarchiveTask) {
+    if (isArchived && onUnarchiveTask) {
       actions.push({ id: "unarchive", label: t("tasks.unarchive", "Unarchive"), onSelect: handleTaskActionUnarchive });
     }
     /*
@@ -2665,7 +2698,7 @@ function TaskCardComponent({
     commit to revert, so the menu communicates WHY the affordance is inert
     instead of silently hiding it.
     */
-    if ((task.column === "done" || task.column === "archived") && onRevertTask) {
+    if ((isDoneColumn || isArchived) && onRevertTask) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -2682,11 +2715,22 @@ function TaskCardComponent({
       FNXC:BoardCardActions 2026-07-16-00:00 (FN-8149):
       The retired in-review Move dropdown offered Done (no merge) and Triage in addition to the shared menu model's Todo/In Progress defaults. Fold those targets into this TaskCard-only menu so card consolidation retains every move capability without changing ListView or TaskDetail menus.
       */
-      if (task.column === "in-review") {
+      if (isReviewColumn) {
         for (const column of ["done", "triage"] as const) {
           if (moveTransitions.some((transition) => transition.column === column)) continue;
           moveTransitions.push({
             column,
+            /*
+            FNXC:WorkflowResolvedColumns 2026-07-30-20:30 (fleet: TaskCard.tsx) DELIBERATE-LITERAL:
+            NOT a lifecycle guard. `column` here is the loop variable over the hardcoded
+            `["done", "triage"]` array two lines above — this asks "which entry of my own literal list
+            am I on" in order to pick a label, not "what role does this card's column play".
+
+            Converting it would resolve a trait for a string this code just wrote itself, which is
+            meaningless. The array is the thing worth revisiting (it names move targets by id), but
+            that is a behaviour question about which targets a review card should offer, and it is out
+            of scope for a vocabulary conversion.
+            */
             label: column === "done"
               ? t("tasks.doneNoMerge", "Done (no merge)")
               : t("taskDetail.move.moveTo", "Move to {{column}}", { column: taskActionColumnLabel(column) }),
@@ -2931,7 +2975,7 @@ function TaskCardComponent({
   const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   const filesChangedButton = (() => {
-    if (task.column === "in-progress") {
+    if (isWipColumn) {
       const activeDiffCount = diffStats?.filesChanged;
       const fallbackCount =
         activeDiffCount == null
@@ -2955,7 +2999,7 @@ function TaskCardComponent({
       );
     }
 
-    if (task.column === "in-review") {
+    if (isReviewColumn) {
       const reviewDiffCount = diffStats?.filesChanged;
       const fallbackCount =
         reviewDiffCount == null
@@ -2979,7 +3023,7 @@ function TaskCardComponent({
       );
     }
 
-    if (task.column === "done") {
+    if (isDoneColumn) {
       // Done cards only display committed diff counts from authoritative lineage
       // stats or recorded landed files; transient execution-touched files are not shown.
       let displayCount: number | undefined;
@@ -3240,10 +3284,10 @@ function TaskCardComponent({
   const hasHeaderActions = Boolean(isAwaitingInput && onOpenDetailWithTab)
     || Boolean(canEdit)
     || Boolean(isIntakeColumn && onDeleteTask)
-    || Boolean(task.column === "done" && onArchiveTask)
-    || Boolean(task.column === "archived" && onUnarchiveTask)
-    || Boolean((task.column === "done" || task.column === "archived") && onRevertTask && isRevertable)
-    || Boolean(task.column === "in-progress" && onMoveTask)
+    || Boolean(isDoneColumn && onArchiveTask)
+    || Boolean(isArchived && onUnarchiveTask)
+    || Boolean((isDoneColumn || isArchived) && onRevertTask && isRevertable)
+    || Boolean(isWipColumn && onMoveTask)
     || Boolean(task.size)
     || hasContextMenuActions;
 
@@ -3686,7 +3730,7 @@ function TaskCardComponent({
               <Trash2 size={12} />
             </button>
           )}
-          {task.column === "archived" && onUnarchiveTask && (
+          {isArchived && onUnarchiveTask && (
             <button
               className="card-unarchive-btn"
               onClick={handleUnarchiveClick}
@@ -3706,7 +3750,7 @@ function TaskCardComponent({
           Reuses `card-archive-btn`'s tokenized styling via a shared class so no new
           one-off CSS/colors are introduced.
           */}
-          {task.column === "archived" && onRevertTask && isRevertable && (
+          {isArchived && onRevertTask && isRevertable && (
             <button
               className="card-archive-btn card-revert-btn"
               onClick={handleRevertClick}
@@ -3982,7 +4026,7 @@ function TaskCardComponent({
               </span>
             </span>
           )}
-          {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> {t("tasks.queued", "Queued")}</span>}
+          {(queued || task.status === "queued") && !isWipColumn && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> {t("tasks.queued", "Queued")}</span>}
           {placeFooterRightInMeta && footerRightCluster}
         </div>
       )}
