@@ -400,12 +400,57 @@ this conversion rather than losing the wake entirely.
    defers everything after it to a microtask and reorders handlers relative to a
    synchronous emitter. A file split must not change event ordering, so the
    resolution uses the store's sync IR path. */
-function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string } {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (batch-engine — widened, not duplicated):
+This already resolved hold/intake SYNCHRONOUSLY via `store.resolveTaskWorkflowIrSync`, and the
+`task:moved` handler that calls it was surrounded by `to === "in-review"` / `"done"` / `"archived"`
+literals. Widening the existing helper converts them without making a hot event handler async and
+without a second resolver beside the first.
+
+MEMBERSHIP for review/complete/archived, single ids for hold/intake (matching how callers already use
+them): a workflow may declare a merge-orchestration lane and a separate human sign-off lane, and
+first-per-role silently ignores the second — the arity trap this program has hit five times now.
+
+Each set is kept SEPARATE rather than one "terminal" set, because the call sites distinguish them: the
+scheduling trigger fires on complete-or-hold but NOT archived, and folding them would widen it.
+*/
+function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): {
+  hold: string;
+  intake: string;
+  wip: ReadonlySet<string>;
+  review: ReadonlySet<string>;
+  complete: ReadonlySet<string>;
+  archived: ReadonlySet<string>;
+} {
+  const legacy = {
+    hold: "todo",
+    intake: "triage",
+    wip: new Set(["in-progress"]),
+    review: new Set(["in-review"]),
+    complete: new Set(["done"]),
+    archived: new Set(["archived"]),
+  };
   try {
-    const lifecycle = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
-    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+    const ir = store.resolveTaskWorkflowIrSync(taskId);
+    const lifecycle = resolveLifecycleColumns(ir);
+    if (!ir) return legacy;
+    /* Legacy ids unioned in: a missing or corrupt workflow yields the BUILT-IN IR rather than throwing,
+       so without the union a degraded renamed board resolves sets that exclude its own lanes. */
+    const withLegacy = (flag: Parameters<typeof columnsWithFlag>[1], fallback: string) => {
+      const out = new Set<string>([fallback]);
+      for (const id of columnsWithFlag(ir, flag)) out.add(id);
+      return out;
+    };
+    return {
+      hold: lifecycle?.hold ?? "todo",
+      intake: lifecycle?.intake ?? "triage",
+      wip: withLegacy("countsTowardWip", "in-progress"),
+      review: new Set([...withLegacy("mergeOrchestration", "in-review"), ...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")]),
+      complete: withLegacy("complete", "done"),
+      archived: withLegacy("archived", "archived"),
+    };
   } catch {
-    return { hold: "todo", intake: "triage" };
+    return legacy;
   }
 }
 
@@ -912,13 +957,13 @@ export class Scheduler {
       }
       // PR Monitoring
       if (this.options.prMonitor) {
-        if (to === "in-review" && task.prInfo) {
+        if (parked.review.has(to) && task.prInfo) {
           // Start monitoring existing PR
           const repo = getCurrentRepo(this.store.getRootDir());
           if (repo) {
             this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
           }
-        } else if (from === "in-review" && to !== "in-review") {
+        } else if (parked.review.has(from) && !parked.review.has(to)) {
           // If task has a closed/merged PR, drain buffered comments before
           // stopping monitoring (drainComments needs the tracked PR to still exist)
           if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
@@ -959,7 +1004,7 @@ export class Scheduler {
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a terminal completion column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
-      if (to === "done" || to === "archived") {
+      if (parked.complete.has(to) || parked.archived.has(to)) {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
@@ -1038,7 +1083,7 @@ export class Scheduler {
         } else {
           this.recentEngineTodoRequeues.delete(task.id);
         }
-      } else if (to === "in-review" || to === "done" || to === "archived") {
+      } else if (parked.review.has(to) || parked.complete.has(to) || parked.archived.has(to)) {
         this.recentEngineTodoRequeues.delete(task.id);
         if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
           void this.store.updateTask(task.id, {
@@ -1055,7 +1100,8 @@ export class Scheduler {
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
-      if (to === "done" || to === parked.hold) {
+      /* complete-or-hold, NOT archived — folding archived in here would widen the scheduling trigger. */
+      if (parked.complete.has(to) || to === parked.hold) {
         schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
@@ -1074,7 +1120,7 @@ export class Scheduler {
       }
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
-        if (task.column === "in-progress") this.failedTaskIds.add(task.id);
+        if (resolveTaskParkedColumnsSync(this.store, task.id).wip.has(task.column)) this.failedTaskIds.add(task.id);
         /*
         FNXC:MissionReconciliation 2026-08-01-00:00:
         In-place failure parks do not emit task:moved, but they release the
@@ -1148,7 +1194,7 @@ export class Scheduler {
       }
 
       if (!this.options.prMonitor) return;
-      if (task.column !== "in-review") return;
+      if (!resolveTaskParkedColumnsSync(this.store, task.id).review.has(task.column)) return;
       if (!task.prInfo) return;
 
       // Check if we're already monitoring this task
