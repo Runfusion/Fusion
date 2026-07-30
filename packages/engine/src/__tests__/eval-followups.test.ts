@@ -83,6 +83,54 @@ describe("normalizeEvalFollowUps", () => {
     expect(followUps[0]?.matchedTaskId).toBe("FN-open");
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (engine feed):
+  THE INVARIANT: "open" is the negation of the card's OWN terminal lanes.
+
+  Census-invisible: the old gate was `OPEN_COLUMNS`, a `Set` literal — a definition, not a
+  comparison — so nothing in the lifecycle backlog pointed at this file.
+
+  On a renamed board that set matched NOTHING, so `openTasks` was empty and this dedup had no live
+  work to compare against. Every eval run re-filed follow-ups it had already filed. The symptom is
+  DUPLICATE TASK CREATION, which reads as the evaluator being thorough rather than as a bug.
+
+  REVERT PROOF, measured: restore `OPEN_COLUMNS.has(task.column)` and the first case below fails —
+  the duplicate is created instead of suppressed.
+  */
+  it("suppresses a duplicate of an open task sitting in a RENAMED wip lane", async () => {
+    const followUps = await normalizeEvalFollowUps({
+      parentTaskId: "FN-1",
+      runId: "ER-1",
+      overallBand: "weak",
+      drafts: [{ title: "Investigate flaky verification command", description: "Investigate flaky verification command causing reruns.", reason: "Failed verification", evidenceRefs: ["workflow-1"] }],
+      store: makeStore({
+        openTasks: [{ id: "FN-open", column: "building", title: "Investigate flaky verification command", description: "x" }],
+        terminalColumnsByTaskId: { "FN-open": ["shipped", "vault"] },
+      }),
+      policyMode: "persist_only",
+    });
+
+    expect(followUps[0]?.state).toBe("suppressed");
+    expect(followUps[0]?.matchedTaskId).toBe("FN-open");
+  });
+
+  it("does NOT suppress against a card in a RENAMED terminal lane", async () => {
+    // The dedup must stay scoped to live work: a finished card should not block a fresh follow-up.
+    const followUps = await normalizeEvalFollowUps({
+      parentTaskId: "FN-1",
+      runId: "ER-1",
+      overallBand: "weak",
+      drafts: [{ title: "Investigate flaky verification command", description: "Investigate flaky verification command causing reruns.", reason: "Failed verification", evidenceRefs: ["workflow-1"] }],
+      store: makeStore({
+        openTasks: [{ id: "FN-shipped", column: "shipped", title: "Investigate flaky verification command", description: "x" }],
+        terminalColumnsByTaskId: { "FN-shipped": ["shipped", "vault"] },
+      }),
+      policyMode: "persist_only",
+    });
+
+    expect(followUps[0]?.suppressedReason).not.toBe("duplicate_open_task");
+  });
+
   it("suppresses duplicates from prior eval results", async () => {
     const priorKey = normalizeEvalFollowUpText("FN-1:Add regression test for merge flow:Add regression test for merge flow regressions.");
     const followUps = await normalizeEvalFollowUps({
