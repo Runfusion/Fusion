@@ -981,7 +981,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async isFalseCompletionHandoffExhaustionWhileMergeOwned(task: Task): Promise<boolean> {
-    return task.column === "in-review"
+    return task.column === await this.resolveReviewColumn(task.id)
       && task.status === "failed"
       && typeof task.error === "string"
       && task.error.includes("Completion handoff limbo recovery exhausted")
@@ -2978,6 +2978,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return { intake: lifecycle?.intake ?? "triage", hold: lifecycle?.hold ?? "todo" };
     } catch {
       return { intake: "triage", hold: "todo" };
+    }
+  }
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:10 (fleet: self-healing.ts):
+  The MERGE-ORCHESTRATION (review) lane for one task, resolved from its own workflow. Sibling of
+  `resolvePreWipColumns` above and deliberately the same shape, including the fallback discipline
+  it documents: these are RECOVERY sweeps, so a card whose IR cannot be read keeps its current
+  behaviour rather than silently dropping out of every sweep.
+  */
+  private async resolveReviewColumn(
+    taskId: string,
+    cache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<string> {
+    try {
+      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, cache));
+      return lifecycle?.review ?? "in-review";
+    } catch {
+      return "in-review";
     }
   }
 
