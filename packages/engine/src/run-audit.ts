@@ -807,6 +807,14 @@ export type DatabaseMutationType =
   | "message-delivery:retry-issued"
   | "message-delivery:park"
   | "branch-worktree:auto-requeue"
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:25 (#2797 review):
+  Emitted when the branch-worktree auto-requeue cannot resolve a rebound destination from the task's
+  own workflow. The requeue is SKIPPED rather than aimed at the legacy `todo`, because `moveTask`
+  rejects a column the board does not declare and the resulting throw left the task parked with no
+  record at all. Metadata stays ids/outcomes-only.
+  */
+  | "branch-worktree:auto-requeue-skipped"
   | "branch-worktree:ai-session-spawned"
   | "branch-worktree:irreducible-pause"
   | "branch-worktree:foreign-branch-discarded"
