@@ -126,12 +126,9 @@
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
     "packages/engine/src/scheduler.ts\u0000in-review": 2,
-<<<<<<< HEAD
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000done": 2,
-=======
     "plugins/fusion-plugin-reports/src/store/report-store.ts\u0000archived": 2,
->>>>>>> 9ee1ce6def (batch(cli+plugins): 5 of 7 guards — fn pr create refused every card on a renamed board)
     "packages/cli/src/commands/task.ts\u0000archived": 1,
     "packages/cli/src/commands/task.ts\u0000done": 1,
     "packages/cli/src/extension.ts\u0000archived": 1,
