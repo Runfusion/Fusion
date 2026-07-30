@@ -3504,7 +3504,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         throw inspection.error;
       }
 
-      const inProgressCandidates = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-13:55 (fleet: self-healing.ts, query-only site):
+      No paired guard here — this query IS the whole predicate. It answers "which worktrees are
+      owned by a card still being implemented", and the answer feeds `ownedByOtherInProgressTask`,
+      which is the only thing preventing auto-reclaim of a live worktree from under its owner.
+
+      On a board that renamed its implementation lane the literal returned nothing, so the map was
+      empty, `ownedByOtherInProgressTask` was always false, and the reclaim proceeded as though no
+      one owned the checkout. Default-board behaviour is unchanged: the WIP role resolves to
+      `in-progress` there.
+      */
+      const inProgressCandidates = await this.filterByWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const inProgressByWorktree = new Map<string, string>();
       for (const inProgressTask of inProgressCandidates) {
         if (inProgressTask.worktree) inProgressByWorktree.set(inProgressTask.worktree, inProgressTask.id);
