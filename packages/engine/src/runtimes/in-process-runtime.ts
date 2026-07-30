@@ -197,7 +197,7 @@ export function resolvePlanningContinuationCandidate(
     return { kind: "skip", item, reason: "paused" };
   }
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (the partially-threaded conversion named by
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (the partially-threaded conversion named by
   workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts):
   THREAD THE SET THIS FUNCTION ALREADY RESOLVED. The terminal test at the top of this function uses the
   caller's `terminal`; this delegation then re-tested against `LEGACY_TERMINAL_PAIR`, so the conversion

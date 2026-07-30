@@ -115,7 +115,7 @@ describe("the parked-link sweep resolves its lanes by ROLE, not by the legacy de
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (#2820 review — greptile P2):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:20 (#2820 review — greptile P2):
 THE SECOND CALL SITE. The commit converted BOTH `isParkedTaskColumn` callers but the tests drove only
 `reconcileOrphanedRunningAgents`. `buildReportsHealthSection` resolves its lanes independently and
 rewrites the rendered report, so it is a separate surface and needed its own case — converting two

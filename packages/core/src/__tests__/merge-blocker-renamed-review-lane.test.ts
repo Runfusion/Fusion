@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (the unwired-parameter class, cf. #2803):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (the unwired-parameter class, cf. #2803):
 
 `getTaskMergeBlocker(task, { reviewColumns })` has taken a RESOLVED lane set since its own conversion.
 `mergeTaskImpl` — the merge path itself — omitted it, so the identity check fell back to the literal
@@ -118,5 +118,68 @@ pgDescribe("mergeTask resolves the review lane from the task's own workflow", ()
     }
 
     expect(message).toContain("must be in");
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
+  THE REPURPOSED-COLUMN DIRECTION. My first version pre-seeded `in-review` into the resolved set, which
+  admits a board that declares `in-review` as its WIP lane — a card mid-implementation would pass the
+  merge-identity check and merge prematurely.
+
+  This is the converse direction the optional-flags doc names: not "the lane was renamed" but "the lane
+  still CARRIES a lifecycle name while its traits say otherwise", which is what a project gets by
+  repurposing a default column. A rename-only test cannot see it.
+
+  REVERT CHECK, measured: pre-seeding the legacy id back into the set makes this fail — the card merges
+  from a WIP lane.
+  */
+  it("still refuses a card in a column NAMED in-review that its workflow declares as WIP", async () => {
+    const repurposed = {
+      ...RENAMED_IR,
+      columns: [
+        { id: "backlog", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        /* The trap: legacy NAME, wip TRAITS. */
+        { id: "in-review", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "signoff", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }] },
+        { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "backlog" },
+        { id: "exec", kind: "prompt", column: "in-review", config: { seam: "execute" } },
+        { id: "merge-gate", kind: "merge-gate", column: "signoff", config: { gate: "auto-merge" } },
+        { id: "end", kind: "end", column: "shipped" },
+      ],
+      edges: [
+        { from: "start", to: "exec" },
+        { from: "exec", to: "merge-gate", condition: "success" },
+        { from: "merge-gate", to: "end", condition: "success" },
+      ],
+    } as unknown as WorkflowIr;
+
+    const created = await store.createWorkflowDefinition({ name: "repurposed in-review", ir: repurposed as never });
+    const task = await store.createTask({ description: "mid-implementation" });
+    await store.selectTaskWorkflow(task.id, created.id);
+    for (const lane of ["backlog", "in-review"]) {
+      await store.moveTask(task.id, lane as never, { moveSource: "user" } as never);
+    }
+    expect((await store.getTask(task.id)).column).toBe("in-review");
+
+    let message = "";
+    try {
+      await store.mergeTask(task.id);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    // The board's review lane is `signoff`; a card in the WIP lane must not merge.
+    /*
+    NAMES THE SITE, deliberately. A looser `toContain("must be in")` passes when EITHER guard refuses —
+    and it did: with merge-queue-ops reverted, the completion guard in task-artifacts-ops caught the card
+    instead and the assertion still held. `Cannot merge` is merge-queue-ops' wording; `Cannot move … to
+    done` is the other. Asserting the prefix is what makes the two sites independently provable.
+    */
+    expect(message).toContain("Cannot merge");
+    expect(message).toContain("must be in");
+    expect(message).toContain("signoff");
   });
 });

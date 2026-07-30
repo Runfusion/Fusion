@@ -391,7 +391,7 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (unwired-parameter class, cf. #2803):
+      FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (unwired-parameter class, cf. #2803):
       `getTaskMergeBlocker` has taken an optional RESOLVED `reviewColumns` since its own conversion, and
       this caller omitted it — so the identity check fell back to the literal `in-review` and threw
       `Cannot merge <id>: task is not in 'in-review'` for a card sitting correctly in ITS OWN board's
@@ -403,11 +403,22 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       humanReview, so a workflow splitting those across columns has all of them accepted. Unioned with
       the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
       */
-      const reviewColumns = new Set<string>(["in-review"]);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
+      THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
+      unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
+      a card mid-implementation would pass the merge-identity check and merge prematurely.
+
+      The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
+      resolution that threw. A non-empty resolved answer replaces it outright; that is the same
+      "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
+      */
+      let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
       try {
         const ir = await resolveWorkflowIrForTask(store, id);
-        if (ir) for (const column of resolveReviewColumns(ir)) reviewColumns.add(column);
-      } catch { /* degraded: legacy id only */ }
+        const resolved = ir ? resolveReviewColumns(ir) : [];
+        if (resolved.length > 0) reviewColumns = new Set(resolved);
+      } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
       const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
       if (mergeBlocker) {
         throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);

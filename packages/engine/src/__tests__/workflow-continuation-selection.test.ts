@@ -119,7 +119,7 @@ describe("selectActionablePlanningContinuations", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (closing the partially-threaded half of the gap that
+FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (closing the partially-threaded half of the gap that
 workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts documented):
 
 `resolvePlanningContinuationCandidate` applied the caller's resolved terminal set to its OWN check and

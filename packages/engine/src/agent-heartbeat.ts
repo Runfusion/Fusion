@@ -3113,7 +3113,7 @@ export class HeartbeatMonitor {
             try {
               const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
               /*
-              FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+              FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
               Pass the resolved lane flags so the ranking's terminal filter is not the literal pair.
 
               `rankAssignedTasksForWakeDelta` gained `flagsByColumnId` and this, its only production

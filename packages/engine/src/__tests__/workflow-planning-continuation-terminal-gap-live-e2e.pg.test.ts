@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowScheduling 2026-07-31-07:10 (E2E evidence — the optional-role-parameter class, third instance):
+FNXC:WorkflowScheduling 2026-07-30-07:10 (E2E evidence — the optional-role-parameter class, third instance):
 
 Third measured instance of the pattern from #2795 and #2798, and the sharpest form of it: the
 converted and unconverted call sites are in the SAME FILE, and one is nested inside the other's call
@@ -35,7 +35,7 @@ runtime module's SYNTAX (parsed, not string-matched — see the note on that cas
 drain needs the runtime's full dependency set, which I did not build; the audit case says so rather
 than dressing it up.
 
-FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (follow-up — one severity correction and one site closed):
+FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (follow-up — one severity correction and one site closed):
 
 TWO REFINEMENTS to the above, both measured rather than argued.
 
@@ -177,7 +177,7 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against the
     module's SYNTAX and labelled as such.
 
-    FNXC:WorkflowScheduling 2026-07-31-10:15 (PR #2799 review — greptile P2):
+    FNXC:WorkflowScheduling 2026-07-30-10:15 (PR #2799 review — greptile P2):
     AST, not string splitting. The first version found call sites by splitting on the callee name and
     then reasoning about the text that followed — whitespace, the next `;`, whether the slice started
     with a parameter name. A formatting-only change to the runtime could fail this suite or, worse,
