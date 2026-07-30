@@ -348,7 +348,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const result = await aggregateProductivityAnalytics(requireAsyncLayer(store, "Command Center productivity analytics"), {
         from: range.from,
         to: range.to,
-      });
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-19:25: store supplied so the duration distribution
+         resolves the board's complete lanes instead of the literal 'done'. */
+      }, store);
       if (wantsCsv(req.query)) {
         sendCsv(
           res,
