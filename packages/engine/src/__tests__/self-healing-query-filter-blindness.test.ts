@@ -522,4 +522,47 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* Not just "the query asked" — the card survived the blocker and was acted on. */
     expect(enqueueMerge).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:20 (the query-filter class, sixth sweep — activation check
+  run FIRST this time):
+  `recoverReviewTasksWithFailedPreMergeSteps` auto-revives a card parked with a FAILED pre-merge review
+  step. Its literal read meant that card stayed parked on a renamed board until a human noticed.
+
+  This sweep is the sharpest example of part 5 of the shape. Its filter asks
+  `blocker !== "task has failed pre-merge workflow steps"` — an EXACT STRING match. Unwired on a renamed
+  board the blocker returns "task is in 'checking', must be in 'in-review'" instead, so widening the query
+  alone would have made the sweep find every card and then reject every card.
+
+  Asserts the END-TO-END outcome (the recover callback fires), not the query, precisely because a
+  query-only assertion passes while the blocker silently rejects.
+
+  REVERT CHECK, measured (each independently):
+    - literal read restored        -> fails, the card is never found
+    - { reviewColumns } dropped    -> fails, the card is found and then rejected by the string compare
+  */
+  it("revives a failed-pre-merge-step card on a RENAMED board, past the now-reachable blocker", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-FAILEDSTEP",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      worktree: "/tmp/wt",
+      steps: [],
+      mergeDetails: {},
+      workflowStepResults: [
+        { phase: "pre-merge", source: "optional-group", status: "failed",
+          workflowStepId: "code-review", workflowStepName: "Code Review",
+          completedAt: new Date().toISOString() },
+      ],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([parked]);
+    Object.assign(store, { logEntry: vi.fn(async () => undefined) });
+    const recoverFailedPreMergeStep = vi.fn(async () => true);
+
+    await new SelfHealingManager(store, { rootDir: "/repo", recoverFailedPreMergeStep } as never)
+      .recoverReviewTasksWithFailedPreMergeSteps();
+
+    expect(recoverFailedPreMergeStep).toHaveBeenCalled();
+  });
 });

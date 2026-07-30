@@ -7703,7 +7703,48 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:20 (the query-filter class, sixth sweep — and the first
+      converted with the ACTIVATION check run FIRST, per
+      `docs/solutions/architecture-patterns/self-healing-sweeps-are-blind-on-a-renamed-board.md`):
+
+      `listTasks({ column: "in-review" })` returned EMPTY on a renamed board, so a card parked with a
+      FAILED pre-merge review step was never auto-revived and stayed parked until a human noticed.
+
+      The activation check mattered here more than anywhere so far. This sweep's filter asks
+      `blocker !== "task has failed pre-merge workflow steps"` — an EXACT STRING match. Unwired on a
+      renamed board the blocker instead returns "task is in 'checking', must be in 'in-review'", which is
+      not that string, so every card would be rejected the moment the widened query started finding them.
+      Wiring the blocker is therefore part of this conversion, not a follow-up.
+      */
+      const failedStepReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const failedStepById = new Map<string, Task>();
+      for (const column of failedStepReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) failedStepById.set(task.id, task);
+      }
+      const tasks = [...failedStepById.values()];
+      const failedStepIrCache = new Map<string, WorkflowIr>();
+      const unresolvedFailedStepCards: string[] = [];
+      /* One resolution per card, feeding BOTH the lane test and the blocker below. */
+      const ownReviewLanesForFailedStep = async (task: Task): Promise<ReadonlySet<string>> => {
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, failedStepIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+          : [];
+        if (!resolved || resolved.source === "default") unresolvedFailedStepCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-21:20. */
+        return own.length > 0 ? new Set(own) : new Set(["in-review"]);
+      };
+      const reviewLanesByTask = new Map<string, ReadonlySet<string>>();
+      for (const task of tasks) reviewLanesByTask.set(task.id, await ownReviewLanesForFailedStep(task));
+      if (unresolvedFailedStepCards.length > 0) {
+        log.warn(
+          `failed-pre-merge-step revival: ${unresolvedFailedStepCards.length} card(s) measured against the `
+          + `built-in review lane because their own workflow could not be resolved `
+          + `(${unresolvedFailedStepCards.slice(0, 5).join(", ")}); a renamed review lane there stays parked.`,
+        );
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const latestFailedPreMergeStep = (task: Pick<Task, "workflowStepResults">): WorkflowStepResult | undefined => {
@@ -7791,7 +7832,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       };
 
       const candidates = tasks.filter((task) => {
-        if (task.column !== "in-review") return false;
+        /* Precomputed above, so this filter stays synchronous. */
+        if (!(reviewLanesByTask.get(task.id) ?? new Set(["in-review"])).has(task.column)) return false;
         if (!allowsAutoMergeProcessing(task, settings)) return false;
         if (task.paused) return false;
         /*
@@ -7814,7 +7856,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Merge must be blocked *specifically* by the failed pre-merge step —
         // not by an unrelated condition (incomplete steps, etc.) that is
         // already handled by a dedicated scan.
-        const blocker = getTaskMergeBlocker(task);
+        /* Wired: this comparison is an EXACT STRING match, so an unwired blocker returning
+           "task is in '<lane>', must be in 'in-review'" would reject every card on a renamed board. */
+        const blocker = getTaskMergeBlocker(task, {
+          reviewColumns: reviewLanesByTask.get(task.id) ?? new Set(["in-review"]),
+        });
         if (!parkedRemediationFailure && blocker !== "task has failed pre-merge workflow steps") return false;
 
         // The retry flow injects into PROMPT.md + re-executes on the worktree.
