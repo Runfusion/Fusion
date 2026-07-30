@@ -53,6 +53,7 @@ import {
 
 import { runHoldReleaseSweep } from "../hold-release.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
+import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 
 pgDescribe("live planning-lane E2E: real hold-release sweep + real PostgreSQL store", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -86,27 +87,12 @@ pgDescribe("live planning-lane E2E: real hold-release sweep + real PostgreSQL st
     );
     await store.writeTaskWorkflowSelection(taskId, workflowId, []);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (release-leg fixture fix, same defect as #2634):
-    The card needs a PLANNED PROMPT.md before the sweep will release it. Task creation leaves a
-    bootstrap seed ("# <id>\n\n<description>"), and FN-7648's `isUnplannedForExecution` reads that
-    file for any card resting in an intake- or hold-trait column and refuses to move an unplanned
-    card into a processing column. So the sweep released NOTHING and even this file's own control
-    case ("releases an ordinary held card on a default board") went red — the gate working, not a
-    scheduler defect.
-
-    Identical to the defect #2634 repaired in workflow-lifecycle-live-e2e, and the reason it is
-    worth stating twice: a release/scheduler fixture that does not model a card which cleared
-    specification is testing the gate, not the sweep.
+    FNXC:WorkflowLifecycleColumns 2026-07-30-12:05 (release-leg fixture):
+    Needs a spec FN-7648 accepts as PLANNED, or even this file's own control case ("releases an
+    ordinary held card on a default board") goes red. Rationale and self-check live in
+    `_planned-spec-fixture.ts`.
     */
-    const { writeFileSync, mkdirSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const dir = join((store as never as { getTasksDir(): string }).getTasksDir(), taskId);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "PROMPT.md"),
-      `# ${taskId}\n\n## Context\nA planned spec, so the release sweep does not classify this card as an unplanned seed.\n\n## Steps\n### Step 1\n- [ ] do the planned work\n`,
-      "utf-8",
-    );
+    seedPlannedSpec(store as never as { getTasksDir(): string }, taskId);
     if (Object.keys(fields).length > 0) await store.updateTask(taskId, fields as never);
     store.taskCache.delete(taskId);
   }

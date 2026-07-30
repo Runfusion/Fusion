@@ -34,6 +34,7 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { runHoldReleaseSweep } from "../hold-release.js";
 import { MERGED_VOCAB, RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
+import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 
 pgDescribe("live MERGED-board E2E: one column carrying both intake and hold", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -63,30 +64,12 @@ pgDescribe("live MERGED-board E2E: one column carrying both intake and hold", ()
     );
     await store.writeTaskWorkflowSelection(taskId, workflowId, []);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-29-14:40 (fixture fix — and a retracted escalation):
-    The card needs a PLANNED PROMPT.md before the release sweep will move it. FN-7648's
-    `isUnplannedForExecution` reads that file for any card resting in an intake- OR hold-trait
-    column and refuses to move an unplanned card into a processing column. On a MERGED board the
-    hold lane IS the intake lane, so every card seeded here is subject to that gate — a bootstrap
-    seed is held, and being held is the GATE WORKING, not a scheduler defect.
-
-    This corrects a wrong escalation of mine. I bisected the failure to #2613's task-creation.ts
-    (reverting that one file re-greened everything) and reported it as a regression. The bisect was
-    sound as ATTRIBUTION and wrong as a verdict: #2613 made a card created in `todo` classify as
-    INTAKE, which post-U11 it genuinely is, so it correctly receives a bootstrap seed instead of a
-    specified prompt. My fixture had been relying on the pre-U11 semantics where `todo` was not
-    intake and a card created there was treated as already specified.
-
-    The lesson, recorded because it cost another worker time: a revert that changes an outcome
-    proves WHICH change moved it, never that the OLD behaviour was the correct one. Diagnosis of
-    #2613's behaviour belongs to #2634, which probed the actual release gates rather than
-    bisecting.
+    FNXC:WorkflowLifecycleColumns 2026-07-30-12:05 (release-leg fixture):
+    On a MERGED board the hold lane IS the intake lane, so EVERY card seeded here is subject to
+    FN-7648's planned-spec gate. Rationale, the retracted #2613 escalation, and the self-check
+    live in `_planned-spec-fixture.ts`.
     */
-    const { writeFileSync, mkdirSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const dir = join((store as never as { getTasksDir(): string }).getTasksDir(), taskId);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "PROMPT.md"), `# ${taskId}\n\n## Context\nA planned spec.\n\n## Steps\n### Step 1\n- [ ] work\n`, "utf-8");
+    seedPlannedSpec(store as never as { getTasksDir(): string }, taskId);
     store.taskCache.delete(taskId);
   }
 
