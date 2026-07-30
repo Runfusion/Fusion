@@ -29,6 +29,7 @@ import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 
 export function MainContent({
+  columnFlagsByTaskId,
   showBackendConnectionErrorPage,
   projectsError,
   t,
@@ -555,6 +556,7 @@ export function MainContent({
         <Suspense fallback={null}>
           <DocumentsView
             projectId={currentProject?.id}
+            columnFlagsByTaskId={columnFlagsByTaskId}
             addToast={addToast}
             onOpenDetail={openDetailTask}
             onOpenArtifactTaskDetail={popOutTaskDetail}

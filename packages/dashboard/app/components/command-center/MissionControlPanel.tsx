@@ -41,6 +41,16 @@ const LIVE_REFETCH_EVENTS = [
  * these canonical stage ids; any column that does not map to a known stage is
  * folded into an "other" bucket so custom workflow columns still contribute a
  * count rather than being silently dropped.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-12:30 DELIBERATE-LITERAL: this is an ALIAS TABLE of
+ * column NAMES, not a lifecycle guard — `triage` sits beside `signal` and `backlog` as one of
+ * several names operators give the same funnel stage. Command Center aggregates across
+ * PROJECTS, so there is no single workflow to resolve traits from here; the honest conversion
+ * needs per-project trait resolution feeding this panel, which is a data change rather than a
+ * predicate change. Until then the "other" bucket keeps unrecognised columns counted instead
+ * of dropped, which is what stops a renamed board from silently reading as empty.
+ *
+ * Recorded for the U12 literal ratchet's allowlist; grep DELIBERATE-LITERAL to enumerate.
  */
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
   { id: "triage", match: (c) => c === "triage" || c === "signal" || c === "backlog" },

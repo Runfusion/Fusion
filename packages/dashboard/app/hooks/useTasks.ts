@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
-import { normalizeColumnId } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
 import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
@@ -159,7 +161,7 @@ function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogAct
   if (
     !PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)
     || task.status === "planning"
-    || entry.agent !== "triage"
+    || entry.agent !== PLANNER_AGENT_ROLE
     || !hasFreshAgentLog(task, entry)
   ) {
     return task;

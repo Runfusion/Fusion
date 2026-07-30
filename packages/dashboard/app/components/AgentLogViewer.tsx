@@ -1,4 +1,7 @@
 import type { AgentLogEntry } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ProviderIcon } from "./ProviderIcon";
@@ -101,7 +104,7 @@ export const markdownComponents: Components = {
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
 
 function getAgentDisplayName(agent: string, t: TFunction<"app">): string {
-  if (agent === "triage") return t("agentLog.agentNameTriage", "Plan");
+  if (agent === PLANNER_AGENT_ROLE) return t("agentLog.agentNameTriage", "Plan");
   return agent;
 }
 

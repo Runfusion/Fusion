@@ -1,5 +1,7 @@
 import type { Agent, AgentLogEntry, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
-import { resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
 import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 export type ModelSelection = ResolvedModelSelection;
@@ -145,7 +147,7 @@ export function resolveEffectiveValidator(
 export function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
   let result: { provider: string; modelId: string } | null = null;
   entries.forEach((entry) => {
-    if (entry.agent !== "triage" || !isEngineMarkerEntryType(entry.type)) return;
+    if (entry.agent !== PLANNER_AGENT_ROLE || !isEngineMarkerEntryType(entry.type)) return;
     const match = parseRuntimeModelMarker(entry.text, "Planning");
     if (match) {
       result = match;

@@ -1710,6 +1710,9 @@ function AppInner() {
     capacityRiskDismissed,
     capacityRiskSignal,
     handleDismissCapacityRisk,
+    // FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: reuse the footer's per-task column traits
+    // so main-content views resolve lifecycle roles instead of matching column names.
+    columnFlagsByTaskId: footerColumnFlagsByTaskId,
     AgentsView,
     ChatView,
     CommandCenter,
