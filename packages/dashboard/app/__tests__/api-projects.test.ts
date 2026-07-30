@@ -63,7 +63,6 @@ import {
   resumeProject,
   fetchFirstRunStatus,
   fetchGlobalConcurrency,
-  updateGlobalConcurrency,
   fetchPiSettings,
   updatePiSettings,
   installPiPackage,
@@ -975,24 +974,17 @@ describe("fetchGlobalConcurrency", () => {
     expect(result.projectsActive["proj_abc123"]).toBe(2);
   });
 
-  it("updates global concurrency state", async () => {
-    const mockState: GlobalConcurrencyState = {
-      globalMaxConcurrent: 10,
-      currentlyActive: 4,
-      queuedCount: 0,
-      projectsActive: {},
-    };
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockState));
+  /*
+  FNXC:CapacityModel 2026-07-31-02:40:
+  The "updates global concurrency state" case is DELETED with the client function it exercised.
+  `updateGlobalConcurrency` PUT to `/api/global-concurrency`, a route removed when the machine-wide cap
+  went (capacity is two numbers PER PROJECT), so the client could only call an endpoint that no longer
+  exists. I deleted the function and missed this test — it kept asserting the deleted write, and the
+  full-suite run is what caught it.
 
-    const result = await updateGlobalConcurrency({ globalMaxConcurrent: 10 });
-
-    expect(result.globalMaxConcurrent).toBe(10);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/global-concurrency", {
-      headers: API_JSON_HEADERS,
-      method: "PUT",
-      body: JSON.stringify({ globalMaxConcurrent: 10 }),
-    });
-  });
+  `fetchGlobalConcurrency` and its cases above SURVIVE: the GET route remains and serves live
+  utilization telemetry to the footer and Command Center. A read, not a limiter.
+  */
 });
 
 describe("fetchProjectTasks", () => {
