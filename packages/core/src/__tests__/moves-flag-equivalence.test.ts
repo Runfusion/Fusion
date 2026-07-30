@@ -191,4 +191,122 @@ pgDescribe("move-path side effects are equivalent with the compatibility flag OF
     */
     expect(traitHooks.timing).toEqual(legacy.timing);
   });
+
+  /*
+  FNXC:WorkflowColumns 2026-07-31-03:00 (U12 — seam 2, demonstrated rather than inferred):
+  WHAT THE FLIP WOULD BREAK ON A CUSTOM BOARD.
+
+  Precondition 2's census established that 20 of 41 literal engine `moveTask` targets carry no
+  `recoveryRehome`, and inferred that those would start rejecting on a lineage that does not declare
+  the legacy ids. Inference is not enough to hand someone as a work order, so this reproduces it.
+
+  Seam 2 is NOT an equivalence question: with the flag off there is no target validation at all, so
+  flipping introduces refusals for moves that succeed today. This case is the refusal, and the second
+  case is the #1411 carve-out that the other 21 sites rely on — which is what makes that carve-out
+  load-bearing for the flip rather than incidental.
+
+  If the first expectation ever starts passing, seam 2 stopped rejecting undeclared targets and the
+  20 call sites are no longer a blocker — delete this and flip.
+  */
+  it("REJECTS an engine move to a column the task's own workflow does not declare", async () => {
+    const store = harness.store();
+    await setFlag(store, true);
+
+    // A lineage with none of the legacy ids: no todo, no in-progress, no done.
+    const definition = await store.createWorkflowDefinition({
+      name: "no-legacy-ids",
+      ir: {
+        version: "v2",
+        name: "no-legacy-ids",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    const task = await store.createTask({ description: "custom lineage card", workflowId: definition.id } as never);
+
+    /*
+    A plain engine-shaped move to `todo` — the shape 20 census sites use. It must reject, because
+    `todo` is not a column this workflow declares. This is the break the flip would ship.
+    */
+    await expect(store.moveTask(task.id, "todo")).rejects.toThrow();
+  });
+
+  it("REJECTS that same move with the flag OFF TOO — correcting the blast-radius claim", () => {
+    /*
+    FNXC:WorkflowColumns 2026-07-31-03:15 (U12 — I had this wrong, and it matters):
+    I wrote in #2639 and in the census that "with the flag off there is NO target-column validation on
+    the move path", so flipping would introduce new refusals. THAT IS NOT WHAT HAPPENS. Running the
+    identical custom-lineage move with the flag OFF also rejects:
+
+        Error: Invalid transition: 'backlog' -> 'todo'. Valid targets: building
+
+    Transition validation is already in force on the flag-OFF path. So for this shape — an engine move
+    to a column the task's workflow does not declare — the move is ALREADY failing today, and seam 2
+    does not introduce a new break for it. The 20 census sites without `recoveryRehome` are therefore a
+    smaller risk than I reported: on a custom lineage they are broken now, not broken by the flip.
+
+    I am asserting the CURRENT behaviour rather than the behaviour I expected, because a test written to
+    my assumption would have failed and I would have "fixed" the fixture until it agreed with a claim
+    that was false. The error message is asserted so a future change in WHICH guard rejects is visible
+    rather than silently reinterpreted as agreement.
+    */
+    return (async () => {
+      const store = harness.store();
+      await setFlag(store, false);
+
+      const definition = await store.createWorkflowDefinition({
+        name: "no-legacy-ids-flagoff",
+        ir: {
+          version: "v2",
+          name: "no-legacy-ids-flagoff",
+          columns: [
+            { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+            { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+            { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+          ],
+          nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+          edges: [{ from: "start", to: "end" }],
+        },
+      } as never);
+
+      const task = await store.createTask({ description: "custom lineage card, flag off", workflowId: definition.id } as never);
+      await expect(store.moveTask(task.id, "todo")).rejects.toThrow(/Invalid transition/);
+    })();
+  });
+
+  it("ACCEPTS the same move when it carries the #1411 recoveryRehome carve-out", async () => {
+    const store = harness.store();
+    await setFlag(store, true);
+
+    const definition = await store.createWorkflowDefinition({
+      name: "no-legacy-ids-rescue",
+      ir: {
+        version: "v2",
+        name: "no-legacy-ids-rescue",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    const task = await store.createTask({ description: "rescued card", workflowId: definition.id } as never);
+
+    /*
+    The carve-out exists so a custom-workflow card can still be rescued to a guaranteed-safe landing
+    column. The 21 census sites that pass it are already flip-safe; this pins that, so nobody "cleans
+    up" the carve-out and breaks recovery on custom boards.
+    */
+    const moved = await store.moveTask(task.id, "todo", { recoveryRehome: true, bypassGuards: true } as never);
+    expect(moved.column).toBe("todo");
+  });
 });
