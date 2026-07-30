@@ -38,7 +38,6 @@ import {
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
   resolveReviewColumns,
-  resolveWorkflowColumnForRole,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -5239,29 +5238,34 @@ export default function kbExtension(pi: ExtensionAPI) {
         const store = await getStore(ctx.cwd);
         const workflowId = params.workflow_id?.trim() || undefined;
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-30-22:05:
-        Delegation lands in the selected workflow's HOLD lane, not in the literal `todo`.
+        FNXC:WorkflowLifecycleColumns 2026-07-30-23:55:
+        Delegation lands in the HOLD lane of the workflow the card ACTUALLY got, not in the literal
+        `todo` and not in a lane resolved from a second, independent read.
 
         The tool's contract (see the description above) is "the task goes to the ready-to-work lane
-        and the target agent picks it up on its next heartbeat" — deliberately NOT intake, which is
-        why this cannot simply omit `column` and inherit `createTask`'s intake resolution: on a
-        manual-intake workflow the card would sit waiting for a human and never reach the agent it
-        was delegated to.
+        and the target agent picks it up on its next heartbeat" — deliberately NOT intake, so this
+        cannot simply omit `column` and inherit `createTask`'s intake resolution: on a manual-intake
+        workflow the card would sit waiting for a human and never reach the agent it was delegated
+        to. Keyed on the literal, a workflow that calls that lane anything else received a card in an
+        undeclared column: written, reported as delegated, invisible to the agent.
 
-        Hold is the role that names that lane. Keyed on the literal, a board whose ready lane is
-        renamed (or a workflow that declares `queued` instead of `todo`) received a card in an
-        undeclared column: it is written, reported as delegated, and never appears for the agent.
+        RESOLVED FROM THE CREATED TASK, and that ordering is the fix rather than a detail (#2843
+        review, greptile P1 — it is right). My first version resolved the hold column BEFORE the
+        create, from `getDefaultWorkflowId()`. `createTask` then resolves the project default AGAIN
+        to select the workflow, so two reads answered the same question and a default changed between
+        them yields a column from workflow A written onto a card selected into workflow B — the exact
+        undeclared-lane write this conversion exists to remove, reintroduced by the fix for it.
 
-        The literal survives ONLY for a workflow that declares NO hold column at all — an unreadable
-        or missing workflow resolves to the built-in IR (see `resolveWorkflowColumnForRole`), whose
-        hold lane is `todo`, so this fallback is narrower than it looks and matches the behaviour
-        this call site had before either way.
+        Resolving afterwards leaves ONE authority: the task's own selection. The move is skipped
+        entirely when the entry lane already carries `hold` — true on the built-in board, where entry
+        and hold are both `todo` — so the common path is byte-identical and costs no extra write.
+
+        A failed move is reported, not swallowed: the card exists either way, and telling the caller
+        it is ready when it is sitting in intake is the failure mode this whole change is about.
         */
-        const holdColumn = await resolveWorkflowColumnForRole(store, "hold", workflowId) ?? "todo";
         const task = await store.createTask({
           description: params.description,
           dependencies: params.dependencies,
-          column: holdColumn,
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           source: {
@@ -5270,15 +5274,29 @@ export default function kbExtension(pi: ExtensionAPI) {
           },
         });
 
+        let landedColumn = task.column;
+        let landingNote = "";
+        const holdColumn = (await resolveTaskLifecycleColumns(store, task.id))?.hold;
+        if (holdColumn && holdColumn !== task.column) {
+          try {
+            await store.moveTask(task.id, holdColumn);
+            landedColumn = holdColumn;
+          } catch (moveError) {
+            landingNote = ` WARNING: could not move it out of "${task.column}" into the ready lane `
+              + `"${holdColumn}" (${moveError instanceof Error ? moveError.message : String(moveError)}), `
+              + "so it is waiting on intake rather than on the agent.";
+          }
+        }
+
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
         const workflow = workflowId ? ` (workflow: ${workflowId})` : "";
         return {
           content: [{
             type: "text" as const,
             text: `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. ` +
-              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
+              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.${landingNote}`,
           }],
-          details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name },
+          details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn },
         };
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("Task ID already exists:")) {

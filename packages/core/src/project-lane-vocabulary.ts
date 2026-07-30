@@ -31,8 +31,6 @@ times.
 
 import { columnsWithFlag } from "./workflow-lifecycle-traits.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
-import { resolveWorkflowIrById } from "./workflow-ir-resolver.js";
-import { DEFAULT_WORKFLOW_ID } from "./builtin-workflows.js";
 import type { TraitFlags } from "./trait-types.js";
 
 /** The store surface this needs — deliberately narrow so callers can pass a fake. */
@@ -119,44 +117,6 @@ export async function resolveProjectColumnsForRoles(
   }
 
   return columns;
-}
-
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
-The DESTINATION resolver — one column, for a caller that is about to WRITE.
-
-`resolveProjectColumnsForRoles` above answers a READ ("which lanes might hold such a card"), and a
-union is the right answer there because over-inclusion only costs an extra filtered query. A create
-or a move needs the opposite shape: exactly one column id, from exactly one workflow, because
-picking the wrong member of a union puts a real card in the wrong lane.
-
-WHY IT RETURNS `undefined` RATHER THAN A LEGACY ID. The read helper can safely bake in the legacy
-ids — an extra id in a query set is inert. Here the same trick would be a silent wrong write: a
-workflow that genuinely does not declare the role would receive a card in a column it does not have,
-which post-U12 is a `TransitionRejectionError` on move and a phantom lane on create. Callers keep
-their own documented fallback so the degraded behaviour is visible at the call site.
-
-`undefined` MEANS "THIS WORKFLOW DECLARES NO SUCH COLUMN" — nothing else, and that is narrower than
-it first looks. `resolveWorkflowIrById` does not throw and does not return nothing: an unregistered
-builtin id, a missing definition row, and a failing read all resolve to the DEFAULT coding IR, marked
-via `markFellBack`. So an unreadable workflow yields the built-in lane (`hold` -> `todo`), not
-`undefined`, and the `try/catch` below is a belt on top of that rather than the main path. Both of my
-first two test cases asserted the opposite and failed; the behaviour is the resolver's, not a bug
-here, and the write it produces is identical to the caller's own legacy fallback either way.
-*/
-export async function resolveWorkflowColumnForRole(
-  store: Parameters<typeof resolveWorkflowIrById>[0] & { getDefaultWorkflowId?: () => Promise<string | undefined> },
-  role: keyof TraitFlags & string,
-  workflowId?: string,
-): Promise<string | undefined> {
-  try {
-    const id = workflowId ?? (await store.getDefaultWorkflowId?.()) ?? DEFAULT_WORKFLOW_ID;
-    const ir = await resolveWorkflowIrById(store, id);
-    return columnsWithFlag(ir, role)[0];
-  } catch {
-    /* Unreadable workflow is the caller's fallback case, not an error — see the header. */
-    return undefined;
-  }
 }
 
 /** The three traits that all mean "a card is in review"; see `isReviewColumnRole` for why it is a union. */

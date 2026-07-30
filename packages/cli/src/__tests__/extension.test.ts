@@ -4301,6 +4301,61 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.assignedAgentId).toBe(agentId);
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:55:
+    THE INVARIANT: when intake and hold are DIFFERENT lanes, delegation ends on hold.
+
+    The case above cannot see this: its workflow carries both traits on one column, so the card
+    arrives on the right lane through `createTask`'s entry resolution and the move never runs. Here
+    the two roles are separate columns, so the card lands on `ideas` and must be moved to `queued` —
+    which is the behaviour the old `column: "todo"` literal was providing (skip intake, go straight
+    to the lane the agent picks up from) and the part that would silently regress if the move were
+    dropped as redundant.
+
+    `workflow_id` is deliberately EXPLICIT here rather than set as the project default: the point
+    under test is the move, and pinning the workflow keeps the case from depending on default
+    resolution as well.
+
+    REVERT PROOF, measured: delete the post-create move and this fails with
+    `expected 'ideas' to be 'queued'`; the sibling case above stays green, which is exactly why it
+    is not sufficient on its own.
+    */
+    it("moves the card off intake onto hold when the workflow separates the two", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-split-lanes" });
+      const store = h.store();
+      const split = await store.createWorkflowDefinition({
+        name: "Split intake and hold",
+        ir: {
+          version: "v2",
+          name: "Split intake and hold",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-split-lanes",
+        { agent_id: agentId, description: "Work past intake", workflow_id: split.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).not.toBe(true);
+      // No WARNING in the text: a move that fails must say so rather than report a ready card.
+      expect(result.content[0].text).not.toContain("WARNING");
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("queued");
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(
