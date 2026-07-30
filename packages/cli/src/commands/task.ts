@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, columnsWithFlag, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1346,32 +1346,26 @@ export async function runTaskRetry(id: string, projectName?: string) {
     before claiming a lane is converted.
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (PR #2728 review — greptile, both lane findings):
-    THE REVIEW LANE IS A SET HERE TOO.
+    FNXC:WorkflowLifecycleColumns 2026-08-02-22:10 (consolidation onto #2730's core resolver):
+    ONE DEFINITION, IN CORE. `resolveReviewColumns` is now the authoritative answer to "which columns are
+    review", and this inline union was one of THREE in-tree copies that disagreed with each other:
 
-    `resolveTaskLifecycleColumns(...).review` is a single id from ONE flag (`mergeOrchestration`), so
-    this gate refused a stalled card in a `humanReview`-only lane, and refused a card in a SECOND merge
-    lane that the dashboard's retry route accepts. Same operator action, different answer per surface —
-    which is precisely the disagreement this PR was opened to remove, reappearing one level down.
+      core (#2730):         mergeOrchestration u mergeBlocker u humanReview — ALL columns
+      dashboard routes:     mergeBlocker u humanReview u FIRST mergeOrchestration
+      cli/src/extension.ts: mergeBlocker u humanReview u FIRST mergeOrchestration
+      this copy:            all three, full union
 
-    The union matches `resolveReviewColumnsForTask` in the dashboard routes and the notifier's copy.
-    That is now FOUR inline copies of one definition; #2730 adds `resolveReviewColumns` to core so they
-    can converge. Not imported here yet because #2730 is unmerged and stacking on an open PR is what
-    stranded #2568 four deep.
+    The two `.slice(0, 1)` variants were MINE, from #2723's review round: I narrowed to core's then-single
+    `.review` because the reviewer was right that a superset let the dashboard act on a lane the engine did not
+    own. #2730 answered that question authoritatively in the other direction, so the narrowing is obsolete — and
+    keeping any local copy means re-litigating arity per call site forever, which is what produced three answers.
+
+    The legacy fallback stays: an unresolvable or column-less IR keeps `in-review`, so boards that never declared
+    traits are unchanged.
     */
     const retryIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
-    const retryReviewColumns = new Set(
-      retryIr === undefined
-        ? ["in-review"]
-        : (() => {
-            const lanes = [
-              ...columnsWithFlag(retryIr, "mergeOrchestration"),
-              ...columnsWithFlag(retryIr, "mergeBlocker"),
-              ...columnsWithFlag(retryIr, "humanReview"),
-            ];
-            return lanes.length > 0 ? lanes : ["in-review"];
-          })(),
-    );
+    const resolvedReviewColumns = retryIr === undefined ? [] : resolveReviewColumns(retryIr);
+    const retryReviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
     const isInReviewStatusNone =
       retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
     const hasIncompleteSteps = task.steps.some(

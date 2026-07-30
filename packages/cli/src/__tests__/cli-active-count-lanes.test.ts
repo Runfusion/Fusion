@@ -177,7 +177,47 @@ describe("the shared missing-worktree classifier takes the caller's resolved rev
       const code = (await readFile(surface, "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
       const call = code.match(/isInReviewMissingWorktreeSessionStartFailure\(([^)]*)\)/);
       expect(call, `${surface.pathname} does not call the classifier`).toBeTruthy();
-      expect(call?.[1], `${surface.pathname} calls it without a resolved review answer`).toContain(",");
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-23:25 (PR #2751 review — greptile P2):
+      TIED TO THE RESOLVED MEMBERSHIP TEST, not just to "a second argument exists". `contains a comma` is
+      satisfied by `(task, true)` or any unrelated flag while that surface classifies renamed lanes differently
+      from the other two — a guard that reports success without checking anything.
+
+      Matched on the whitespace-normalised SOURCE rather than a capture group: `[^)]*` stops at the first `)`, so
+      it truncates `retryReviewColumns.has(task.column)` mid-expression and fails against CORRECT code. A
+      ratchet that fails on a correct tree is as bad as one that passes on a broken one.
+      */
+      const normalised = code.replace(/\s+/g, "");
+      expect(
+        normalised,
+        `${surface.pathname} must pass retryReviewColumns.has(task.column) to the classifier`,
+      ).toContain("isInReviewMissingWorktreeSessionStartFailure(task,retryReviewColumns.has(task.column))");
+    }
+  });
+
+  it("uses ONE definition of the review columns — core's resolveReviewColumns", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-23:40 (the consolidation this PR is about):
+    Three in-tree copies of "which columns are review" disagreed with each other and with core (#2730): the
+    dashboard route and the pi extension each took only the FIRST mergeOrchestration column while the CLI
+    command took the full union, so `fn_task_retry` refused a card in a second merge lane that `fn task retry`
+    accepted.
+
+    This fails if any surface grows a local union again, which is how the three appeared in the first place —
+    each added in good faith, in a different review round, by someone reading only their own call site.
+    */
+    const { readFile } = await import("node:fs/promises");
+    const surfaces = [
+      new URL("../extension.ts", import.meta.url),
+      new URL("../commands/task.ts", import.meta.url),
+      new URL("../../../dashboard/src/routes/register-task-workflow-routes.ts", import.meta.url),
+    ];
+
+    for (const surface of surfaces) {
+      const code = (await readFile(surface, "utf8")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(code, `${surface.pathname} must use core's resolveReviewColumns`).toContain("resolveReviewColumns(");
+      expect(code, `${surface.pathname} still rolls its own review union`).not.toMatch(/columnsWithFlag\([^)]*"mergeBlocker"\)/);
+      expect(code, `${surface.pathname} still rolls its own review union`).not.toMatch(/columnsWithFlag\([^)]*"humanReview"\)/);
     }
   });
 });

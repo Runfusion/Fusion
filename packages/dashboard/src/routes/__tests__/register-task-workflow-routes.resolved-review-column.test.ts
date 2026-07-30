@@ -344,12 +344,22 @@ describe("the review set agrees with core on WHICH merge lane", () => {
     expect(payload?.error ?? "").not.toContain("to recover branch binding");
   });
 
-  it("REFUSES a second mergeOrchestration column, because core does not call it the review lane", async () => {
-    // Over-inclusion here would have the dashboard move a card out of a lane the engine does not own.
+  it("ACCEPTS a second mergeOrchestration column, because core says every merge lane is review", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-22:55 (consolidation onto #2730 — this case INVERTED, deliberately):
+    This asserted a REFUSAL, from #2723's review round: I had narrowed the route resolver to core's then-single
+    `.review` choice because a superset let the dashboard act on a lane the engine did not own.
+
+    #2730 answered that question authoritatively and in the other direction — core's `resolveReviewColumns`
+    returns EVERY merge-orchestration column — and this file now delegates to it. So the behaviour legitimately
+    changed and the assertion flips with it.
+
+    Kept rather than deleted, because the invariant under test is unchanged and is the one that matters: THE
+    ROUTES AGREE WITH CORE. Deleting the case would have hidden that its answer moved; inverting it records
+    which decision moved and why.
+    */
     const message = await refusalFor("second-signoff");
 
-    expect(message).toContain("to recover branch binding");
-    // And the message names the lane the board actually uses for review.
-    expect(message).toContain("signoff");
+    expect(message).not.toContain("to recover branch binding");
   });
 });

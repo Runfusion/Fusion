@@ -37,7 +37,7 @@ import {
   type SecretScope,
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
-  columnsWithFlag,
+  resolveReviewColumns,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -1887,17 +1887,19 @@ export default function kbExtension(pi: ExtensionAPI) {
       #2713), and the same note applies: three copies of one predicate is the argument for a set-returning
       resolver in core, which is a follow-up rather than a rider on this PR.
       */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-22:15 (consolidation onto #2730's core resolver):
+      CORE'S `resolveReviewColumns` — see the fuller note in `commands/task.ts`. This copy carried
+      `.slice(0, 1)` on the merge-orchestration lanes while the CLI command took the full union, so
+      `fn_task_retry` refused a card in a SECOND merge lane that `fn task retry` accepted: two surfaces, one
+      operator action, two answers. That is the exact defect #2728 was opened to remove, reproduced by two
+      copies of one definition drifting apart within a single PR.
+      */
       const retryIr = await resolveWorkflowIrForTask(store, params.id).catch(() => undefined);
+      const resolvedRetryReviewColumns = retryIr === undefined ? [] : resolveReviewColumns(retryIr);
       const retryReviewColumns = new Set<string>(
-        retryIr
-          ? [
-              ...columnsWithFlag(retryIr, "mergeBlocker"),
-              ...columnsWithFlag(retryIr, "humanReview"),
-              ...columnsWithFlag(retryIr, "mergeOrchestration").slice(0, 1),
-            ]
-          : [],
+        resolvedRetryReviewColumns.length > 0 ? resolvedRetryReviewColumns : ["in-review"],
       );
-      if (retryReviewColumns.size === 0) retryReviewColumns.add("in-review");
       const isInReviewStatusNone =
         retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(

@@ -55,6 +55,7 @@ import {
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
+  resolveReviewColumns,
   workflowHasColumn,
   workflowPlansInColumn,
   workflowDeclaresColumnModel,
@@ -262,45 +263,19 @@ this card ALREADY there" — membership. Every resolver used in a comparison aga
 the second kind.
 */
 async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-02-22:20 (consolidation onto #2730's core resolver):
+  THE BODY IS NOW CORE'S. This resolver went through three shapes in three review rounds — a single id, then a
+  membership set over mergeBlocker/humanReview (#2713), then plus the FIRST mergeOrchestration column (#2723) —
+  and every round was an argument about arity at one call site. #2730 settled it in core, authoritatively and
+  for every surface, so the local body is deleted and only the store lookup and the legacy fallback remain.
+
+  The WRAPPER stays: this file's callers hold a store and a task id, not an IR, which is the same reason its
+  sibling resolvers exist. One idiom per layer; one definition per question.
+  */
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-05:30 (TWO DEFINITIONS OF "THE REVIEW LANE", one codebase):
-    `mergeOrchestration` IS INCLUDED, because core's `resolveLifecycleColumns().review` — the answer the
-    engine, the executor and `project-engine` all act on — resolves review from `mergeOrchestration`, while
-    this route resolver looked only at `mergeBlocker`/`humanReview`.
-
-    The default lineage hides the difference: its `in-review` carries merge-blocker, human-review AND merge.
-    A board that declares only `merge` on its review lane — a perfectly ordinary custom board, and the shape
-    my renamed-board fixture uses — resolved as review in the ENGINE and as "not review" in these ROUTES. So
-    the executor would treat the card as in review while the dashboard's comment re-engagement, retry gate
-    and branch-binding recovery all refused it.
-
-    Two layers answering one question differently is the same defect class as a literal, one level up: the
-    guard is converted, reads a real trait, and still disagrees with the authority. Unioning all three makes
-    this resolver a superset of core's, so the routes cannot refuse a card the engine considers in review.
-    */
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-07:20 (PR #2723 review — greptile P1, and the narrower answer
-    is the right one):
-    ONLY THE FIRST `mergeOrchestration` COLUMN, because that is the one core picks. `resolveLifecycleColumns`
-    resolves `.review` as `columnsWithFlag(ir, "mergeOrchestration")[0]`, so unioning ALL of them would have
-    swapped one disagreement with the engine for another: a board declaring the trait on two columns would
-    have the dashboard re-engage, retry and recover cards from a lane the engine does not treat as review —
-    an over-admission, and this route's re-engagement MOVES the card, so it is a state change rather than
-    mere permissiveness.
-
-    The membership SET stays for `mergeBlocker`/`humanReview` (#2713's finding: those two can sit on
-    different columns and every caller here asks "is this card ALREADY in review"). The point of including
-    mergeOrchestration at all is to stop refusing a card the ENGINE considers in review; matching core's
-    choice of WHICH column achieves that without inventing a second definition.
-    */
-    const [primaryMergeLane] = columnsWithFlag(ir, "mergeOrchestration");
-    const lanes = [
-      ...columnsWithFlag(ir, "mergeBlocker"),
-      ...columnsWithFlag(ir, "humanReview"),
-      ...(primaryMergeLane === undefined ? [] : [primaryMergeLane]),
-    ];
+    const lanes = resolveReviewColumns(ir);
     return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
   } catch {
     return new Set(["in-review"]);
