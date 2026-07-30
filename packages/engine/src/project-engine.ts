@@ -18,6 +18,7 @@ import type {
 } from "@fusion/core";
 import {
   allowsAutoMergeProcessing,
+  resolveTaskLifecycleColumns,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
   emitOverseerEscalation,
@@ -3240,7 +3241,7 @@ export class ProjectEngine {
               continue;
             }
             const task = await store.getTask(taskId);
-            if (!task || task.column !== "in-review") {
+            if (!task || task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
               continue;
             }
             if (!(await this.allowInReviewMergeProcessing(task, settings, store))) {
@@ -4722,7 +4723,7 @@ export class ProjectEngine {
 
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
-      if (to !== "in-review") return;
+      if (to !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) return;
       if (task.paused) return;
       if (this.options.getTaskMergeBlocker?.(task)) return;
 
@@ -4743,7 +4744,7 @@ export class ProjectEngine {
             runtimeLog.warn(`Auto-merge handoff (${task.id}): task disappeared during grace period`);
             return;
           }
-          if (latestTask.column !== "in-review") {
+          if (latestTask.column !== ((await resolveTaskLifecycleColumns(store, latestTask.id))?.review ?? "in-review")) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: column changed to ${latestTask.column}`);
             return;
           }
@@ -4854,7 +4855,7 @@ export class ProjectEngine {
 
   private wireTaskPauseMergeInterruption(store: TaskStore): void {
     this.taskUpdatedHandler = async (task: Task) => {
-      if (task.column !== "in-review") {
+      if (task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
         this.pausedReviewTaskIds.delete(task.id);
         return;
       }
