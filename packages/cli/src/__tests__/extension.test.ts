@@ -4356,6 +4356,79 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.column).toBe("queued");
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-00:30 (#2843 review — greptile P1, "failed move reports
+    successful delegation"):
+
+    A FAILED LANDING MUST NOT LEAD WITH A SUCCESS CLAIM.
+
+    The first version kept "will be picked up by X on their next heartbeat cycle" and appended a
+    ` WARNING: ...`. Assigned-agent selection skips cards outside the workflow's hold lane, so a card
+    stranded on intake is never dispatched — and the caller, usually another agent, reads the first
+    sentence and moves on. "Success with a caveat" is how a delegation silently goes nowhere.
+
+    WHAT THIS PROVES AND WHAT IT DOES NOT, stated because the distinction matters. It pins the
+    HANDLING — the branch returns `isError`, never claims pickup, and still surfaces the task id so a
+    caller can finish by hand. It does NOT prove the failure is reachable in production, and I could
+    not make it so: `holdColumn` comes from the task's OWN resolved IR, so `moveTask`'s declared-column
+    check passes by construction. I tried a workflow declaring a `hold` column with no node on it,
+    expecting rejection; the move SUCCEEDED and the card landed there — `moveTask` accepts any column
+    the workflow declares, and node reachability does not gate it.
+
+    So the store method is stubbed for exactly one call. Stubbing is normally how a test proves only
+    that a catch block runs, which is why it is worth being explicit: the catch is DEFENSIVE, and what
+    changed — and what regresses silently — is the shape of the message it produces.
+    */
+    it("reports a failed landing as an ERROR and never claims the agent will pick it up", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-landing-fails" });
+      const store = h.store();
+      const split = await store.createWorkflowDefinition({
+        name: "Split lanes (landing fails)",
+        ir: {
+          version: "v2",
+          name: "Split lanes (landing fails)",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const moveTask = vi.spyOn(store, "moveTask").mockRejectedValueOnce(
+        new Error("unknown-column: queued"),
+      );
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      const tool = api.tools.get("fn_delegate_task")!;
+      try {
+        result = await tool.execute(
+          "dt-landing-fails",
+          { agent_id: agentId, description: "Landing will fail", workflow_id: split.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        moveTask.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      /* The claim that must never survive a failed landing. */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("stranded on intake");
+      /* The card exists either way, so the caller keeps what it needs to finish the job by hand. */
+      expect(result.details.taskId).toBeTruthy();
+      expect(result.details.error).toContain("unknown-column");
+
+      /* And it really is still on intake — the message is not merely pessimistic. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("ideas");
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(
