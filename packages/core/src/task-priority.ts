@@ -104,6 +104,9 @@ export interface BuildUnblockWeightMapOptions {
   /** The workflow's terminal columns (complete + archived). Defaults to the
    *  built-in `{done, archived}` so existing callers are unchanged (R11). */
   terminalColumns?: ReadonlySet<string>;
+  /** The workflow's review lane, forwarded to the fan-out's staleness classification.
+   *  Defaults to the built-in `{in-review}` so existing callers are unchanged. */
+  reviewColumns?: ReadonlySet<string>;
 }
 
 function countUnmetDependencies(
@@ -132,7 +135,12 @@ export function buildUnblockWeightMap(
 ): Map<string, number> {
   const taskList = [...tasks];
   const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
-  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, { terminalColumns });
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-10:00: forward the review lane too — this is the one
+     production caller, so an option it does not pass is an option that never fires. */
+  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, {
+    terminalColumns,
+    ...(options.reviewColumns ? { reviewColumns: options.reviewColumns } : {}),
+  });
   const taskById = new Map(taskList.map((task) => [task.id, task]));
   const weights = new Map<string, number>();
 

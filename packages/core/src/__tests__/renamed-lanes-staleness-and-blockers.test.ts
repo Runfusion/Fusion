@@ -108,4 +108,65 @@ describe("a finished blocker reads as STALE under a renamed vocabulary", () => {
 
     expect(map.get("FN-BLOCK")?.staleBlockedByDependentIds).toEqual([]);
   });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2749 review — greptile P1):
+  THE SET-SHAPED PATH IS THE ONE PRODUCTION TAKES.
+
+  The cases above drive `classify`, but the ONLY production caller — `buildUnblockWeightMap` in
+  task-priority.ts — passes `terminalColumns` and no `classify` at all. So a fix reachable only
+  through `classify` never fires in production: converted predicate, green tests, unchanged
+  behaviour. That is the guard-that-cannot-fire pattern turned on my own fix.
+
+  These drive the set-shaped path end to end, including the REVIEW half, which `classify` does not
+  answer at all (it reports `isTerminal`/`isHold` only).
+  */
+  it("set-shaped path: a renamed TERMINAL blocker is stale without classify", () => {
+    const blocker = makeTask({ id: "FN-BLOCK", column: "shipped" });
+    const dependent = makeTask({ id: "FN-DEP", column: "building", blockedBy: "FN-BLOCK" });
+
+    const map = computeBlockerFanoutMap([blocker, dependent], 3, {
+      terminalColumns: RENAMED.terminal,
+      reviewColumns: RENAMED.review,
+    });
+
+    expect(map.get("FN-BLOCK")?.staleBlockedByDependentIds).toEqual(["FN-DEP"]);
+  });
+
+  it("set-shaped path: a renamed PAUSED review blocker is stale without classify", () => {
+    const blocker = makeTask({ id: "FN-BLOCK", column: "checking", paused: true });
+    const dependent = makeTask({ id: "FN-DEP", column: "building", blockedBy: "FN-BLOCK" });
+
+    const map = computeBlockerFanoutMap([blocker, dependent], 3, {
+      terminalColumns: RENAMED.terminal,
+      reviewColumns: RENAMED.review,
+    });
+
+    expect(map.get("FN-BLOCK")?.staleBlockedByDependentIds).toEqual(["FN-DEP"]);
+  });
+
+  it("set-shaped path: a renamed RETRY-EXHAUSTED review blocker is stale without classify", () => {
+    const blocker = makeTask({ id: "FN-BLOCK", column: "checking", status: "failed", mergeRetries: 5 });
+    const dependent = makeTask({ id: "FN-DEP", column: "building", blockedBy: "FN-BLOCK" });
+
+    const map = computeBlockerFanoutMap([blocker, dependent], 3, {
+      terminalColumns: RENAMED.terminal,
+      reviewColumns: RENAMED.review,
+    });
+
+    expect(map.get("FN-BLOCK")?.staleBlockedByDependentIds).toEqual(["FN-DEP"]);
+  });
+
+  /* Paired negative on the same path: a LIVE renamed review blocker still blocks. */
+  it("set-shaped path: a live renamed review blocker is NOT stale", () => {
+    const blocker = makeTask({ id: "FN-BLOCK", column: "checking" });
+    const dependent = makeTask({ id: "FN-DEP", column: "building", blockedBy: "FN-BLOCK" });
+
+    const map = computeBlockerFanoutMap([blocker, dependent], 3, {
+      terminalColumns: RENAMED.terminal,
+      reviewColumns: RENAMED.review,
+    });
+
+    expect(map.get("FN-BLOCK")?.staleBlockedByDependentIds).toEqual([]);
+  });
 });
