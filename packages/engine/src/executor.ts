@@ -10689,7 +10689,7 @@ export class TaskExecutor {
     const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
     executorLog.warn(`${live.id}: ${message}`);
     await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    if (live.column !== "done" && live.column !== "archived" && live.error == null) {
+    if (!(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column) && live.error == null) {
       await this.store.updateTask(live.id, { error: message, status: "failed" }, this.getRunContextFor(live.id));
     }
     await this.persistTokenUsage(live.id);
@@ -11222,7 +11222,7 @@ export class TaskExecutor {
           benign completion note, and never emit the PAUSE_ABORT_PARK markers
           (so self-healing's recoverPausedAbortFailures has nothing to chase).
           */
-          if (live.column === "done" || live.column === "archived") {
+          if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) {
             this.clearPausedAborted(task.id);
             this.activeWorktrees.delete(task.id);
             const doneBenign = `Workflow graph run ended during ${pauseProvenance} after the task already completed ('${live.column}') — benign, no action needed`;
@@ -11403,7 +11403,7 @@ export class TaskExecutor {
       if (mergeGraphFailure && !this.isTerminalMergeGraphFailureValue(failureValue) && await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
         return;
       }
-      if (mergeGraphFailure && this.isTerminalMergeGraphFailureValue(failureValue) && live.column !== "done" && live.column !== "archived") {
+      if (mergeGraphFailure && this.isTerminalMergeGraphFailureValue(failureValue) && !(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) {
         const message = `Workflow graph terminal merge failure at node '${failedNode ?? "unknown"}' (${failureValue}) — operator action required`;
         executorLog.warn(`${task.id}: ${message}`);
         await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
@@ -15150,7 +15150,7 @@ export class TaskExecutor {
         this.branchConflictErrorCount.delete(task.id);
       } else {
         const latestTask = await this.store.getTask(task.id);
-        if (latestTask.column === "done" || latestTask.column === "archived") {
+        if ((await resolveTerminalColumnsFor(this.store, task.id)).includes(latestTask.column)) {
           this.branchConflictErrorCount.delete(task.id);
         }
       }
