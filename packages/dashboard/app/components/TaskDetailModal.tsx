@@ -2535,6 +2535,11 @@ export function TaskDetailContent({
         ids when the destination has no resolved metadata.
         */
         const targetFlags = workflowMoveMetadata?.moveColumns?.find((candidate) => candidate.id === column)?.flags;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only. Same reasoning as
+        the TaskCard site: a wrong guess skips the preserve-progress prompt and discards steps with
+        no way back. Reason in full above.
+        */
         const targetIsPreImplementation = targetFlags
           ? targetFlags.intake === true || targetFlags.hold === true
           : column === "todo" || column === "triage";
@@ -3039,6 +3044,10 @@ export function TaskDetailContent({
   The INTAKE lane's approval hold. `task.column === "triage"` is deleted by U11, which
   would silently drop the Approve/Reject controls from a parked planning card — the
   operator sees a task stuck "awaiting approval" with no way to answer it.
+
+  FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only.
+  Reachable only with no resolved flags; guessing "not intake" hides Approve/Reject from a parked
+  planning card, which is an operator dead end. Retires with the pre-load window.
   */
   const isIntakeColumn = workflowMoveMetadata?.currentColumnFlags
     ? workflowMoveMetadata.currentColumnFlags.intake === true

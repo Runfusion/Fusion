@@ -1194,6 +1194,15 @@ export class TriageProcessor {
     const declaresLegacyTriage = workflowIr
       ? workflowHasColumn(workflowIr, "triage")
       : true; // Unresolvable: assume it declares `triage`, i.e. do not widen.
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-29-23:55 DELIBERATE-LITERAL: the migration arm only.
+    The census flagged this as a NEW guard, correctly — it is a literal, and it is new. It is also
+    irreducible: the condition is "this row sits in a column its workflow no longer declares", so
+    there is no trait to resolve and no IR that can answer it. Resolving `triage` from the workflow
+    is what the `!declaresLegacyTriage` half already does, and it is what makes this the orphan case
+    rather than a blanket acceptance. Same class as the markers in `replan-target.ts` and
+    `hold-release.ts`; retires with the U11 migration window, when no row can rest in `triage`.
+    */
     const inPlannerColumn = task.column === lanes.intake
       || (task.column === "triage" && !declaresLegacyTriage);
     if (!inPlannerColumn || !recoverableStatus) {

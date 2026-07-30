@@ -1003,6 +1003,11 @@ function TaskCardComponent({
   than scattered through the file. When flags are present — which is every card on a
   loaded board whose column its workflow declares — the traits decide and the U11 merge
   is a non-event. The fallback retires with the load window, not with this change.
+
+  FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only.
+  The trait path above is the live answer; this arm runs ONLY when the board has no resolved flags,
+  and in that state there is nothing to resolve FROM. Deleting it does not remove a guard, it picks a
+  different guess ("not intake") and silently drops planning affordances during first paint.
   */
   const isIntakeColumn = taskColumnFlags
     ? taskColumnFlags.intake === true
@@ -2480,6 +2485,11 @@ function TaskCardComponent({
       the single fallback documented at the role helpers above.
       */
       const targetFlags = taskMoveColumns?.find((candidate) => candidate.id === column)?.flags;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only. Guessing "not
+      pre-implementation" here skips the preserve-progress PROMPT, and losing completed steps is
+      unrecoverable — the safe degraded answer is the legacy one. Reason in full above.
+      */
       const targetIsPreImplementation = targetFlags
         ? targetFlags.intake === true || targetFlags.hold === true
         : column === "todo" || column === "triage";

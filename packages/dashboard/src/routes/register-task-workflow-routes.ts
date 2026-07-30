@@ -2677,6 +2677,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           the generic branch then clears worktree/branch/retry counters and rebounds the card — losing
           live execution or review state that was never in question. A v1 IR yields no roles, so the
           legacy pre-implementation ids are the only pre-WIP signal available.
+
+          FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the v1-IR arm only.
+          A v1 workflow declares no roles, so there is no trait to read — this is not an unconverted
+          guard, it is the answer for IRs that cannot express the question. The v2 branch below
+          resolves it properly. Retires when v1 IRs do.
           */
           strandedSpecificationRetry = task.column === "triage" || task.column === "todo";
         } else {
