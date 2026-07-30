@@ -732,7 +732,7 @@ interface MoveRow {
 }
 
 /*
-FNXC:SdlcFunnelColumns 2026-07-31-09:40:
+FNXC:SdlcFunnelColumns 2026-07-30-09:40:
 THE FALLBACK WAS THE LEGACY MONOLITHIC IR, and the only production callers use the fallback.
 `aggregateActivityAnalytics` (Command Center's `/command-center/activity`, and the OTel exporter) never
 passes `columns`, so every project's funnel was mapped through `BUILTIN_CODING_WORKFLOW_IR` — the

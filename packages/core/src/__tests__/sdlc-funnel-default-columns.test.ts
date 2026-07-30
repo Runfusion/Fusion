@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:SdlcFunnelColumns 2026-07-31-09:50 (the default path was the only path, and it used the legacy IR):
+FNXC:SdlcFunnelColumns 2026-07-30-09:50 (the default path was the only path, and it used the legacy IR):
 
 THE INVARIANT: the SDLC funnel's built-in column fallback maps the board Fusion actually ships.
 
@@ -80,7 +80,7 @@ describe("the funnel's built-in column fallback tracks the SHIPPED default board
 });
 
 /*
-FNXC:SdlcFunnelColumns 2026-07-31-10:25 (the real fix, and the correction of my own claim):
+FNXC:SdlcFunnelColumns 2026-07-30-10:25 (the real fix, and the correction of my own claim):
 
 I first changed only `defaultColumns()` from the legacy IR to `resolveDefaultWorkflowIr()` and described
 it as fixing renamed boards. IT DOES NOT. Post-U11 the current lineage's column ids are a SUBSET of the
