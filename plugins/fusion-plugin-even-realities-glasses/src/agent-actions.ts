@@ -320,8 +320,16 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
   }
 
   const { lanes: retryLanes, declared: retryDeclared, degraded: retryDegraded } = await laneContext(deps.taskStore, taskId);
-  if (retryDegraded) conflict("retry", task);
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-15:10 (PR #2644 review, CodeRabbit — MAJOR, my regression):
+  DEGRADED GATES ONLY THE LANE-DEPENDENT BRANCH. I put the refusal at the top of `retryTask`, which also
+  blocked the plain failure-retry below — a branch that reads no lanes at all and only clears status. So a
+  FAILED card became un-retryable whenever its workflow definition could not be read, which is exactly the
+  situation an operator is trying to retry out of. The refusal existed to stop a MOVE onto another board's
+  vocabulary; the failure-retry performs no move, so it has nothing to be wrong about.
+  */
   if (
+    retryDegraded === false &&
     isInPlanningLane(retryLanes, String(task.column), retryDeclared) &&
     (RETRYABLE_TRIAGE_STATUSES.has(String(task.status)) || (typeof task.stuckKillCount === "number" && task.stuckKillCount > 0))
   ) {

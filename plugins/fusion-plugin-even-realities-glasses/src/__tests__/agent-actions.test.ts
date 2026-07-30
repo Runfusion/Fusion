@@ -811,3 +811,90 @@ describe("degraded means the definition read failed, not that the IR looks diffe
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-15:30 (PR #2644 review, CodeRabbit — MAJOR, my regression):
+
+DEGRADED GATES ONLY THE LANE-DEPENDENT BRANCH. I put the refusal at the top of `retryTask`, which also
+blocked the plain failure-retry below — a branch that reads no lanes and only clears status. So a FAILED
+card became un-retryable whenever its workflow definition could not be read, which is precisely the state
+an operator is trying to retry out of.
+
+The refusal exists to stop a MOVE onto another board's vocabulary. A branch that performs no move has
+nothing to be wrong about, so gating it was cost without benefit — the kind of over-application that makes
+a safety check read as breakage.
+*/
+describe("a degraded workflow does not block retries that move nothing", () => {
+  function degradedDeps(task: FakeTask) {
+    const base = createDeps(task);
+    const selection = { workflowId: "wf-gone", stepIds: [] };
+    return {
+      ...base,
+      taskStore: {
+        ...base.taskStore,
+        getTaskWorkflowSelection: () => selection,
+        getTaskWorkflowSelectionAsync: async () => selection,
+        getWorkflowDefinition: async () => undefined,
+      },
+    };
+  }
+
+  it("retries a FAILED card even when the workflow definition cannot be read", async () => {
+    // Pre-fix: 409. The one action an operator has for a failed card was refused because of a workflow
+    // read that this branch never consults.
+    const deps = degradedDeps(makeTask({ column: "in-progress", status: "failed" }));
+
+    await retryTask({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: null, error: null }));
+  });
+
+  it("still refuses the PLANNING-lane retry when the workflow cannot be read", async () => {
+    /*
+    The paired positive for the refusal: this branch writes `needs-replan` and clears the worktree based on
+    the card being in a planner lane, so acting on another board's lanes is exactly the mistake to avoid.
+    A degraded read leaves the card untouched.
+    */
+    const deps = degradedDeps(makeTask({ column: "todo", status: "failed" }));
+
+    await retryTask({ taskId: "FN-1" }, deps as never);
+
+    const updates = (deps.updateTask as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => c[1]);
+    expect(updates.some((u) => (u as { status?: string })?.status === "needs-replan")).toBe(false);
+  });
+});
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-16:00 (PR #2644 review, CodeRabbit — recorded, not fixed):
+
+A STORED STRING IR COSTS A SECOND READ. The reviewer is right that the lanes can then come from a different
+revision than the degraded verdict, and my excuse ("deliberate and confined to that shape") was not a
+reason.
+
+I tried parsing the row instead. The parse succeeds in isolation and `resolveLifecycleColumns` returns the
+right roles for the parsed IR — verified directly — but the action still refused in this harness, so
+something between the parse and the lane check differs from the resolver path and I could not identify it
+within this PR. I will not ship an unexplained change into the code path that decides whether an operator's
+action is refused.
+
+What is pinned instead is the CURRENT contract for this shape, which had no coverage at all: a stored
+string IR still resolves lanes and the action proceeds. That is the part a future one-read fix must keep.
+*/
+describe("a stored string IR still resolves lanes", () => {
+  it("starts work on a board whose definition row holds its IR as a string", async () => {
+    const base = createDeps(makeTask({ column: "todo", status: null }));
+    const selection = { workflowId: "builtin:coding", stepIds: [] };
+    const deps = {
+      ...base,
+      taskStore: {
+        ...base.taskStore,
+        getTaskWorkflowSelection: () => selection,
+        getTaskWorkflowSelectionAsync: async () => selection,
+      },
+    };
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+  });
+});

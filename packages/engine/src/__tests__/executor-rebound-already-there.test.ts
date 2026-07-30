@@ -115,8 +115,26 @@ describe("an engine rebound does not move a card that is already in its rebound 
     expect(h.moves).toEqual([]);
   });
 
-  it("still moves to the legacy backlog when the workflow cannot be resolved", async () => {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-16:20 (PR #2644 review, CodeRabbit):
+  THIS FIXTURE HAD TO DIFFER FROM THE DEFAULT-LINEAGE ONE. Both used `harness(undefined, ...)`, which
+  supplies no workflow SELECTION at all — so "the default lineage" and "the workflow cannot be resolved"
+  were the same setup, and this case could pass without ever exercising a selection whose definition lookup
+  fails. Two tests with identical fixtures are one test with two names.
+
+  It now names a workflow whose definition read THROWS, which is the state that actually reaches the
+  resolver's fail-soft path in production (a deleted or unreadable definition row, not an absent
+  selection).
+  */
+  it("still moves to the legacy backlog when a SELECTED workflow's definition cannot be read", async () => {
     const h = harness(undefined, "in-progress");
+    const selection = { workflowId: "wf-unreadable", stepIds: [] as string[] };
+    const widened = h.store as unknown as Record<string, unknown>;
+    widened.getTaskWorkflowSelection = () => selection;
+    widened.getTaskWorkflowSelectionAsync = async () => selection;
+    widened.getWorkflowDefinition = async () => {
+      throw new Error("definition row is gone");
+    };
 
     await h.park(blockedCompletedTask("in-progress"));
 

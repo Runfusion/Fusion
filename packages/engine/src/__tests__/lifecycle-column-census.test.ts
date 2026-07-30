@@ -393,16 +393,41 @@ describe("the baseline contract", () => {
     const cli = readFileSync(cliPath, "utf8");
 
     // The rise branch exits; the default drop branch does not.
-    // Windows are generous on purpose: the assertion is "this branch exits / does not exit", and a
-    // tight slice would fail on formatting rather than on the contract.
-    const riseBranch = cli.slice(cli.indexOf("column-guard count ROSE"));
-    expect(riseBranch.slice(0, 900)).toContain("process.exit(1)");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-16:35 (PR #2644 review, CodeRabbit):
+    SLICE FROM MARKER TO MARKER, not by a character count. The windows were magic numbers I had already
+    had to widen once when a comment grew — a bound that needs tuning is a bound that will eventually be
+    tuned until it asserts nothing. Each branch is anchored by a unique string, so the next marker is the
+    honest end of the slice.
+    */
+    const between = (from: string, to?: string): string => {
+      const start = cli.indexOf(from);
+      expect(start).toBeGreaterThan(-1);
+      const end = to === undefined ? cli.length : cli.indexOf(to, start);
+      expect(end).toBeGreaterThan(start);
+      return cli.slice(start, end);
+    };
 
-    const staleBranch = cli.slice(cli.indexOf("baseline is STALE (warning)"));
-    expect(staleBranch.slice(0, 600)).not.toContain("process.exit(1)");
-    // ...and the --exact branch above it does exit.
-    const exactBranch = cli.slice(cli.indexOf("--strict --exact: baseline is STALE"));
-    expect(exactBranch.slice(0, 500)).toContain("process.exit(1)");
+    /*
+    --update-baseline comes FIRST and exits SUCCESSFULLY, which is the ordering bug this pins: if it sat
+    after the rise check, a risen file could never be re-recorded through the supported path. Asserting
+    exit(0) rather than exit(1) here is the point — my first version of this assertion looked for the
+    failure code and failed, which is the assertion catching my own copy-paste.
+    */
+    /*
+    END MARKER IS THE TOP-LEVEL RISE MESSAGE, not `if (regressions.length > 0) {` — that string also
+    appears INSIDE the update-baseline block, so slicing to it cut the branch short and the assertion
+    failed on a boundary rather than on behaviour. Marker-to-marker is only robust when the marker is
+    unique; picking one that repeats is the same magic-number problem wearing a name.
+    */
+    expect(between("if (updateBaseline) {", 'console.error("\\nlifecycle-column-census --strict: column-guard count ROSE'))
+      .toContain("process.exit(0)");
+    // The rise branch exits.
+    expect(between('console.error("\\nlifecycle-column-census --strict: column-guard count ROSE', "if (stale.length > 0) {"))
+      .toContain("process.exit(1)");
+    // The --exact stale branch exits; the default stale branch does NOT.
+    expect(between("--strict --exact: baseline is STALE", "console.warn(")).toContain("process.exit(1)");
+    expect(between('baseline is STALE (warning)', "process.exit(0)")).not.toContain("process.exit(1)");
   });
 
   it("re-records unconditionally under --update-baseline, before the rise check can exit", async () => {
