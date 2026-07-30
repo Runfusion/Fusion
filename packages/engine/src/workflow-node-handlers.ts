@@ -451,8 +451,17 @@ export function createPrimitivePromptLikeHandler(
         return { outcome: result.outcome, value: result.value, contextPatch: result.contextPatch };
       }
       if (seam === "review-handoff") {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+        Ask for the review LANE by role; this handler cannot resolve it and must not guess.
+
+        Naming `in-review` here was a hard failure, not a silent one: post-U12 `moveTask` rejects a
+        destination the workflow does not declare, so on a renamed review lane this threw
+        `TransitionRejectionError` and killed the workflow walk mid-run. The runtime primitive holds
+        the store and resolves the role against the task's own selection.
+        */
         const result = await primitives.transitionTask(primitiveCtx, context.task, {
-          column: "in-review",
+          columnRole: "review",
           status: null,
           reason: "workflow-review-handoff",
           preserveProgress: true,

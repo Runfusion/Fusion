@@ -94,6 +94,21 @@ export interface VerificationPrimitiveResult {
 
 export interface TransitionPrimitiveInput {
   column?: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+  Ask for the LANE BY ROLE when the caller cannot resolve it.
+
+  Seam handlers in `workflow-node-handlers.ts` are pure functions over an IR node and a task; they
+  hold no store, so a handler that wants "move this card to review" could only name `in-review`. Post
+  U12 `moveTask` REJECTS an undeclared destination, so on a board that renamed its review lane the
+  review-handoff seam threw `TransitionRejectionError` and killed the workflow walk mid-run.
+
+  The runtime primitive holds the store, so it resolves the role to a column. `column` still wins when
+  both are given — an explicit destination is an explicit destination — and a role that cannot be
+  resolved falls back to the legacy id rather than failing the transition, which is the behaviour
+  every caller had before.
+  */
+  columnRole?: "review";
   status?: string | null;
   reason: string;
   preserveProgress?: boolean;

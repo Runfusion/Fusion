@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -7831,10 +7831,29 @@ export class TaskExecutor {
         const taskStore = this.store;
         const patch: Partial<TaskDetail> = {};
         /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+        Resolve a requested ROLE to this task's own column, because the seam that asks cannot.
+
+        `workflow-node-handlers.ts`'s review-handoff seam is a pure function over an IR node and a
+        task — no store — so it could only name `in-review`. Post-U12 `moveTask` REJECTS a destination
+        the workflow does not declare, so on a renamed review lane that transition threw
+        `TransitionRejectionError` and killed the walk mid-run. Not a silent wrong answer for once: a
+        hard failure in the middle of a workflow, which is why it outranked the rest of the backlog.
+
+        Resolved per task from its OWN selection, so there is one authority — the mistake that took
+        #2843 five review rounds was answering one question with two reads. `column` still wins when
+        both are supplied, and an unresolvable role falls back to the legacy id rather than failing
+        the transition, which is exactly the behaviour callers had before.
+        */
+        let targetColumn = input.column;
+        if (targetColumn === undefined && input.columnRole === "review") {
+          targetColumn = (await resolveTaskLifecycleColumns(taskStore, task.id))?.review ?? "in-review";
+        }
+        /*
         FNXC:WorkflowNotifications 2026-06-29-08:50:
         Workflow graph lifecycle transitions must use TaskStore move semantics, not raw `updateTask({ column })`, because ntfy/webhook notification delivery is subscribed to `task:moved`. Direct column writes make graph-owned tasks invisible to in-review/done lifecycle notifications and bypass column hooks.
         */
-        if (input.column !== undefined) {
+        if (targetColumn !== undefined) {
           const moveOptions = {
             preserveProgress: input.preserveProgress,
             moveSource: "engine" as const,
@@ -7850,9 +7869,9 @@ export class TaskExecutor {
             moveTask?: typeof taskStore.moveTask;
           };
           if (typeof storeWithMove.moveTask === "function") {
-            await storeWithMove.moveTask(task.id, input.column, moveOptions);
+            await storeWithMove.moveTask(task.id, targetColumn, moveOptions);
           } else {
-            patch.column = input.column;
+            patch.column = targetColumn;
           }
         }
         if (input.status !== undefined && input.status !== null) patch.status = input.status;
