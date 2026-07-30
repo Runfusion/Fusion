@@ -201,7 +201,7 @@ A default-workflow card in Planning can be moved **into `triage`** — a column 
 longer declares — re-creating exactly the stranded state `reconcileUndeclaredTaskColumns` exists to
 repair. Measured on a fresh store:
 
-```
+```text
 experimentalFeatures.workflowColumns   null            <- no production writer
 createTask(...)                        column = "todo"
 moveTask("todo" -> "triage")           ACCEPTED

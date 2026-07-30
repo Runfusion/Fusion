@@ -37,6 +37,8 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { workflowHasColumn } from "../workflow-transitions.js";
 
 pgDescribe("live move path — which targets it accepts after the Planning merge", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -54,8 +56,15 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
   }
 
   it("premise: the compatibility flag really is unset, so the legacy path decides", async () => {
+    /*
+    FNXC:MergedPlanningColumn 2026-07-30-12:05 (PR #2601 review — coderabbit):
+    `not.toBe(true)` also passes when the key is explicitly `false`, which is a
+    DIFFERENT state from the documented fresh-store `null` and would hide a change
+    to it. The premise this file rests on is that NOTHING WRITES the key, so assert
+    the unset representation itself.
+    */
     const settings = await h.store().getSettingsFast();
-    expect(settings?.experimentalFeatures?.workflowColumns).not.toBe(true);
+    expect(settings?.experimentalFeatures?.workflowColumns ?? null).toBeNull();
   });
 
   /*
@@ -83,6 +92,18 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     const store = h.store();
     const task = await store.createTask({ description: "re-strandable today" });
     expect(task.column).toBe("todo");
+
+    /*
+    FNXC:MergedPlanningColumn 2026-07-30-12:05 (PR #2601 review — coderabbit):
+    Prove the PREMISE before reproducing the defect. Checking only the start column
+    left this test green if the default workflow ever declared `triage` again — it
+    would still pass while reproducing nothing, which is the failure mode this whole
+    exercise keeps hitting. The defect is "moves into an UNDECLARED column are
+    accepted", so undeclaredness has to be asserted, not assumed.
+    */
+    const ir = await resolveWorkflowIrForTask(store, task.id);
+    expect(workflowHasColumn(ir, "triage")).toBe(false);
+    expect(workflowHasColumn(ir, "todo")).toBe(true);
 
     await store.moveTask(task.id, "triage" as never, { moveSource: "user" } as never);
 
