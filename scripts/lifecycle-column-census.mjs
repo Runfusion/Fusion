@@ -75,7 +75,17 @@ if (json) {
   console.log(`  COLUMN guards (the backlog):   ${summary.totals.column}`);
   console.log(`  ROLE comparisons (not guards): ${summary.totals.role}`);
   console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
-  console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}\n`);
+  console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-29-19:40:
+  Reported BESIDE the backlog, never inside it. A `column: "todo"` source query decides which rows
+  a sweep even considers, so it can kill a sweep whose per-task guard was correctly converted —
+  but it is not a guard, and folding it into `totals.column` would move a number the program is
+  actively driving to zero. Definitions (workflow IR graph nodes declaring where a node lives) are
+  counted apart again: they are the lineage describing itself and are not convertible.
+  */
+  console.log(`  QUERY filters (column: "<legacy>"): ${summary.properties.query}`);
+  console.log(`  IR node definitions (not convertible): ${summary.properties.definition}\n`);
   console.log("  by column id:");
   for (const [id, count] of Object.entries(summary.byColumnId).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${String(count).padStart(4)}  ${id}`);
@@ -107,7 +117,23 @@ if (compare) {
   const regressions = ["column", "role", "status", "deliberate"].filter(
     (kind) => text.totals[kind] > summary.totals[kind],
   );
-  if (regressions.length > 0) {
+  /*
+The query ratchet, same both-directions rule as the guard ratchet above and pinned separately.
+Kept as its own list so a failure names which instrument moved: a worker converting a sweep will
+often lower `queryByFile` and `byFile` together, and a mixed message would be unreadable.
+*/
+const baselineQueryByFile = new Map(Object.entries(baseline.queryByFile ?? {}));
+const currentQueryByFile = new Map(summary.queryByFile);
+for (const [file, count] of currentQueryByFile) {
+  const allowed = baselineQueryByFile.get(file) ?? 0;
+  if (count > allowed) regressions.push({ file, count, allowed, kind: "query" });
+  else if (count < allowed) stale.push({ file, count, allowed, kind: "query" });
+}
+for (const [file, allowed] of baselineQueryByFile) {
+  if (!currentQueryByFile.has(file) && allowed > 0) stale.push({ file, count: 0, allowed, kind: "query" });
+}
+
+if (regressions.length > 0) {
     console.error(
       `\nlifecycle-column-census --compare: the regex found MORE than the parser for ${regressions.join(", ")}.\n` +
       "The parser has a blind spot; its count cannot be the bar until this is closed.",
@@ -153,7 +179,7 @@ for (const [file, allowed] of baselineByFile) {
 if (regressions.length > 0) {
   console.error("\nlifecycle-column-census --strict: column-guard count ROSE\n");
   for (const r of regressions) {
-    console.error(`  ${r.file}: ${r.allowed} -> ${r.count}`);
+    console.error(`  ${r.file}${r.kind === "query" ? " (query filter)" : ""}: ${r.allowed} -> ${r.count}`);
   }
   console.error(
     "\nResolve a lifecycle column from the task's own workflow (resolveLifecycleColumns /\n" +
@@ -172,6 +198,9 @@ if (stale.length > 0) {
         totals: summary.totals,
         byColumnId: summary.byColumnId,
         byFile: Object.fromEntries(summary.byFile),
+        properties: summary.properties,
+        queryByColumnId: summary.queryByColumnId,
+        queryByFile: Object.fromEntries(summary.queryByFile),
       }, null, 2)}\n`,
     );
     console.log(`\nlifecycle-column-census --strict: baseline TIGHTENED for ${stale.length} file(s).`);

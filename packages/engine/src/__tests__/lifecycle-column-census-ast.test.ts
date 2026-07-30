@@ -194,3 +194,72 @@ describe("sibling detection uses the enclosing expression, not a line window", (
     expect(result.role).toBe(0);
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-29-20:10 (query-filter category):
+
+A guard is not the only way a legacy column id decides behaviour. `listTasks({ column: "todo" })`
+is a SOURCE QUERY — it selects the rows a sweep considers at all — so on a board that renamed or
+merged that column it returns nothing, and a sweep whose per-task predicate WAS correctly converted
+still does nothing while looking converted. `self-healing.ts:2849` names the pairing in prose and
+#2560 had to repair exactly that combination.
+
+The comparison walk cannot see these: a PropertyAssignment is not a BinaryExpression. So they were
+invisible to both the census and its ratchet, and the class could grow silently.
+
+These cases pin the three decisions that make the category meaningful: it is counted, it is counted
+SEPARATELY from the backlog, and an IR node definition is not mistaken for a query.
+*/
+describe("query-filter category", () => {
+  it("counts a legacy column id used as a source-query filter", () => {
+    const result = summarize(census(`await store.listTasks({ column: "todo", slim: true });`));
+    expect(result.properties.query).toBe(1);
+    expect(result.queryByColumnId).toEqual({ todo: 1 });
+  });
+
+  it("keeps queries OUT of the guard backlog, which is the completion bar", () => {
+    /* The load-bearing decision. Folding these into `totals.column` would move a number the
+       program is actively driving to zero, and would make every fleet PR's before/after
+       arithmetic disagree with the bar. */
+    const result = summarize(census(`await store.listTasks({ column: "triage" });`));
+    expect(result.totals.column).toBe(0);
+    expect(result.byColumnId).toEqual({});
+    expect(result.byFile).toEqual([]);
+    expect(result.properties.query).toBe(1);
+  });
+
+  it("does NOT count a workflow IR node definition as a query", () => {
+    /* `column:` on a graph node declares WHERE the node lives — the lineage describing itself,
+       not a lookup, and not convertible. Told apart structurally (an `id`/`kind` sibling) rather
+       than by filename, so a definition written anywhere is classified the same way. */
+    const result = summarize(census(`const ir = { nodes: [{ id: "review", kind: "review", column: "in-review" }] };`));
+    expect(result.properties.query).toBe(0);
+    expect(result.properties.definition).toBe(1);
+    expect(result.totals.column).toBe(0);
+  });
+
+  it("still counts a comparison in the same file, so the two instruments are independent", () => {
+    /* Without this, a bug that routed comparisons into the query bucket would look like a clean
+       pass on both numbers. */
+    const result = summarize(census(`
+      const rows = await store.listTasks({ column: "todo" });
+      if (task.column === "todo") { act(); }
+    `));
+    expect(result.properties.query).toBe(1);
+    expect(result.totals.column).toBe(1);
+  });
+
+  it("honours a DELIBERATE-LITERAL marker on a query filter", () => {
+    const result = summarize(census(`
+      /* ${DELIBERATE_MARKER}: reviewed — this lineage genuinely declares todo. */
+      const rows = await store.listTasks({ column: "todo" });
+    `));
+    expect(result.properties.query).toBe(0);
+    expect(result.totals.deliberate).toBe(1);
+  });
+
+  it("ignores a column property whose value is not a legacy id", () => {
+    const result = summarize(census(`await store.listTasks({ column: "backlog" });`));
+    expect(result.properties.query).toBe(0);
+  });
+});
