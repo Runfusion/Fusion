@@ -330,6 +330,23 @@ const TRAIT_TEST_HINTS = [
 ];
 
 /*
+FNXC:LifecycleColumnCensus 2026-07-30-22:15 (the other half of the inverted-fallback miss):
+A CAMEL-CASE SUFFIX CANNOT BE A HINT, so resolved-lane variables get their own rule.
+
+A resolver that hoists its answer names it `completeLanes`, `activeLanes`, `reviewLanes`,
+`archivedLanes` — the shape used across analytics, the glasses notifier and the GitHub tracking
+classifier. Adding `Lanes` to the hint list does NOT work, and the reason is a fix rather than an
+oversight: hints are word-bounded because the unbounded form once let `hold` match `threshold` and
+`household`. `\bLanes\b` therefore cannot match inside `completeLanes`, where the boundary the
+regex needs does not exist.
+
+So the suffix is matched explicitly. It is narrow on purpose — an identifier ENDING in `Lanes` or
+`Columns` — which covers the resolved-lane naming without reopening the substring problem: `planes`
+does not end in `Lanes` (case-sensitive), and `columnsRendered` does not end in `Columns`.
+*/
+const RESOLVED_LANE_IDENTIFIER = /\b[A-Za-z_$][A-Za-z0-9_$]*(?:Lanes|Columns)\b/;
+
+/*
 FNXC:LifecycleColumnCensus 2026-07-30-10:40 (PR #2677 review — coderabbit):
 HINTS MUST NOT MATCH INSIDE A LONGER IDENTIFIER. The leading class was `[.?\w]`, so the `hold`
 hint matched `threshold`, `staleThreshold`, `household`, `stronghold`, `withhold` — and `flags`
@@ -376,12 +393,87 @@ function alwaysTerminates(stmt) {
  * True when this comparison sits in the FALLBACK branch of a conditional whose test reads resolved
  * trait data — i.e. it is the documented answer for callers without traits, not an unconverted guard.
  */
+/**
+ * True when a condition asks "is the trait data ABSENT?" rather than "is it present?".
+ *
+ * Form only, deliberately: `=== undefined`, `== null`, `=== null` or a leading `!`. Anything else is
+ * treated as a positive test, so an unrecognised spelling leaves the site COUNTED — the safe
+ * direction for a backlog measurement, since over-counting sends a reader to a correct line while
+ * under-counting hides a live guard.
+ */
+function isNegativeTraitTest(text) {
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-23:15 (#2874 review — greptile P2, "compound absence tests
+  over-classify"): SIMPLE conditions only.
+
+  The equality check was unanchored, so `completeLanes === undefined || forceLegacy` passed — and its
+  second disjunct can select the true branch with lane data PRESENT, making the literal a live guard
+  rather than a fallback. Marking a live line "already converted" is the direction that removes a real
+  guard from the backlog, which is the failure this whole rule was added to stop doing.
+
+  A compound condition is not something to reason about here: whether the literal is reachable with
+  traits present depends on the other operand. Refusing them leaves those sites COUNTED, which is the
+  safe answer for a measurement — over-counting sends a reader to a correct line, under-counting hides
+  a live one.
+
+  ANCHORING IS WHAT DOES THE WORK, not a separate compound check. I wrote one — `if (/[|&]{2}/) return
+  false` — and mutation showed it was dead: `^...$` already refuses anything with an operand beside
+  the comparison. A redundant guard carrying a comment that claims it is load-bearing is worse than no
+  guard, because the next reader trusts it instead of the anchors.
+  */
+  return /^\s*[A-Za-z_$][\w.$?[\]"'`]*\s*(===|==)\s*(undefined|null)\s*$/.test(text.trim())
+    || /^\s*!\s*[A-Za-z_$][\w.$?[\]"'`]*\s*$/.test(text.trim());
+}
+
 function isTraitFallback(node, sourceFile) {
   let current = node;
   while (current.parent && !ts.isSourceFile(current.parent)) {
     const parent = current.parent;
     if (ts.isConditionalExpression(parent) && parent.whenFalse === current) {
       if (testsTraitData(parent.condition.getText(sourceFile))) return true;
+    }
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-21:55 (an INVERTED fallback the census counted as backlog):
+    THE LITERAL IS SOMETIMES THE `whenTrue` BRANCH, BECAUSE THE CONDITION ASKS THE QUESTION BACKWARDS.
+
+    Only `cond ? trait : literal` was recognised. The other spelling is at least as common once a
+    caller resolves its lanes up front:
+
+      complete: completeLanes === undefined ? columnId === "done" : completeLanes.includes(columnId)
+
+    That is `github-tracking-state.ts:245`, a fully converted resolver whose two degraded arms the
+    census reports as unconverted debt. The consequence is not cosmetic: the census header says
+    "0 are trait-fallback branches (already converted)" while sites of exactly that shape exist, so
+    the remaining number reads higher than the remaining WORK and a reader chasing the backlog is
+    sent to lines that are already correct.
+
+    A NEGATIVE trait test plus the true branch is the same statement as a positive test plus the
+    false branch. Recognising it needs the condition to be negative in FORM — `=== undefined`,
+    `== null`, or a leading `!` — because a positive condition with the literal on the true side is a
+    live guard, not a fallback, and must keep counting.
+
+    IMMEDIATE PARENT ONLY (`current === node`), unlike the sibling rules that walk ancestors, and this
+    is measured rather than cautious. With the walk, any literal ANYWHERE inside a block governed by a
+    negative lane test was marked converted — including
+    `step.status === "done" || step.status === "in-progress"` in
+    `register-task-workflow-routes.ts:941`, a STEP-STATUS comparison that is not a column guard at
+    all. Marking a live line "already converted" is the dangerous direction for a backlog measurement,
+    so this rule only fires where the literal IS the ternary's true branch, which is the shape it was
+    written for.
+    */
+    if (current === node && ts.isConditionalExpression(parent) && parent.whenTrue === current) {
+      const condition = parent.condition.getText(sourceFile);
+      /*
+      The lane-suffix rule is applied HERE ONLY, not folded into `testsTraitData`. Widening that
+      shared predicate fed the ancestor-walking rules too, and they promptly marked
+      `step.status === "done" || step.status === "in-progress"` at
+      `register-task-workflow-routes.ts:941` — a STEP-STATUS comparison, not a column guard — as an
+      already-converted fallback. Measured, not hypothetical: the count went to 6 with two of them
+      wrong. A widening that reaches rules it was not reasoned about is how a measurement quietly
+      starts excusing live lines.
+      */
+      if (isNegativeTraitTest(condition)
+        && (testsTraitData(condition) || RESOLVED_LANE_IDENTIFIER.test(condition))) return true;
     }
     if (ts.isIfStatement(parent)) {
       /*
