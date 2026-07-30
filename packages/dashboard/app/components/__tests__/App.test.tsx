@@ -88,12 +88,7 @@ vi.mock("../../api", async (importOriginal) => {
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
     fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
-    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
-      flagEnabled: false,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [],
-      taskWorkflowIds: {},
-    })),
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve(DEFAULT_BOARD_WORKFLOWS)),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -668,6 +663,9 @@ import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, f
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
+import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
+
+
 
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
@@ -700,12 +698,7 @@ beforeEach(() => {
     },
     taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
   });
-  vi.mocked(fetchBoardWorkflows).mockResolvedValue({
-    flagEnabled: false,
-    defaultWorkflowId: "builtin:coding",
-    workflows: [],
-    taskWorkflowIds: {},
-  });
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_BOARD_WORKFLOWS);
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReset();
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReturnValue({
     projects: [],
@@ -2458,7 +2451,7 @@ describe("App view switching", () => {
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Cleanup
@@ -2479,7 +2472,7 @@ describe("App view switching", () => {
     // Switch to list view
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Switch back to board view
@@ -2505,7 +2498,7 @@ describe("App view switching", () => {
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("+ New Task"));
@@ -2554,7 +2547,7 @@ describe("App view switching", () => {
 
     // Wait for the app to render
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // List view should be active
@@ -2756,7 +2749,7 @@ describe("App view switching", () => {
 
     // Should NOT show board or list view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
   });
 
   it("persists agents view preference to localStorage", async () => {
@@ -2823,7 +2816,7 @@ describe("App view switching", () => {
 
     // Should NOT show board, list, or agents view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
   });
 
@@ -3551,7 +3544,9 @@ describe("App footer-safe project layout", () => {
     await waitFor(() => {
       const wrapper = document.querySelector(".project-content--with-footer");
       expect(wrapper).toBeTruthy();
-      expect(wrapper?.querySelector(".list-view")).toBeTruthy();
+      /* Containment is the point here, so this stays a scoped query — but on the body marker, not
+         the `.list-view` class the workflow skeleton also carries. */
+      expect(wrapper?.querySelector('[data-testid="list-view-body"]')).toBeTruthy();
     });
   });
 

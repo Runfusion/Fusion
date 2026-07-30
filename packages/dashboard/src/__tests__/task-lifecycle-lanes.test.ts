@@ -23,7 +23,7 @@ resolved set is EMPTY even though the columns exist) must BOTH keep the legacy p
 */
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core"; // registers the built-in column traits so flags resolve
-import { landedColumnsForTask, completeColumnsForTask } from "../task-lifecycle-lanes.js";
+import { landedColumnsForTask, completeColumnsForTask, archivedColumnsForTask, wipColumnsForTask, preWipColumnsForTask } from "../task-lifecycle-lanes.js";
 
 function storeWith(ir: unknown, workflowId = "wf") {
   const selection = { workflowId, stepIds: [] as string[] };
@@ -112,4 +112,100 @@ describe("completeColumnsForTask is narrower than the landed set", () => {
 
     expect([...(await completeColumnsForTask(store, "FN-1"))]).toEqual(["done"]);
   });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:05 (self-audit after #2821's review):
+
+THE RESOLVERS NOBODY WAS TESTING.
+
+#2821's review found a bug that lived entirely in a lane BUILDER while every test drove the guard
+that consumed it — injecting a value makes the guard testable and the resolver invisible. Auditing
+the helpers I added this session for the same shape found three with no direct coverage at all:
+`archivedColumnsForTask`, `wipColumnsForTask`, `preWipColumnsForTask`. Their callers are tested; the
+functions themselves were not.
+
+They also shared the defect that review named. Each read `resolved.length > 0 ? resolved : legacyId`,
+which conflates a v1 upgrade (traits synthesised empty, so the legacy id is the only vocabulary) with
+a v2 board that expresses traits and declares no lane of that role — where falling back onto the
+legacy id widens the guard onto a role the board deliberately did not assign.
+
+Each helper is now pinned on all four outcomes: the renamed lane, an untraited legacy NAME, the v1
+fallback, and the unresolvable fallback.
+*/
+describe("the lane resolvers themselves, not just their callers", () => {
+  const storeFor = (ir: unknown) => {
+    const selection = { workflowId: "wf", stepIds: [] as string[] };
+    return {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => (ir === undefined ? undefined : { id: "wf", ir }),
+    } as never;
+  };
+
+  /* Traits ARE expressed here, and `done`/`archived`/`in-progress`/`todo` appear WITHOUT them. */
+  const TRAITED_WITH_LEGACY_NAMES = {
+    version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Not intake", traits: [] },
+      { id: "in-progress", name: "Not wip", traits: [] },
+      { id: "done", name: "Not complete", traits: [] },
+      { id: "archived", name: "Not archived", traits: [] },
+      { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
+    ],
+  };
+
+  const V1 = {
+    version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+    columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+  };
+
+  const cases: Array<[string, (s: never, id: string) => Promise<Set<string>>, string, string]> = [
+    ["archivedColumnsForTask", archivedColumnsForTask, "attic", "archived"],
+    ["wipColumnsForTask", wipColumnsForTask, "building", "in-progress"],
+    ["preWipColumnsForTask", preWipColumnsForTask, "backlog", "todo"],
+  ];
+
+  for (const [name, resolve, renamed, legacy] of cases) {
+    it(`${name} returns the traited lane and EXCLUDES the untraited legacy name`, async () => {
+      const lanes = await resolve(storeFor(TRAITED_WITH_LEGACY_NAMES), "FN-1");
+      expect(lanes.has(renamed)).toBe(true);
+      /* The board declares this column and deliberately did not give it the role. */
+      expect(lanes.has(legacy)).toBe(false);
+    });
+
+    it(`${name} returns EMPTY when traits are expressed but no column carries this role`, async () => {
+      /*
+      The case that actually separates the two shapes, and the reason the assertion above could not.
+      Where the role IS traited, `resolved.length > 0 ? resolved : legacy` and "trust the resolved
+      set" agree — both return the traited lane. They diverge only when the resolved set is EMPTY
+      while traits ARE expressed: the old shape falls back onto the legacy NAME, which this board
+      declares and deliberately did not give the role; the new one takes the board at its word.
+
+      Caught by mutation: reverting the helper left every other case in this suite green.
+      */
+      const traitedElsewhere = {
+        version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+        columns: [
+          { id: "todo", name: "plain", traits: [] },
+          { id: "in-progress", name: "plain", traits: [] },
+          { id: "done", name: "plain", traits: [] },
+          { id: "archived", name: "plain", traits: [] },
+          /* One trait, and deliberately never the role under test. */
+          { id: "signoff", name: "Signoff", traits: [{ trait: "merge" }] },
+        ],
+      };
+      expect([...(await resolve(storeFor(traitedElsewhere), "FN-1"))]).toEqual([]);
+    });
+
+    it(`${name} falls back to the legacy id on a V1-UPGRADED board`, async () => {
+      expect([...(await resolve(storeFor(V1), "FN-1"))]).toEqual([legacy]);
+    });
+
+    it(`${name} falls back to the legacy id when the workflow cannot be resolved`, async () => {
+      expect([...(await resolve(storeFor(undefined), "FN-1"))]).toEqual([legacy]);
+    });
+  }
 });
