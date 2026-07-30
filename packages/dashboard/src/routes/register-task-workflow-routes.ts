@@ -4120,7 +4120,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggerDetail: "task-comment",
       };
       if (normalizedAuthor === "user") {
-        if (task.column === "in-review" && !task.sessionFile) {
+        const reviewColumnForGuard = await resolveReviewColumnForTask(scopedStore, task.id);
+        if (task.column === reviewColumnForGuard && !task.sessionFile) {
           const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
           res.json(reengagedTask);
           return;
@@ -4687,7 +4688,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
       };
-      if (task.column === "in-review" && !task.sessionFile) {
+      const reviewColumnForGuard = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column === reviewColumnForGuard && !task.sessionFile) {
         const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
         res.json(reengagedTask);
         return;
@@ -5790,7 +5792,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      const reviewColumnForGuard = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column === reviewColumnForGuard) {
         updatedTask = (await reengageInReviewTaskForUserComment(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: steeringCommentId ? [steeringCommentId] : undefined,
@@ -5848,7 +5851,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      const reviewColumnForGuard = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column === reviewColumnForGuard) {
         await scopedStore.updateTask(task.id, {
           status: null,
           error: null,
