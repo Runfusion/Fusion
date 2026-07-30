@@ -10834,6 +10834,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
 
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-17:50 (fleet: self-healing.ts):
+          One resolved rebound target for the whole block — the guard, the notification payload and
+          the move must all name the SAME column or the notification describes a move that did not
+          happen. `resolveReboundTarget` is the helper this file already uses for KTD-10 rebounds
+          (hold, else intake, else first declared column), so recovery lands somewhere the workflow
+          actually declares instead of a `todo` a renamed board may not have.
+          */
+          const pauseAbortReboundColumn =
+            resolveReboundTarget(await resolveWorkflowIrForTask(this.store, fresh.id)) ?? "todo";
+
           const workflowTransitionNotification = route.kind === "node-requeue"
             ? {
                 /*
@@ -10844,7 +10855,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                  * later task movement.
                  */
                 kind: "recovery-requeue" as const,
-                column: "todo" as const,
+                column: pauseAbortReboundColumn,
                 transitionId: `recovery-requeue:${task.id}:pause-abort-active-work`,
                 nodeId: "pause-abort-recovery-router",
                 reason: route.reason,
@@ -10854,12 +10865,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-            ...(fresh.column === "todo" && workflowTransitionNotification
+            ...(fresh.column === pauseAbortReboundColumn && workflowTransitionNotification
               ? { workflowTransitionNotification }
               : {}),
           });
-          if (route.kind === "node-requeue" && fresh.column !== "todo") {
-            await this.store.moveTask(task.id, "todo", {
+          if (route.kind === "node-requeue" && fresh.column !== pauseAbortReboundColumn) {
+            await this.store.moveTask(task.id, pauseAbortReboundColumn, {
               preserveProgress: true,
               moveSource: "engine",
               recoveryRehome: true,
