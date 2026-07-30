@@ -183,7 +183,7 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     expect(latestFailedPreMergeStep(updated)).toBeUndefined();
   });
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (PR #2709 review — greptile):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (PR #2709 review — greptile):
   THE REJECTION MUST NAME THE COLUMN THE CHECK USED. The guard was converted to the resolved review
   lane while the message still said `in-review`, so on a custom board an operator was refused and
   then told to move the card to a column their board does not have — through both the CLI and the
