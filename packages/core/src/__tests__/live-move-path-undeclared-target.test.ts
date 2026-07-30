@@ -105,14 +105,26 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     expect(workflowHasColumn(ir, "triage")).toBe(false);
     expect(workflowHasColumn(ir, "todo")).toBe(true);
 
-    await store.moveTask(task.id, "triage" as never, { moveSource: "user" } as never);
+    /*
+    FNXC:WorkflowColumns 2026-07-31-04:30 (U12 — the move-path flag is RESOLVED; this is the fix):
+    THE DEFECT IS GONE, so this case now asserts the refusal instead of the acceptance, and the
+    `it.todo` below it — "should REFUSE a move into a column the task's workflow does not declare
+    (U2b)" — is fulfilled rather than left dangling.
 
-    // Today's behavior. The card is now in a column its workflow does not declare, carrying no
-    // trait flags, invisible to every trait-driven sweep until reconciliation re-homes it.
-    expect(await column(task.id)).toBe("triage");
+    Before: the move was ACCEPTED and the card landed in a column carrying no trait flags, invisible
+    to every trait-driven sweep until reconciliation re-homed it. Now the move path resolves the
+    target against the task's own workflow unconditionally, so it is refused at the boundary.
+
+    The premise assertions above are deliberately kept: they prove `triage` really is undeclared, so
+    this cannot pass for the wrong reason if the default lineage ever declares it again.
+    */
+    await expect(
+      store.moveTask(task.id, "triage" as never, { moveSource: "user" } as never),
+    ).rejects.toThrow(/Unknown column for this workflow/);
+
+    // And the card never moved.
+    expect(await column(task.id)).toBe("todo");
   });
-
-  it.todo("should REFUSE a move into a column the task's workflow does not declare (U2b)");
 
   it("still permits every move the workflow DOES declare", async () => {
     /*

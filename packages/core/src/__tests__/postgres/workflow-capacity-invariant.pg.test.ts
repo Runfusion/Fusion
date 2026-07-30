@@ -72,21 +72,23 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   tautological "passes" respectively. A both-paths suite without this probe
   reports what it assumed, not what happened.
   */
-  async function setPath(path: "inline" | "hooks"): Promise<void> {
+  /*
+  FNXC:WorkflowColumns 2026-07-31-04:45 (U12 — the move-path flag is resolved):
+  There is only ONE path now, so this no longer selects between them. It is kept rather than deleted
+  because the probe half is still worth doing: it proves the move path is live and rejecting before
+  a capacity case draws conclusions from a rejection, so a capacity test cannot pass because moves
+  were broken for some unrelated reason.
+
+  The `inline`/`hooks` parameter and the `updateGlobalSettings` flag write are gone with the flag.
+  */
+  async function assertMovePathLive(): Promise<void> {
     const store = h.store();
-    await store.updateGlobalSettings(
-      path === "hooks"
-        ? { experimentalFeatures: { workflowColumns: true } }
-        : { experimentalFeatures: { workflowColumns: false } },
-    );
-    const probe = await store.createTask({ description: `path probe ${path}` });
+    const probe = await store.createTask({ description: "path probe" });
     const err = await store
       .moveTask(probe.id, "not-a-column-any-workflow-declares")
       .then(() => null, (e: unknown) => e as Error);
-    expect(err, `${path}: probe move should have been rejected`).toBeInstanceOf(Error);
-    expect(err!.message, `${path} path not active`).toContain(
-      path === "hooks" ? "Unknown column for this workflow" : "Valid targets:",
-    );
+    expect(err, "probe move should have been rejected").toBeInstanceOf(Error);
+    expect(err!.message, "move path not active").toContain("Unknown column for this workflow");
     await store.deleteTask(probe.id);
   }
 
@@ -129,7 +131,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("inline");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
@@ -150,7 +152,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("hooks");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
@@ -172,7 +174,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("hooks");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond({ selectWorkflow: "builtin:coding" });
 
@@ -207,7 +209,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     async () => {
       const store = h.store();
       await store.updateSettings({ maxConcurrent: 1 });
-      await setPath("hooks");
+      await assertMovePathLive();
 
       const { error, secondColumn } = await fillWipThenAdmitSecond();
 
@@ -258,7 +260,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   it("RATCHET: a workflow-selection change mid-move cannot split the limit from the counting pool", async () => {
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("inline");
+    await assertMovePathLive();
 
     // Fill builtin:coding's wip pool to its limit of 1.
     const holder = await store.createTask({ description: "split-snapshot holder" });
@@ -335,7 +337,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   it("RATCHET: the capacity read is taken UNDER the per-task lock, not merely inside the transaction", async () => {
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("inline");
+    await assertMovePathLive();
 
     const holder = await store.createTask({ description: "xproc holder" });
     await store.selectTaskWorkflow(holder.id, "builtin:coding");
