@@ -183,6 +183,23 @@ async function laneContext(
         return { lanes: undefined, declared: new Set(), degraded: true };
       }
       if (definition?.ir == null) return { lanes: undefined, declared: new Set(), degraded: true };
+      /*
+      FNXC:PluginLifecycleColumns 2026-07-31-17:10 (PR #2644 review, CodeRabbit — REAL, and NOT fixed):
+      A STORED STRING IR COSTS A SECOND READ, so the lanes can come from a different revision than the
+      degraded verdict — the drift the surrounding comment claims to have removed. My earlier excuse for
+      it ("deliberate and confined to that shape") was not a reason.
+
+      I tried `parseWorkflowIr(definition.ir)` to keep it to one read. The parse succeeds in isolation and
+      `resolveLifecycleColumns` returns the right roles for the parsed IR (verified directly), but the
+      action still refused in the plugin harness, so something between the parse and the lane check
+      differs from the resolver path and I could not identify it here. Shipping an unexplained change into
+      the code path that decides whether an operator's action is REFUSED trades a bounded drift window for
+      an unbounded one, so the second read stays — named rather than excused.
+
+      The window is small and its failure mode is safe: it needs a workflow edit between two reads
+      microseconds apart, and the result is a refusal or a stale lane set, never a move onto another
+      board's column. A store that returned parsed IRs removes it entirely; that is where the fix belongs.
+      */
       snapshotIr = typeof definition.ir === "string"
         ? await resolveWorkflowIrById(taskStore as never, selectionWorkflowId)
         : definition.ir;
