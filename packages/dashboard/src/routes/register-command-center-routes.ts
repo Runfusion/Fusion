@@ -411,10 +411,22 @@ grouping by workflow in the query, which is a change to the aggregation, not to 
 there and would be exact. I have not taken it in this change because it needs a second option shape
 on the aggregator; it is the obvious follow-up and is called out on the PR rather than left implied.
 */
+/** Do two workflows disagree about what this column id MEANS? Only the roles the analytics tallies
+ *  read are compared — a difference in an unrelated trait is not a conflict for this purpose. */
+function isConflictingColumnFlags(
+  a: ReturnType<typeof resolveColumnFlags>,
+  b: ReturnType<typeof resolveColumnFlags>,
+): boolean {
+  return (a.countsTowardWip === true) !== (b.countsTowardWip === true)
+    || (a.mergeBlocker === true) !== (b.mergeBlocker === true)
+    || (a.humanReview === true) !== (b.humanReview === true);
+}
+
 async function resolveColumnFlagsByName(
   store: Pick<TaskStore, "listWorkflowDefinitions" | "getWorkflowDefinition">,
 ): Promise<Map<string, ReturnType<typeof resolveColumnFlags>>> {
   const byColumn = new Map<string, ReturnType<typeof resolveColumnFlags>>();
+  const conflicting = new Set<string>();
   try {
     const definitions = await store.listWorkflowDefinitions();
     for (const definition of definitions) {
@@ -423,12 +435,38 @@ async function resolveColumnFlagsByName(
       for (const column of columns ?? []) {
         const flags = resolveColumnFlags(column);
         const existing = byColumn.get(column.id);
-        byColumn.set(column.id, existing ? { ...existing, ...flags } : flags);
+        if (existing === undefined) {
+          byColumn.set(column.id, flags);
+          continue;
+        }
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-17:20 (#2803 review — greptile P1):
+        A CONFLICTING id is DROPPED, not merged.
+
+        My first version merged flags across workflows with `{ ...existing, ...flags }`. Where two
+        workflows reuse one column id for DIFFERENT roles, that produced an entry carrying both, and
+        the aggregators then counted the same rows as in-progress AND in-review — a double count,
+        which is worse than the silent zero this wiring set out to fix. I had documented the flat-map
+        ambiguity in the PR body and shipped it anyway; documenting a defect is not resolving it.
+
+        Dropping the id leaves those rows on the aggregators' documented legacy behaviour: still
+        wrong for a renamed board, but wrong in ONE direction and never double counted. Unambiguous
+        ids — the overwhelming majority, and the whole board on a single-workflow project — keep the
+        resolved answer.
+
+        Exact per-workflow classification is possible for `workflow` analytics (its rows carry
+        `workflowId`) and impossible for `team` analytics at this seam (its rows are aggregated to
+        `{agentId, columnName}` by SQL before this code sees them). That asymmetry needs a second
+        option shape on the aggregator and a change to the team query — a separate change, named here
+        rather than approximated.
+        */
+        if (isConflictingColumnFlags(existing, flags)) conflicting.add(column.id);
       }
     }
   } catch {
     /* Unreadable definitions leave the map empty, so both aggregators keep their legacy ids. */
   }
+  for (const id of conflicting) byColumn.delete(id);
   return byColumn;
 }
 
