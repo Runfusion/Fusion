@@ -63,7 +63,9 @@ describe("linear plugin routes", () => {
     const context = ctx();
     const result = await importSingleLinearIssue({ body: { issueId: "ENG-1" } }, context);
     expect(result).toMatchObject({ status: 201, body: { imported: true, duplicate: false, taskId: "FN-9" } });
-    expect((context.taskStore as any).createTask).toHaveBeenCalledWith(expect.objectContaining({ column: "triage" }));
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-16:35: the route must not name a column either —
+       `createTask` resolves the workflow's intake lane. Pinned `"triage"` before, a column U11 deleted. */
+    expect((context.taskStore as any).createTask).toHaveBeenCalledWith(expect.not.objectContaining({ column: expect.anything() }));
   });
 
   it("returns duplicate task id for existing imported issue", async () => {

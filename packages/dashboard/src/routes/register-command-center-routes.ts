@@ -483,7 +483,13 @@ async function resolveColumnFlagsByName(
         now: Date.now(),
         pricingOverrides: settings.modelPricingOverrides,
         columnFlagsByName: await resolveColumnFlagsByName(store),
-      });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+      The store is the third argument so the analytics queries resolve which lanes carry the
+      complete / wip / human-review traits. Without it they filter on 'done' and
+      ('in-progress','in-review') and report zero completed work on any renamed board.
+      */
+      }, store);
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

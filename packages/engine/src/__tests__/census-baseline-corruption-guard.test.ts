@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-15:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:35:
 
 THE INVARIANT: a corrupt census baseline fails with a DIAGNOSIS, and `--update-baseline` refuses to
 regenerate on top of one.
@@ -82,17 +82,39 @@ describe("the census fails readably on a corrupt baseline", () => {
   });
 
   it("still succeeds against the repo's real baseline", () => {
-    // Guards against the diagnosis firing on a healthy file — a guard that always fails is no guard.
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-16:30:
+    ASSERTS A HEALTHY OUTCOME, NOT PERMANENT EXACT SYNC.
+
+    This required "every file matches its baseline exactly", which demands the COMMITTED baseline be
+    byte-in-step with the tree at all times. It is not: a conversion that removes guards leaves the
+    tree holding FEWER than the baseline allows, and the CLI treats that as the good case — it
+    tightens the pin and exits 0. So every legitimate conversion that did not also re-record turned
+    this test red on main (measured: four separate main reds in one day).
+
+    This guard's job is narrower — prove the CORRUPTION diagnosis does not fire on a healthy file —
+    and a tightened baseline IS healthy. It therefore asserts a zero exit (execFileSync throws
+    otherwise, so a RISE still fails: real debt stays loud), no corruption diagnosis, and one of the
+    two healthy outcome shapes.
+
+    A rise, a corrupt file, and an unreadable file all still fail. Only "converted guards, pin not
+    re-recorded yet" stops being red, which was never a defect.
+    */
     scratch = mkdtempSync(join(tmpdir(), "fusion-census-guard-"));
     const baselinePath = join(scratch, "baseline.json");
     copyFileSync(REAL_BASELINE, baselinePath);
 
+    /* Throws on a non-zero exit, so a RISE (exit 1) fails this test before any assertion runs. */
     const result = execFileSync("node", [SCRIPT, "--strict"], {
       cwd: REPO_ROOT,
       env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
       encoding: "utf8",
     });
 
-    expect(result).toContain("every file matches its baseline exactly");
+    expect(result).not.toContain("is not valid JSON");
+    expect(result).not.toContain("could not be read");
+    const healthy = result.includes("every file matches its baseline exactly")
+      || result.includes("baseline TIGHTENED");
+    expect(healthy, `census reported neither healthy outcome:\n${result}`).toBe(true);
   });
 });

@@ -10,8 +10,8 @@ legacy pair (`done` + `archived`). Three internal call sites:
 
   drainDuePlanningContinuations:386        passes { terminalColumns }              CONVERTED
   selectActionablePlanningContinuations:413 passes NOTHING                         unconverted
-  resolvePlanningContinuationCandidate:199  calls the inner dispatchable predicate
-                                            without threading its own set          unconverted
+  resolvePlanningContinuationCandidate      threads its resolved set into the inner
+                                            dispatchable predicate                 CONVERTED (2026-08-02)
 
 WHAT BREAKS. `selectActionablePlanningContinuations` documents its own purpose as excluding
 "soft-deleted / archived / done tasks so archive-fallback rows returned by getTask cannot re-enter
@@ -19,11 +19,15 @@ plan-review after the card left the board". On a renamed board its terminal chec
 board does not have, so a card sitting in its COMPLETE column is classified `actionable` and re-enters
 plan-review — precisely the thing the function exists to prevent, silently, on every custom board.
 
-The third site is subtler and worth naming because it shows the conversion is not even whole along
-the converted path: `resolvePlanningContinuationCandidate` applies the caller's resolved set to its
-own terminal test, then delegates to `isPlanningContinuationTaskDispatchable(task)` WITHOUT passing
-it, so that inner predicate re-tests against the legacy pair. A partially threaded conversion is
-indistinguishable from a complete one at every call site that looks converted.
+The third site WAS the subtler one — `resolvePlanningContinuationCandidate` applied the caller's
+resolved set to its own terminal test and then delegated to `isPlanningContinuationTaskDispatchable`
+without passing it. That half has since been fixed, and this suite is how it was noticed: the audit
+case turned red on the arity change.
+
+What did NOT change is the outcome. `selectActionablePlanningContinuations` still passes nothing, so
+the CHARACTERIZATION case below is untouched — a card in a renamed COMPLETE lane still comes back
+`actionable`. That is the useful shape of a partial conversion: the code reads more converted than
+before and the operator-visible defect is exactly where it was.
 
 WHY THE CENSUS CANNOT SEE ANY OF IT. There is no column literal at the unconverted call sites — the
 literal is `LEGACY_TERMINAL_PAIR`, one function away, where it is correct for an unconverted caller
@@ -172,7 +176,7 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(resolved.kind === "orphan" ? resolved.reason : null).toBe("task-terminal");
   });
 
-  it("AUDIT — one of the two classifier call sites is converted, and the inner predicate is not", async () => {
+  it("AUDIT — the inner predicate is threaded; one of the two classifier call sites still is not", async () => {
     /*
     NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against the
     module's SYNTAX and labelled as such.
@@ -221,11 +225,23 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(classifierCalls).toHaveLength(2);
     expect(classifierCalls.filter(passesTerminalColumns)).toHaveLength(1);
 
-    /* The inner predicate, called from the classifier without threading its resolved set: exactly one
-       call, and it takes only the task. Arity is the property asserted, so a renamed local cannot
-       spell around it. */
+    /*
+    FNXC:WorkflowScheduling 2026-08-02-00:20 (THE ALARM FIRED — a partial conversion landed):
+    THE INNER PREDICATE IS NOW THREADED. `resolvePlanningContinuationCandidate` passes its resolved
+    set down as `isPlanningContinuationTaskDispatchable(task, terminal)`, so this case flipped from
+    arity 1 to arity 2 and turned this suite red — which is exactly what it was written to do.
+
+    THE OUTER GAP REMAINS. `selectActionablePlanningContinuations` still calls the classifier with no
+    options, so a card in a renamed COMPLETE lane is still classified `actionable` and still re-enters
+    plan-review. The CHARACTERIZATION case above is unchanged and still passes, which is the proof
+    that this was a partial fix rather than a complete one — half the conversion landed and the
+    operator-visible defect did not move.
+
+    Updated deliberately rather than loosened: arity is still the property asserted, so the next
+    change to either site lands here again.
+    */
     const innerCalls = callArguments("isPlanningContinuationTaskDispatchable");
     expect(innerCalls).toHaveLength(1);
-    expect(innerCalls[0]?.length).toBe(1);
+    expect(innerCalls[0]?.length).toBe(2);
   });
 });
