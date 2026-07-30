@@ -899,4 +899,37 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (the query-filter class, ninth sweep):
+  `recoverOrphanOnlyScopeViolations` recovers a task failed by an ORPHAN-ONLY file-scope violation —
+  commits belonging to no declared scope. Its literal read meant such a task stayed failed on a renamed
+  board.
+
+  SCOPE, stated rather than implied. This asserts CANDIDACY via `getAgentLogs`, the first call made once
+  per candidate after the filter, which proves the read conversion. It does NOT cover the
+  `getTaskHardMergeBlocker` wiring in the same sweep: that guard sits behind
+  `resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit`, both of which need a real git repo,
+  so reaching it would make this a git fixture rather than a lane test. The wiring is type-checked and
+  identical to the shape revert-proven in `recoverMergeableReviewTasks` and `finalizeNoOpReviewTasks`.
+
+  REVERT CHECK, measured: restoring the literal read fails this — the card is never found, so
+  `getAgentLogs` is never called for it.
+  */
+  it("the orphan-only scope recovery reaches a card on a RENAMED board", async () => {
+    const failed = {
+      ...shippedCard(),
+      id: "FN-ORPHAN",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([failed]);
+    const getAgentLogs = vi.fn(async () => []);
+    Object.assign(store, { getAgentLogs, logEntry: vi.fn(async () => undefined) });
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanOnlyScopeViolations();
+
+    expect(getAgentLogs).toHaveBeenCalledWith("FN-ORPHAN", expect.anything());
+  });
 });

@@ -10042,9 +10042,43 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (the query-filter class, ninth sweep):
+      `listTasks({ column: "in-review" })` returned EMPTY on a renamed board, so a task failed by an
+      ORPHAN-ONLY file-scope violation — commits that belong to no declared scope — was never recovered
+      and stayed failed.
+
+      Activation check first: one of the two sweeps still holding both a literal query and an unwired
+      `getTaskHardMergeBlocker`, so the guard is wired in the same change.
+      */
+      const orphanReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const orphanById = new Map<string, Task>();
+      for (const column of orphanReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) orphanById.set(task.id, task);
+      }
+      const tasks = [...orphanById.values()];
+      const orphanIrCache = new Map<string, WorkflowIr>();
+      const unresolvedOrphanCards: string[] = [];
+      const orphanLanesByTask = new Map<string, ReadonlySet<string>>();
+      for (const task of tasks) {
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, orphanIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+          : [];
+        if (!resolved || resolved.source === "default") unresolvedOrphanCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-23:20. */
+        orphanLanesByTask.set(task.id, own.length > 0 ? new Set(own) : new Set(["in-review"]));
+      }
+      if (unresolvedOrphanCards.length > 0) {
+        log.warn(
+          `orphan-only scope recovery: ${unresolvedOrphanCards.length} card(s) measured against the `
+          + `built-in review lane because their own workflow could not be resolved `
+          + `(${unresolvedOrphanCards.slice(0, 5).join(", ")}); a renamed review lane there stays failed.`,
+        );
+      }
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (orphanLanesByTask.get(task.id) ?? new Set(["in-review"])).has(task.column) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         task.scopeOverride !== true &&
@@ -10107,11 +10141,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeTargetSource: mergeTarget.source,
           };
 
+          /* Wired: unwired, this would decline every card the widened read now finds. */
           const hardBlocker = getTaskHardMergeBlocker({
             ...task,
             steps: task.steps ?? [],
             workflowStepResults: task.workflowStepResults,
-          });
+          }, { reviewColumns: orphanLanesByTask.get(task.id) ?? new Set(["in-review"]) });
           if (hardBlocker) {
             await this.store.updateTask(task.id, {
               status: "failed",
