@@ -87,31 +87,36 @@ describe("TaskContextMenu shared task action model", () => {
     }).shouldShowActionsMenu).toBe(true);
   });
 
-  it("hides it on a bare merged-column card while metadata is STILL LOADING (greptile #2623)", () => {
-    // No `currentColumnFlags` — the async metadata window. A triage-only fallback is false for a
-    // merged `todo` card and reinstates the vacuous gate for the whole window.
-    expect(buildTaskActionMenuModel({
-      task: makeTask({ column: "todo" }),
-      t,
-      columnLabel: columnLabel as never,
-    }).shouldShowActionsMenu).toBe(false);
+  it("leaves the metadata-loading window exactly as it was (greptile/coderabbit #2623)", () => {
+    /*
+    Two reviewers pushed opposite ways on this window and both were partly right, so the deciding
+    factor is that the repo has ALREADY pinned it — "mirrors detail Actions menu availability across
+    lifecycle states" below asserts a bare `triage` card with no flags shows no menu.
 
-    // Still opens for anything actionable in that same window.
-    expect(buildTaskActionMenuModel({
-      task: makeTask({ column: "todo", status: "awaiting-approval" as never }),
-      t,
-      columnLabel: columnLabel as never,
-    }).shouldShowActionsMenu).toBe(true);
-  });
+    Covering `todo` in the fallback was my first attempt: it restricts a HOLD-ONLY `todo` (Coding
+    (Ideas), whose intake is `ideas`), and restricting is not free — `actions` still holds Respecify
+    and Delete, so it removes real operator actions. Dropping the fallback to `false` contradicts the
+    pinned contract instead.
 
-  it("falls back to the legacy id while column metadata is still loading", () => {
-    // `currentColumnFlags` arrives from an async metadata fetch and is undefined until it lands,
-    // so the legacy comparison remains the only signal in that window.
+    So the fallback is UNCHANGED, and this test says so out loud: with no flags the behaviour is
+    identical to before the fix. The merged column stays vacuous for that window — a PRE-EXISTING
+    consequence of having no lane information, not a regression introduced here. Closing it needs the
+    flags to arrive synchronously, not a better guess.
+    */
     expect(buildTaskActionMenuModel({
       task: makeTask({ column: "triage" }),
       t,
       columnLabel: columnLabel as never,
-    }).shouldShowActionsMenu).toBe(false);
+    }).shouldShowActionsMenu, "legacy id, no flags: restricted, exactly as before").toBe(false);
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as never,
+    }).shouldShowActionsMenu, "merged column, no flags: unchanged from before the fix").toBe(true);
+
+    // Restricting that case would have removed these, which is why it was not done.
+    expect(actionIds(makeTask({ column: "todo" }))).toContain("delete");
   });
 
   it("mirrors detail Actions menu availability across lifecycle states", () => {

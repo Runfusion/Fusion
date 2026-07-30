@@ -70,6 +70,18 @@ const MIN_FILES = 500;
  * commentary is removed, and only so explanatory FNXC notes quoting a removed literal do not read
  * as live violations.
  */
+/*
+KNOWN LIMIT (coderabbit #2623): this is a character scanner, not a parser, so a REGEX LITERAL that
+contains a comment-opening sequence is misread as the start of a comment, and the rest of the file is
+blanked until a block-comment terminator turns up. That direction of error UNDERCOUNTS, which is the
+dangerous one, so it is asserted against rather than assumed away: the suite pins the totals, and a
+collapse of this kind shows up as many ceilings dropping at once rather than one changing by one.
+Measured at the time of writing, no scanned file contains such a literal. A real parser is the fix if
+one ever appears — do not "handle" it with another regex.
+
+(Written without the offending character sequences on purpose. Spelling one out inside a block comment
+is what broke this file twice while writing it, which is itself the argument for a parser.)
+*/
 export function stripComments(src) {
   let out = "";
   let i = 0;
@@ -242,6 +254,17 @@ function main() {
   const explicitFiles = filesFlagIndex === -1
     ? undefined
     : (process.argv[filesFlagIndex + 1] ?? "").split(",").filter(Boolean);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-04:10 (coderabbit #2623 — CRITICAL):
+  `--files` with no value parsed to `[]`, and an explicit list deliberately SKIPS the MIN_FILES
+  self-check, so the census scanned nothing, found nothing, and exited 0 — a clean bill of health from
+  a run that never opened a file. That is the precise failure this script exists to make impossible,
+  reachable by a typo in its own flag. An explicit list must be non-empty.
+  */
+  if (explicitFiles && explicitFiles.length === 0) {
+    console.error("--files was given no readable paths. Refusing to report a census over zero files.");
+    process.exit(2);
+  }
 
   const files = explicitFiles ?? listSourceFiles();
   // The self-check applies only to the DISCOVERED list; an explicit list is deliberate by definition.

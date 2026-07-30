@@ -457,20 +457,25 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   the menu from hold cards that have always had it — Coding (Ideas) keeps a hold-only `todo`. On the
   merged column intake and hold are the same column, so this restricts exactly what `triage` did.
 
-  The fallback covers BOTH pre-implementation ids, not just the legacy one (greptile #2623).
-  `currentColumnFlags` arrives from an async metadata fetch and is undefined until it lands, so during
-  every loading window the comparison is the only signal — and a `triage`-only fallback is false for a
-  merged `todo` card, which reinstates exactly the vacuous behaviour this fix removes.
+  The no-flags fallback is left EXACTLY as it was: `task.column === "triage"`. Two reviewers pushed in
+  opposite directions here and the deciding factor is that the repo has already pinned this case —
+  "mirrors detail Actions menu availability across lifecycle states" asserts a bare `triage` card with
+  no flags shows no menu.
 
-  The trade is explicit: including `todo` also restricts a HOLD-ONLY `todo` (Coding (Ideas)) for the
-  duration of that window, where the menu is warranted. That is the better of two transient wrongs —
-  the merged lineage is the default shape, so a `triage`-only fallback is wrong on most boards on every
-  render until metadata lands, whereas this is wrong on one workflow for one window and self-corrects
-  the moment flags arrive.
+  Covering `todo` in the fallback was my first attempt and it is wrong: it restricts a HOLD-ONLY `todo`
+  (Coding (Ideas), intake `ideas`), and a restricted card does not merely lose an empty menu —
+  `actions` still holds Respecify and Delete, so it removes real operator actions. Dropping the
+  fallback to `false` is also wrong: it contradicts the pinned contract above.
+
+  So this fix applies where the data exists — every render after `currentColumnFlags` lands, which is
+  the state a board spends essentially all of its time in — and the metadata-loading window keeps the
+  behaviour it has always had. That window remains vacuous for a merged `todo` card; it is a
+  PRE-EXISTING limitation of having no lane information, not something introduced here, and closing it
+  needs the flags to arrive synchronously rather than a better guess.
   */
   const isIntakeLaneColumn = options.currentColumnFlags
     ? options.currentColumnFlags.intake === true
-    : task.column === "triage" || task.column === "todo";
+    : task.column === "triage";
 
   return {
     actions,

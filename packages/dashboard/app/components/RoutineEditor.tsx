@@ -735,9 +735,21 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               <div className="form-group">
                 <label htmlFor="routine-task-column">{t("schedule.taskColumnLabel", "Target Column")}</label>
                 <select id="routine-task-column" value={taskColumn} onChange={(e) => setTaskColumn(e.target.value)}>
+                  {/*
+                  FNXC:Automations 2026-07-30-04:20 (coderabbit #2623):
+                  The `triage` option is REMOVED, not merely un-defaulted. Fixing only the initializer
+                  left the operator able to pick a column the default workflow no longer declares —
+                  the same defect, one click away — and it was the option labelled "Planning", which is
+                  the name the merged `todo` column now displays, so it was the natural choice.
+
+                  That also retires the label inversion rather than documenting it: what remains is
+                  "Automatic", which resolves each workflow's own intake, and `todo`, now labelled
+                  "Planning" to match the board. An existing routine persisted with `taskColumn:
+                  "triage"` keeps that value until edited (the state initializer reads it back), so
+                  nothing silently changes under a saved routine; re-saving moves it to Automatic.
+                  */}
                   <option value="">{t("schedule.taskColumnAuto", "Automatic (workflow intake)")}</option>
-                  <option value="triage">{t("schedule.taskColumnTriage", "Planning")}</option>
-                  <option value="todo">{t("schedule.taskColumnTodo", "To Do")}</option>
+                  <option value="todo">{t("schedule.taskColumnPlanning", "Planning")}</option>
                 </select>
               </div>
               <div className="form-group">
