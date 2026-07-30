@@ -899,4 +899,79 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (the query-filter class, twelfth sweep):
+  `reclaimSelfOwnedBranchConflicts` frees a task whose OWN worktree is holding its OWN branch hostage —
+  a conflict no other sweep resolves. Three literal reads plus three lane guards in the body, so both
+  halves convert together: widening the read alone would admit renamed-board cards and then mis-decide
+  every one, since the phantom-binding check, the blocked-hold skip and the review triple-proof are each
+  keyed on lane.
+
+  ONE ASSERTION COVERS BOTH HALVES. `isPhantomExecutorBinding` runs only for a card that (a) the read
+  found and (b) the wip-lane guard accepted. Two private seams are stubbed to reach it —
+  `getFalsePositiveRequeueSignal` for the live-execution signal, and the binding check itself — which is
+  the same technique used above for the orphan sweep, and avoids a git/fs fixture entirely.
+
+  REVERT CHECKS, both measured, each run alone:
+    - literal reads restored          -> fails, the card is never listed
+    - guard back to `task.column === "in-progress"` -> fails, the renamed wip lane does not match, so the
+      sweep falls through to the no-action path
+  */
+  it("reclaims a self-owned branch conflict on a RENAMED wip lane, guard included", async () => {
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-SELFCONFLICT",
+      column: RENAMED_VOCAB.wip,
+      branch: "fusion/FN-SELFCONFLICT",
+      worktree: "/tmp/worktrees/FN-SELFCONFLICT",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isPhantomExecutorBinding = vi.fn(() => null);
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-SELFCONFLICT" }),
+      expect.anything(),
+    );
+  });
+
+  it("does not evaluate a phantom binding for a card sitting in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a guard matching every column would satisfy the case above. Same
+    board, same card, same stubs — only its lane changes, and the review lane must not take the wip path.
+    */
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-SELFCONFLICT",
+      column: RENAMED_VOCAB.review,
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      branch: "fusion/FN-SELFCONFLICT",
+      worktree: "/tmp/worktrees/FN-SELFCONFLICT",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isPhantomExecutorBinding = vi.fn(() => null);
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).not.toHaveBeenCalled();
+  });
 });
