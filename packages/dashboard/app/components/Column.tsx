@@ -12,7 +12,14 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import { isTaskAgentActive } from "../utils/taskActivity";
-import { isPreImplementationColumnRole } from "../utils/columnRoles";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isHoldColumnRole,
+  isPreImplementationColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+} from "../utils/columnRoles";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
@@ -307,13 +314,25 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     };
   }, [isMenuOpen]);
 
-  // Archived column is collapsed by default - don't show drag state when collapsed.
-  // Workflow mode keys off the resolved `archived` trait flag instead of the
-  // literal column id (R9). A hold-flagged column shows the promote affordance.
-  const isArchived = workflowMode ? Boolean(columnFlags?.archived) : column === "archived";
-  const isHoldColumn = workflowMode && Boolean(columnFlags?.hold);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — one role question, one answer):
+  The shared role helpers replace the `workflowMode ? trait : literal` ternaries.
+
+  They are NOT identical, and the difference is the point. `workflowMode` is a BOARD-level boolean
+  (`Boolean(boardWorkflows?.workflows.length)`) standing in for a PER-COLUMN question, so when the
+  board is in workflow mode but THIS column has no resolved traits — a column the workflow no longer
+  declares, which is exactly what a mid-flight workflow edit leaves behind — the old form answered
+  `false` for every role. Not "fall back to the id": no role at all, so the archive affordance, the
+  promote affordance and the bulk actions all silently vanished from that column.
+
+  The helpers ask per column and fall back to the legacy id only when the flags are genuinely absent,
+  which also covers the pre-load window the old form handled via `workflowMode === false`. Deliberate
+  behaviour change, documented rather than silent; covered by column-role-degraded-flags.test.ts.
+  */
+  const isArchived = isArchivedColumnRole(columnFlags, column);
+  const isHoldColumn = isHoldColumnRole(columnFlags, column);
   const isCollapsed = isArchived && collapsed;
-  const isWipProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
+  const isWipProcessingColumn = isWipColumnRole(columnFlags, column);
   const getTaskContextMenuColumns = useCallback((task: Task) => (
     taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
   ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
@@ -675,9 +694,9 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   // Bulk-action eligibility (R9): workflow mode keys off trait flags instead of
   // the literal column ids. Todo-equivalent = hold/intake (replan affordance);
   // processing = wip/countsTowardWip; review = mergeBlocker/humanReview.
-  const isTodoLikeColumn = workflowMode ? Boolean(columnFlags?.hold || columnFlags?.intake) : column === "todo";
-  const isProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
-  const isReviewColumn = workflowMode ? Boolean(columnFlags?.mergeBlocker || columnFlags?.humanReview) : column === "in-review";
+  const isTodoLikeColumn = isPreImplementationColumnRole(columnFlags, column);
+  const isProcessingColumn = isWipColumnRole(columnFlags, column);
+  const isReviewColumn = isReviewColumnRole(columnFlags, column);
   const hasColumnBulkActions = isTodoLikeColumn || isProcessingColumn || isReviewColumn;
   const isMenuBusy = isReplanning || isPausingAll || isMovingAllToTodo;
   const columnLabelText = workflowMode ? (columnDisplayName ?? COLUMN_LABELS[column] ?? column) : COLUMN_LABELS[column];
@@ -769,7 +788,9 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   FNXC:DoneColumnSorting 2026-06-29-20:23:
   In workflow mode, the Done-sort control belongs to non-archived complete lanes even when the workflow uses a custom column id such as `shipped`; legacy mode remains limited to the literal Done column.
   */
-  const isDoneSortColumn = workflowMode ? columnFlags?.complete === true && columnFlags?.archived !== true : column === "done";
+  /* Complete AND not archived: the archived lane is also "complete-ish" but must not carry the
+     Done-sort control, and that exclusion survives the move to the shared helper. */
+  const isDoneSortColumn = isCompleteColumnRole(columnFlags, column) && !isArchivedColumnRole(columnFlags, column);
   const showDoneSortControl = isDoneSortColumn && doneSortMode !== undefined && !!onDoneSortModeChange;
   const showDoneArchiveAction = isDoneSortColumn && !!onArchiveAllDone;
   /*
@@ -835,7 +856,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         >
           <span>{activeTaskCount}</span>/<span>{tasks.length}</span>
         </span>
-        {(workflowMode ? isReviewColumn : column === "in-review") && onToggleAutoMerge && (
+        {isReviewColumn && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
             {/*
             FNXC:AutoMergeA11y 2026-07-14-19:20:

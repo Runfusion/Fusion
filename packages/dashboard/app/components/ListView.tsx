@@ -8,7 +8,7 @@ import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, 
 import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { useColumnLabel } from "../i18n/labels";
-import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
+import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
@@ -313,17 +313,28 @@ interface ListViewProps {
 }
 
 
-function shouldShowTaskProgress(task: Task): boolean {
-  return task.status === "executing" || task.column === "in-progress";
+/**
+ * FNXC:WorkflowResolvedColumns 2026-07-31-00:10:
+ * The progress bar shows for an EXECUTING card or one resting in a wip lane.
+ *
+ * `flags` is threaded from the caller's per-column map. Keyed on the literal, a renamed wip column
+ * showed no progress bar for any card whose status had not yet flipped to `executing` — the row
+ * looked idle while an agent was working in it.
+ */
+function shouldShowTaskProgress(task: Task, flags?: Parameters<typeof isWipColumnRole>[0]): boolean {
+  return task.status === "executing" || isWipColumnRole(flags, task.column);
 }
 
-function getTaskProgress(task: Task): { label: string; percent: number; hasProgress: boolean } {
+function getTaskProgress(
+  task: Task,
+  columnFlags?: Parameters<typeof isWipColumnRole>[0],
+): { label: string; percent: number; hasProgress: boolean } {
   /*
   FNXC:TaskCardWorkflowProgress 2026-07-21-22:26:
   List progress for WIP matches TaskCard: only implementation steps, not Todo Plan Review or In-review Code Review gates.
   */
   const progress = getUnifiedTaskProgress(task, { scope: "implementation" });
-  if (progress.total === 0 || !shouldShowTaskProgress(task)) {
+  if (progress.total === 0 || !shouldShowTaskProgress(task, columnFlags)) {
     return { label: "-", percent: 0, hasProgress: false };
   }
 
@@ -869,13 +880,22 @@ export function ListView({
     return isIntakeColumnRole(columnFlagsById.get(task.column), task.column);
   }, [columnFlagsById]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:10 (fleet — same change as Column.tsx):
+  `workflowMode` is a BOARD-level boolean answering a PER-COLUMN question. In workflow mode with a
+  column that has no resolved traits, the old form returned false for every role rather than falling
+  back to the id — so the archive and revert affordances silently vanished for a card sitting in a
+  column its workflow no longer declares. The shared helpers ask per column and degrade to the
+  legacy id only when the flags are truly absent, which also covers the pre-load window the old form
+  handled via `workflowMode === false`.
+  */
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
-    return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
-  }, [columnFlagsById, workflowMode]);
+    return isArchivedColumnRole(columnFlagsById.get(column), column);
+  }, [columnFlagsById]);
 
   const isCompleteColumn = useCallback((column: ColumnId): boolean => {
-    return workflowMode ? Boolean(columnFlagsById.get(column)?.complete) : column === "done";
-  }, [columnFlagsById, workflowMode]);
+    return isCompleteColumnRole(columnFlagsById.get(column), column);
+  }, [columnFlagsById]);
 
   const selectedWorkflowTaskIds = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow || isAllWorkflowsSelected) return null;
@@ -2096,7 +2116,7 @@ export function ListView({
     });
 
     const actions = [...model.actions];
-    if (task.column === "done" && onArchiveTask) {
+    if (isCompleteColumn(task.column) && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
     }
     /*
@@ -2105,7 +2125,7 @@ export function ListView({
     entry above. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if ((task.column === "done" || task.column === "archived") && onRevertTask) {
+    if ((isCompleteColumn(task.column) || isArchivedColumn(task.column)) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
@@ -2984,7 +3004,7 @@ export function ListView({
                               ? t("tasks.statusPlanning", "Planning")
                               : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
-                          const taskProgress = getTaskProgress(task);
+                          const taskProgress = getTaskProgress(task, columnFlagsById.get(task.column));
                           const hasProgress = taskProgress.hasProgress;
                           const isSelectionMode = bulkEditEnabled;
 
@@ -3373,7 +3393,7 @@ export function ListView({
                                 {visibleColumns.has("progress") && (
                                   <td className="list-cell list-cell-progress">
                                     {(() => {
-                                      const taskProgress = getTaskProgress(task);
+                                      const taskProgress = getTaskProgress(task, columnFlagsById.get(task.column));
                                       if (!taskProgress.hasProgress) return "-";
                                       return (
                                         <div className="list-progress">
