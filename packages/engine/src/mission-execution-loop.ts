@@ -25,7 +25,9 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
-import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription } from "@fusion/core";
+import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
+  resolveTaskLifecycleColumns,
+} from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type VerificationOutcome } from "./mission-verification.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -318,7 +320,13 @@ export class MissionExecutionLoop extends EventEmitter {
                   // If the feature has a linked task that's already done, re-trigger validation
                   if (feature.taskId) {
                     const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                    if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                    const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                       await this.processTaskOutcome(feature.taskId);
                     }
                   }
@@ -335,7 +343,13 @@ export class MissionExecutionLoop extends EventEmitter {
                 if (feature.taskId) {
                   try {
                     const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                    if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                    const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                       await this.processTaskOutcome(feature.taskId);
                     }
                     recoveredCount++;
@@ -361,7 +375,13 @@ export class MissionExecutionLoop extends EventEmitter {
 
                 try {
                   const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                  if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                  const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                     loopLog.log(`Recovery: re-triggering implementing feature ${feature.id} from completed task ${feature.taskId}`);
                     await this.processTaskOutcome(feature.taskId);
                     recoveredCount++;
@@ -665,7 +685,12 @@ export class MissionExecutionLoop extends EventEmitter {
     if (!taskId) return null;
     const linkedTask = await this.taskStore.getTask(taskId).catch(() => null);
     const column = linkedTask?.column;
-    if (!column || column === "done" || column === "archived") return null;
+    const premergeLifecycle = linkedTask ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id) : undefined;
+    if (
+      !column
+      || column === (premergeLifecycle?.complete ?? "done")
+      || column === (premergeLifecycle?.archived ?? "archived")
+    ) return null;
     return column;
   }
 
