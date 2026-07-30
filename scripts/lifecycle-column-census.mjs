@@ -154,9 +154,33 @@ if (compare) {
   console.log(`\n  text classifier:  ${JSON.stringify(text.totals)}`);
   console.log(`  AST classifier:   ${JSON.stringify(summary.totals)}`);
 
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-13:05 (PR #2682 review — greptile):
+  A SITE KEY CAN REPEAT ON ONE LINE, so this counts occurrences instead of testing set membership.
+  `from === "todo" || to === "todo"` yields TWO findings sharing file:line:columnId; keyed by a Set,
+  one parser match would satisfy both regex findings and hide a genuine miss of the other. Receiver
+  is deliberately NOT part of the key — `c === "todo" || c === "todo"` would collapse again — so the
+  comparison is per-key COUNTS, which cannot be fooled by either shape.
+  */
   const siteKey = (f) => `${f.file}:${f.line}:${f.columnId}`;
-  const astSites = new Map(findings.map((f) => [siteKey(f), f]));
-  const missed = textFindings.filter((f) => !astSites.has(siteKey(f)));
+  const astByKey = new Map();
+  for (const f of findings) {
+    const list = astByKey.get(siteKey(f)) ?? [];
+    list.push(f);
+    astByKey.set(siteKey(f), list);
+  }
+  const textByKey = new Map();
+  for (const f of textFindings) {
+    const list = textByKey.get(siteKey(f)) ?? [];
+    list.push(f);
+    textByKey.set(siteKey(f), list);
+  }
+
+  const missed = [];
+  for (const [key, list] of textByKey) {
+    const shortfall = list.length - (astByKey.get(key)?.length ?? 0);
+    for (let i = 0; i < shortfall; i += 1) missed.push(list[i]);
+  }
 
   if (missed.length > 0) {
     console.error(
@@ -168,18 +192,24 @@ if (compare) {
   }
 
   /* Reclassifications are expected and are the parser's value-add, so they are reported, not failed. */
-  const reclassified = textFindings.filter(
-    (f) => f.kind === "column" && astSites.get(siteKey(f)).kind !== "column",
-  );
-  const byKind = reclassified.reduce((acc, f) => {
-    const kind = astSites.get(siteKey(f)).kind;
-    acc[kind] = (acc[kind] ?? 0) + 1;
-    return acc;
-  }, {});
-  const parserOnly = findings.filter((f) => !textFindings.some((t) => siteKey(t) === siteKey(f)));
-  console.log(`  parser sees every site the regex does (+${parserOnly.length} sites the regex cannot see).`);
-  if (reclassified.length > 0) {
-    console.log(`  ${reclassified.length} the regex calls a column guard, the parser classifies as ${JSON.stringify(byKind)}.`);
+  const byKind = {};
+  let reclassifiedCount = 0;
+  for (const [key, list] of textByKey) {
+    /* Pair occurrences positionally within a key; equal counts are guaranteed by the miss check above. */
+    const astList = astByKey.get(key) ?? [];
+    list.forEach((f, i) => {
+      const kind = astList[i]?.kind;
+      if (f.kind === "column" && kind !== undefined && kind !== "column") {
+        byKind[kind] = (byKind[kind] ?? 0) + 1;
+        reclassifiedCount += 1;
+      }
+    });
+  }
+  let parserOnly = 0;
+  for (const [key, list] of astByKey) parserOnly += Math.max(0, list.length - (textByKey.get(key)?.length ?? 0));
+  console.log(`  parser sees every site the regex does (+${parserOnly} sites the regex cannot see).`);
+  if (reclassifiedCount > 0) {
+    console.log(`  ${reclassifiedCount} the regex calls a column guard, the parser classifies as ${JSON.stringify(byKind)}.`);
   }
 }
 
