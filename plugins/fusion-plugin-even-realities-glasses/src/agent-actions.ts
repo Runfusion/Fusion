@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import { GlassesInputError } from "./quick-capture.js";
 
@@ -63,9 +63,30 @@ async function resolveLanes(
   }
 }
 
-/** Every column id the workflow assigns to a role. */
-function declaredIds(lanes?: Lanes): Set<string> {
-  return new Set(Object.values(lanes ?? {}).filter((v): v is string => typeof v === "string"));
+/**
+ * Every column id the workflow DECLARES.
+ *
+ * FNXC:PluginLifecycleColumns 2026-07-30-07:10 (PR #2607 review, second P1):
+ * Read from the IR, not from the six resolved roles. A column whose traits map to no
+ * role is invisible to a role-only set — which is how a workflow declaring an inert
+ * column named `todo` had it claimed as a planning lane. The previous revision noted
+ * that as a limitation; the IR is reachable from here, so it is closed instead.
+ */
+async function declaredColumnIds(
+  taskStore: AgentActionDeps["taskStore"],
+  taskId: string,
+  lanes: Lanes | undefined,
+): Promise<Set<string>> {
+  const ids = new Set(Object.values(lanes ?? {}).filter((v): v is string => typeof v === "string"));
+  try {
+    const ir = await resolveWorkflowIrForTask(taskStore as never, taskId);
+    for (const c of (ir as { columns?: Array<{ id?: unknown }> }).columns ?? []) {
+      if (typeof c?.id === "string") ids.add(c.id);
+    }
+  } catch {
+    /* narrowed store cannot resolve — role ids are all we have */
+  }
+  return ids;
 }
 
 /**
@@ -79,17 +100,52 @@ function declaredIds(lanes?: Lanes): Set<string> {
  * lane set, which is why `resolveLanes` returns all of it rather than intake/hold only;
  * the earlier version could not express this and said so as a known limitation.
  */
-function isInPlanningLane(lanes: Lanes | undefined, column: string): boolean {
+function isInPlanningLane(lanes: Lanes | undefined, column: string, declared: Set<string>): boolean {
   if (column === lanes?.intake || column === lanes?.hold) return true;
-  return LEGACY_PLANNING_IDS.has(column) && !declaredIds(lanes).has(column);
+  return LEGACY_PLANNING_IDS.has(column) && !declared.has(column);
 }
 
-/** A move target from the resolved role, falling back to the legacy id ONLY when the
- *  workflow declares no such role — never over a column it assigned elsewhere. */
-function destination(lanes: Lanes | undefined, role: keyof typeof LEGACY_DESTINATIONS): string {
-  return lanes?.[role] ?? LEGACY_DESTINATIONS[role];
+/**
+ * A move target from the resolved role.
+ *
+ * FNXC:PluginLifecycleColumns 2026-07-30-07:10 (PR #2607 review, second P1 — greptile):
+ * Returns `undefined` rather than substituting a legacy id the workflow DOES NOT
+ * DECLARE. The previous version fell back unconditionally, so a valid custom workflow
+ * that simply omits the role had `moveTask` called with `todo`/`in-progress` — a column
+ * that does not exist on that board. The action then either threw or parked the card
+ * somewhere nothing renders it, which is the R7 failure this whole conversion removes,
+ * reintroduced by the fallback meant to be conservative.
+ *
+ * The legacy id is used only when the workflow genuinely DECLARES it, which is the
+ * migration case (a pre-U11 board still carrying `todo`). Otherwise the caller must
+ * refuse — an action with nowhere legitimate to move the card has not been configured
+ * for this workflow, and saying so beats guessing.
+ */
+function destination(
+  lanes: Lanes | undefined,
+  role: keyof typeof LEGACY_DESTINATIONS,
+  declared: Set<string>,
+): string | undefined {
+  const resolved = lanes?.[role];
+  if (resolved) return resolved;
+  const legacy = LEGACY_DESTINATIONS[role];
+  return declared.has(legacy) ? legacy : undefined;
 }
 
+
+/**
+ * FNXC:PluginLifecycleColumns 2026-07-30-07:14: one resolve per action. Both the gate
+ * (is the card in a planning lane?) and the destination (where does it go?) need the
+ * SAME declared-column set — resolving them separately is how the two halves drifted
+ * out of agreement in the first place (PR #2607: gates converted, destinations literal).
+ */
+async function laneContext(
+  taskStore: AgentActionDeps["taskStore"],
+  taskId: string,
+): Promise<{ lanes: Lanes | undefined; declared: Set<string> }> {
+  const lanes = await resolveLanes(taskStore, taskId);
+  return { lanes, declared: await declaredColumnIds(taskStore, taskId, lanes) };
+}
 
 type AgentActionResult = {
   task: TaskRecord;
@@ -127,12 +183,17 @@ async function toResult(taskStore: PluginContext["taskStore"], taskId: string): 
 export async function startWork(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  const startLanes = await resolveLanes(deps.taskStore, taskId);
-  if (!isInPlanningLane(startLanes, String(task.column)) || START_WORK_BLOCKED_STATUSES.has(String(task.status))) {
+  const { lanes: startLanes, declared: startDeclared } = await laneContext(deps.taskStore, taskId);
+  if (
+    !isInPlanningLane(startLanes, String(task.column), startDeclared)
+    || START_WORK_BLOCKED_STATUSES.has(String(task.status))
+  ) {
     conflict("start-work", task);
   }
+  const startTarget = destination(startLanes, "wip", startDeclared);
+  if (!startTarget) conflict("start-work", task);
   // Intentional v1 limitation: plugin cannot import engine allocator, so moveTask runs without allocateWorktree.
-  await deps.taskStore.moveTask(taskId, destination(startLanes, "wip"));
+  await deps.taskStore.moveTask(taskId, startTarget);
   return toResult(deps.taskStore, taskId);
 }
 
@@ -149,11 +210,16 @@ export async function requestReview(input: AgentActionInput, deps: AgentActionDe
 export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  const approveLanes = await resolveLanes(deps.taskStore, taskId);
-  if (!isInPlanningLane(approveLanes, String(task.column)) || task.status !== "awaiting-approval") {
+  const { lanes: approveLanes, declared: approveDeclared } = await laneContext(deps.taskStore, taskId);
+  if (
+    !isInPlanningLane(approveLanes, String(task.column), approveDeclared)
+    || task.status !== "awaiting-approval"
+  ) {
     conflict("approve-plan", task);
   }
-  await deps.taskStore.moveTask(taskId, destination(approveLanes, "hold"));
+  const approveTarget = destination(approveLanes, "hold", approveDeclared);
+  if (!approveTarget) conflict("approve-plan", task);
+  await deps.taskStore.moveTask(taskId, approveTarget);
   await deps.taskStore.updateTask(taskId, { status: undefined });
   return toResult(deps.taskStore, taskId);
 }
@@ -192,9 +258,9 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
     return toResult(deps.taskStore, taskId);
   }
 
-  const retryLanes = await resolveLanes(deps.taskStore, taskId);
+  const { lanes: retryLanes, declared: retryDeclared } = await laneContext(deps.taskStore, taskId);
   if (
-    isInPlanningLane(retryLanes, String(task.column)) &&
+    isInPlanningLane(retryLanes, String(task.column), retryDeclared) &&
     (RETRYABLE_TRIAGE_STATUSES.has(String(task.status)) || (typeof task.stuckKillCount === "number" && task.stuckKillCount > 0))
   ) {
     // Intentional v1 limitation: does not delete on-disk PROMPT.md or run dashboard step-reset/branch-inspection logic.

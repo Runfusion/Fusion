@@ -336,11 +336,10 @@ const todoIsReviewIr = {
     back undefined, `declaredIds` did not contain `todo`, and the legacy acceptance
     applied — the test failed and was RIGHT to.
 
-    RESIDUAL LIMITATION, recorded rather than papered over: the scoping is only as
-    strong as the roles the resolver returns. A workflow that assigns `todo` to a
-    column whose traits map to NO role is still invisible to `declaredIds`, so the
-    legacy acceptance would authorize it. Closing that needs the resolver to report
-    every declared column, not six roles — a core change, not a plugin one.
+    (That gap — a column whose traits map to no role being invisible to a role-only
+    check — is CLOSED below by reading the IR's declared column ids directly. It did not
+    need a core change after all; it needed me to read an input that was already in
+    reach. See "a declared column is declared even when it carries no role".)
     */
     { id: "todo", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }] },
     { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
@@ -388,5 +387,108 @@ describe("resolved lanes drive destinations, not just gates", () => {
 
     await expect(startWork({ taskId: "FN-1" }, deps as never)).resolves.toBeTruthy();
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+});
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-07:20 (PR #2607 review, second P1 — greptile):
+
+TWO THINGS THE ROLE-ONLY VERSION GOT WRONG, both of which I had written down as
+limitations rather than fixed. Recording a gap you can close is just a nicer way of
+leaving it open.
+
+  1. A DECLARED COLUMN IS DECLARED EVEN WHEN IT CARRIES NO ROLE. Building the
+     declared set from the six resolved roles left a trait-less column named `todo`
+     invisible, so the legacy acceptance claimed it as a planning lane and `startWork`
+     would pull a card out of it. The IR lists its own columns; read that instead.
+
+  2. A MISSING ROLE IS NOT A LICENCE TO INVENT A COLUMN. `destination` fell back to
+     `todo`/`in-progress` unconditionally, so a valid workflow that simply omits the
+     role had `moveTask` called with a column that does not exist on that board. An
+     action with nowhere legitimate to send the card is not configured for this
+     workflow; 409 says that, a move to a phantom column does not.
+*/
+/** A column named with a legacy id but carrying NO lifecycle trait. Legal, and not planning. */
+const inertTodoIr = {
+  version: "v2", id: "wf-custom", name: "inert-todo", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "todo", name: "Parking", traits: [] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+/** A workflow with NO wip lane at all — nowhere for `startWork` to legitimately send a card. */
+const noWipIr = {
+  version: "v2", id: "wf-custom", name: "no-wip", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+describe("a declared column is declared even when it carries no role", () => {
+  it("refuses start-work on an inert column named `todo`", async () => {
+    // Pre-fix: `todo` was absent from the role-derived set, the legacy acceptance
+    // applied, and the card was pulled out of the operator's parking column.
+    const deps = createResolvingDeps(makeTask({ id: "FN-1", column: "todo", status: null }), inertTodoIr);
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still admits the workflow's REAL planning column", async () => {
+    // The other half of the pair: "never a planning lane" must not be able to pass
+    // for "reads the IR".
+    const deps = createResolvingDeps(makeTask({ id: "FN-2", column: "backlog", status: null }), inertTodoIr);
+
+    await startWork({ taskId: "FN-2" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-2", "building");
+  });
+});
+
+describe("a missing destination role conflicts instead of inventing a column", () => {
+  it("refuses start-work when the workflow declares no wip lane", async () => {
+    // Pre-fix: moved to the literal `in-progress`, which this workflow does not declare.
+    const deps = createResolvingDeps(makeTask({ id: "FN-3", column: "backlog", status: null }), noWipIr);
+
+    await expect(startWork({ taskId: "FN-3" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses approve-plan when the workflow declares no hold lane", async () => {
+    const holdlessIr = {
+      version: "v2", id: "wf-custom", name: "no-hold", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Planning", traits: [{ trait: "intake" }] },
+        { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const deps = createResolvingDeps(makeTask({ id: "FN-4", column: "backlog", status: "awaiting-approval" }), holdlessIr);
+
+    await expect(approvePlan({ taskId: "FN-4" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("STILL uses the legacy id when the workflow genuinely declares it (migration window)", async () => {
+    // The fallback is not deleted, it is scoped: a pre-U11 board really does have
+    // `todo`, and refusing there would break the migration this program is mid-way
+    // through. `todo` here carries the hold trait, so it is a real destination.
+    const migrationIr = {
+      version: "v2", id: "wf-custom", name: "pre-u11", nodes: [], edges: [],
+      columns: [
+        { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+        { id: "todo", name: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      ],
+    };
+    const deps = createResolvingDeps(makeTask({ id: "FN-5", column: "triage", status: "awaiting-approval" }), migrationIr);
+
+    await approvePlan({ taskId: "FN-5" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-5", "todo");
   });
 });
