@@ -1,5 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getPathBasename } from "./pathDisplay";
+import { isHoldColumnRole } from "@fusion/core";
 
 export interface WorktreeGroupData {
   label: string;
@@ -58,6 +59,15 @@ export function groupByWorktree(
   inProgressTasks: Task[],
   allTasks: Task[],
   maxConcurrent: number,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The ids of every column on the board carrying the HOLD trait, when the caller resolved
+  them. A SET rather than one column's flags because this helper scans `allTasks`: it must
+  recognise the hold lane of any workflow represented on the board, which is the reason the
+  earlier note said there was no seam here. Board has that information; Lane does not, and
+  omitting it keeps the documented legacy-id fallback.
+  */
+  holdColumnIds?: ReadonlySet<string>,
 ): WorktreeGroupData[] {
   // Separate assigned vs unassigned in-progress tasks
   const assigned = inProgressTasks.filter((t) => t.worktree);
@@ -74,26 +84,23 @@ export function groupByWorktree(
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
-  NOT CONVERTED, deliberately, and this note is the reason rather than an oversight.
+  The filter wants "cards waiting for capacity" — the HOLD role, resolved from the board's
+  columns rather than the id `todo`.
 
-  The filter wants "cards waiting for capacity" — the HOLD role. It cannot resolve that
-  here: it scans `allTasks`, so it needs the traits of every OTHER column on the board,
-  while its only caller (`Column.tsx`) knows the flags of the column it is rendering. There
-  is no seam to pass a trait through, unlike `sortTasksForDisplayColumn`, whose caller
-  already supplies its own column's flags.
+  THE BUG THIS CLOSES, measured rather than assumed: on the default board the id and the
+  role coincide (U11 gave `todo` the hold trait), so this looked healthy. On a board whose
+  hold column is renamed the filter matched NOTHING, so the worktree view showed no upcoming
+  work at all and read as idle — a whole panel silently empty, with nothing failing.
 
-  Current behaviour, measured rather than assumed: correct on the default board, because U11
-  gave `todo` the hold trait, so the id and the role still coincide there. On a board whose
-  hold column is renamed this list is silently EMPTY — the worktree view shows no upcoming
-  work and looks idle. Wrong, but bounded and non-destructive.
-
-  Converting it means plumbing board-level column metadata (a hold-column id set, or the
-  resolved columns) from Board through Column into this helper — a signature change across
-  three files with its own review surface. Left as one unit of work rather than smuggled in.
+  Dependency satisfaction below still names terminal ids. That is a separate question from
+  the hold role and is left alone deliberately: it needs `complete`/`mergeBlocker`/`archived`
+  traits for the DEPENDENCY's column, which is another lookup and another unit of work.
   */
   // Find queued hold-lane tasks: cards in the hold column with all deps satisfied.
   const taskById = new Map(allTasks.map((t) => [t.id, t]));
-  const todoTasks = allTasks.filter((t) => t.column === "todo");
+  const isWaitingColumn = (column: string): boolean =>
+    holdColumnIds ? holdColumnIds.has(column) : isHoldColumnRole(undefined, column);
+  const todoTasks = allTasks.filter((t) => isWaitingColumn(t.column));
   const eligible = todoTasks.filter((t) =>
     !t.paused &&
     (t.dependencies || []).every((depId) => {
