@@ -75,12 +75,31 @@ export async function recordBranchGroupMemberLandedImpl(store: TaskStore,
     });
 }
 
-export function areAllDependenciesDoneImpl(store: TaskStore, dependencies: string[], tasksById: Map<string, Task>): boolean {
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-17:45 (fleet — the SAME "satisfied" answer as #2720):
+A DEPENDENCY IS SATISFIED IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived), unioned with the legacy
+ids. This is the third place that question is asked, and it now gives the same answer as the store's
+`blockedBy` computation (#2720) and the merge blocker — three surfaces, one rule, which is the whole reason
+I refused to settle it inside a vocabulary sweep the first two times it came up.
+
+Injected: this helper takes a pre-loaded map of dependency rows (it is used inside batch passes), so the
+caller resolves lanes once for the batch rather than once per dependency.
+*/
+export function areAllDependenciesDoneImpl(
+  store: TaskStore,
+  dependencies: string[],
+  tasksById: Map<string, Task>,
+  satisfiedColumns?: ReadonlySet<string>,
+): boolean {
+    const satisfied = satisfiedColumns ?? LEGACY_SATISFIED_COLUMNS;
     return dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
-      return dependency?.column === "done" || dependency?.column === "archived";
+      return dependency !== undefined && satisfied.has(dependency.column);
     });
 }
+
+/** The satisfied ids from before workflows owned the vocabulary. */
+const LEGACY_SATISFIED_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     moveSource: NonNullable<MoveTaskOptions["moveSource"]>,
@@ -140,6 +159,19 @@ params: {
   }): boolean {
     if (params.bypassGuards) return true;
     if (params.options?.recoveryRehome === true) return true;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-17:55 (fleet):
+    THE HARD-CANCEL SHAPE — a USER dragging a card from the wip lane back to the hold lane — is what
+    AGENTS.md's Move-Task contract calls a hard cancel, and it is the one move allowed to bypass workflow
+    transition guards. Spelled as literals, the bypass never applied on a renamed board: the operator's drag
+    was rejected by the transition validator, so a card could not be cancelled from the board at all.
+
+    FLAGGED, NOT CONVERTED: this function is SYNCHRONOUS and receives only column strings — no task id, no
+    store — so there is nothing to resolve from and no caller-injected set today. Converting it means adding
+    lanes to `MoveTaskOptions` (the moves path already resolves them; see moves.ts) and threading them here.
+    That is a moves-path change, and moves.ts is owned by another worker's PR, so this is a deliberate hand-off
+    rather than a literal nobody noticed. DELIBERATE-LITERAL until the moves path passes its snapshot down.
+    */
     return params.moveSource === "user" && params.fromColumn === "in-progress" && params.toColumn === "todo";
 }
 

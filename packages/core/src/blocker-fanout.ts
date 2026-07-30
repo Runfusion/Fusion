@@ -80,15 +80,37 @@ interface MutableEntry {
   overlapBlockedTodoCount: number;
 }
 
-export function isStaleBlockedByBlocker(blocker: Task | undefined, maxAutoMergeRetries: number): boolean {
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-17:35 (fleet: the pure lifecycle predicates):
+"IS THIS BLOCKER STALE?" — i.e. may the blocked card stop waiting on it. Three lifecycle questions in four
+lines: the blocker is finished, or it is parked in review, or it is a review row that exhausted its merge
+retries. All three were the default lineage's ids.
+
+On a renamed board every one answered NO, so a blocked card kept waiting on a blocker that was done, paused
+in review, or permanently failed — waiting forever, with no signal, because "not stale" is the silent answer.
+
+Injected rather than resolved: this module is pure and its callers already hold the blocker row. The optional
+set defaults to the legacy ids so no existing caller changes behaviour.
+*/
+export function isStaleBlockedByBlocker(
+  blocker: Task | undefined,
+  maxAutoMergeRetries: number,
+  lanes?: { terminal?: ReadonlySet<string>; review?: ReadonlySet<string> },
+): boolean {
   if (!blocker) return true;
-  if (blocker.column === "done" || blocker.column === "archived") return true;
-  if (blocker.column === "in-review" && blocker.paused === true) return true;
-  if (blocker.column === "in-review" && blocker.status === "failed" && (blocker.mergeRetries ?? 0) >= maxAutoMergeRetries) {
+  const terminal = lanes?.terminal ?? LEGACY_TERMINAL_COLUMNS;
+  const review = lanes?.review ?? LEGACY_REVIEW_COLUMNS;
+  if (terminal.has(blocker.column)) return true;
+  if (review.has(blocker.column) && blocker.paused === true) return true;
+  if (review.has(blocker.column) && blocker.status === "failed" && (blocker.mergeRetries ?? 0) >= maxAutoMergeRetries) {
     return true;
   }
   return false;
 }
+
+/** The ids from before workflows owned the vocabulary; the fallback when a caller supplies no lanes. */
+const LEGACY_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
+const LEGACY_REVIEW_COLUMNS: ReadonlySet<string> = new Set(["in-review"]);
 
 function getBlockingAgeMs(blocker: Task, nowMs: number): number {
   const startedAt = Date.parse(blocker.columnMovedAt ?? blocker.updatedAt);

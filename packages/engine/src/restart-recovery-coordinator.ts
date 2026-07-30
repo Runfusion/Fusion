@@ -66,16 +66,34 @@ export function extractMissingWorktreePathFromSessionStartFailure(error: unknown
   return pathPart.length > 0 ? pathPart : null;
 }
 
-export function isRecoverableMissingWorktreeReviewFailureWithProgress(task: Task): boolean {
-  return task.column === "in-review"
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-18:20 (fleet: the missing-worktree recovery classifiers):
+THE REVIEW LANE ARRIVES FROM THE CALLER, matching the contract added to
+`isInReviewMissingWorktreeSessionStartFailure` in #2728 — this module is pure and synchronous by design
+(the classifiers are combined in chains) and every caller either holds a store or already resolved the lane.
+
+These three decide whether a review row stranded by an unusable-worktree session start is RECOVERABLE. As
+literals they answered NO on every renamed board, so the recovery never ran and the row stayed parked failed
+for a human — the exact operator-action park these paths were written to avoid.
+
+Optional, defaulting to the legacy id, so no existing caller or test changes behaviour.
+*/
+export function isRecoverableMissingWorktreeReviewFailureWithProgress(
+  task: Task,
+  reviewColumns?: ReadonlySet<string>,
+): boolean {
+  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && task.status === "failed"
     && isMissingWorktreeSessionStartFailure(task.error)
     && hasStepProgress(task);
 }
 
-export function isRecoverableMissingWorktreeReviewFailureNoProgress(task: Task): boolean {
-  return task.column === "in-review"
+export function isRecoverableMissingWorktreeReviewFailureNoProgress(
+  task: Task,
+  reviewColumns?: ReadonlySet<string>,
+): boolean {
+  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && task.status === "failed"
     && isMissingWorktreeSessionStartFailure(task.error)
@@ -85,8 +103,11 @@ export function isRecoverableMissingWorktreeReviewFailureNoProgress(task: Task):
 export const MERGE_ACTIVE_MISSING_WORKTREE_STATUSES = ["merging", "merging-pr", "merging-fix"] as const;
 const MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET = new Set<string>(MERGE_ACTIVE_MISSING_WORKTREE_STATUSES);
 
-export function isMergeActiveMissingWorktreeSessionStartFailure(task: Task): boolean {
-  return task.column === "in-review"
+export function isMergeActiveMissingWorktreeSessionStartFailure(
+  task: Task,
+  reviewColumns?: ReadonlySet<string>,
+): boolean {
+  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
     && !task.paused
     && typeof task.status === "string"
     && MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET.has(task.status)
@@ -115,10 +136,15 @@ export function isInReviewMissingWorktreeSessionStartFailure(
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 
-export function isRecoverableMissingWorktreeReviewFailure(task: Task): boolean {
-  return isRecoverableMissingWorktreeReviewFailureWithProgress(task)
-    || isRecoverableMissingWorktreeReviewFailureNoProgress(task)
-    || isMergeActiveMissingWorktreeSessionStartFailure(task);
+export function isRecoverableMissingWorktreeReviewFailure(
+  task: Task,
+  reviewColumns?: ReadonlySet<string>,
+): boolean {
+  /* The combiner threads the set to all three, so a caller cannot convert the outer question and leave one
+     of the three inner ones on the legacy id — the half-conversion shape this program keeps finding. */
+  return isRecoverableMissingWorktreeReviewFailureWithProgress(task, reviewColumns)
+    || isRecoverableMissingWorktreeReviewFailureNoProgress(task, reviewColumns)
+    || isMergeActiveMissingWorktreeSessionStartFailure(task, reviewColumns);
 }
 
 export class RestartRecoveryCoordinator {
@@ -128,6 +154,17 @@ export class RestartRecoveryCoordinator {
   ) {}
 
   async recoverInterruptedRuns(): Promise<void> {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-18:30 (fleet — FLAGGED as the QUERY class, not converted):
+    The live filter here is the `listTasks({ column: "in-progress" })` QUERY, not the `.filter` below it: the
+    query has already restricted the rows, so the predicate is a redundant re-assertion of the same literal.
+    Converting the filter alone would drop the census count by one and change nothing an operator sees — the
+    board's wip-lane rows still would not be listed, because the QUERY never asked for them.
+
+    Query filters are the class the census tracks separately, and fixing them needs a project-level lane
+    resolution before the read (there is no task to resolve from yet). Same shape as `executor.ts`'s
+    in-progress sweep and `server.ts`'s reliability counts, both flagged in earlier fleet PRs.
+    */
     const allInProgress = await this.store.listTasks({ slim: true, column: "in-progress" });
     const candidates = allInProgress.filter((task) => task.column === "in-progress" && !task.paused);
 
