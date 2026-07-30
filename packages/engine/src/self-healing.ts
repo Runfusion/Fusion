@@ -1085,7 +1085,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   */
   private isWorkspaceOwnerLive(owner: Task | null | undefined): boolean {
     if (!owner) return false; // not found / deleted → terminal.
-    if (owner.column === "done") return false;
+    if (this.resolveMoveLanesSync(owner.id).complete.has(owner.column)) return false;
     if (owner.status === "failed") return false;
     return true;
   }
@@ -1352,7 +1352,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     return {
-      phantom: task.column === "in-progress"
+      phantom: this.resolveMoveLanesSync(task.id).wip.has(task.column)
         && worktreeExists
         && options.executionAgeMs !== null
         && options.executionAgeMs > safeAgeMs
@@ -4412,7 +4412,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!derivedTaskId) continue;
 
         const task = taskById.get(derivedTaskId.toUpperCase());
-        if (!task || task.column === "archived" || task.checkedOutBy || task.userPaused) continue;
+        if (!task || this.resolveMoveLanesSync(task.id).archived.has(task.column) || task.checkedOutBy || task.userPaused) continue;
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.debug(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;
@@ -5259,7 +5259,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
     const reboundedIds: string[] = [];
     for (const task of tasks) {
-      if (task.column !== "in-progress" || task.paused !== true) continue;
+      if (!this.resolveMoveLanesSync(task.id).wip.has(task.column) || task.paused !== true) continue;
       if (SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS.has(task.pausedReason ?? "")) continue;
       const followerCount = followersByHolder.get(task.id) ?? 0;
       if (followerCount <= 0) continue;
@@ -5974,7 +5974,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           deadlockEvidence = "stale-overlap-blocker";
           break;
         }
-        if (dependency.column !== "todo") continue;
+        if (!this.resolveMoveLanesSync(dependency.id).hold.has(dependency.column)) continue;
         const dependencyScope = await getFilteredFileScope(dependency.id);
         if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
         if (pathsOverlap(holderScope, dependencyScope)) {
@@ -6096,7 +6096,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== "todo") continue;
+      if (!this.resolveMoveLanesSync(snapshot.id).hold.has(snapshot.column)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -6194,7 +6194,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let recovered = 0;
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.deletedAt) continue;
+      if (!this.resolveMoveLanesSync(task.id).review.has(task.column) || task.deletedAt) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
@@ -10342,7 +10342,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== "in-review") return false;
+    if (!this.resolveMoveLanesSync(task.id).review.has(task.column)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -11757,7 +11757,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!linkedTask) {
         shouldClear = true;
         reason = "linked task missing";
-      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+      } else if (
+          /* FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (batch-engine): the LINKED task's own workflow —
+             an agent may be bound to a card in another workflow entirely. */
+          this.resolveMoveLanesSync(linkedTask.id).complete.has(linkedTask.column)
+          || this.resolveMoveLanesSync(linkedTask.id).archived.has(linkedTask.column)
+        ) {
         shouldClear = true;
         reason = `linked task in terminal column ${linkedTask.column}`;
       } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
@@ -12863,7 +12868,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === "todo" &&
+          this.resolveMoveLanesSync(peer.id).hold.has(peer.column) &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -12884,7 +12889,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === "todo" &&
+            this.resolveMoveLanesSync(peer.id).hold.has(peer.column) &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
@@ -13314,7 +13319,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (task.column === "done" || task.column === "archived") {
+                if (
+              /* FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (batch-engine): terminal by role, so a stale
+                 temp merge worktree is reclaimed on a renamed board too. */
+              this.resolveMoveLanesSync(task.id).complete.has(task.column)
+              || this.resolveMoveLanesSync(task.id).archived.has(task.column)
+            ) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }
