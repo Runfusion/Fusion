@@ -99,7 +99,7 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
 
     const offenders: string[] = [];
     for (const file of files) {
-      const src = stripLineAndBlockComments(readFileSync(resolve(root, file), "utf-8"));
+      const src = await stripComments(readFileSync(resolve(root, file), "utf-8"));
       if (!src.includes("maxWorktrees")) continue;
       for (const line of src.split("\n")) {
         if (!line.includes("maxWorktrees")) continue;
@@ -122,7 +122,7 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     // The allowlist must not rot into a list of files that no longer bound anything: a stale entry
     // would let a real new bound hide behind an audited name.
     for (const file of Object.keys(AUDITED_BOUNDS)) {
-      const src = stripLineAndBlockComments(readFileSync(resolve(root, file), "utf-8"));
+      const src = await stripComments(readFileSync(resolve(root, file), "utf-8"));
       expect(src, `${file} no longer bounds on maxWorktrees — drop its AUDITED_BOUNDS entry`).toContain("maxWorktrees");
     }
   });
@@ -143,7 +143,19 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
   });
 });
 
-/** Strip comments so prose describing a bound is not mistaken for one. */
-function stripLineAndBlockComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+/*
+FNXC:CapacityModel 2026-07-30-04:40 (coderabbit #2623):
+Uses the CENSUS's stripper rather than a local copy. The local one was
+`replace(/^\s*\/\/.*$/gm, " ")`, which only matches a comment occupying a WHOLE line — a trailing
+`foo(); // maxWorktrees * 2` survived, so its prose could trip the unaudited-bound check as a false
+positive on a file with no raw bounding code at all. A ratchet that fires on prose gets muted.
+
+Two copies of "strip comments" is also the drift shape this program keeps paying for, so this imports
+the state-machine version that already handles trailing comments, block comments and string literals,
+and is itself under test. Importing the script is side-effect free: its `main()` runs only when it is
+the process entry point.
+*/
+async function stripComments(src: string): Promise<string> {
+  const mod = await import("../../../../scripts/check-lifecycle-column-literals.mjs");
+  return (mod as { stripComments: (s: string) => string }).stripComments(src);
 }

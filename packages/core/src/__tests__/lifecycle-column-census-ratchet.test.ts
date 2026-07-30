@@ -260,11 +260,19 @@ describe("lifecycle-column census ratchet", () => {
     };
     const summed = Object.values(ledger.ceilings).reduce((a, b) => a + b, 0);
     expect(summed).toBe(ledger.total);
+    const l = ledger as { membershipTotal?: number; membershipCeilings?: Record<string, number> };
+    expect(Object.values(l.membershipCeilings ?? {}).reduce((a, b) => a + b, 0)).toBe(l.membershipTotal);
 
     // A ceiling for a file that no longer exists is a ceiling nothing can ever violate — it would
-    // let a converted file silently regain guards under a new path.
+    // let a converted file silently regain guards under a new path. Checked on BOTH ceiling surfaces
+    // (coderabbit #2623): membershipCeilings is exactly as susceptible, and was unguarded.
     const { out } = runCensus(["--report"]);
-    for (const file of Object.keys(ledger.ceilings)) {
+    const allCeilingFiles = [
+      ...Object.keys(ledger.ceilings),
+      ...Object.keys((ledger as { membershipCeilings?: Record<string, number> }).membershipCeilings ?? {}),
+    ];
+    expect(allCeilingFiles.length).toBeGreaterThan(Object.keys(ledger.ceilings).length);
+    for (const file of allCeilingFiles) {
       expect(readFileSync(resolve(__dirname, "../../../..", file), "utf-8").length, file).toBeGreaterThan(0);
     }
     expect(out).toContain("CODE-ONLY TOTAL:");
