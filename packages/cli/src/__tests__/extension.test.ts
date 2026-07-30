@@ -4429,6 +4429,108 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.column).toBe("ideas");
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:45 (#2843 review — coderabbit, "fail the delegation
+    when the hold lane cannot be resolved"):
+
+    THE COLLAPSE WAS REAL; THE PATH THAT REACHES IT IS ALL BUT UNREACHABLE. Both halves stated.
+
+    `resolveTaskLifecycleColumns` returns `undefined` when resolution THREW, and a struct whose `hold`
+    is `undefined` when the board resolved fine and declares no hold lane. Reading it as
+    `(await ...)?.hold` collapsed the two, so a resolver failure would skip the move and fall into the
+    SUCCESS response — the same "stranded on intake, reported as ready" outcome the error branch exists
+    to prevent, by a path that never enters it. Splitting them is correct and costs nothing.
+
+    BUT I COULD NOT MAKE THE THROW HAPPEN, and the reason generalises: `resolveWorkflowIrForTask` does
+    not fail, it SUBSTITUTES the built-in IR. Making the selection read reject (below) is swallowed
+    there, so the resolve succeeds with the default board, `hold` comes back as `todo`, and on the
+    built-in board that already equals the card's column — no move, and success is the right answer.
+
+    So this asserts the outcome that IS reachable: a degraded resolve that yields the card's own lane
+    reports success, because nothing went wrong. The `undefined` guard remains as defence, and it is
+    documented as defence rather than counted as covered.
+    */
+    it("a resolve that DEGRADES to the built-in board still reports success — nothing was stranded", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-resolve-degrades" });
+      const store = h.store();
+
+      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValueOnce(
+        new Error("workflow selection unreadable"),
+      );
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-resolve-degrades",
+          { agent_id: agentId, description: "Resolve degrades" },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        resolve.mockRestore();
+      }
+
+      expect(result.isError).not.toBe(true);
+      expect(result.content[0].text).toContain("will be picked up");
+
+      /* The claim has to be TRUE, not merely present: the card really is on the lane agents pick from. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("todo");
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:55 (#2843 review — greptile, "missing hold reports
+    successful delegation"):
+
+    A BOARD WITH NO HOLD LANE STILL CANNOT DISPATCH THE CARD.
+
+    I first treated this as a benign no-op — the board declares no hold lane, there is nowhere to move
+    the card, staying on intake is correct. Both halves true, conclusion wrong: assigned-agent
+    selection picks cards OUT OF the hold lane, so on a board that has none, nothing ever dispatches
+    this card and "will be picked up on their next heartbeat cycle" is false.
+
+    Unlike the two cases above, this one needs NO stub. A workflow that simply declares no hold-trait
+    column is an ordinary board someone can build, which is what makes it the reachable one of the
+    three and worth the most.
+    */
+    it("reports an ERROR when the workflow declares NO hold lane, instead of promising pickup", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-no-hold" });
+      const store = h.store();
+      const noHold = await store.createWorkflowDefinition({
+        name: "No hold lane",
+        ir: {
+          version: "v2",
+          name: "No hold lane",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "building" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-no-hold",
+        { agent_id: agentId, description: "Nowhere to land", workflow_id: noHold.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("no hold");
+      /* The card exists and is assigned; only the dispatch claim is withheld. */
+      expect(result.details.taskId).toBeTruthy();
+      expect(result.details.agentId).toBe(agentId);
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(

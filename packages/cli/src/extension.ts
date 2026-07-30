@@ -35,6 +35,7 @@ import {
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
   type SecretScope,
+  declaresAnyLifecycleTrait,
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
   resolveReviewColumns,
@@ -699,6 +700,23 @@ function emitSecretAudit(
  * Rejects unknown agents and ephemeral/runtime-managed agents — mirrors fn_delegate
  * so callers can't park hallucinated or task-worker IDs in `task.assignedAgentId`.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (#2843 review):
+Has this task's board made a statement about its lifecycle at all?
+
+Separates "traits expressed, and this role is absent" — an answer — from "no column declares any
+trait", which is a v1 graph upgraded by `synthesizeDefaultColumns` and means the legacy vocabulary
+still applies. Unreadable resolves to `false` for the same reason: absence of evidence is not the
+board declaring anything.
+*/
+async function taskBoardDeclaresLifecycleTraits(
+  store: Parameters<typeof resolveWorkflowIrForTask>[0],
+  taskId: string,
+): Promise<boolean> {
+  const ir = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+  return ir ? declaresAnyLifecycleTrait(ir) : false;
+}
+
 async function validateAssignableAgentId(
   cwd: string,
   agentId: string,
@@ -5279,35 +5297,41 @@ export default function kbExtension(pi: ExtensionAPI) {
         let landingError: string | undefined;
         /*
         FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (#2843 review — coderabbit major / greptile P1):
-        AN UNRESOLVABLE WORKFLOW AND A WORKFLOW WITH NO HOLD LANE ARE DIFFERENT ANSWERS.
+        AN UNRESOLVABLE WORKFLOW, AN UNTRAITED BOARD, AND A BOARD WITH NO HOLD LANE ARE THREE ANSWERS.
 
-        Reading `?.hold` off the result collapsed them: both produced `undefined`, the move was
-        skipped, and the tool reported success — so a split-lane workflow whose IR could not be read
-        left the card on intake while telling the caller it was on its way. That is the same
-        success-with-nothing-behind-it this branch was rewritten to remove, arriving one line earlier.
+        Reading `?.hold` off the result collapsed the first two into one: both produced `undefined`,
+        the move was skipped, and the tool reported success — so a split-lane workflow whose IR could
+        not be read left the card on intake while telling the caller it was on its way. That is the
+        same success-with-nothing-behind-it this branch was rewritten to remove, arriving a line early.
 
-        `resolveTaskLifecycleColumns` distinguishes them and this now reads both levels:
-          - `undefined` OBJECT — the workflow could not be resolved at all. Nothing can be verified,
-            so the landing is reported as failed rather than assumed.
-          - object with `hold: undefined` — the workflow resolved and declares NO hold lane. The
-            entry column is the only lane it has, so the card is already where it belongs and
-            success is honest. Reporting an error here would fail every workflow that never declared
-            one, which is a legitimate shape.
+          - `undefined` OBJECT — the workflow could not be resolved at all. Nothing can be verified, so
+            the landing is reported as failed rather than assumed.
+          - resolved, NO column declares any lifecycle trait — a v1 graph upgraded by
+            `synthesizeDefaultColumns`, or a fixture like `linearWorkflowIr`. Its `todo` column plainly
+            exists and is where agents pick work up, so the legacy vocabulary still applies and success
+            is honest. Failing these would break every untraited board to fix a case none of them have,
+            and the existing suite caught exactly that when this gate was first written without it.
+          - resolved, traits EXPRESSED, still no hold lane — the board has answered, and the answer is
+            that nothing will dispatch this card: assigned-agent selection picks OUT OF the hold lane.
+            Staying on intake is correct and "will be picked up" is false, so it is reported like any
+            other failed landing.
 
         THE FIRST ARM IS UNREACHABLE TODAY, and saying so is the point of writing it down rather than
         shipping a claim I cannot test. `resolveWorkflowIrForTask` never throws: an unreadable
         selection, a missing definition, a malformed one and a throwing lookup ALL degrade to the
         default coding IR (branded `markFellBack`). So `resolveTaskLifecycleColumns` cannot return
         `undefined` through this path, and an unreadable workflow instead yields the BUILT-IN lanes —
-        `hold: "todo"`. On a split-lane workflow that is a column the card's workflow does not
-        declare, so the move below is rejected and the error branch fires anyway; the caller gets the
-        failure the review asked for, by the other route. This arm is kept because it costs nothing
-        and is correct the day that resolver stops degrading, not because it runs.
+        `hold: "todo"`. On a split-lane workflow that is a column the card's workflow does not declare,
+        so the move below is rejected and the error branch fires anyway; the caller gets the failure the
+        review asked for, by the other route. This arm is kept because it costs nothing and is correct
+        the day that resolver stops degrading, not because it runs.
         */
         const lanes = await resolveTaskLifecycleColumns(store, task.id);
         const holdColumn = lanes?.hold;
         if (!lanes) {
           landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
+        } else if (!holdColumn && await taskBoardDeclaresLifecycleTraits(store, task.id)) {
+          landingError = "this workflow declares no hold (ready-to-pick-up) lane";
         } else if (holdColumn && holdColumn !== task.column) {
           try {
             await store.moveTask(task.id, holdColumn);
