@@ -281,3 +281,112 @@ describe("post-U11 planning-column gates", () => {
     }
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-05:10 (PR #2607 review — greptile P1 x2):
+
+Two over-reaches in my own first version, both found by review:
+
+  1. DESTINATIONS stayed literal while the GATES were converted. On a renamed workflow
+     that is WORSE than the original bug: the gate now admits the card and then moves it
+     into a column the workflow does not declare. Half a conversion moved the failure
+     from "refuses valid work" to "puts work where nothing renders it".
+
+  2. The legacy-id acceptance was UNSCOPED, so a workflow naming its review or wip lane
+     `triage`/`todo` had those cards authorized as planning work.
+
+These drive a store that CAN resolve a workflow, which the default fixture cannot — the
+plugin store is narrowed, so without the workflow methods every earlier case silently
+exercised the legacy fallback rather than the resolved path.
+*/
+function createResolvingDeps(task: FakeTask, ir: unknown) {
+  const base = createDeps(task);
+  const selection = { workflowId: "wf-custom", stepIds: [] };
+  return {
+    ...base,
+    taskStore: {
+      ...base.taskStore,
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir }),
+    },
+  };
+}
+
+const renamedIr = {
+  version: "v2", id: "wf-custom", name: "renamed", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+/** A workflow that assigns the LEGACY id `todo` to its REVIEW lane. Legal, and not planning. */
+const todoIsReviewIr = {
+  version: "v2", id: "wf-custom", name: "todo-is-review", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    /*
+    The `merge` trait is REQUIRED for this to be a resolvable review lane, and that
+    detail is the finding: `resolveLifecycleColumns` derives `review` from `merge`, not
+    from `merge-blocker`/`human-review`. My first fixture omitted it, so `review` came
+    back undefined, `declaredIds` did not contain `todo`, and the legacy acceptance
+    applied — the test failed and was RIGHT to.
+
+    RESIDUAL LIMITATION, recorded rather than papered over: the scoping is only as
+    strong as the roles the resolver returns. A workflow that assigns `todo` to a
+    column whose traits map to NO role is still invisible to `declaredIds`, so the
+    legacy acceptance would authorize it. Closing that needs the resolver to report
+    every declared column, not six roles — a core change, not a plugin one.
+    */
+    { id: "todo", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }] },
+    { id: "shipped", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+};
+
+describe("resolved lanes drive destinations, not just gates", () => {
+  it("startWork moves a renamed card to the workflow's OWN wip column", async () => {
+    // Pre-fix: admitted, then moved to the literal `in-progress` — a column this
+    // workflow does not declare.
+    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+
+    const result = await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(result.task.column).toBe("building");
+  });
+
+  it("approvePlan moves a renamed card to the workflow's OWN hold column", async () => {
+    const deps = createResolvingDeps(
+      makeTask({ column: "backlog", status: "awaiting-approval" }),
+      renamedIr,
+    );
+
+    await approvePlan({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
+  });
+
+  it("REFUSES a card in a legacy-named column the workflow assigns to REVIEW", async () => {
+    /*
+    The aliasing case. Unscoped, `todo` counted as a planning lane and startWork would
+    have pulled a card out of review and into wip — skipping the review entirely.
+    */
+    const deps = createResolvingDeps(makeTask({ column: "todo", status: null }), todoIsReviewIr);
+
+    await expectInputError(startWork({ taskId: "FN-1" }, deps as never), 409);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a legacy id the workflow does not use at all (migration window)", async () => {
+    // `renamedIr` declares no `todo`, so a pre-U11 row resting there is an orphan and
+    // still means "planning".
+    const deps = createResolvingDeps(makeTask({ column: "todo", status: null }), renamedIr);
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).resolves.toBeTruthy();
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+});
