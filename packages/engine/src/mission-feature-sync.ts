@@ -5,7 +5,33 @@ export type MissionFeatureSyncTargetStatus = "done" | "in-progress" | "triaged";
 
 export interface MissionFeatureSyncContext {
   hasLinkedAssertions?: boolean;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (U11):
+  The task's resolved planner lanes (intake + hold). Supplied by the CALLER, which
+  holds the store — this module takes a deliberately narrowed
+  `Pick<TaskStore, "getTask">` and widening it just to resolve an IR would be the
+  wrong trade.
+
+  A card back in a planner lane returns the mission feature to `triaged`. Keyed on
+  the literals, a renamed workflow left the feature reading `in-progress` forever:
+  the roadmap claims work is underway while the card sits waiting to be re-planned.
+  Nothing errors — the rollup is simply wrong, which is why it would go unnoticed.
+
+  Defaults to the legacy pair so an unconverted caller is byte-identical.
+  */
+  plannerColumns?: readonly string[];
 }
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (U11):
+The PLANNER LANES — the columns where specification happens (intake + hold). The
+default stays the legacy PAIR rather than a single id: post-#2515 the default
+lineage's intake and hold are the same column, so the pair collapses to one entry
+on its own, while every workflow that still declares both keeps both.
+*/
+export const LEGACY_PLANNER_COLUMNS: readonly string[] = ["triage", "todo"];
+
+
 
 export type MissionFeatureSyncDecision =
   | { kind: "failure"; reason: string }
@@ -86,7 +112,7 @@ export async function reconcileMissionFeatureState(
   }
 
   if (
-    (task.column === "triage" || task.column === "todo")
+    (context.plannerColumns ?? LEGACY_PLANNER_COLUMNS).includes(task.column)
     && feature.status === "in-progress"
   ) {
     return {
