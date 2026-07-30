@@ -648,4 +648,29 @@ describe("RoutineEditor", () => {
       expect(onSubmit).not.toHaveBeenCalled();
     });
   });
+
+  /*
+  FNXC:Automations 2026-07-30-01:40 (U11 merged planning column):
+  The "Target Column" default was `triage`, a column U11 DELETES from the default workflow. It is
+  submitted as the create step's `taskColumn`, and an EXPLICIT column bypasses the intake fallback
+  #2589 added for column-less creates — so a routine saved with the untouched default seeded tasks
+  into a column the board does not declare.
+
+  Asserted on the rendered control rather than the constant, so it covers what the operator actually
+  submits.
+  */
+  describe("create-task target column (U11)", () => {
+    it("defaults to the surviving pre-implementation column, not the deleted one", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      expect(
+        select.value,
+        "a routine saved with the untouched default must not seed tasks into a column the workflow no longer declares",
+      ).toBe("todo");
+      expect(select.value).not.toBe("triage");
+    });
+  });
 });

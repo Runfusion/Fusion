@@ -221,7 +221,24 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   const [prompt, setPrompt] = useState(isSimpleAiPrompt ? routine.steps?.[0]?.prompt ?? "" : "");
   const [taskTitle, setTaskTitle] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskTitle ?? "" : "");
   const [taskDescription, setTaskDescription] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskDescription ?? "" : "");
-  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "triage" : "triage");
+  /*
+  FNXC:Automations 2026-07-30-01:35 (U11 merged planning column):
+  Defaulted to `triage`, which U11 DELETES from the default workflow. This value is submitted as the
+  create step's `taskColumn`, and an EXPLICIT column bypasses the intake fallback that #2589 added for
+  column-less creates — so every routine saved with the untouched default seeded its tasks into a
+  column the board does not declare, to be re-homed later by reconciliation. Same defect class as
+  #2589, reached through the automation form instead of createTask.
+
+  `todo` is the merged pre-implementation column and is where specification now runs, so it is both
+  the surviving id and the correct destination.
+
+  NOTE, deliberately not changed here: the option LABELS are now inverted against the board. The
+  `triage` option reads "Planning" while the column actually displayed as "Planning" is `todo`. Fixing
+  that means either new i18n keys across every catalogue or resolving the workflow's real columns for
+  this dropdown (it hardcodes two, so it already ignores custom boards). Left as a follow-up rather
+  than bundled into a default-value fix.
+  */
+  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "todo" : "todo");
   const [modelProvider, setModelProvider] = useState(
     isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.modelProvider ?? "" : ""
   );
