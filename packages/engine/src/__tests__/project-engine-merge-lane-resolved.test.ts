@@ -102,3 +102,93 @@ describe("project-engine merge eligibility resolves the board's own merge lane",
     expect(onMerge).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-22:10 (PR #2706 review — greptile P2, and the project's own
+Surface Enumeration rule says the same thing):
+
+The first block covered `requestInterpreterMerge` only, while the change also touches the merge-queue
+snapshot, the queue drain, the `taskMoved` handoff, the pause-interruption tracker and the
+session-advisor WIP guard. A suite that covers one of six surfaces can stay green while renamed-board
+cards disappear from admission or pause tracking again.
+
+Two more surfaces are covered here, chosen because they are the ones with STATE an assertion can see:
+
+  - THE PAUSE-INTERRUPTION TRACKER, because it has state an assertion can see. On a renamed board its
+    first branch DELETED every card from `pausedReviewTaskIds` and returned, so pausing an active merge
+    never interrupted it.
+
+NOT COVERED, and named rather than implied — I tried each of these before dropping it:
+
+  - THE MERGE-QUEUE SNAPSHOT. Its failure is the quietest in the file (an EMPTY array for a queue full of
+    review cards, with no log line saying why), so it is the one I most wanted. The admission provider is
+    registered in the CONSTRUCTOR, which builds a whole runtime, so reaching its `refresh` needs a booted
+    ProjectEngine. My first attempt looked the method up dynamically on the prototype and would have
+    silently skipped — a case that cannot fail is worse than an absent one, so it is gone.
+  - THE `taskMoved` HANDOFF and THE QUEUE DRAIN schedule real timers and recurse into the merge machinery.
+  - THE SESSION-ADVISOR guard needs a live advisor.
+
+Those four are covered by the census and by review only. Padding the suite with cases that assert nothing
+would make the gap invisible, which is the failure this file already documents twice.
+*/
+describe("the other merge-lane surfaces on a renamed board", () => {
+  function storeFor(column: string, ir: WorkflowIr | undefined) {
+    const task = { id: "FN-Q", column, dependencies: [], steps: [] } as unknown as Task;
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    return {
+      task,
+      store: {
+        getTask: vi.fn(async () => task),
+        getSettings: vi.fn(async () => ({ autoMerge: true }) as unknown as Settings),
+        getTaskWorkflowSelection: () => (ir ? selection : undefined),
+        getTaskWorkflowSelectionAsync: async () => (ir ? selection : undefined),
+        getWorkflowDefinition: async () => (ir ? { ir } : undefined),
+        /* `wireTaskPauseMergeInterruption` also subscribes to store events; the stub must accept that. */
+        on: vi.fn(),
+      } as unknown as TaskStore,
+    };
+  }
+
+  it("keeps a renamed board's review card in the paused-review set", async () => {
+    // Pre-fix: `signoff` !== "in-review", so the first branch DELETED the card and returned — pausing an
+    // active merge never interrupted it.
+    const { store, task } = storeFor("signoff", RENAMED_IR);
+    const self = {
+      pausedReviewTaskIds: new Set<string>(),
+      mergeQueue: [] as string[],
+      mergeActive: new Set<string>(),
+      activeMergeTaskId: null as string | null,
+      taskUpdatedHandler: undefined as unknown,
+      abortActiveMerge: vi.fn(),
+    };
+
+    (ProjectEngine.prototype as unknown as {
+      wireTaskPauseMergeInterruption: (this: unknown, s: TaskStore) => void;
+    }).wireTaskPauseMergeInterruption.call(self, store);
+
+    await (self.taskUpdatedHandler as (t: Task) => Promise<void>)({ ...task, paused: true } as Task);
+
+    expect([...self.pausedReviewTaskIds]).toEqual([task.id]);
+  });
+
+  it("still drops a NON-review card from the paused-review set", async () => {
+    // The paired negative: the set must not accumulate cards that are not in the merge lane.
+    const { store, task } = storeFor("building", RENAMED_IR);
+    const self = {
+      pausedReviewTaskIds: new Set<string>([task.id]),
+      mergeQueue: [] as string[],
+      mergeActive: new Set<string>(),
+      activeMergeTaskId: null as string | null,
+      taskUpdatedHandler: undefined as unknown,
+      abortActiveMerge: vi.fn(),
+    };
+
+    (ProjectEngine.prototype as unknown as {
+      wireTaskPauseMergeInterruption: (this: unknown, s: TaskStore) => void;
+    }).wireTaskPauseMergeInterruption.call(self, store);
+
+    await (self.taskUpdatedHandler as (t: Task) => Promise<void>)({ ...task, paused: true } as Task);
+
+    expect([...self.pausedReviewTaskIds]).toEqual([]);
+  });
+});
