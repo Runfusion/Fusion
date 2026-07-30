@@ -37,13 +37,13 @@ import { join } from "node:path";
 const GOVERNED_IDS = ["triage", "todo", "in-progress", "in-review"] as const;
 
 /**
- * Per-id ceilings, measured 2026-07-30 on `main`. LOWER THESE as conversions land; never raise one.
+ * Per-id ceilings, RE-MEASURED against `main` at push time (2026-07-30, gate 2). LOWER THESE as conversions land; never raise one.
  * A raise means a literal came back — convert the site or, if it genuinely is not a column, teach
  * the classifier why rather than widening the ceiling.
  */
 const CEILINGS: Record<string, number> = {
-  triage: 62,
-  todo: 88,
+  triage: 48,
+  todo: 84,
   "in-progress": 133,
   "in-review": 200,
 };
