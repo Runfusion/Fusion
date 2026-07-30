@@ -564,11 +564,25 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   }, [shouldPaginate, tasks, visibleTaskCount]);
 
   const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
-  const canCreateInColumn = Boolean(
-    onQuickCreate &&
-    !isArchived &&
-    (workflowMode || column === "triage"),
-  );
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (Phase B — third attempt, this time with the
+  fixtures migrated instead of the arm defended):
+  The `|| column === "triage"` arm was the LEGACY-board path: before workflow lanes, only the
+  hardcoded intake column offered inline create. U12 deleted the legacy board, Board is Column's
+  only consumer, and it passes `workflowMode` at all three render sites — so the arm is unreachable
+  in production.
+
+  I deleted it twice before and reverted both times, because four Column tests render without
+  `workflowMode` and went red. That was the delete-only rule working: a behaviour change means the
+  branch was not dead FOR THOSE CALLERS. The callers in question are fixtures, not production, so
+  the honest fix is to migrate them to the shape Board actually uses rather than keep an arm alive
+  to satisfy them. Done in Column.test.tsx alongside this.
+
+  Deliberately NOT solved by defaulting `workflowMode` to true: `isArchived`, `isHoldColumn` and
+  `isWipProcessingColumn` all switch on that same flag, so a global default would silently
+  reinterpret every other fixture in the file.
+  */
+  const canCreateInColumn = Boolean(onQuickCreate && !isArchived && workflowMode);
 
   const handleQuickCreate = useCallback(
     (input: TaskCreateInput) => {
