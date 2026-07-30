@@ -12,6 +12,8 @@
 
 import { TaskStore } from "../store.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
+import { parseWorkflowIr } from "../workflow-ir.js";
+import { columnsWithFlag } from "../workflow-lifecycle-traits.js";
 import { InsightStore } from "../insight-store.js";
 import { ResearchStore } from "../research-store.js";
 import { type TaskRow } from "./persistence.js";
@@ -225,9 +227,60 @@ export function getWorkflowWorkItemByIdentityImpl(store: TaskStore,
     return row ? store.rowToWorkflowWorkItem(row) : null;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+THE QUERY WAS THE DEFECT, not the predicate below it.
+
+`isLegacyAutoMergeStampCandidate` gained an optional resolved `reviewColumns` and no caller passed
+it. Wiring that parameter here would have changed NOTHING, because the read above it asked
+`listTasks({ column: "in-review" })` — a QUERY filter with the literal. On a renamed board that query
+returns zero rows, so the backfill iterated an empty list and reported success over nothing; the
+predicate was never reached.
+
+This is the third unwired parameter in this sweep whose caller held the larger defect
+(`blocker-fanout` emitted no warning at all; the analytics routes reported a silent zero). An
+optional parameter nobody fills is worth reading as a SYMPTOM of an unexamined caller rather than as
+a cosmetic gap.
+
+WHY A UNION ACROSS DEFINITIONS: there is no task to resolve from before the read, which is what makes
+the query class hard. The project's declared workflows are the only lane vocabulary available at this
+point, so every review-bearing column any of them declares is queried, unioned with the legacy id so
+a board mid-rename (rows still stored under the old id) is not skipped. Over-inclusion costs one
+extra query and is filtered by the predicate; under-inclusion silently backfills nothing, which is
+the failure being fixed.
+*/
+/**
+ * The review-lane vocabulary for the legacy auto-merge stamp backfill, resolved from the PROJECT's
+ * declared workflows because there is no task to resolve from before the read.
+ *
+ * Exported so the candidate query and the two re-checks that follow it share ONE answer. Deriving it
+ * separately per site is how a read and its re-check end up disagreeing.
+ */
+export async function resolveLegacyStampReviewColumns(store: TaskStore): Promise<ReadonlySet<string>> {
+    /* DELIBERATE-LITERAL — unioned, not replaced: a board mid-rename still has rows stored under the
+       old id, and skipping them is the failure this fixes. Reviewed 2026-07-31-13:00. */
+    const reviewColumns = new Set<string>(["in-review"]);
+    try {
+      for (const definition of await store.listWorkflowDefinitions()) {
+        const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+        if (!ir) continue;
+        for (const id of columnsWithFlag(ir, "mergeOrchestration")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "mergeBlocker")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "humanReview")) reviewColumns.add(id);
+      }
+    } catch {
+      /* Unreadable definitions leave the legacy id alone — exactly the previous behaviour. */
+    }
+    return reviewColumns;
+}
+
 export async function listLegacyAutoMergeStampCandidatesImpl(store: TaskStore): Promise<Task[]> {
-    const inReview = await store.listTasks({ column: "in-review" });
-    return inReview.filter((task) => store.isLegacyAutoMergeStampCandidate(task));
+    const reviewColumns = await resolveLegacyStampReviewColumns(store);
+    const byId = new Map<string, Task>();
+    for (const column of reviewColumns) {
+      for (const task of await store.listTasks({ column })) byId.set(task.id, task);
+    }
+    return [...byId.values()].filter((task) => store.isLegacyAutoMergeStampCandidate(task, reviewColumns));
 }
 
 export function deleteTaskByIdImpl(store: TaskStore, taskId: string): void {
