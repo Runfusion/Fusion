@@ -64,8 +64,26 @@ sites, the same accounting the `=` arm uses when a query holds two comparisons. 
 matched loosely (`[^)]*`) so a mixed list — a legacy id beside a resolved one — is still caught, and
 the per-element count is taken from the matched text afterwards.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-22:20 (#2841 review, third round — greptile P1 "nested IN
+expressions evade scanning"):
+
+`[^)]*` STOPS AT THE FIRST `)`, WHICH A NESTED CALL SUPPLIES.
+
+`"column" IN (COALESCE(x, y), 'done')` never reached its legacy id: the leading `[^)]*` halted at
+`COALESCE(x, y)`'s closing paren, the id after it was unreachable, and the predicate contributed
+nothing. A third false negative of the same family as the first two rounds — a shape the pattern did
+not describe — and the reviewer is right that another one could be added with the baseline green.
+
+The IN body now tolerates nested groups TWO levels deep (`LOWER(COALESCE(a, b))` is the realistic
+worst case in this codebase). A regex cannot balance arbitrary nesting, and the alternative — matching
+the predicate head and extracting the balanced region programmatically — buys a depth nobody writes at
+the cost of a second scanner to keep correct. The bound is stated here rather than hidden: at three
+levels the gate under-counts again, which is a known limit, not an unknown one.
+*/
+const IN_BODY = `(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*`;
 export const COMPARISON = new RegExp(
-  `${COLUMN_REF}\\s*(?:(?:=|!=|<>)\\s*${LEGACY_ID}|(?:NOT\\s+)?IN\\s*\\([^)]*${LEGACY_ID}[^)]*\\))`,
+  `${COLUMN_REF}\\s*(?:(?:=|!=|<>)\\s*${LEGACY_ID}|(?:NOT\\s+)?IN\\s*\\(${IN_BODY}${LEGACY_ID}${IN_BODY}\\))`,
   "gi",
 );
 /** Legacy ids inside one matched predicate — an `IN` list can hold several. */

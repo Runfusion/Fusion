@@ -133,3 +133,23 @@ test("a NON-column interpolation does not splice two fragments into a false matc
   */
   assert.equal(hits("const q = sql`WHERE \"column\" = ${someExpr}'done'`;"), 0);
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-22:30 (#2841 review, THIRD round — greptile P1):
+The third false negative of the same family: a shape the pattern did not describe. `[^)]*` stops at
+the first `)`, which any nested call supplies, so the legacy id after it was unreachable.
+*/
+
+test("an IN list with a NESTED call before the legacy id is caught", () => {
+  assert.equal(hits("const q = `WHERE \"column\" IN (COALESCE(x, y), 'done')`;"), 1);
+});
+
+test("an IN list nested TWO levels deep is caught", () => {
+  /* The realistic worst case in this codebase, and the documented bound of the pattern. */
+  assert.equal(hits("const q = `WHERE \"column\" IN (LOWER(COALESCE(a, b)), 'archived')`;"), 1);
+});
+
+test("a nested IN list of only NON-legacy ids is still not matched", () => {
+  /* The paired negative: tolerating nesting must not turn every IN predicate into a hit. */
+  assert.equal(hits("const q = `WHERE \"column\" IN (COALESCE(x, y), 'shipped')`;"), 0);
+});
