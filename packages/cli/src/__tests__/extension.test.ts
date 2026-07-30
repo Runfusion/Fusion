@@ -4480,47 +4480,20 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-18:35 (#2843 review — greptile P1, "workflow snapshot race
-    misroutes delegation"):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-18:50 (#2843 review — the race, and the fix that removed
+    it rather than detecting it):
 
-    A TORN SNAPSHOT IS NOT AN ANSWER.
+    NO TEST FOR A TORN SELECTION SNAPSHOT, because the shape it would test no longer exists.
 
-    `resolved.ir` and the selection id came from separate reads, so a selection changing between them
-    left the two describing different boards. The dangerous order is a selection CLEARED after it
-    resolved: the substitution check stays false, the lanes come from a workflow the card no longer
-    runs, and the card is moved to that board's hold lane.
+    I wrote one against a version that read the selection on both sides of the resolve and refused when
+    they disagreed. The version that shipped is better: it drops the second read entirely and judges
+    the substitution by whether it would MOVE the card, so there is no window for two reads to
+    disagree. A test asserting "refuses on a torn snapshot" would have been asserting the mechanism I
+    removed.
 
-    Simulated by making the second selection read return a DIFFERENT workflow than the first, which is
-    what a concurrent edit looks like from inside this function.
+    The negative below survives, and matters more under either design: a selection read that FAILS must
+    not fail the delegation.
     */
-    it("refuses to land the card when the workflow selection CHANGES mid-placement", async () => {
-      const agentId = await seedAgent(tmpDir, { name: "delegate-torn-selection" });
-      const store = h.store();
-
-      let call = 0;
-      const sel = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockImplementation(async () => {
-        call += 1;
-        /* First read: no selection. Second read: someone selected a workflow in between. */
-        return call === 1 ? undefined : ({ workflowId: "WF-CHANGED", stepIds: [] } as never);
-      });
-      const tool = api.tools.get("fn_delegate_task")!;
-      let result: Awaited<ReturnType<typeof tool.execute>>;
-      try {
-        result = await tool.execute(
-          "dt-torn",
-          { agent_id: agentId, description: "Selection changes mid-flight" },
-          undefined,
-          undefined,
-          makeCtx(tmpDir),
-        );
-      } finally {
-        sel.mockRestore();
-      }
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).not.toContain("will be picked up");
-      expect(result.content[0].text).toContain("changed while it was being placed");
-    });
 
     /*
     The paired negative, and the one that keeps the tear check from becoming "refuse whenever the
