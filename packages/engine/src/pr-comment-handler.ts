@@ -251,7 +251,10 @@ Please review the PR comments and address any remaining issues.`;
       const task = await this.store.createTask({
         title: `Follow-up: Address PR #${prInfo.number} feedback`,
         description,
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [originalTaskId],
         source: {
           sourceType: "api",

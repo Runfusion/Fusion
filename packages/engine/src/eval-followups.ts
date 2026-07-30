@@ -230,7 +230,10 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
         `Rationale: ${followUp.rationale}`,
         `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
       ].join("\n"),
-      column: "triage",
+      /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+         `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+         override it. Hard-coding `"triage"` created the card in a column the default
+         lineage no longer declares (#2515), i.e. straight into the stranded state. */
       priority: followUp.priority,
       source: {
         sourceType: "automation",

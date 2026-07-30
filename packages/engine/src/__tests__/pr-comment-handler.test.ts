@@ -245,10 +245,20 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-29-20:40 (U11):
+      This asserted `column: "triage"` and so PINNED the defect. `createTaskImpl`
+      resolves the column as `input.column || resolvedEntryColumn || fallbackIntake
+      || "triage"`, so an explicit column OVERRIDES the workflow's intake — and
+      after #2515 `triage` is not a column the default lineage declares, so the
+      follow-up was created straight into the stranded state.
+
+      Now asserts the invariant instead of the id: the caller passes NO column, so
+      whatever intake the task's workflow declares is what wins.
+      */
       expect(mockStore.createTask).toHaveBeenCalledWith({
         title: "Follow-up: Address PR #42 feedback",
         description: expect.stringContaining("FN-001"),
-        column: "triage",
         dependencies: ["FN-001"],
         source: {
           sourceType: "api",
@@ -259,6 +269,8 @@ describe("PrCommentHandler", () => {
           },
         },
       });
+      const [createArg] = (mockStore.createTask as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0];
+      expect(Object.hasOwn(createArg, "column")).toBe(false);
     });
 
     it("does nothing when no unaddressed comments", async () => {
