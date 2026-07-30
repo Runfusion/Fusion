@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -164,9 +164,6 @@ export class BranchWorktreeAutoRecoveryHandler {
     }
 
 
-    if (wipColumns.has(task.column)) {
-      await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null });
-    }
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-13:45 (#2797 review — greptile):
     THE REQUEUE MUST NOT DIE ON A DESTINATION THE BOARD DOES NOT DECLARE.
@@ -185,6 +182,25 @@ export class BranchWorktreeAutoRecoveryHandler {
     Catching at the move covers every route to a wrong destination, resolved or guessed. A task left
     parked WITH a record beats one parked by an exception nobody sees.
     */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1 x2):
+
+    ORDER: MOVE FIRST, THEN CLEAR THE BRANCH LINKAGE. The clear used to run BEFORE the move, so a
+    rejected move left the card in its wip lane with `branch`/`baseCommitSha` already erased — the
+    recovery destroyed the only pointers back to the work and then declined to requeue. Half-applied is
+    worse than not applied: nothing else can reconstruct the branch from the row afterwards. The clear
+    now happens only once the requeue has actually landed.
+
+    REASON MUST NAME THE ACTUAL FAILURE. The catch labelled EVERY moveTask failure
+    `rebound-target-rejected` — capacity exhaustion, a guard rejection, a deleted task, a persistence
+    error — so the audit asserted a lane problem for causes that have nothing to do with lanes, and a
+    reader debugging a stuck card would chase the wrong thing. `TransitionRejectionError` carries a typed
+    `rejection.code`, so the unknown-column case is distinguishable exactly rather than by message match.
+
+    Everything is still CAUGHT (an exception thrown out of the recovery handler is invisible), but the
+    row now says which failure it was.
+    */
+    let moveFailure: { reason: string; code?: string } | undefined;
     try {
       await this.deps.taskStore.moveTask(task.id, reboundTarget, {
         moveSource: "engine",
@@ -193,21 +209,35 @@ export class BranchWorktreeAutoRecoveryHandler {
         preserveWorktree: false,
       });
     } catch (err) {
+      const code = err instanceof TransitionRejectionError ? err.rejection.code : undefined;
+      moveFailure = {
+        reason: code === "unknown-column" ? "rebound-target-rejected" : "requeue-move-failed",
+        ...(code ? { code } : {}),
+      };
+    }
+
+    if (moveFailure) {
       await this.deps.runAudit.database({
         type: "branch-worktree:auto-requeue-skipped",
         target: task.id,
         metadata: {
           class: failure.class,
-          reason: "rebound-target-rejected",
+          reason: moveFailure.reason,
+          ...(moveFailure.code ? { rejectionCode: moveFailure.code } : {}),
           rationale,
           ...(laneResolutionError ? { laneResolutionError } : {}),
           reboundTarget,
           column: task.column,
-          error: err instanceof Error ? err.message : String(err),
+          /* Branch linkage deliberately NOT cleared on this path — see the note above. */
+          branchPreserved: true,
           evidence,
         },
       });
       return;
+    }
+
+    if (wipColumns.has(task.column)) {
+      await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null });
     }
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../auto-recovery.js";
 import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/branch-worktree.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
+import { TransitionRejectionError } from "@fusion/core";
 
 const branchConflictMocks = vi.hoisted(() => ({
   inspectBranchConflict: vi.fn(),
@@ -121,8 +122,17 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
   */
   it("records a skip instead of throwing when the rebound destination is rejected", async () => {
     const f = createFixtures({ column: "building" }, "programmatic");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1):
+    A REAL TransitionRejectionError, not a look-alike Error whose message happens to read like one.
+    The reason is now derived from the typed `rejection.code`, so a plain Error must NOT be classified
+    as a lane problem — which is the point of the companion case below.
+    */
     f.taskStore.moveTask.mockRejectedValue(
-      new Error("Invalid transition: 'building' -> 'todo'. Unknown column for this workflow."),
+      new TransitionRejectionError(
+        { code: "unknown-column", messageKey: "transition.rejected.unknownColumn", retryable: false, detail: "Column 'todo' is not defined in this task's workflow" } as never,
+        "Invalid transition: 'building' -> 'todo'. Unknown column for this workflow.",
+      ),
     );
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
 
@@ -131,10 +141,58 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
 
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
       type: "branch-worktree:auto-requeue-skipped",
-      metadata: expect.objectContaining({ reason: "rebound-target-rejected", reboundTarget: "todo" }),
+      metadata: expect.objectContaining({ reason: "rebound-target-rejected", rejectionCode: "unknown-column", reboundTarget: "todo" }),
     }));
     /* And the success audit must NOT be written for a move that did not happen. */
     expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1 "move failures become
+  successful retries"):
+  A moveTask failure that is NOT a lane problem — capacity exhaustion, a guard rejection, a deleted
+  task, a persistence error — was labelled `rebound-target-rejected` all the same, so the audit row
+  asserted a lane cause for something that has nothing to do with lanes and anyone debugging a stuck
+  card would chase the wrong thing.
+
+  REVERT CHECK, measured: collapsing the reason back to the single literal makes this fail — the row
+  reads `rebound-target-rejected` for a plain persistence error.
+  */
+  it("names a non-lane move failure honestly instead of blaming the rebound target", async () => {
+    const f = createFixtures({ column: "in-progress" }, "programmatic");
+    f.taskStore.moveTask.mockRejectedValue(new Error("database connection lost"));
+    branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
+
+    await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
+
+    expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "branch-worktree:auto-requeue-skipped",
+      metadata: expect.objectContaining({ reason: "requeue-move-failed" }),
+    }));
+    expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ reason: "rebound-target-rejected" }),
+    }));
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1 "rejected move erases
+  branch linkage"):
+  The branch/baseCommitSha clear used to run BEFORE the move, so a rejected move left the card in its
+  wip lane with the only pointers back to its work already erased — the recovery destroyed the linkage
+  and then declined to requeue. Half-applied is worse than not applied; nothing reconstructs the branch
+  from the row afterwards.
+
+  REVERT CHECK, measured: moving the clear back above the move makes this fail — updateTask is called
+  with { branch: null, baseCommitSha: null } on a move that never landed.
+  */
+  it("preserves the branch linkage when the requeue move is rejected", async () => {
+    const f = createFixtures({ column: "in-progress" }, "programmatic");
+    f.taskStore.moveTask.mockRejectedValue(new Error("database connection lost"));
+    branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
+
+    await f.handler.issueRetry(f.failure, f.decision, f.ctx);
+
+    expect(f.taskStore.updateTask).not.toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null });
   });
 
   it("does not clear the branch when a RENAMED board's card is not in its wip lane", async () => {
