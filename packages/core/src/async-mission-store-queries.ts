@@ -2202,6 +2202,22 @@ export async function getTerminalTaskEvidence(handle: QueryHandle, taskId: strin
   const task = taskRows[0];
   const hasArchiveSnapshot = archiveRows.length > 0;
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:50 (audited — REAL, deferred with the cost stated):
+  On a renamed board a genuinely completed task is classified `nonterminal`.
+
+  `task.column === "done"` is the only test for the `done` verdict, so a card in a complete lane
+  called anything else falls through every branch to `{ kind: "nonterminal" }`. The caller is mission
+  TERMINAL EVIDENCE repair, so a finished feature reads as unfinished — a wrong verdict rather than an
+  error, which is the shape this program keeps finding. The `archived` test below is the same defect;
+  its `deletedAt` companion masks it for soft-deleted rows, which is why only the `done` half bites in
+  practice.
+
+  Not converted here because `getTerminalTaskEvidence` takes a bare `QueryHandle`: no store, no task
+  object, no workflow, nothing to resolve a lane vocabulary from. The fix is a resolved terminal-lane
+  set threaded in by the caller — the same shape `getLiveTaskColumn` needs, and it should land with
+  it so the two cannot disagree about what "finished" means.
+  */
   if (!task) return hasArchiveSnapshot ? { kind: "invalid-deleted", id: taskId } : { kind: "missing" };
   if (task.deletedAt === null && task.column === "done") return { kind: "done", id: task.id, column: "done" };
   if (task.deletedAt !== null && task.column === "archived" && hasArchiveSnapshot) {

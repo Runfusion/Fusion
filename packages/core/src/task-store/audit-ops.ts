@@ -124,6 +124,20 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         {
           const layer = store.asyncLayer!;
           const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — SENTINEL, do NOT convert):
+          `getLiveTaskColumn` MANUFACTURES the string "archived" for an archived-or-soft-deleted
+          parent; it does not return the board's archived lane. So this compares against that
+          function's return vocabulary, not against a column id, and converting it to
+          `isArchivedColumnRole` would keep passing on the built-in board and start FAILING on a
+          renamed one — a soft-deleted task's log would become writable.
+
+          The convertible site is `getLiveTaskColumn`'s own `row.column === "archived"` test, and it
+          is deferred with its cost stated: that helper takes a `db` handle with no task, no workflow
+          and no lane vocabulary, so resolving there threads a lane set through a low-level query on a
+          hot path. See docs/solutions/architecture-patterns/
+          the-archived-literal-is-usually-a-sentinel-not-a-column.md.
+          */
           if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
         }
@@ -173,6 +187,18 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       if (!pgRow) {
         throw new Error(`Task ${id} not found`);
       }
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — REAL, deferred with the cost stated):
+      Unlike the sentinel above, this reads the task ROW, so `pgRow.column` is a real board lane and a
+      renamed archived column is not recognised — a card the board shows as archived keeps accepting
+      log writes. `deletedAt` covers the soft-delete half, which is why the gap is narrow rather than
+      absent, and why it has stayed invisible: the common path is soft-delete.
+
+      Not converted here because the fix is the same one `getLiveTaskColumn` needs — a resolved
+      archived-lane set threaded into a low-level, project-scoped read — and doing it in one of the
+      two places would leave the pair disagreeing about what "archived" means. Recorded so the census
+      keeps pointing at it with the reason attached.
+      */
       if (pgRow.column === "archived" || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
       }
