@@ -15,8 +15,13 @@
  * path only.
  *
  * Hook classes (KTD-2):
- *   - guard  (sync, in-lock): merge-blocker, human-review. Implemented as the
- *     `evaluateDefaultWorkflowGuards` reader; pure DB-free reads off the task.
+ *   - guard  (sync, in-lock): merge-blocker, human-review. NOT implemented here.
+ *     The header used to credit an `evaluateDefaultWorkflowGuards` reader in this
+ *     file; no such function has ever existed. The merge-blocker guard is enforced
+ *     inline in `task-store/moves.ts` (~645 and ~821) via `getTaskMergeBlocker`,
+ *     gated on the RESOLVED trait flags (`toFacts.flags.complete` +
+ *     `fromFacts.flags.mergeBlocker`) rather than on column ids — which is why no
+ *     `guard` trait hook is registered below and none is missing.
  *   - onEnter / onExit (mutating, applied in-lock to the in-memory task before
  *     the commit for field effects; queue effects run in-txn): timing,
  *     reset-on-entry, abort-on-exit, merge.
@@ -34,50 +39,10 @@
 import { getTraitRegistry } from "./trait-registry.js";
 import type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import type { TraitAuditWarning } from "./trait-registry.js";
-import { getTaskMergeBlocker } from "./task-merge.js";
 import type { Settings, Task } from "./types.js";
 
 // ── Guard evaluation (sync, in-lock) ─────────────────────────────────────────
 
-/** A guard verdict: undefined = allow; a string reason = reject. */
-export type GuardVerdict = string | undefined;
-
-/**
- * Evaluate the default workflow's sync guards for a move. Reproduces the legacy
- * `getTaskMergeBlocker` gate on `in-review → done`. (The default workflow does
- * not carry the human-review trait — see the Trait Vocabulary note — so there
- * is no human-review guard on this workflow.)
- *
- * `bypassGuards` (engine-sourced moves, KTD-9) skips guards entirely — the
- * caller is responsible for honoring that; this function still computes the
- * verdict so callers can choose. The store only consults it when not bypassing.
- */
-export function evaluateMergeBlockerGuard(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  fromColumn: string,
-  toColumn: string,
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (fleet phase):
-  The moving task's resolved lifecycle columns, so the review -> complete crossing this guard fires on
-  is a ROLE crossing. OPTIONAL and last, matching `DefaultWorkflowMoveContext.lifecycleColumns`: absent,
-  the legacy ids answer, which is the same degraded contract `planningColumnsOf` and
-  `liveWorkColumnsOf` already use in this file.
-  */
-  lifecycleColumns?: LifecycleColumns | undefined,
-): GuardVerdict {
-  if (
-    fromColumn === (lifecycleColumns?.review ?? "in-review")
-    && toColumn === (lifecycleColumns?.complete ?? "done")
-  ) {
-    return getTaskMergeBlocker(task);
-  }
-  return undefined;
-}
-
-// ── Move-effect context ───────────────────────────────────────────────────────
-
-/** Side-effect callbacks the store provides so the hooks stay engine-free and
- *  DB-handle-free; the store wires these to its in-txn / post-commit machinery. */
 export interface DefaultWorkflowMoveContext {
   task: Task;
   fromColumn: string;

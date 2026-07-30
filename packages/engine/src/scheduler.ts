@@ -40,7 +40,7 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
@@ -1206,8 +1206,24 @@ export class Scheduler {
           }
 
           const deletedParked = resolveTaskParkedColumnsSync(this.store, task.id);
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+          A HALF-CONVERTED PAIR, one line apart. The hold read above already resolved its lane while
+          the wip read below stayed on the literal, so on a renamed board this dependent sweep saw
+          the queued cards and none of the running ones — a dependency held by an in-flight task was
+          never reconciled when that task was deleted.
+
+          Two reads of the same board, one resolved and one not, is the shape this program keeps
+          finding; that they are adjacent is what makes it easy to miss in review rather than easy to
+          catch.
+          */
+          const deletedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
           const todoTasks = await this.store.listTasks({ column: deletedParked.hold, slim: true });
-          const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
+          const inProgressById = new Map<string, Task>();
+          for (const column of deletedWipColumns) {
+            for (const task of await this.store.listTasks({ column, slim: true })) inProgressById.set(task.id, task);
+          }
+          const inProgressTasks = [...inProgressById.values()];
           const dependents = [...todoTasks, ...inProgressTasks];
           /* One IR cache for the whole reconciliation, per the caller-owned-cache contract. */
           const deletedDependencyIrCache = new Map<string, WorkflowIr>();

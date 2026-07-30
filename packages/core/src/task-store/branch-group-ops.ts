@@ -15,6 +15,7 @@ import {runReconciliationAbort} from "../workflow-reconciliation.js";
 import "../builtin-traits.js";
 import {evaluateImplementationTaskBind} from "../agent-role-policy.js";
 import {isNearDuplicateCanonicalInactive} from "../near-duplicate-canonical.js";
+import {resolveColumnFlags} from "../trait-registry.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -41,7 +42,29 @@ export async function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskI
 }
 
 export async function clearNearDuplicateReferencesToImpl(store: TaskStore, canonicalId: string, inactiveState: { column?: ColumnId | null; deletedAt?: string | null; reason: string },): Promise<Task[]> {
-    if (!isNearDuplicateCanonicalInactive(inactiveState)) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-03:10:
+    Resolve the CANONICAL's own column flags before asking whether it is inactive. Omitted, the
+    predicate falls back to the legacy `done`/`archived` ids, so on a renamed board a canonical that
+    has just been completed or archived (`shipped`, `filed`) reads as still ACTIVE — this guard
+    early-returns and the duplicate markers pointing at it are NEVER cleared. The flagged tasks stay
+    parked behind a user decision that can never arrive, which is the exact stranding the note on
+    `isNearDuplicateCanonicalInactive` says it was written to prevent.
+
+    Five of this predicate's six production call sites already resolved flags; this one did not, and
+    it is the one that runs on every archive/complete transition.
+
+    `undefined` on failure is deliberate and matches `moves.ts`: it degrades to the legacy id rather
+    than to absent traits that match nothing.
+    */
+    const canonicalIr = await resolveWorkflowIrForTask(store, canonicalId).catch(() => undefined);
+    /* v1 IRs declare no columns, so there is nothing to resolve and the legacy fallback stands.
+       (`columnsOf` in workflow-lifecycle-traits.ts is module-private; this is the same narrowing,
+       inlined rather than widening that module's API for a single caller.) */
+    const canonicalColumns = canonicalIr?.version === "v2" ? canonicalIr.columns : [];
+    const canonicalColumn = canonicalColumns.find((column) => column.id === inactiveState.column);
+    const canonicalFlags = canonicalColumn ? resolveColumnFlags(canonicalColumn) : undefined;
+    if (!isNearDuplicateCanonicalInactive(inactiveState, canonicalFlags)) {
       return [];
     }
 

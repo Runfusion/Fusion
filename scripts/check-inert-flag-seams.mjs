@@ -57,22 +57,25 @@ const ALLOWED = new Map([
       + "self-healing.ts and both supplying `reviewColumns`. This is the convenience wrapper over them, "
       + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
   ],
-  [
-    "evaluateMergeBlockerGuard",
-    "TEMPORARY: core-owned; reported on #2783. NOT 'test-only' — that was this entry's previous "
-      + "stated reason and it was false. Including __tests__ in the scan finds zero callers there too: "
-      + "the function has exactly one reference in the repo, its own declaration. It is never "
-      + "registered as a trait hook either, and the `evaluateDefaultWorkflowGuards` reader its file "
-      + "header credits does not exist. So its `lifecycleColumns` conversion was applied to dead code.",
-  ],
+
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
     "sortTasksForDisplayColumn",
-    "TEMPORARY: core-owned (task-priority.ts). Its `columnFlags` argument is supplied by its own "
-      + "tests and no production caller — the three dashboard call sites bind to a DIFFERENT function "
-      + "of the same name in app/components/taskSorting.ts. Surfaced only once this check resolved "
-      + "imported shadows; before that the dashboard calls raised the arg-count max and cleared it.",
+    "PERMANENT, with evidence. core/task-priority.ts's copy has ZERO callers anywhere: the three "
+      + "dashboard call sites bind to a DIFFERENT function of the same name in "
+      + "app/components/taskSorting.ts, and only its own tests pass the flags. It is not reachable "
+      + "externally either — @fusion/core is private, @runfusion/fusion declares no `exports` map and "
+      + "re-exports nothing from core wholesale, and it is absent from plugin-sdk. So there is no "
+      + "production behaviour to be wrong, and nothing to wire a supplier from.\n"
+      + "Deliberately NOT 'fixed'. Deleting the parameter (this check's usual remedy) would trade a "
+      + "dormant-but-correct implementation for a dormant legacy-only one, and deleting the function "
+      + "would discard a well-documented ordering it is plausible someone wires later. Both are churn "
+      + "with no product effect. The honest resolution is a duplicate-vs-core consolidation with the "
+      + "dashboard twin, which is a refactor and needs an owner — not a seam fix.\n"
+      + "Was TEMPORARY pending #2783; that PR merged without it, so the pending-owner framing was a "
+      + "fiction and is removed rather than left to rot.",
   ],
+
 ]);
 
 /*
@@ -88,22 +91,22 @@ An omission earns an entry only when supplying the argument would be WRONG, not 
 const ALLOWED_OMISSIONS = new Map([
   [
     "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
-    "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
+    { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
-      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
+      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site." },
   ],
   [
     "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
-    "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
+    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
       + "wrapper; the two moves.ts callers supply. So the automatic handoff-to-review path resolves "
-      + "the review column and the manual re-enqueue path does not.",
+      + "the review column and the manual re-enqueue path does not." },
   ],
   [
     "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",
-    "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
+    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
       + "wireable — `clearNearDuplicateReferencesToImpl` is async and already holds `store` and "
       + "`canonicalId`, so the canonical's own flags are one await away. Its five sibling call sites "
-      + "already supply, so on a renamed board this is the single path that answers from legacy ids.",
+      + "already supply, so on a renamed board this is the single path that answers from legacy ids." },
   ],
 ]);
 
@@ -266,7 +269,25 @@ const callSitesFor = (fn, declaringFile) => {
     if (site.file === declaringFile) return true;                       // the seam's own file
     if (site.shadowed) return false;                                    // a local same-named function
     if (site.from === undefined) return true;                           // not imported: ambiguous, count it
-    /* Imported: it must come from the seam's module, or it is a different function of that name. */
+    /*
+    BARREL AND PACKAGE IMPORTS CANNOT BE RESOLVED BY BASENAME, SO THEY COUNT.
+
+    Correction to a regression I shipped while closing the imported-shadow hole. Engine and CLI reach
+    core through `import { ... } from "@fusion/core"`, whose basename is "core" and never matches a
+    module name like "near-duplicate-canonical". Comparing basenames therefore classified EVERY
+    barrel-imported call site as "a different function of the same name" and dropped it — so the
+    check stopped seeing engine's and cli's calls into core at all, which is most of the
+    cross-package surface it exists to watch.
+
+    Measured: `isNearDuplicateCanonicalInactive` reported "supplied by 5/6 call sites" while FOUR
+    engine sites (self-healing.ts x2, triage.ts x2) omitted the argument and were invisible. The
+    check read cleaner and caught less — the exact failure mode this gate exists to document.
+
+    Only a RELATIVE specifier identifies a module well enough to exclude on. Anything else is
+    unresolved, and unresolved must mean COUNTED: an over-counted seam produces a false report
+    somebody investigates, an under-counted one produces silence.
+    */
+    if (!site.from.startsWith(".")) return true;
     return site.from.replace(/\.js$/, "").split("/").pop() === declaringModule;
   });
   return relevant;
@@ -305,17 +326,45 @@ for (const [fn, { file, arity }] of declared) {
   A partially-supplied seam is the harder defect of the two. A wholly-unsupplied one is at least
   uniformly wrong; this one works on the board you tested and degrades on the column you did not.
   */
-  const omitting = sites
-    .filter((site) => site.args < arity)
-    .filter((site) => !ALLOWED_OMISSIONS.has(`${site.file}::${fn}`));
+  /*
+  FNXC:InertFlagSeams 2026-07-31-03:10 (#2822 review — greptile):
+  AN EXEMPTION IS BOUNDED BY COUNT, NOT OPEN-ENDED.
+
+  `<file>::<function>` previously exempted EVERY call to that function in that file, so a later call
+  added without the flags was silently covered and the gate stayed green — an exemption that grows to
+  fit whatever arrives is not an exemption, it is a hole. That is the same defect this gate exists to
+  catch (`isTaskStuck` shipped two of three sites unsupplied and the gate was green), one level up in
+  the gate itself.
+
+  Each entry now records HOW MANY omissions were reviewed. Extras beyond that count are reported like
+  any other unsupplied site, so adding a call site cannot inherit someone else's review.
+  */
+  const omittingAll = sites.filter((site) => site.args < arity);
+  const usedPerKey = new Map();
+  const omitting = [];
+  for (const site of omittingAll) {
+    const key = `${site.file}::${fn}`;
+    const entry = ALLOWED_OMISSIONS.get(key);
+    if (entry === undefined) { omitting.push(site); continue; }
+    const used = usedPerKey.get(key) ?? 0;
+    if (used < entry.count) { usedPerKey.set(key, used + 1); continue; }
+    omitting.push(site);
+  }
 
   /* Same staleness rule as the name-level list: an exemption whose site now supplies is dead. */
-  for (const [key, reason] of ALLOWED_OMISSIONS) {
+  for (const [key, entry] of ALLOWED_OMISSIONS) {
     const [siteFile, siteFn] = key.split("::");
     if (siteFn !== fn) continue;
-    const site = sites.find((candidate) => candidate.file === siteFile);
-    if (!site) stale.push(`  ${key} — no such call site; remove its ALLOWED_OMISSIONS entry`);
-    else if (site.args >= arity) stale.push(`  ${key} — now supplied; remove its entry (${reason.slice(0, 40)}...)`);
+    const omittingHere = sites.filter((candidate) => candidate.file === siteFile && candidate.args < arity).length;
+    if (omittingHere === 0) {
+      stale.push(`  ${key} — no unsupplied call site remains; remove its ALLOWED_OMISSIONS entry`);
+    } else if (omittingHere < entry.count) {
+      /*
+      A count that overshoots is the same hazard in miniature: it silently pre-authorises an omission
+      that has not been reviewed. Narrow it in the change that fixed the site.
+      */
+      stale.push(`  ${key} — count is ${entry.count} but only ${omittingHere} site(s) omit; lower it`);
+    }
   }
   if (ALLOWED.has(fn)) {
     /*
@@ -351,8 +400,40 @@ if (declared.size === 0) {
   process.exit(1);
 }
 
+/*
+AN EXEMPTION FOR A FUNCTION THAT NO LONGER EXISTS ALSO ROTS.
+
+The staleness check above only fires for a seam the scan still FINDS — it asks "is this site supplied
+now?". Delete the declaration and the name is never iterated, so its entry sits in the list forever,
+silently exempting nothing and misleading the next reader about what is tolerated. Found by deleting
+`evaluateMergeBlockerGuard` and watching the gate stay quiet about its leftover entry.
+*/
+for (const fn of ALLOWED.keys()) {
+  if (!declared.has(fn)) stale.push(`  ${fn} — no such seam declared any more; remove its ALLOWED entry`);
+}
+
+/*
+FNXC:InertFlagSeams 2026-07-31-03:45 (#2830 review — greptile):
+THE SAME ROT REACHES ALLOWED_OMISSIONS, and the pass above did not cover it.
+
+Both staleness rules for the per-site list live inside the per-declaration loop, so they only run for
+a function the scan still FINDS. Delete or rename the function and that loop never visits it: the
+`<file>::<fn>` entry survives, exempting nothing, while reading as a reviewed and tolerated omission.
+
+This is the identical defect the ALLOWED pass above was added to fix — written for one of the two
+lists and not the other, which is the half-conversion shape this repo keeps producing. Same check,
+same failure mode, so it belongs immediately beside it rather than folded into the loop that cannot
+see deletions.
+*/
+for (const key of ALLOWED_OMISSIONS.keys()) {
+  const [, siteFn] = key.split("::");
+  if (!declared.has(siteFn)) {
+    stale.push(`  ${key} — no such seam declared any more; remove its ALLOWED_OMISSIONS entry`);
+  }
+}
+
 if (stale.length > 0) {
-  console.error("\n[check-inert-flag-seams] STALE allow-list entries — the sites are supplied now:\n");
+  console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
   for (const line of stale.sort()) console.error(line);
   console.error("\nRemove them, or the check silently stops guarding those functions.\n");
   process.exit(1);

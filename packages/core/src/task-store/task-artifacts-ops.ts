@@ -10,6 +10,7 @@
  */
 
 import { TaskStore } from "../store.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
@@ -298,7 +299,24 @@ export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskSt
 }
 
 export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
-    const doneTasks = await store.listTasks({ slim: true, column: "done" });
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    "Archive all done" archived NOTHING on a renamed board.
+
+    `listTasks({ column })` filters in the store, so this read returned an empty array and the button
+    completed successfully having archived zero cards — an operator action that silently does nothing
+    is worse than one that errors, because the board simply looks unchanged.
+
+    Project-level resolution: a read has no task in hand. The legacy id is unioned in, so a board
+    mid-rename still archives rows stored under the old one, and the set is deduped by id because one
+    column can carry both complete and archived.
+    */
+    const completeColumns = await resolveProjectColumnsForRoles(store, ["complete"]);
+    const doneById = new Map<string, Task>();
+    for (const column of completeColumns) {
+      for (const task of await store.listTasks({ slim: true, column })) doneById.set(task.id, task);
+    }
+    const doneTasks = [...doneById.values()];
 
     if (doneTasks.length === 0) {
       return [];

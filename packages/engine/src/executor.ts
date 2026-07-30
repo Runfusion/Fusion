@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -5810,10 +5810,37 @@ export class TaskExecutor {
    *      best-effort (failure → skip, never strands resume).
    * A task re-dispatched by pass 1 is not re-dispatched by pass 2 (dedupe set).
    */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-01:10:
+  The wip-lane read for the two resume sweeps, resolved at PROJECT level.
+
+  `listTasks`' `column` option filters in the store, so both sweeps returned an EMPTY array on a
+  renamed board and neither resume ran:
+
+    - `resumeTaskForAgent` — a durable agent coming back up adopted nothing, so its in-flight task
+      stayed orphaned;
+    - `resumeOrphaned` — the engine-wide sweep found no orphans to re-dispatch after a restart.
+
+  Both are recovery paths, which is the expensive place to be silently inert: the failure only shows
+  up after a crash or a restart, when the operator is already looking at something else. The census
+  cannot see either — it scores comparisons, and a query filter is not one.
+
+  Project-level because a read has no task in hand, legacy ids unioned so a board mid-rename still
+  finds rows under the old one, deduped by id because one column can carry two roles.
+  */
+  private async listWipLaneTasks(): Promise<Task[]> {
+    const columns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+    const byId = new Map<string, Task>();
+    for (const column of columns) {
+      for (const task of await this.store.listTasks({ slim: true, column })) byId.set(task.id, task as Task);
+    }
+    return [...byId.values()];
+  }
+
   async resumeTaskForAgent(agentId: string): Promise<void> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return;
-    const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
+    const tasks = await this.listWipLaneTasks();
     const dispatched = new Set<string>();
     const isDispatchable = (task: Task): boolean =>
       !task.deletedAt
@@ -5919,7 +5946,7 @@ export class TaskExecutor {
       return;
     }
 
-    const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
+    const tasks = await this.listWipLaneTasks();
     const inProgress = tasks.filter(
       (t) => t.column === "in-progress" && !t.deletedAt && !this.executing.has(t.id) && !t.paused,
     );

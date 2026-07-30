@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, resolveProjectColumnsForRoles, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
@@ -56,9 +56,33 @@ export class BacklogPressureReporter {
         return { alerted: false, reason: "invalid-config" };
       }
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-20:10:
+      THE QUERY, not the comparison — this reporter had no comparison to convert at all.
+
+      `listTasks({ column })` filters in the store, so on a board whose lanes are renamed both reads
+      return EMPTY and the ratio is computed as 0/0: the backlog-pressure alert never fires, on a
+      board that may be under exactly the pressure it exists to report. Nothing errors, and the
+      census never pointed here because a query filter is not a comparison.
+
+      Resolved through `resolveProjectColumnsForRoles`, which answers the PROJECT-level question a
+      read needs (there is no task in hand yet to resolve from) and always unions the legacy id, so a
+      board mid-rename still counts rows stored under the old one.
+      */
+      const [holdColumns, wipColumns] = await Promise.all([
+        resolveProjectColumnsForRoles(this.store, ["hold"]),
+        resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+      ]);
+      const listByColumns = async (columns: ReadonlySet<string>, slim: boolean): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const task of await this.store.listTasks({ column, slim })) byId.set(task.id, task);
+        }
+        return [...byId.values()];
+      };
       const [todoSlim, inProgressSlim] = await Promise.all([
-        this.store.listTasks({ column: "todo", slim: true }),
-        this.store.listTasks({ column: "in-progress", slim: true }),
+        listByColumns(holdColumns, true),
+        listByColumns(wipColumns, true),
       ]);
 
       const todoCount = todoSlim.length;
@@ -69,7 +93,7 @@ export class BacklogPressureReporter {
       }
 
       const [todoFull, allTasks] = await Promise.all([
-        this.store.listTasks({ column: "todo" }),
+        listByColumns(holdColumns, false),
         this.store.listTasks({ slim: true, includeArchived: true }),
       ]);
       const byId = new Map(allTasks.map((task) => [task.id, task]));

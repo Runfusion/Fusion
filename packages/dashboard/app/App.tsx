@@ -1449,8 +1449,22 @@ function AppInner() {
         moveTask,
         openAuthenticationSettings: () => openSettingsWithNav("authentication" as SectionId),
         addToast,
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+        Resolve Cancel's destination from the card's OWN workflow. Without this the banner moved to a
+        hardcoded `"todo"`, which `moves.ts` REJECTS on a board that does not declare it — the button
+        threw instead of cancelling. Wired here rather than left optional: an unsupplied parameter is
+        the inert shape this program has already found five times.
+        */
+        resolveCancelColumn: (taskId: string) => {
+          if (!footerBoardWorkflows) return undefined;
+          const workflow = footerBoardWorkflows.workflows.find(
+            (candidate) => candidate.id === (footerBoardWorkflows.taskWorkflowIds[taskId] ?? footerBoardWorkflows.defaultWorkflowId),
+          );
+          return workflow?.columns.find((column) => column.flags?.hold === true)?.id;
+        },
       }),
-    [addToast, currentProject?.id, modalManager, moveTask, retryTask],
+    [addToast, currentProject?.id, footerBoardWorkflows, modalManager, moveTask, retryTask],
   );
 
   const [shellOnboardingComplete, setShellOnboardingComplete] = useState(false);
