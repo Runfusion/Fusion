@@ -810,8 +810,14 @@ describe("fetchPiSettings", () => {
     const result = await fetchPiSettings();
 
     expect(result).toEqual(mockSettings);
+    /*
+    Exact headers, not a nested objectContaining (coderabbit #2652). `fetchPiSettings` goes through
+    `api()`, so it carries the `x-fusion-client` attribution header — and a loose matcher would pass
+    with that header silently dropped, which is precisely what these assertions are the only guard
+    against. My own note in test/apiRequestHeaders.ts says so; this site was inconsistent with it.
+    */
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/pi-settings", expect.objectContaining({
-      headers: expect.objectContaining({ "content-type": "application/json" }),
+      headers: API_JSON_HEADERS,
     }));
   });
 
