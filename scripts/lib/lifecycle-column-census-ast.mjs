@@ -402,7 +402,27 @@ function alwaysTerminates(stmt) {
  * under-counting hides a live guard.
  */
 function isNegativeTraitTest(text) {
-  return /(===|==)\s*(undefined|null)\b/.test(text) || /^\s*!\s*[A-Za-z_$]/.test(text);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-23:15 (#2874 review — greptile P2, "compound absence tests
+  over-classify"): SIMPLE conditions only.
+
+  The equality check was unanchored, so `completeLanes === undefined || forceLegacy` passed — and its
+  second disjunct can select the true branch with lane data PRESENT, making the literal a live guard
+  rather than a fallback. Marking a live line "already converted" is the direction that removes a real
+  guard from the backlog, which is the failure this whole rule was added to stop doing.
+
+  A compound condition is not something to reason about here: whether the literal is reachable with
+  traits present depends on the other operand. Refusing them leaves those sites COUNTED, which is the
+  safe answer for a measurement — over-counting sends a reader to a correct line, under-counting hides
+  a live one.
+
+  ANCHORING IS WHAT DOES THE WORK, not a separate compound check. I wrote one — `if (/[|&]{2}/) return
+  false` — and mutation showed it was dead: `^...$` already refuses anything with an operand beside
+  the comparison. A redundant guard carrying a comment that claims it is load-bearing is worse than no
+  guard, because the next reader trusts it instead of the anchors.
+  */
+  return /^\s*[A-Za-z_$][\w.$?[\]"'`]*\s*(===|==)\s*(undefined|null)\s*$/.test(text.trim())
+    || /^\s*!\s*[A-Za-z_$][\w.$?[\]"'`]*\s*$/.test(text.trim());
 }
 
 function isTraitFallback(node, sourceFile) {

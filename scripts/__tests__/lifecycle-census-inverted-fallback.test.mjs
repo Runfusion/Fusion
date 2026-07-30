@@ -66,3 +66,31 @@ test("an identifier merely CONTAINING a lane word is not a lane test", () => {
   const src = 'const c = airplanes === undefined ? columnId === "done" : other;';
   assert.deepEqual(fallbacks(src), []);
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:20 (#2874 review — greptile P2):
+A COMPOUND condition is not a simple absence test. `completeLanes === undefined || forceLegacy` has a
+second disjunct that can select the true branch with lane data PRESENT, so the literal there is a live
+guard. The unanchored check accepted it, which removes a real guard from the backlog — the direction
+this rule exists to stop.
+*/
+
+test("a compound absence test is NOT treated as a fallback", () => {
+  const src = 'const c = completeLanes === undefined || forceLegacy ? columnId === "done" : other;';
+  assert.deepEqual(fallbacks(src), []);
+});
+
+test("a conjunction is refused too", () => {
+  const src = 'const c = completeLanes === undefined && legacyMode ? columnId === "done" : other;';
+  assert.deepEqual(fallbacks(src), []);
+});
+
+test("the simple negated form still counts", () => {
+  const src = 'const c = !completeLanes ? columnId === "done" : completeLanes.includes(columnId);';
+  assert.deepEqual(fallbacks(src), ["done"]);
+});
+
+test("a property-path absence test still counts", () => {
+  const src = 'const c = lifecycle?.completeLanes === undefined ? columnId === "done" : other;';
+  assert.deepEqual(fallbacks(src), ["done"]);
+});
