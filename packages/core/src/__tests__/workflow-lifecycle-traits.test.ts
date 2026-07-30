@@ -8,7 +8,7 @@ byte-identical on the default workflow. The custom cases prove KTD-10 fallback.
 import { describe, expect, it } from "vitest";
 import "../builtin-traits.js"; // register built-in traits
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveReviewColumns, resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveReviewColumns, resolveTaskLifecycleColumns, resolveTerminalColumns } from "../workflow-lifecycle-traits.js";
 import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../builtin-coding-ideas-workflow-ir.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import { getTraitRegistry } from "../trait-registry.js";
@@ -433,5 +433,43 @@ describe("resolveReviewColumns", () => {
 
   it("agrees with the shipped coding workflow", () => {
     expect(resolveReviewColumns(BUILTIN_CODING_WORKFLOW_IR)).toContain("in-review");
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:20:
+A v1 graph upgraded to v2 carries `traits: []` on every synthesized column (`synthesizeDefaultColumns`
+in workflow-ir.ts — placement only, by design). So every role resolver answers "nothing" for a board
+whose lanes are in fact the legacy ones.
+
+This is pinned because the shape is INDISTINGUISHABLE at the call site from a hand-written v2 workflow
+that genuinely declares no such lane, and the two want opposite handling. A guard that reads empty as
+"no such lane" is right for the second and withdraws every role at once for the first.
+*/
+describe("a v1-upgraded IR resolves to NO roles — the other meaning of empty", () => {
+  const v1Upgraded = {
+    version: "v2",
+    name: "upgraded",
+    columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+    nodes: [],
+    edges: [],
+  } as never;
+
+  it("returns no lifecycle roles at all", () => {
+    expect(resolveLifecycleColumns(v1Upgraded)).toEqual({});
+  });
+
+  it("returns an EMPTY review set, not the legacy lane", () => {
+    expect(resolveReviewColumns(v1Upgraded)).toEqual([]);
+  });
+
+  it("returns an EMPTY wip set", () => {
+    expect(columnsWithFlag(v1Upgraded, "countsTowardWip")).toEqual([]);
+  });
+
+  it("STILL yields the legacy terminal pair, because that resolver keeps its own fallback", () => {
+    /* The contrast that makes the hazard concrete: same IR, and this one is unaffected purely because
+       it never adopted the empty-means-absent reading. */
+    expect(resolveTerminalColumns(v1Upgraded)).toEqual(["done", "archived"]);
   });
 });
