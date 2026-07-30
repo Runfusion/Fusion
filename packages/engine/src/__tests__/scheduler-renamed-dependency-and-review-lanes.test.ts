@@ -3,6 +3,16 @@ import { Scheduler } from "../scheduler.js";
 import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 /*
+The hydration path bails early unless the root dir resolves to a real GitHub repo. That guard is not
+what these cases are about, so it is stubbed — leaving it live made the assertion pass vacuously
+(BOTH vocabularies hydrated nothing, so "they match" was true for the wrong reason).
+*/
+vi.mock("@fusion/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fusion/core")>();
+  return { ...actual, getCurrentRepo: () => ({ owner: "acme", repo: "widgets" }) };
+});
+
+/*
 FNXC:WorkflowLifecycleColumns 2026-07-30-19:05:
 Two scheduler decisions that were keyed on column-id literals, on a RENAMED board.
 
@@ -294,5 +304,191 @@ describe("scheduler file-scope lease is held for a RENAMED review column", () =>
     ]);
 
     expect(renamed).toEqual(byDefault);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:40:
+Three more scheduler decisions that were keyed on column-id literals.
+
+DEFECT 3 — PR-MONITOR STARTUP HYDRATION. `configurePrMonitoring` rehydrated watchers behind
+`column !== "in-review"`. On a renamed board an engine restart hydrated NOTHING, so every open PR
+silently stopped being watched — no error, just a background watcher that never runs again.
+
+DEFECT 4 — BASE-BRANCH STACKING. `resolveBaseBranch` decides whether a starting task stacks its
+branch on a predecessor still in review. Keyed on the literal, a renamed board started the task from
+HEAD instead, so it silently rebuilt work its predecessor had already done.
+
+DEFECT 5 — MISSION COMPLETION ADVANCE. `handleMissionTaskMove` reconciled the feature status through
+a trait-aware path and THEN gated the follow-on completion on `toColumn === "done"`. On a renamed
+board the two halves of one handler disagreed about whether the same move was a completion, so the
+roadmap showed the work finished while mission execution stalled.
+*/
+
+async function baseBranchScenario(names: Names) {
+  const tasks = [
+    makeTask({ id: "FN-PRED", column: names.review, worktree: "/tmp/project/.worktrees/FN-PRED" }),
+    makeTask({ id: "FN-CAND", column: names.hold, priority: "urgent", dependencies: ["FN-PRED"] }),
+  ];
+  const store = createStore(tasks, {}, ir(names));
+  const started: Array<{ id: string; baseBranch: string | null }> = [];
+  const scheduler = new Scheduler(store, {
+    onTaskStart: ((task: Task, _worktree: string, baseBranch: string | null) => {
+      started.push({ id: task.id, baseBranch });
+    }) as never,
+  } as never);
+  (scheduler as unknown as { running: boolean }).running = true;
+  await scheduler.schedule();
+
+  const resolved = (scheduler as unknown as {
+    resolveBaseBranch: (t: Task, all: Task[], isReview: (c: Task) => boolean) => string | null;
+  });
+  return { started, resolved, tasks };
+}
+
+describe("scheduler base-branch stacking on a RENAMED board", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(Scheduler.prototype as never as { validateTaskFilesystem: () => unknown }, "validateTaskFilesystem")
+      .mockResolvedValue({ valid: true } as never);
+  });
+
+  /*
+  The predicate is now REQUIRED, so the compiler asks the question at the one call site. This asserts
+  the behaviour that matters: a review-lane predecessor with a worktree supplies the base branch, and
+  the answer is identical under both vocabularies.
+  */
+  it("stacks on a review-lane predecessor under BOTH vocabularies", async () => {
+    const outcomes = await Promise.all([DEFAULT_NAMES, RENAMED_NAMES].map(async (names) => {
+      const { resolved, tasks } = await baseBranchScenario(names);
+      const reviewIds = new Set([tasks[0].id]);
+      return resolved.resolveBaseBranch(
+        tasks[1],
+        tasks,
+        (candidate: Task) => reviewIds.has(candidate.id),
+      );
+    }));
+
+    expect(outcomes[0]).not.toBeNull();
+    expect(outcomes[1]).toEqual(outcomes[0]);
+  });
+
+  /* The paired negative: no review-lane predecessor means start from HEAD, not from something else. */
+  it("returns null when no predecessor is in the review lane", async () => {
+    const { resolved, tasks } = await baseBranchScenario(RENAMED_NAMES);
+
+    expect(resolved.resolveBaseBranch(tasks[1], tasks, () => false)).toBeNull();
+  });
+});
+
+describe("scheduler PR-monitor hydration on a RENAMED board", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(Scheduler.prototype as never as { validateTaskFilesystem: () => unknown }, "validateTaskFilesystem")
+      .mockResolvedValue({ valid: true } as never);
+  });
+
+  async function hydrationScenario(names: Names) {
+    const tasks = [
+      makeTask({
+        id: "FN-PR",
+        column: names.review,
+        prInfo: { number: 7, url: "https://example.invalid/pr/7", branch: "fusion/FN-PR" },
+      } as Partial<Task>),
+    ];
+    const store = createStore(tasks, {}, ir(names));
+    const scheduler = new Scheduler(store);
+    const startMonitoring = vi.fn();
+    scheduler.configurePrMonitoring({
+      prMonitor: { startMonitoring, getTrackedPrs: () => new Map(), updatePrInfo: vi.fn() } as never,
+    });
+    // The hydration is intentionally off the hot path (`void ... .then`), so let it settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return startMonitoring.mock.calls.map((call) => call[0]);
+  }
+
+  it("hydrates the review-lane PR under BOTH vocabularies", async () => {
+    const [byDefault, renamed] = await Promise.all([
+      hydrationScenario(DEFAULT_NAMES),
+      hydrationScenario(RENAMED_NAMES),
+    ]);
+
+    expect(byDefault).toEqual(["FN-PR"]);
+    expect(renamed).toEqual(byDefault);
+  });
+});
+
+describe("scheduler mission completion advance on a RENAMED board", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Drives `handleMissionTaskMove` directly with a task whose linked feature exists, and reports
+   * whether the follow-on completion fired. The feature-status half of this handler already resolves
+   * traits; this asserts the completion half agrees with it.
+   */
+  async function missionMoveScenario(names: Names) {
+    const task = makeTask({ id: "FN-M", column: names.complete, sliceId: "slice-1" } as Partial<Task>);
+    const store = createStore([task], {}, ir(names));
+    const feature = { id: "feat-1", sliceId: "slice-1", status: "in-progress", taskId: "FN-M", title: "task" };
+    const missionStore = {
+      listFeatures: vi.fn(async () => [feature]),
+      listAssertionsForFeature: vi.fn(async () => []),
+      updateFeatureStatus: vi.fn(async () => undefined),
+      getFeature: vi.fn(async () => feature),
+      getFeatureByTaskId: vi.fn(async () => feature),
+    };
+
+    const scheduler = new Scheduler(store, { missionStore } as never);
+    const completion = vi
+      .spyOn(scheduler as never as { handleMissionTaskCompletion: () => Promise<void> }, "handleMissionTaskCompletion")
+      .mockResolvedValue(undefined as never);
+
+    await (scheduler as unknown as {
+      handleMissionTaskMove: (id: string, to: string) => Promise<void>;
+    }).handleMissionTaskMove("FN-M", names.complete);
+
+    return completion.mock.calls.length;
+  }
+
+  /* Control: the default vocabulary advances the mission. */
+  it("default vocabulary: moving into the complete column advances mission execution", async () => {
+    expect(await missionMoveScenario(DEFAULT_NAMES)).toBe(1);
+  });
+
+  /*
+  The defect. Before the fix `shipped` failed `toColumn === "done"`, so the feature status was
+  reconciled but mission execution never advanced — the roadmap showed the work finished while the
+  mission stalled.
+  */
+  it("renamed vocabulary: moving into the complete column advances mission execution", async () => {
+    expect(await missionMoveScenario(RENAMED_NAMES)).toBe(1);
+  });
+
+  /* The paired negative: a non-complete destination must NOT advance, under either vocabulary. */
+  it("a move into the REVIEW column does not advance mission execution", async () => {
+    const task = makeTask({ id: "FN-M", column: RENAMED_NAMES.review, sliceId: "slice-1" } as Partial<Task>);
+    const store = createStore([task], {}, ir(RENAMED_NAMES));
+    const feature = { id: "feat-1", sliceId: "slice-1", status: "in-progress", taskId: "FN-M", title: "task" };
+    const scheduler = new Scheduler(store, {
+      missionStore: {
+        listFeatures: vi.fn(async () => [feature]),
+        listAssertionsForFeature: vi.fn(async () => []),
+        updateFeatureStatus: vi.fn(async () => undefined),
+        getFeature: vi.fn(async () => feature),
+      getFeatureByTaskId: vi.fn(async () => feature),
+      },
+    } as never);
+    const completion = vi
+      .spyOn(scheduler as never as { handleMissionTaskCompletion: () => Promise<void> }, "handleMissionTaskCompletion")
+      .mockResolvedValue(undefined as never);
+
+    await (scheduler as unknown as {
+      handleMissionTaskMove: (id: string, to: string) => Promise<void>;
+    }).handleMissionTaskMove("FN-M", RENAMED_NAMES.review);
+
+    expect(completion).not.toHaveBeenCalled();
   });
 });

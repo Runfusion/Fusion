@@ -40,7 +40,7 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, columnsWithFlag } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
@@ -253,11 +253,19 @@ export interface DependencySatisfactionColumns {
   review: ReadonlySet<string>;
 }
 
+/*
+DELIBERATE-LITERAL — the no-metadata fallback, reviewed 2026-07-30-20:40.
+Resolved columns win when present; the literal answers only when the caller could not resolve the
+dependency's workflow at all. DELETING it does not "finish the conversion" — it makes an
+unresolvable workflow read as `terminal.size === 0`, i.e. NEVER satisfied, which blocks every
+dependent forever. That is strictly worse than the legacy behaviour it would replace.
+*/
 function isTerminalDependencyColumn(dep: Task, columns: DependencySatisfactionColumns | undefined): boolean {
   if (columns) return columns.terminal.has(dep.column);
   return dep.column === "done" || dep.column === "archived";
 }
 
+/* DELIBERATE-LITERAL — same no-metadata fallback as above, reviewed 2026-07-30-20:40. */
 function isLegacyDependencySatisfied(dep: Task | undefined, columns?: DependencySatisfactionColumns): boolean {
   if (!dep) return false;
   if (isTerminalDependencyColumn(dep, columns)) return true;
@@ -436,7 +444,15 @@ export function shouldHoldActiveFileScopeLease(
   scheduler-renamed-wip-file-scope-lease.test.ts.
   */
   if (task.paused || task.userPaused) return false;
+  /*
+  DELIBERATE-LITERAL — the documented default for an unconverted caller, reviewed 2026-07-30-20:40.
+  Both scheduler call sites now pass the resolved answer, so these defaults are dead on the
+  scheduler's own path; they exist for the self-healing / repair callers this predicate is shared
+  with. Removing them would silently change those callers' meaning, which is the coupling the
+  optional-parameter shape exists to avoid.
+  */
   const isWipColumn = options?.isWipColumn ?? task.column === "in-progress";
+  /* DELIBERATE-LITERAL — the review half of the same shared-caller default. */
   const isReviewColumn = options?.isReviewColumn ?? task.column === "in-review";
   if (isWipColumn) {
     return getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions).length === 0;
@@ -1515,13 +1531,37 @@ export class Scheduler {
       return;
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-20:40 (fleet — PR-monitor startup hydration):
+    Startup rehydration of PR monitoring resolves the review lane per task.
+
+    Keyed on `column !== "in-review"`, a renamed board hydrated NOTHING on engine restart: every
+    open PR silently stopped being watched, so merges, review comments and closures went unnoticed
+    until something else moved the card. The failure is invisible precisely because it is a missing
+    background watcher rather than an error.
+
+    This is a one-shot startup pass over an already-fetched list, and it is already off the hot path
+    (`void ... .then(...)`), so a per-task resolution with a shared IR cache costs one read per
+    distinct workflow. Fail-soft: an unresolvable workflow falls back to the legacy literal via
+    `isReviewColumnRole`'s documented no-metadata behaviour rather than dropping the watcher.
+    */
     void this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true })
-      .then((tasks) => {
+      .then(async (tasks) => {
         const repo = getCurrentRepo(this.store.getRootDir());
         if (!repo) return;
 
+        const hydrationIrCache = new Map<string, WorkflowIr>();
         for (const task of tasks) {
-          if (task.column !== "in-review" || !task.prInfo) continue;
+          if (!task.prInfo) continue;
+          let flags: ColumnRoleTraitFlags | undefined;
+          try {
+            const ir = await resolveWorkflowIrForTask(this.store, task.id, hydrationIrCache);
+            const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
+            if (column) flags = resolveColumnFlags(column);
+          } catch {
+            // Unresolvable workflow: `isReviewColumnRole` falls back to the legacy id below.
+          }
+          if (!isReviewColumnRole(flags, task.column)) continue;
           options.prMonitor!.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
         }
       })
@@ -1538,20 +1578,38 @@ export class Scheduler {
    * or `null` if the task should start from HEAD (default).
    *
    * Priority: explicit dep in-review (first with worktree) > blockedBy in-review.
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-20:40 (fleet — scheduler base-branch stacking):
+   * `isReviewColumn` is a REQUIRED resolved answer, not an optional one with a literal default.
+   *
+   * This decides whether a starting task stacks its branch on a predecessor still in review. Keyed
+   * on the literal, a renamed board resolved every predecessor as "not in review" and the task
+   * started from HEAD instead of from its dependency's branch — so the dependent silently rebuilt
+   * work its predecessor had already done, and the first merge of the two conflicted. That is a
+   * quiet wrong answer, not a crash, which is why it would survive unnoticed.
+   *
+   * Required rather than optional because this method has exactly ONE caller, inside
+   * `runHoldReleaseSweepPass`, which has already resolved per-task trait flags for the whole board.
+   * An optional parameter with a literal default would let a future caller reintroduce the bug by
+   * omission; making it required means the compiler asks the question.
    */
-  private resolveBaseBranch(task: Task, allTasks: Task[]): string | null {
-    // Check explicit dependencies for in-review tasks with worktrees
+  private resolveBaseBranch(
+    task: Task,
+    allTasks: Task[],
+    isReviewColumn: (candidate: Task) => boolean,
+  ): string | null {
+    // Check explicit dependencies for review-lane tasks with worktrees
     for (const depId of task.dependencies) {
       const dep = allTasks.find((t) => t.id === depId);
-      if (dep && dep.column === "in-review" && dep.worktree) {
+      if (dep && isReviewColumn(dep) && dep.worktree) {
         return resolveTaskWorkingBranch(dep);
       }
     }
 
-    // Check implicit blockedBy for in-review task with worktree
+    // Check implicit blockedBy for a review-lane task with worktree
     if (task.blockedBy) {
       const blocker = allTasks.find((t) => t.id === task.blockedBy);
-      if (blocker && blocker.column === "in-review" && blocker.worktree) {
+      if (blocker && isReviewColumn(blocker) && blocker.worktree) {
         return resolveTaskWorkingBranch(blocker);
       }
     }
@@ -1709,6 +1767,9 @@ export class Scheduler {
    */
   private async renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> {
     for (const task of tasks) {
+      /* DELIBERATE-LITERAL — seeds the trait resolution immediately below, which overwrites it
+         whenever the workflow resolves; the literal survives only as the documented fallback for an
+         unresolvable workflow. Reviewed 2026-07-30-20:40. */
       let isImplementationColumn = task.column === "in-progress";
       try {
         const ir = await resolveWorkflowIrForTask(this.store, task.id);
@@ -2454,7 +2515,7 @@ export class Scheduler {
           }
 
           dispatchPrepByTaskId.set(task.id, {
-            baseBranch: this.resolveBaseBranch(freshTask, tasks),
+            baseBranch: this.resolveBaseBranch(freshTask, tasks, isReviewColumnTask),
             dispatchStormCount: nextDispatchStormCount,
             dispatchTimestamp,
             effectiveNodeId: effectiveNode.nodeId ?? null,
@@ -2604,7 +2665,27 @@ export class Scheduler {
         );
       }
 
-      if (toColumn === "done") {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-20:40 (fleet — mission completion advance):
+      "Did this task just COMPLETE?" resolved from the destination column's own trait.
+
+      Keyed on `toColumn === "done"`, a renamed board never advanced mission execution: the feature
+      status above was reconciled (that path already resolves traits), but the follow-on completion
+      never fired, so the mission stalled with its roadmap showing the work finished. The two halves
+      of one handler disagreed about whether the same move was a completion.
+
+      Fail-soft to the legacy literal via `isCompleteColumnRole`'s documented no-metadata behaviour —
+      an unresolvable workflow keeps today's behaviour rather than stalling the mission.
+      */
+      let completionFlags: ColumnRoleTraitFlags | undefined;
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, taskId);
+        const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === toColumn);
+        if (column) completionFlags = resolveColumnFlags(column);
+      } catch {
+        // Unresolvable workflow: fall back to the legacy `done` literal below.
+      }
+      if (isCompleteColumnRole(completionFlags, toColumn)) {
         await this.handleMissionTaskCompletion(taskId, sliceIdBeforeUpdate);
       }
     } catch (err) {
