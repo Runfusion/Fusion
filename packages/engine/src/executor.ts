@@ -10411,7 +10411,46 @@ export class TaskExecutor {
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
-    return live.column === "todo" || live.column === "in-review" || live.column === "in-progress";
+    const resumeLanes = await this.resolveResumeLanes(live.id);
+    return live.column === resumeLanes.hold
+      || live.column === resumeLanes.review
+      || live.column === resumeLanes.wip;
+  }
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-16:00 (Phase C convergence — resume eligibility):
+  The columns a RESUME may legitimately start from, resolved from the task's own workflow: the
+  hold (backlog) lane, the wip lane, and the review lane.
+
+  These decisions were spelled as the default lineage's three names, so on a renamed board every
+  resume-safety check answered "not a safe resume state" and the paused-node re-entry, the
+  pause-abort auto-continue, and the benign-todo abort-marker clear all stopped firing. The last
+  of those is the one that bites: FN-6478's benign path exists so a re-queued card clears its
+  abort marker instead of being parked `failed` for an operator — and on a renamed board it took
+  the operator-action branch instead, which is the retry storm that path was written to end.
+
+  ASYNC on purpose: every call site here is already async (a store read precedes each one), so
+  there is no listener-ordering hazard of the kind that forced the synchronous planner-lane
+  resolver in `replan-target.ts`.
+
+  Fail-soft to the legacy trio so an unresolvable or column-less workflow behaves as before.
+
+  FOLLOW-UP, deliberately not done here: PR #2628 exports a synchronous `resolvePlannerLanes`
+  (hold/intake/wip) from `replan-target.ts`. Once both land, this helper and that one should
+  become one resolver returning the full lane set — two resolvers for the same question is the
+  drift this program keeps paying for. Kept separate now only to avoid a cross-branch dependency.
+  */
+  private async resolveResumeLanes(taskId: string): Promise<{ hold: string; wip: string; review: string }> {
+    try {
+      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
+      return {
+        hold: lifecycle?.hold ?? "todo",
+        wip: lifecycle?.wip ?? "in-progress",
+        review: lifecycle?.review ?? "in-review",
+      };
+    } catch {
+      return { hold: "todo", wip: "in-progress", review: "in-review" };
+    }
   }
 
   private async reenterPausedAbortedWorkflowNode(
@@ -10423,7 +10462,15 @@ export class TaskExecutor {
     const priorRetries = live.graphResumeRetryCount ?? 0;
     if (priorRetries >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
     const nextRetries = priorRetries + 1;
-    const preservedInReview = live.column === "in-review";
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:05: resolved ONCE for the whole re-entry —
+    `preservedInReview`, the audit `mode` label, the resume-safety recheck, and the branch that
+    picks execute() vs executeWorkflowGraph() must all agree on which column is which. They were
+    four independent literal comparisons, so on a renamed board `preservedInReview` was false for
+    a card in review AND the recheck rejected it, and the re-entry silently never happened.
+    */
+    const reentryLanes = await this.resolveResumeLanes(live.id);
+    const preservedInReview = live.column === reentryLanes.review;
     this.clearPausedAborted(live.id);
     this.activeWorktrees.delete(live.id);
     const message = `Workflow graph node '${nodeId}' was interrupted by engine pause/resume — re-entering workflow graph (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
@@ -10446,7 +10493,7 @@ export class TaskExecutor {
           maxAttempts: MAX_TRANSIENT_GRAPH_RESUME_RETRIES,
           abortProvenance: abortProvenance ?? "unknown",
           preservedInReview,
-          mode: preservedInReview ? "preserved-in-review" : live.column === "todo" ? "reexecuted-from-todo" : "reentered-graph",
+          mode: preservedInReview ? "preserved-in-review" : live.column === reentryLanes.hold ? "reexecuted-from-todo" : "reentered-graph",
         },
       });
     } catch (error) {
@@ -10464,7 +10511,9 @@ export class TaskExecutor {
             || resumeTask.userPaused
             || resumeTask.status != null
             || resumeTask.error != null
-            || (preservedInReview ? resumeTask.column !== "in-review" : resumeTask.column !== "todo" && resumeTask.column !== "in-progress")
+            || (preservedInReview
+              ? resumeTask.column !== reentryLanes.review
+              : resumeTask.column !== reentryLanes.hold && resumeTask.column !== reentryLanes.wip)
             || this.activeSessions.has(live.id)
             || this.activeStepExecutors.has(live.id)
             || this.activeWorkflowStepSessions.has(live.id)
@@ -10476,7 +10525,7 @@ export class TaskExecutor {
           }
           if (preservedInReview) {
             await this.executeWorkflowGraph(resumeTask);
-          } else if (resumeTask.column === "todo") {
+          } else if (resumeTask.column === reentryLanes.hold) {
             await this.execute(resumeTask);
           } else {
             await this.executeWorkflowGraph(resumeTask);
