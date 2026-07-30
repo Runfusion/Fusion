@@ -193,6 +193,45 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
   and then misdirects, so the operator's next three attempts are all wrong for a reason the product
   told them.
   */
+  it("accepts a humanReview-ONLY lane, which the singular `.review` excluded", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (PR #2718 review — greptile):
+    `.review` is the single `mergeOrchestration` column, so a board hosting review on a `humanReview`-
+    only lane failed this guard — `TaskContextMenu` offered "Bypass failed review" (it asks by ROLE)
+    and the store refused it. The operator's only escape from a stranded failed pre-merge step returned
+    a conflict.
+
+    The BROAD set is right here because this guard refuses or permits and moves nothing; #2750
+    documents why a caller that admits and then MOVES wants the narrow lane instead.
+    */
+    const definition = await store().createWorkflowDefinition({
+      name: "human-review-bypass",
+      ir: {
+        version: "v2",
+        name: "human-review-bypass",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    await store().createTaskWithReservedId(
+      { description: "human-review bypass", column: "signoff", workflowId: definition.id } as never,
+      { taskId: "FN-HRB", applyDefaultWorkflowSteps: false },
+    );
+    await store().updateTask("FN-HRB", { workflowStepResults: [failedStep()] });
+
+    /* Passes the lane guard; any later refusal is a different gate, which is the point. */
+    await expect(
+      store().bypassFailedPreMergeReviewStep("FN-HRB", { reason: "operator override" } as never),
+    ).resolves.toBeDefined();
+  });
+
   it("names the board's OWN review column when refusing a card that is elsewhere", async () => {
     const definition = await store().createWorkflowDefinition({
       name: "renamed-review",

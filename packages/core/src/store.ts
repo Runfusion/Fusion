@@ -126,7 +126,8 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { resolveTaskLifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { resolveReviewColumns } from "./workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
 // persistence/allocator/settings/search/lifecycle/merge/archive helpers preserve
@@ -1395,9 +1396,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       one refuses correctly and then sends the operator somewhere that does not exist. Resolved once
       into a local so the check and the message cannot drift apart again.
       */
-      const reviewColumn = (await resolveTaskLifecycleColumns(this, task.id))?.review ?? "in-review";
-      if (task.column !== reviewColumn) {
-        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in '${reviewColumn}'`);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (PR #2718 review — greptile, on the guard I
+      converted in #2709):
+      EVERY REVIEW LANE, because `.review` is the single `mergeOrchestration` column. A board hosting
+      review on a `humanReview`- or `mergeBlocker`-only lane failed this check, so `TaskContextMenu`
+      offered "Bypass failed review" (it asks by ROLE) and the store refused it — the operator's only
+      escape from a stranded failed pre-merge step returned a conflict.
+
+      THE BROAD SET IS RIGHT HERE, and that is a decision rather than a default: this guard REFUSES or
+      PERMITS an operator action and moves nothing, so admitting every lane where review happens cannot
+      send a card anywhere the engine disagrees with. #2750 documents the split — a caller that admits
+      and then MOVES wants the narrow single lane instead.
+
+      The message names the lanes the check actually used, keeping #2709's fix: telling an operator to
+      move to a column their board does not have is worse than refusing.
+      */
+      const reviewIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
+      const reviewColumns = reviewIr === undefined ? ["in-review"] : resolveReviewColumns(reviewIr);
+      if (!reviewColumns.includes(task.column)) {
+        const named = reviewColumns.length > 0 ? reviewColumns.map((c: string) => `'${c}'`).join(" or ") : "a review lane";
+        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in ${named}`);
       }
       if (task.paused) {
         throw new Error(`Cannot bypass review lane for ${id}: task is paused`);
