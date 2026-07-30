@@ -52,7 +52,7 @@ excluding `__tests__`/`*.test.*` and comment lines:
 
 The plain 29, by file:
 
-```
+```text
   6  packages/engine/src/self-healing.ts
   3  packages/engine/src/executor.ts
   3  packages/engine/src/project-engine.ts
@@ -71,7 +71,7 @@ The plain 29, by file:
 
 Re-measure with:
 
-```
+```text
 grep -rn 'moveTask(' packages/*/src packages/dashboard/app packages/cli/src plugins \
   --include=*.ts --include=*.tsx | grep -v __tests__ | grep -v '\.test\.'
 ```
@@ -99,7 +99,7 @@ writes** — so the check did not execute and the legacy `VALID_TRANSITIONS` tab
 hoisted it out of that dead branch, and it is now live and unconditional whenever the workflow resolves.
 Proven on a real store by `packages/core/src/__tests__/live-move-path-undeclared-target.test.ts`:
 
-```
+```text
 moveTask(card in "todo" -> "triage")  now REJECTS: /Unknown column for this workflow/
 ```
 

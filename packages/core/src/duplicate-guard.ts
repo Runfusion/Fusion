@@ -204,11 +204,39 @@ export async function reconcileDeterministicDuplicate(
         deterministicDuplicateOf: olderSibling.id,
       },
     });
-    /* FNXC:WorkflowResolvedColumns 2026-07-30-19:30: census-invisible destination — see
-       `resolveArchiveTargetForTask`. The row above has already been stamped
-       `deterministicDuplicateOf`, so a rejected move here leaves it marked as a duplicate while still
-       occupying an active lane. */
-    await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id));
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (#2808 review — coderabbit):
+    COMPENSATED, not merely documented.
+
+    The previous note here described this hazard and shipped it: the row is stamped
+    `deterministicDuplicateOf` BEFORE the move, and `moveTask` rejects a destination the workflow does
+    not declare. A rejection therefore left a task marked as an archived duplicate while still sitting
+    in an active lane — visible on the board, counted as live, and permanently mislabelled. Describing
+    a defect is not resolving it.
+
+    The stamp is rolled back and the original error rethrown, so a failed archive leaves the task
+    exactly as it was found. Compensation rather than reordering because the stamp is deliberately
+    written first — a `task:moved` subscriber reading `deterministicDuplicateOf` would see a different
+    row if the move came first, and this fix should not quietly change that ordering.
+
+    The rollback is best-effort: if it also fails, the original move error still surfaces, because
+    that is the one that explains what went wrong.
+    */
+    try {
+      await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id));
+    } catch (moveError) {
+      try {
+        await store.updateTask(args.createdTask.id, {
+          sourceMetadataPatch: { deterministicDuplicateOf: null },
+        });
+      } catch (rollbackError) {
+        args.logger?.warn("Failed to roll back the deterministic-duplicate stamp after a rejected archive move", {
+          taskId: args.createdTask.id,
+          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      }
+      throw moveError;
+    }
 
     try {
       await store.recordActivity({

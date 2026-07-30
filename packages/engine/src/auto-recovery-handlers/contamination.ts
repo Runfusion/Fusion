@@ -82,7 +82,11 @@ export class ContaminationAutoRecoveryHandler implements Pick<AutoRecoveryHandle
     }
 
     if (recoveryKind === "default") {
-      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:50: census-invisible moveTask DESTINATION — a call argument, not a comparison. This requeue is not a #1411 `recoveryRehome` escape, so on a board that does not declare `todo` the move is REJECTED and the recovery it belongs to never completes. */
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
+       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
+       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
+       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
+       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
       await this.deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(this.deps.taskStore, task.id), {
         moveSource: "engine",
         preserveResumeState: true,

@@ -46,14 +46,22 @@ const RENAMED: WorkflowIr = {
   edges: [],
 } as unknown as WorkflowIr;
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:30 (#2808 review — coderabbit):
+The two `.not.toBe(legacyId)` cases are DELETED, and the comment that called one of them
+"Non-vacuous" had it exactly backwards.
+
+Each sat directly beneath a positive case asserting `.toBe("backlog")` / `.toBe("boxed")`. An exact
+equality is strictly stronger than a negation: nothing can satisfy `toBe("backlog")` and still return
+`"todo"`. So the negatives could not fail unless the positive had already failed, and they would have
+passed for any wrong-but-not-legacy id — which is the weakness they claimed to be guarding against.
+
+The remaining four cases pin all four outcomes exactly: the resolved lane, and the legacy fallback for
+both an unresolvable workflow and a throwing lookup.
+*/
 describe("resolveReboundTargetForTask", () => {
   it("resolves the board's own hold lane", async () => {
     await expect(resolveReboundTargetForTask(storeWith(RENAMED), "FN-1")).resolves.toBe("backlog");
-  });
-
-  it("does NOT return the legacy id for a board that declares no such column", async () => {
-    /* Non-vacuous: the assertion above would also hold if the resolver returned any string. */
-    await expect(resolveReboundTargetForTask(storeWith(RENAMED), "FN-1")).resolves.not.toBe("todo");
   });
 
   it("falls back to the legacy id when no workflow resolves", async () => {
@@ -68,10 +76,6 @@ describe("resolveReboundTargetForTask", () => {
 describe("resolveArchiveTargetForTask", () => {
   it("resolves the board's own archive lane", async () => {
     await expect(resolveArchiveTargetForTask(storeWith(RENAMED), "FN-1")).resolves.toBe("boxed");
-  });
-
-  it("does NOT return the legacy id for a board that declares no such column", async () => {
-    await expect(resolveArchiveTargetForTask(storeWith(RENAMED), "FN-1")).resolves.not.toBe("archived");
   });
 
   it("falls back to the legacy id when no workflow resolves", async () => {
