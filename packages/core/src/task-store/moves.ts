@@ -6,7 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
+import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
 import {and, eq, sql} from "drizzle-orm";
@@ -361,7 +361,6 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     // project) via getSettingsFast(). This is an async read taken before the
     // lock-sensitive transaction; it does not touch the task lock.
     const mergedSettingsForMove = await store.getSettingsFast();
-    const useWorkflow = isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove);
     // bypassGuards (KTD-9): engine-sourced moves + the existing skipMergeBlocker
     // call sites map onto it. Capacity (KTD-10) is NEVER bypassed by this — the
     // capacity check is not a guard (U6 fills the enforcement; U4 leaves a
@@ -390,9 +389,9 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     */
     const workflowSelectionForMove = await store.getTaskWorkflowSelectionAsync(id);
     const effectiveWorkflowIdForMove = workflowSelectionForMove?.workflowId ?? DEFAULT_WORKFLOW_ID;
-    const workflowIr: WorkflowIr | undefined = useWorkflow
-      ? await resolveTaskWorkflowIrForMove(store, id)
-      : undefined;
+    // FNXC:WorkflowColumns 2026-07-31-04:00 (U12): resolved unconditionally — the gate is gone, so
+    // `undefined` now means only "no IR on this path or a v1 column-less IR", never "flag off".
+    const workflowIr: WorkflowIr | undefined = await resolveTaskWorkflowIrForMove(store, id);
 
     if (task.column === toColumn) {
       if (internal.fromHandoff && toColumn === "in-review") {
@@ -487,7 +486,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
 
     const fromColumn = task.column;
 
-    if (useWorkflow && workflowIr) {
+    if (workflowIr) {
       // ── Flag-ON validation + sync guards (typed rejections, KTD-3/R13) ─────
       // 1. Target column must exist in the task's workflow → unknown-column.
       //    #1411: a recoveryRehome move to a LEGACY column (todo/archived/…) is
@@ -787,7 +786,27 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     task.columnMovedAt = movedAt;
     task.updatedAt = movedAt;
 
-    if (useWorkflow) {
+    /*
+    FNXC:WorkflowColumns 2026-07-31-04:00 (U12 — the compatibility flag is RESOLVED):
+    Column side effects run through the default-workflow TRAIT HOOKS unconditionally. The
+    `if (useWorkflow)` gate and its inline legacy `else` branch are DELETED, not converted —
+    converting a branch we intended to delete would have left a second definition of every
+    column side effect alive to drift.
+
+    WHY THIS WAS SAFE TO FLIP, evidenced rather than asserted:
+      - `moves-flag-equivalence.test.ts` runs the SAME journey under both flag states against live
+        PostgreSQL and diffs the persisted row: identical across 128 fields plus an equal timing
+        shape, over todo -> in-progress -> in-review -> todo -> in-progress. Mutation-verified in
+        both directions (stamping this branch, and diverging the reopen hook, each fail it).
+      - The flag was read by NOTHING in production: `experimentalFeatures.workflowColumns` is
+        global-only and no module writes it, so this branch had never run for any project that did
+        not carry a stale persisted value. That is also why "the suite is green" was never evidence
+        on its own — both paths were individually valid and only one was live.
+      - Target-column validation was NOT introduced by this flip. I claimed it was, twice, and
+        reproduced the opposite: a move to a column the task's workflow does not declare already
+        rejects on the legacy path with `Invalid transition: ... Valid targets: ...`. See the seam-2
+        cases in that same test file.
+    */
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-08:10 (Phase C convergence):
       Resolved ONCE for both the hook context and the store's own reopen check, so the two
@@ -855,130 +874,6 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       if (isReopenToTodoOrTriage && !preserveStepProgress) {
         await store.resetPromptCheckboxes(dir);
       }
-    } else {
-      // ── Flag-OFF legacy inline side effects (UNCHANGED — the flag-off path) ──
-      if (fromColumn === "in-progress" && toColumn !== "in-progress") {
-        const segmentStartMs = Date.parse(task.executionStartedAt ?? task.columnMovedAt);
-        const segmentEndMs = Date.parse(task.columnMovedAt);
-        const segmentDeltaMs =
-          Number.isFinite(segmentStartMs) && Number.isFinite(segmentEndMs)
-            ? Math.max(0, segmentEndMs - segmentStartMs)
-            : 0;
-        task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
-      }
-
-      if (toColumn === "in-progress") {
-        task.cumulativeActiveMs ??= 0;
-        if (!task.firstExecutionAt) {
-          task.firstExecutionAt = task.columnMovedAt;
-        }
-        if (!task.executionStartedAt) {
-          task.executionStartedAt = task.columnMovedAt;
-        }
-        task.userPaused = undefined;
-      }
-      if (toColumn === "done" && !task.executionCompletedAt) {
-        task.executionCompletedAt = task.columnMovedAt;
-      }
-
-      if (toColumn === "done") {
-        store.clearDoneTransientFields(task);
-      }
-
-      const isReopenToTodoOrTriage =
-        (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review")
-        && (toColumn === "todo" || toColumn === "triage");
-
-      if (isReopenToTodoOrTriage) {
-        // FNXC:WorkflowLifecycle 2026-07-12-09:05 (merge port from main): keep
-        // this flag-OFF inline block in sync with applyResetOnEntryEffects
-        // (default-workflow-hooks.ts) — `preservePause` keeps a pause-caused
-        // teardown move from clearing the user's park (FN-7851 pause-bounce loop).
-        if (!options?.preserveStatus) {
-          task.status = undefined;
-          task.error = undefined;
-          if (!options?.preservePause) {
-            task.pausedReason = undefined;
-          }
-        }
-        task.blockedBy = undefined;
-        task.overlapBlockedBy = undefined;
-        if (!options?.preservePause) {
-          task.paused = undefined;
-          task.pausedByAgentId = undefined;
-        }
-        if (moveSource === "user" && toColumn === "todo") {
-          task.userPaused = true;
-        } else if (!options?.preservePause) {
-          task.userPaused = undefined;
-        }
-
-        const hasNonPendingStepProgress = task.steps.some((step) => step.status !== "pending");
-        const preserveStepProgress =
-          options?.preserveResumeState || (options?.preserveProgress === true && hasNonPendingStepProgress);
-
-        if (!options?.preserveWorktree) {
-          task.worktree = undefined;
-        }
-
-        if (!options?.preserveResumeState) {
-          task.executionStartedAt = undefined;
-          task.executionCompletedAt = undefined;
-        } else {
-          task.executionCompletedAt = undefined;
-        }
-
-        if (!preserveStepProgress) {
-          store.resetAllStepsToPending(task);
-          await store.resetPromptCheckboxes(dir);
-        }
-      }
-
-      if (toColumn === "in-review") {
-        // Keep this flag-OFF inline path in sync with applyInReviewEnterEffects.
-        // Do not snapshot global autoMerge: undefined follows the live setting,
-        // while explicit per-task true/false overrides remain sticky.
-        task.recoveryRetryCount = undefined;
-        task.nextRecoveryAt = undefined;
-        // Clear scheduler-side dispatch state: `queued`, `blockedBy`, and
-        // `overlapBlockedBy` are stamped while the task waits in `todo`. If
-        // they survive the transition into `in-review` they permanently block
-        // the merge gate (see getTaskMergeBlocker's BLOCKING_TASK_STATUSES).
-        if (task.status === "queued") {
-          task.status = undefined;
-        }
-        task.blockedBy = undefined;
-        task.overlapBlockedBy = undefined;
-      }
-
-      /*
-      FNXC:WorkflowReviewGates 2026-07-26-14:25:
-      Parity mirror of the gate in `applyReopenFieldClears` (default-workflow-hooks.ts) — these two
-      blocks are deliberately kept byte-equivalent in behavior. The graph's own
-      in-review -> in-progress crossing (the remediation node entry, routine now that the pre-merge
-      review gates live in `in-review`) must retain `workflowStepResults`; every other reopen still
-      clears. See the hook for the full rationale.
-      */
-      const graphOwnedReviewToWip = options?.workflowMoveSource === "workflow-graph"
-        && fromColumn === "in-review"
-        && toColumn === "in-progress";
-      if (
-        !graphOwnedReviewToWip
-        && ((fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage"))
-          || (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage")))
-      ) {
-        task.workflowStepResults = undefined;
-      }
-
-      if (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "triage")) {
-        task.branch = undefined;
-        task.executionStartBranch = undefined;
-        task.baseCommitSha = undefined;
-        task.summary = undefined;
-        task.recoveryRetryCount = undefined;
-        task.nextRecoveryAt = undefined;
-      }
-    }
 
     if (toColumn === "in-progress" && !task.worktree && options?.allocateWorktree) {
       const allocator = options.allocateWorktree;
@@ -1110,7 +1005,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       // crash-safe transitionPending marker in the SAME transaction as the
       // column change (KTD-2). countActiveInCapacitySlotAsync already counts
       // pending markers in PG, so this is load-bearing for capacity too.
-      if (useWorkflow) {
+      {
         await writeTransitionPendingAsync(
           tx,
           id,
@@ -1348,7 +1243,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     // per-hook completion in the marker's hooksRemaining. A throwing plugin hook
     // DEGRADES (audit) and never wedges the lock or strands the marker — the
     // marker is always cleared at the end regardless of hook failures.
-    if (useWorkflow) {
+    {
       // Plugin hooks are skipped on engine/recovery-sourced moves (KTD-9 — those
       // bypass trait effects) and on same-column no-ops.
       if (!bypassGuards && fromColumn !== toColumn && workflowIr) {
@@ -1413,7 +1308,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         `workflowId` means "not resolved here"; a subscriber that needs it reads
         the selection itself.
         */
-        ...(useWorkflow ? { workflowId: effectiveWorkflowIdForMove } : {}),
+        workflowId: effectiveWorkflowIdForMove,
       });
     }
     if (toColumn === "done") {

@@ -35,13 +35,6 @@ export interface RepairOverlapBlockerResult {
 }
 
 /** @internal Extracted modules use this compatibility flag */
-export function isWorkflowColumnsCompatibilityFlagEnabled(settings: Pick<Settings, "experimentalFeatures"> | undefined): boolean {
-  /*
-  FNXC:WorkflowColumns 2026-06-22-00:00:
-  TaskStore still needs the raw compatibility flag for legacy movement characterization, v1 workflow-IR rollback persistence, and ON→OFF custom-column evacuation tests. This is narrower than the public runtime helper, which treats stale false values as enabled after workflow-column cutover.
-  */
-  return settings?.experimentalFeatures?.workflowColumns === true;
-}
 import { type PluginGateVerdict } from "./plugin-gate-verdict.js";
 import type { PluginOnSchemaInit, PluginPostgresSchemaDefinition } from "./plugin-types.js";
 import { assertLoadedPluginSchemaInitHooksSupported, type LoadedPluginSchemaContract } from "./postgres/plugin-schema-hook.js";
@@ -2406,11 +2399,14 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   the three U5 reconciliation guards (now unconditional) and the three v1-IR
   rollback-compat persistence sites (now unconditional, same stored bytes).
 
-  The underlying `isWorkflowColumnsCompatibilityFlagEnabled` SURVIVES for now: it is
-  still read by `moves.ts` and `workflow-task-create-ops.ts`, and removing those reads
-  IS the U2b move-path convergence, which carries an equivalence-proof obligation.
-  Deleting this wrapper is what makes the remaining reads easy to enumerate: after
-  this change, every surviving read of the raw flag is on the move path.
+  FNXC:WorkflowColumns 2026-07-31-04:00 (U12): `isWorkflowColumnsCompatibilityFlagEnabled` is now
+  DELETED TOO. Its last two readers were the move path — `moves.ts` and the preflight in
+  `workflow-task-create-ops.ts` — and both were un-gated in one commit because the preflight computes
+  what `moves.ts` consumes.
+
+  The equivalence-proof obligation that held this back is discharged, not waived:
+  `moves-flag-equivalence.test.ts` diffs the persisted row after the same journey under both flag
+  states against live PostgreSQL and finds them identical, mutation-verified in both directions.
   */
   public async listWorkflowOccupantTaskIds(workflowId: string, includeNullSelection: boolean): Promise<string[]> {
     return listWorkflowOccupantTaskIdsImpl(this, workflowId, includeNullSelection);
