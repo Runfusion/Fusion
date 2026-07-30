@@ -156,7 +156,6 @@
   "queryByFile": {
     "packages/engine/src/self-healing.ts": 48,
     "packages/engine/src/project-engine.ts": 7,
-    "packages/engine/src/backlog-pressure-reporter.ts": 3,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
     "packages/core/src/task-store/moves.ts": 2,
