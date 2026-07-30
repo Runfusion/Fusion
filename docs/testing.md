@@ -74,6 +74,44 @@ Public `@fusion/core` exports consumed by runtime tools should include a literal
 `packages/engine/src/__tests__/user-configured-command-no-execsync.test.ts` guards user-configured command execution helpers against accidental `execSync` usage or dropped async bounds. Its registry covers verification helpers, `fn_run_verification`, executor configured-command execution, merger post-merge script execution, routine command execution, and the native/bubblewrap/sandbox-exec sandbox backends. Each protected slice must keep the appropriate bounded async safeguard (`timeout`/`timeoutMs`, `maxBuffer`, or `maxLifetimeMs`). The test intentionally slices named function bodies instead of scanning whole files; deterministic git-plumbing `execSync` in merger/self-healing/already-merged/integration/worktree-prune paths and the executor git ancestry check are explicitly out of scope.
 
 
+## Lifecycle-column census (report-only)
+
+<!-- FNXC:WorkflowLifecycleColumns 2026-07-30-14:50: added while converting the last of the tracked triage guards. The point of documenting it is the measurement, not the script: the number the workflow-owned-lifecycle program tracked was wrong in three ways at once, and the same mistake is available to any future migration that greps for one string. -->
+`pnpm census:lifecycle-columns` reports every comparison of a task column against the six legacy
+column ids (`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`) across the packages
+and plugins source trees, with comments stripped. It reports **three separate numbers**, and that
+separation is the whole value:
+
+- **COLUMN guards** — the real backlog. A lifecycle decision made by column NAME stops matching
+  the moment a board renames a column.
+- **ROLE comparisons** — `role === "triage"`, `agentType === "triage"`, `entry.agent === "triage"`.
+  These compare an AGENT ROLE. The planner *lane* is named `triage` and keeps that name; U11
+  removed only the *column*. These must NOT be converted — renaming the role silently empties the
+  planner's prompt template and mis-binds its model markers.
+- **DELIBERATE-LITERAL** — reviewed sites whose literal is correct, with the reason recorded at the
+  site rather than in a list that can drift from it. Grep `DELIBERATE-LITERAL` to enumerate them.
+
+Why it exists: the program tracked its remaining work by grepping `=== "triage"`, and that count
+was simultaneously too low (six ids exist; `triage` was under 4% of the total, and the pattern was
+anchored on locals named `column`, so real guards on `from` and `originColumn` were invisible) and
+too high (ten role comparisons counted as backlog). A count that is wrong in both directions sends
+work to the wrong files and hides the files that need it.
+
+`--json` emits the machine-readable form. `--strict` compares per-file counts against
+`scripts/lib/lifecycle-column-census-baseline.json` and fails when any file's column-guard count
+**rises** — the ratchet shape. It is deliberately **not** wired into the merge gate: a
+thousand-site backlog cannot be a blocking check the day it is first measured, and a guard nobody
+can pass is a guard everyone disables. Owners tightening their own area should re-record the
+baseline in the same PR that lowers it.
+
+The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
+each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
+multiple hits per line) and each it must not (role comparisons, comment prose, trailing line
+comments, marked sites) — plus that one marker cannot launder a distant guard in the same file.
+The CLI additionally exits non-zero on an empty file list, because a guard that reports success
+without checking anything is worse than no guard.
+
+
 ## Dashboard Availability & Supervised Mode
 
 <!-- FNXC:DashboardAvailability 2026-06-30-23:20: The dashboard needs a supervised restart mode for long-lived remote access sessions. Planning parse failures now surface as retryable session errors instead of causing process-level exits. -->
