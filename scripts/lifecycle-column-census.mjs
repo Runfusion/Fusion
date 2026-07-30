@@ -16,9 +16,16 @@ Report-only by default:
 `--strict` fails on a RISE (a reintroduced guard) and equally on a DROP that was not recorded: a
 stale allowance is a hole through which the same guards can return while the check stays green.
 
-NOT wired into the merge gate. A thousand-site backlog cannot be a blocking check on the day it
-is first measured; `--strict` exists so it can become one incrementally, per-file, once owners have
-converted their areas.
+WIRED INTO THE MERGE GATE (`pnpm test:gate`) as of 2026-07-31. The original note here said the
+opposite — "NOT wired into the merge gate" — on the reasoning that a thousand-site backlog cannot be
+blocking on the day it is first measured. That reasoning was sound and its conclusion expired: the
+baseline is per-file, so gating costs nothing for files nobody touches, and while it was unwired the
+baseline drifted to 854 against a tree of 787. Sixty-seven guards of regression would have merged
+green (PR #2661).
+
+Consequence for conversion PRs, stated because it is a real cost: lowering a count now REQUIRES
+re-recording the baseline in the same PR (`--strict --update-baseline`). That is deliberate — it puts
+the new number in the diff, where a reviewer sees it, instead of in a hand-written claim.
 */
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -138,6 +145,33 @@ if (!existsSync(BASELINE_PATH)) {
 const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
 const baselineByFile = new Map(Object.entries(baseline.byFile ?? {}));
 const currentByFile = new Map(summary.byFile);
+  /*
+FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (PR #2661 review — greptile, narrowed and closed):
+THE DELIBERATE TOTAL IS PINNED TOO, because a marker exempts the construct it is attached to and
+everything INSIDE it — so a comparison appended to an already-marked expression inherits the
+exemption and never reaches the byFile counts.
+
+Measured rather than argued, on the marker in register-task-workflow-routes.ts:
+  - a comparison added as a SIBLING statement inside the same `if`  -> COUNTED (21 -> 22, fails)
+  - a comparison appended to the MARKED assignment itself           -> exempt, and byFile is unchanged
+The review's stated mechanism (the marker attaching to the enclosing conditional) does not hold;
+the narrower hole does, and it applies to every marker in the codebase rather than just this one.
+
+Pinning `totals.deliberate` closes it: growing a marked expression moves that number, so it must be
+re-recorded like any other change, which puts it in the diff where a reviewer sees it.
+*/
+if (baseline.totals && typeof baseline.totals.deliberate === "number"
+    && summary.totals.deliberate > baseline.totals.deliberate) {
+  console.error(
+    `\nlifecycle-column-census --strict: DELIBERATE-LITERAL count ROSE ` +
+    `(${baseline.totals.deliberate} -> ${summary.totals.deliberate})\n\n` +
+    "A marker exempts everything inside the construct it is attached to, so a comparison added to an\n" +
+    "already-marked expression is invisible to the per-file counts. Either convert it, or re-record\n" +
+    "the baseline in this PR and say in the body which marked site grew and why.\n",
+  );
+  process.exit(1);
+}
+
 const regressions = [];
 const stale = [];
 
