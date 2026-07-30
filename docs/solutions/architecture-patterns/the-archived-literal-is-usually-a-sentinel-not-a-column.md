@@ -95,7 +95,11 @@ enough to call it a pattern rather than an accident, and enough to say plainly t
 total does not include this class at all**, so it is a floor in a second, independent way.
 
 Fixing this one is not a rename: it means threading a resolved lane set into a raw `sql` fragment
-inside a `projectId`-scoped query. Recorded here rather than attempted from `batch-cli-plugins`.
+inside a `projectId`-scoped query. **Done in #2875** — the lanes resolve in the impl (which holds the
+store; the query function takes a bare `db` handle) and arrive as parameterised equality fragments,
+tested against real PostgreSQL because a mocked store would assert the arguments and prove nothing
+about the query that runs. `scripts/check-sql-column-literals.mjs` (#2841) is the detector for the
+class and freezes the surface at 30 sites; the two are complementary.
 
 Sibling importers are the other half of the same lesson: the GitLab importer's `column: "triage"` was
 fixed in #2843 and the Linear importer — written from the same template — still had it, found only by
