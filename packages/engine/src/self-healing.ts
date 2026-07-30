@@ -5937,8 +5937,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     let recovered = 0;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-05:10 (batch-engine): lanes per holder, one IR cache for the sweep.
+    A stale file-scope lease held by a card in the wip lane is what blocks an unmet dependency; on a renamed
+    board no holder matched, so this sweep never rebounded anything.
+    */
+    const leaseIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    const leaseWipById = new Map<string, ReadonlySet<string>>();
     for (const holder of tasks) {
-      if (holder.column !== "in-progress") continue;
+      if (leaseWipById.has(holder.id)) continue;
+      const wip = new Set<string>(["in-progress"]);
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, holder.id, leaseIrCache);
+        if (ir) for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
+      } catch { /* degraded */ }
+      leaseWipById.set(holder.id, wip);
+    }
+
+    for (const holder of tasks) {
+      if (leaseWipById.get(holder.id)?.has(holder.column) !== true) continue;
       if (holder.paused === true || holder.userPaused === true) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
@@ -6971,8 +6988,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let detected = 0;
       const seen = new Set<string>();
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-05:15 (batch-engine — detectStalledCards):
+      Terminal lanes per task, one IR cache. A terminal card cannot be "stalled", so on a renamed board
+      this skip never fired and finished cards were evaluated for stall detection every cycle — noise the
+      guard exists to prevent.
+      */
+      const stalledIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const stalledTerminalById = new Map<string, ReadonlySet<string>>();
       for (const task of tasks) {
-        if (task.column === "done" || task.column === "archived") continue;
+        if (stalledTerminalById.has(task.id)) continue;
+        const terminal = new Set<string>(["done", "archived"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, task.id, stalledIrCache);
+          if (ir) for (const flag of ["complete", "archived"] as const) {
+            for (const id of columnsWithFlag(ir, flag)) terminal.add(id);
+          }
+        } catch { /* degraded: legacy pair */ }
+        stalledTerminalById.set(task.id, terminal);
+      }
+
+      for (const task of tasks) {
+        if (stalledTerminalById.get(task.id)?.has(task.column) === true) continue;
         if (task.paused === true || task.userPaused === true) continue;
         if (executingIds.has(task.id) || executingTaskLock.has(task.id)) continue;
         if (this.options.isTaskActive?.(task.id) === true) continue;
