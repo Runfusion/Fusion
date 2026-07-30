@@ -27,19 +27,28 @@ not enforce it. Whether that layer *should* enforce it is the open question.
 
 ## Every `execute()` call site outside the scheduler
 
-Enclosing method resolved per site, and "guard" means a `globalPause`/`enginePaused` check appearing
-in that method before the call:
+Enclosing method resolved per site. "Guard" means a `globalPause`/`enginePaused` check reached before
+the call — **directly OR through a helper that reads them**.
+
+FNXC:WorkflowLifecycle 2026-07-30-15:45 (PR review — coderabbit, major):
+An earlier version of this table scanned each method body for the literal flag names and marked
+`dispatchUnpauseResume()` unguarded. Wrong: it reads them through `getExecutionPauseLabel()`. The scan
+was re-run against the 13 methods that read the flags directly, treating a call to any of them as a
+guard. That is the SECOND cheap heuristic to produce a confident wrong answer in this audit — the
+first was a 40-line window above each call site, which mis-attributed two guarded sites as unguarded.
+Both erred by making the problem look different in size than it is.
 
 | Site | Enclosing method | Pause-guarded? | Reading |
 |---|---|---|---|
-| `executor.ts:3333` | `dispatchUnpauseResume()` | no | **Correct as-is.** This is the UNPAUSE path; a pause guard here would be self-contradictory. |
+| `executor.ts:3333` | `dispatchUnpauseResume()` | **yes** (via helper) | Guarded at `:3290` via `getExecutionPauseLabel()`, which reads both flags; returns at `:3293`. Also the unpause path, so it declines while a pause is still active rather than racing the operator. |
 | `executor.ts:3495` | `constructor()` — a `task:moved` subscription, `to === "in-progress"` | **no** | **The one real gap.** Event-driven dispatch that consults no pause state. |
 | `executor.ts:5702` | `resumeTaskForAgent()` | yes | `if (settings.globalPause \|\| settings.enginePaused) return;` plus `!task.paused`. |
 | `executor.ts:5858` | `resumeOrphaned()` | yes | Same guard earlier in the method. |
 | `in-process-runtime.ts:2255` | `drainWorkflowContinuations()` | no (indirect) | Gated by `workflowContinuationDrainActive \|\| this.status !== "active"`. Engine pause is *expected* to leave the runtime non-active, so this is guarded by proxy rather than by a pause read. |
 
 **Result: exactly one path — the `task:moved` subscription in the constructor — can reach
-`execute()` without consulting pause state.** That is a much narrower question than "does `execute()`
+`execute()` without consulting pause state.** Re-verified after that correction: the block
+(`executor.ts:3481-3503`) reads neither flag directly and calls NONE of the 13 methods that do. That is a much narrower question than "does `execute()`
 need a guard", and it is answerable by whoever owns the pause contract.
 
 ## Why this was not fixed here
