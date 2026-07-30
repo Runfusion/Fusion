@@ -1,22 +1,22 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "totals": {
-    "column": 682,
+    "column": 677,
     "role": 5,
     "status": 186,
     "deliberate": 17
   },
   "byColumnId": {
     "done": 184,
-    "in-progress": 131,
-    "in-review": 190,
+    "in-progress": 130,
+    "in-review": 186,
     "archived": 137,
     "todo": 40
   },
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
-    "packages/engine/src/executor.ts": 45,
     "packages/dashboard/app/components/TaskCard.tsx": 42,
+    "packages/engine/src/executor.ts": 40,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
     "packages/engine/src/scheduler.ts": 28,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts": 20,

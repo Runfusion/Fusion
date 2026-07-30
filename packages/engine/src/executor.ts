@@ -2336,7 +2336,10 @@ export class TaskExecutor {
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
     const latestTask = await this.store.getTask(taskId);
-    if (!latestTask || latestTask.column !== "in-review") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:55 (fleet: executor.ts review-lane family): the board's
+       own review lane. Spelled as the literal, this reported "missing" for every card on a renamed board
+       and the already-reviewed finalize never ran. */
+    if (!latestTask || latestTask.column !== (await this.resolveResumeLanes(taskId)).review) {
       return "missing";
     }
 
@@ -4363,7 +4366,11 @@ export class TaskExecutor {
       the task back for remediation, so `in-review` must bounce back exactly like
       `in-progress` regardless of the column the completion race left it in.
       */
-      if (latestTask.column === "in-progress" || latestTask.column === "in-review") {
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-10:58 (fleet): both lanes from ONE snapshot — the comment
+         above says in-review must bounce EXACTLY like in-progress, so the two must be resolved together
+         or the bounce handles one lane and throws on the other, which is the bug that comment describes. */
+      const bounceLanes = await this.resolveResumeLanes(taskId);
+      if (latestTask.column === bounceLanes.wip || latestTask.column === bounceLanes.review) {
         const originalExecutionStartedAt = latestTask.executionStartedAt;
         // Preserve step progress across the in-progress/in-review → todo hop:
         // moveTask's default reopen-to-todo path resets every step to
@@ -4624,8 +4631,12 @@ export class TaskExecutor {
     // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the step-status "already complete" branch
     // must not treat skip-bypass-tainted skips as completion; an accepted done / in-review
     // column are honest completion signals and stay unaffected.
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-11:02 (fleet): SYNCHRONOUS predicate, so the sync planner
+       lanes; a board with no review lane cannot hold a card in review, so an undefined lane simply does
+       not contribute this completion signal (the other two still apply). */
+    const reviewLane = resolvePlannerLanes(this.store, task.id).review;
     return taskDone
-      || task.column === "in-review"
+      || (reviewLane !== undefined && task.column === reviewLane)
       || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
   }
 
@@ -4649,7 +4660,7 @@ export class TaskExecutor {
 
     await this.persistTokenUsage(task.id);
 
-    if (liveTask.column === "in-review") {
+    if (liveTask.column === (await this.resolveResumeLanes(task.id)).review) {
       this.clearCompletedTaskWatchdog(task.id);
       this.signalTaskComplete(liveTask);
       return true;

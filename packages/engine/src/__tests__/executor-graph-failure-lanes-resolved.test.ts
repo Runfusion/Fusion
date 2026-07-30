@@ -264,3 +264,44 @@ describe("the wip-lane liveness family resolves the board's own wip column", () 
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-11:20 (fleet: executor.ts review-lane family):
+
+THE INVARIANT: "is this card in review?" is the board's review lane.
+
+`finalizeAlreadyReviewedTask` is the case pinned here because its failure is the loudest: it returns
+"missing" — a word that reads as "the task is gone" — for a card that is sitting in review on a
+renamed board. Everything downstream of the already-reviewed finalize path was therefore dead on any
+board that renamed its merge lane, and the log line said the task could not be found.
+*/
+describe("the review-lane family resolves the board's own review column", () => {
+  function finalizeAlreadyReviewed(executor: TaskExecutor, taskId: string): Promise<string> {
+    return (executor as unknown as {
+      finalizeAlreadyReviewedTask: (id: string) => Promise<string>;
+    }).finalizeAlreadyReviewedTask(taskId);
+  }
+
+  it("does not report a review-lane card as MISSING", async () => {
+    // Pre-fix: `checking` !== "in-review", so this returned "missing" for a card plainly in review.
+    const live = { id: "FN-15", column: "checking", steps: [], workflowStepResults: [] };
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await finalizeAlreadyReviewed(executor, "FN-15")).not.toBe("missing");
+  });
+
+  it("still reports a card OUTSIDE the review lane as missing", async () => {
+    // The paired negative: the guard must still refuse a card that is not in review at all.
+    const live = { id: "FN-16", column: "building", steps: [], workflowStepResults: [] };
+    const { executor } = harness(RENAMED_IR, live);
+
+    expect(await finalizeAlreadyReviewed(executor, "FN-16")).toBe("missing");
+  });
+
+  it("behaves identically on the DEFAULT board", async () => {
+    const live = { id: "FN-17", column: "in-review", steps: [], workflowStepResults: [] };
+    const { executor } = harness(undefined, live);
+
+    expect(await finalizeAlreadyReviewed(executor, "FN-17")).not.toBe("missing");
+  });
+});
