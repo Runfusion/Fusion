@@ -252,6 +252,47 @@ undeclared column on purpose (the path that rescues already-stranded cards). Plu
 asserting the compatibility flag really is unset, so the suite fails loudly if that ever changes
 rather than silently testing a different code path.
 
+## Coding (Ideas): the U11 merge is already applied — and collapsing `ideas` is a different change
+
+Recorded 2026-07-29, because "coding-ideas IR merge" stayed on the owed list after it had shipped,
+and the remaining half of that request is not the same kind of change as the one it shipped.
+
+**The discipline is applied.** `builtin-coding-ideas-workflow-ir.ts` already declares
+`{ id: "todo", name: "Planning", traits: [hold(capacity), reset-on-entry] }`, and the node re-home
+loop no longer places planning nodes at all — the comment at the loop says why:
+
+> The explicit planning-node re-home is GONE: the cloned default graph is itself plan-in-place now,
+> so plan / plan-review / plan-replan already declare "todo".
+
+So this preset plans in place in a column named "Planning", exactly like the default lineage. What
+remains undone is only the collapse of the separate `ideas` intake into that column.
+
+**Why that collapse is a product decision, not a conversion.** `builtin-workflows.ts` states the
+preset's whole purpose: it "adds a manual 'Ideas' intake in front of the default stepwise pipeline
+... from there the graph is identical to the default Coding workflow." The Ideas inbox
+(`intake` with `autoTriage: false`) is the only thing distinguishing this preset from the default.
+Merging it into `todo` does not simplify the lifecycle — it makes the preset a duplicate of the
+default workflow with one trait config changed, so the honest form of that change is "delete the
+Coding (Ideas) preset", which is an operator call about a shipped board layout.
+
+**One concrete consequence, stated at its real size.** `isUnplannedStartCreate` in
+`task-store/task-creation.ts` discriminates with `task.column !== intakeFacts.intake &&
+task.column === intakeFacts.hold` — a card created DIRECTLY into the hold column of a
+manual-intake workflow, bypassing intake. If `ideas` and `todo` become one column then
+`intake === hold` and that conjunction is unsatisfiable, so the arm becomes dead.
+
+It is NOT a correctness regression: the sibling arm (`task.column === resolvedEntryColumn`) still
+classifies the card as intake, so it still receives the bootstrap prompt rather than a generated
+spec prompt. I checked that specifically, having first assumed it was a live break — the difference
+matters, because "this gate silently stops firing" would block the merge and "this arm becomes
+dead code" merely means deleting it in the same change.
+
+**If the collapse proceeds**, the checklist is: delete the `ideas` column and its `start`-node
+anchor, repoint `start` to `todo`, add `intake` with `autoTriage: false` to `todo`'s traits, delete
+the now-dead `isUnplannedStartCreate` arm, and rely on the U9b legacy-adoption sweep
+(`reconcileUndeclaredTaskColumns`) to re-home cards resting in `ideas` — the same mechanism that
+carries `triage` rows through the default lineage's merge.
+
 ### CORRECTION (same day): the collapse is NOT mechanical — it is contradictory
 
 I implemented the checklist above, ran the suites, and it does not work. Recording the disproof
