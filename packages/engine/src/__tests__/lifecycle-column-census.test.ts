@@ -342,3 +342,70 @@ describe("the summary separates the three classes", () => {
     expect(summary.byColumnId).toEqual({ todo: 1 });
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-18:40 (the ratchet's one unusable state, now fixed):
+
+`--update-baseline` MUST RUN EVEN WHEN A FILE ROSE. It could not: the rise check exited before the write,
+so the only supported way to re-record was unavailable in exactly the situation that needs it.
+
+That is a live problem, not a tidiness one, because #2654 gates CI on this AND A CONVERSION LEGITIMATELY
+ADDS A LITERAL — the correct shape for a caller that may have no traits is
+`flags ? flags.x : columnId === "legacy"`, and each one raises a file's count by one. Measured on main:
+`columnRoles.ts` went 0 -> 1 from exactly that shape. So a worker doing the right thing met a red gate
+whose only escape was hand-editing the JSON, which is how a ratchet becomes something people route around.
+
+Exercised end to end before writing this, on a real rise injected into `live-agent-count.ts`:
+  rise + plain --strict            exit 1  (unchanged — the ratchet still bites)
+  rise + --strict --update-baseline exit 0, printing "ACCEPTED RISES  live-agent-count.ts: 6 -> 7"
+
+EXIT CODES ARE THE CONTRACT and the pure summarizer cannot express them, so these assert the CLI's own
+source: which branch writes, which exits, and — the part that was actually broken — the ORDER. Marker-to-
+marker slices rather than character windows, and each marker checked for uniqueness first, because a
+repeated marker is the magic-number problem wearing a name.
+*/
+describe("the baseline can always be re-recorded", () => {
+  const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
+
+  function cliSource(): string {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("node:fs").readFileSync(cliPath, "utf8") as string;
+  }
+
+  function sliceBetween(cli: string, from: string, to: string): string {
+    const start = cli.indexOf(from);
+    const end = cli.indexOf(to, start + from.length);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    // A repeated marker would make the slice meaningless, so prove uniqueness before trusting it.
+    expect(cli.indexOf(from, start + from.length)).toBe(-1);
+    return cli.slice(start, end);
+  }
+
+  it("writes the baseline BEFORE the rise check can exit", () => {
+    const cli = cliSource();
+    const updateAt = cli.indexOf("if (updateBaseline) {");
+    const riseAt = cli.indexOf("column-guard count ROSE");
+
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(riseAt).toBeGreaterThan(updateAt);
+  });
+
+  it("exits 0 from the update branch and 1 from the rise branch", () => {
+    const cli = cliSource();
+
+    expect(sliceBetween(cli, "if (updateBaseline) {", "column-guard count ROSE")).toContain("process.exit(0)");
+    expect(sliceBetween(cli, "column-guard count ROSE", "baseline is STALE")).toContain("process.exit(1)");
+  });
+
+  it("names what it accepted instead of swallowing it", () => {
+    // A silent re-record would hide a genuine regression behind a routine command.
+    expect(cliSource()).toContain("ACCEPTED RISES");
+  });
+
+  it("has exactly ONE writer for the baseline artifact", () => {
+    // The old code had a second `writeFileSync` behind the rise exit — unreachable in the case that
+    // needed it, and a second writer for one artifact is how the two drift.
+    expect(cliSource().split("writeFileSync(").length - 1).toBe(1);
+  });
+});
