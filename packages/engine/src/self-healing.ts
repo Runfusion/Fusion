@@ -3118,6 +3118,29 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:30 (fleet: self-healing.ts):
+  Synchronous per-task lane readers for the many `.filter` predicates in this file. The async
+  `resolveReviewColumn` above is preferred wherever the context allows awaiting; these exist because
+  a sync callback cannot, and restructuring a dozen sweeps into async loops would be a much larger
+  change than the conversion itself.
+  */
+  private reviewLaneOf(taskId: string): string {
+    try {
+      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.review ?? "in-review";
+    } catch {
+      return "in-review";
+    }
+  }
+
+  private completeLaneOf(taskId: string): string {
+    try {
+      return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.complete ?? "done";
+    } catch {
+      return "done";
+    }
+  }
+
   /** Sibling of `filterByPreWipRole` for the WIP lane — see `filterByReviewRole` for why the
    *  SOURCE QUERY must be converted alongside the guard it feeds. */
   private async filterByWipRole(
@@ -6193,7 +6216,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let recovered = 0;
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.deletedAt) continue;
+      if (task.column !== await this.resolveReviewColumn(task.id) || task.deletedAt) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
@@ -7221,7 +7244,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((t) =>
-        t.column === "in-review" &&
+        t.column === this.reviewLaneOf(t.id) &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
         // FNXC:AutoMergeHold 2026-07-09-17:10: FN-7750 intentionally keeps the pure branchContext-shape predicate here. Stale shared-group members must stay OUT of solo no-op finalize even when their group is not live; only the positive auto-merge-off exemption gates use the live-group predicate.
@@ -7424,7 +7447,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const tasks = await this.store.listTasks({ column: "done", slim: true });
       const candidates = tasks.filter((task) =>
-        task.column === "done" &&
+        task.column === this.completeLaneOf(task.id) &&
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
         (task.modifiedFiles?.length ?? 0) > 0,
       ).slice(0, DONE_TASK_INTEGRITY_SWEEP_LIMIT);
@@ -7589,7 +7612,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const mergeable = tasks.filter((t) =>
-        t.column === "in-review" &&
+        t.column === this.reviewLaneOf(t.id) &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
         !executingIds.has(t.id) &&
@@ -7915,7 +7938,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * progress preserved instead of waiting for the stale timeout.
        */
       const staleIncomplete = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         (!task.status || task.status === "failed") &&
@@ -8313,7 +8336,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       // Pre-filter sync conditions, then resolve async merge-lane ownership.
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         !executingIds.has(task.id) &&
@@ -8420,7 +8443,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const slim = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = slim.filter((t) =>
-        t.column === "in-review"
+        t.column === this.reviewLaneOf(t.id)
         && allowsAutoMergeProcessing(t, settings)
         && t.status === "failed"
         && (t.mergeRetries ?? 0) >= maxAutoMergeRetries
@@ -8441,7 +8464,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Re-check selector on the full row — the slim snapshot is best-effort
         // and may be stale once we await.
         if (
-          task.column !== "in-review"
+          task.column !== this.reviewLaneOf(task.id)
           || task.status !== "failed"
           || (task.mergeRetries ?? 0) < maxAutoMergeRetries
         ) {
@@ -8567,7 +8590,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const statusCandidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         Boolean(task.status && ACTIVE_MERGE_STATUSES.has(task.status)),
