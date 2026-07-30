@@ -10863,6 +10863,24 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     mockedIsUsableTaskWorktree.mockResolvedValue(true);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (#2879 review — greptile, "multi-role tasks run
+  recovery twice"): THE FIX IS IN `self-healing.ts`; NO TEST HERE, AND THE ABSENCE IS DELIBERATE.
+
+  `readBucket` dedupes by id inside ONE role's read, so a custom column carrying two queried traits —
+  `hold` plus `countsTowardWip`, or a review role beside either — is returned by two reads and the
+  concatenation handed the recovery loop the same STALE SNAPSHOT twice.
+
+  I wrote a case here and removed it: it reported 0 recoveries, because the card it built reaches the
+  BRANCH-LEVEL scan (subsumed branch, no worktree) rather than the candidates loop the dedupe lives
+  in. Reaching that loop needs `branch` AND `worktree` set plus matching git state, i.e. the git
+  fixture this suite deliberately avoids. A test that passes without exercising the loop would have
+  been worse than none — that is the vacuous shape this program keeps finding.
+
+  So the dedupe ships uncovered and stated. What would cover it: a candidates-loop fixture with a live
+  branch/worktree pair, asserting the recovery COUNT (a double-processed card reports 2 for one card's
+  work) rather than a call count.
+  */
   it("reclaims subsumed fusion task branch with no worktree", async () => {
     (store.listTasks as any).mockResolvedValueOnce([
       { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null, lineageId: "lin-1" },

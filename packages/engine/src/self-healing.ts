@@ -3754,8 +3754,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // and resume-limbo escalation inert in manual-review projects. The
       // per-task override preserves that for override-less tasks while letting
       // explicit autoMerge:true tasks recover.
-      const candidates = [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]
-        .filter((task) => allowsAutoMergeProcessing(task, settings));
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-01:15 (#2879 review — greptile, "multi-role tasks run
+      recovery twice"): DEDUPED ACROSS THE BUCKETS, NOT JUST WITHIN EACH.
+
+      `readBucket` dedupes by id, but only inside one role's read. A custom workflow may put more than
+      one queried flag on ONE column — `hold` plus `countsTowardWip` on a lane that both parks and
+      counts as work, or a review role beside either — and that column is then returned by two reads.
+      The task lands in two buckets, and the concatenation below hands the recovery loop the SAME
+      STALE SNAPSHOT twice.
+
+      That is not a wasted iteration: the second pass re-reads `task.branch`/`task.worktree` from a
+      snapshot taken before the first pass mutated anything, so a worktree the first pass reclaimed is
+      reclaimed again against state that no longer exists. The lane-resolution loop above already
+      guards with `reclaimLanes.has(task.id)`; this is the same guard the consumption side was missing.
+
+      Deduping by id preserves order — first bucket wins — so the roles keep their existing precedence
+      and nothing else about the sweep changes.
+      */
+      const candidates = [
+        ...new Map(
+          [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]
+            .map((task) => [task.id, task] as const),
+        ).values(),
+      ].filter((task) => allowsAutoMergeProcessing(task, settings));
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const activeTaskIds = await this.listActiveHeartbeatTaskIds();
 
