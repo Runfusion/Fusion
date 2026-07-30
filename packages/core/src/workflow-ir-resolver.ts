@@ -298,25 +298,29 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   it has no column vocabulary either, so it is reported as a default rather than guessed at.
   */
   const ir = await resolveWorkflowIrById(store, workflowId, irCache);
-  if (didFallBackToDefault(ir)) return { ir, source: "default" };
-  const resolvedId = (ir as { id?: unknown }).id;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-16:20 (PR #2618 review — greptile P1, 2nd):
-  Only a CONTRADICTION proves a fallback. Requiring a matching id also reported `default` for a
-  perfectly good selection whose IR simply carries no id of its own — a valid v1, or a stored v2
-  that omits it. That direction errs safe (the caller keeps its legacy compat) but it silently
-  denies those workflows the very trust this API exists to grant, so the conversion would quietly
-  not take effect for them.
+  FNXC:WorkflowLifecycleColumns 2026-07-31-23:30 (the id cross-check is DELETED — it misfired):
+  THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
+  that a returned IR whose `id` differs from the requested one proves a fallback. It does not, and it
+  was wrong in the direction that matters:
 
-  An ABSENT id is no evidence either way, so it is treated as the selection it was asked for. A
-  PRESENT id that differs is positive proof of a fallback, and it still catches the three ways
-  `resolveWorkflowIrById` degrades — missing definition, malformed definition, throwing lookup —
-  because every one of them returns the default coding IR, whose id is `builtin:coding` and
-  therefore differs from the custom id that was requested.
+    store workflow id = WF-001   stored ir.id = custom:prov
+    -> source reported "default", for a workflow that resolved CORRECTLY
+
+  `createWorkflowDefinition` stores an authored IR VERBATIM, so `ir.id` keeps whatever the author
+  wrote while the store allocates its own `WF-NNN`. Those two are unequal for every such workflow, so
+  every one of them was reported as a guess — denying trust to exactly the custom boards this API
+  exists to serve, and silently disabling any conversion gated on `source === "selection"`.
+
+  It was also redundant. The three ways `resolveWorkflowIrById` degrades — missing definition,
+  malformed definition, throwing lookup — all return a MARKED IR, and the line above already returns
+  `"default"` for those. The note on `markFellBack` states the principle the id check violated: "there
+  is no rule over the returned value that separates them, because the two shapes are genuinely
+  identical. So the function that KNOWS marks it."
+
+  Found while fixing PR #2812, where gating on this signal turned a passing case red.
   */
-  if (typeof resolvedId === "string" && resolvedId !== workflowId) {
-    return { ir, source: "default" };
-  }
+  if (didFallBackToDefault(ir)) return { ir, source: "default" };
   return { ir, source: "selection", workflowId };
 }
 
