@@ -1,6 +1,7 @@
 import type { Task } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
+import { resolveArchiveTargetForTask } from "./duplicate-intake.js";
 
 /*
 FNXC:TaskCreationDeduplication 2026-07-26-06:45:
@@ -203,7 +204,11 @@ export async function reconcileDeterministicDuplicate(
         deterministicDuplicateOf: olderSibling.id,
       },
     });
-    await store.moveTask(args.createdTask.id, "archived");
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-19:30: census-invisible destination — see
+       `resolveArchiveTargetForTask`. The row above has already been stamped
+       `deterministicDuplicateOf`, so a rejected move here leaves it marked as a duplicate while still
+       occupying an active lane. */
+    await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id));
 
     try {
       await store.recordActivity({
