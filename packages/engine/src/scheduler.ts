@@ -2309,35 +2309,67 @@ export class Scheduler {
             first-per-role ids: a workflow may declare more than one implementation lane, and load
             held in the second must still count.
             */
-            const loadLaneIr = await resolveWorkflowIrForTask(this.store, freshTask.id).catch(() => undefined);
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-10:40 (#2787 review — greptile P1, second round):
-            THE HOLD AND INTAKE LANES COUNT AS LOAD TOO.
+            FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+            RESOLVE PER TASK, because a project runs several workflows at once.
 
-            The legacy set is `{todo, in-progress, in-review}` — and `todo` is the HOLD/INTAKE lane.
-            My first union covered only wip and review, so passing it OVERRODE the fallback and
-            dropped assigned backlog work from the tally: a regression against the legacy behaviour
-            for that lane, introduced by the very argument meant to fix the renamed case.
+            My first wiring resolved the lanes from the CANDIDATE task's workflow and handed that flat
+            set to a tally that runs over EVERY assigned row. Assignments living in another workflow's
+            load-bearing lanes were therefore omitted — the same already-loaded-agent-wins bug the
+            parameter exists to fix, reached through a different door. A column id means something
+            only relative to its OWN workflow; `blocker-fanout.ts` documents exactly this and offers a
+            per-task `classify`, so this passes a per-task predicate rather than a board-wide set.
 
-            That is the trap in overriding a default rather than extending it — the resolved answer
-            must cover EVERY role the literal covered, or wiring the parameter is a downgrade for the
-            roles it forgot.
+            One IR cache for the whole selection, per the caller-owned-cache contract, so a board
+            spanning three workflows reads three IRs and not one per assigned card.
             */
-            const activeLoadColumns = loadLaneIr === undefined
-              ? undefined
-              : new Set<string>([
-                ...columnsWithFlag(loadLaneIr, "intake"),
-                ...columnsWithFlag(loadLaneIr, "hold"),
-                ...columnsWithFlag(loadLaneIr, "countsTowardWip"),
-                ...columnsWithFlag(loadLaneIr, "mergeOrchestration"),
-                ...columnsWithFlag(loadLaneIr, "mergeBlocker"),
-                ...columnsWithFlag(loadLaneIr, "humanReview"),
+            const loadLaneIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+            const resolveLoadLanes = async (candidate: Task): Promise<ReadonlySet<string>> => {
+              const ir = await resolveWorkflowIrForTask(this.store, candidate.id, loadLaneIrCache).catch(() => undefined);
+              /* DELIBERATE-LITERAL — the unresolvable-workflow default. */
+              if (!ir) return new Set(["todo", "in-progress", "in-review"]);
+              return new Set([
+                ...columnsWithFlag(ir, "intake"),
+                ...columnsWithFlag(ir, "hold"),
+                ...columnsWithFlag(ir, "countsTowardWip"),
+                ...columnsWithFlag(ir, "mergeOrchestration"),
+                ...columnsWithFlag(ir, "mergeBlocker"),
+                ...columnsWithFlag(ir, "humanReview"),
               ]);
+            };
+            /*
+            FNXC:WorkflowResolvedColumns 2026-07-30-12:10 (#2796 review — greptile):
+            MEMOISE THE LANES, NOT THE VERDICT — the two snapshots are not the same list.
+
+            This pre-computed a Set of load-bearing task IDs from ITS OWN `listTasks` read, and
+            `selectPermanentAgentForTask` then applies the predicate to rows from ITS read. Anything
+            that changes in between diverges, and it diverges in both directions: a task MOVED out of
+            a load-bearing lane keeps its id in the set and is still counted, while a task created or
+            newly assigned in between is missing from the set and counts as zero. Either way the
+            balancer acts on a board that no longer exists.
+
+            Caching the resolved LANES per task instead of a boolean removes the dependency. Lane
+            membership is a property of the task's workflow, which a move does not change, so the
+            predicate can be evaluated against the column on the row the helper actually holds. Only
+            the workflow lookup is memoised; the comparison is live.
+
+            A task absent from the map (created between the two reads) falls back to the same legacy
+            trio the resolver itself uses when a workflow will not resolve, rather than silently
+            counting as no load.
+            */
+            const LEGACY_LOAD_LANES: ReadonlySet<string> = new Set(["todo", "in-progress", "in-review"]);
+            const loadLanesByTaskId = new Map<string, ReadonlySet<string>>();
+            for (const candidate of await this.store.listTasks({ slim: true })) {
+              if (!candidate.assignedAgentId) continue;
+              loadLanesByTaskId.set(candidate.id, await resolveLoadLanes(candidate));
+            }
+
             const selectedAgent = await selectPermanentAgentForTask({
               task: freshTask,
               agentStore: this.options.agentStore,
               taskStore: this.store,
-              ...(activeLoadColumns && activeLoadColumns.size > 0 ? { activeColumns: activeLoadColumns } : {}),
+              countsAsAssignmentLoad: (candidate: Task) =>
+                (loadLanesByTaskId.get(candidate.id) ?? LEGACY_LOAD_LANES).has(candidate.column),
             });
             if (!selectedAgent) {
               await this.store.updateTask(task.id, { status: "queued" });
