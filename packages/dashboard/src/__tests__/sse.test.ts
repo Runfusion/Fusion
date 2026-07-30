@@ -459,6 +459,13 @@ describe("createSSE connection log severity", () => {
 
   it("emits +/- connection when FUSION_DEBUG=sse", () => {
     process.env.FUSION_DEBUG = "sse";
+    /*
+    FNXC:EngineDiagnostics 2026-07-30-17:10:
+    `sseDebug` routes through `createLogger("sse").debug` (sse.ts:50-53), and the shared logger writes
+    debug lines to console.ERROR carrying a `\0fnlvl=info\0` severity marker — that is the whole point
+    of FN-8603's adapter. Spying `console.log` saw nothing once the bare console call was replaced, and
+    failed with "expected false to be true" rather than anything naming the channel.
+    */
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     openSseConnection("client-severity-debug");
     disconnectSSEClient("client-severity-debug");
