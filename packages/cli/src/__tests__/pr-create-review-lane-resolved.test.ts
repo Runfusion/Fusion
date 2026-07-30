@@ -182,10 +182,18 @@ describe("fn pr create resolves the board's own review lane", () => {
     it — there is no "no review lane" message in the shipped code at all, so `errors.find(...)`
     returned undefined.
 
-    Re-pointed at the contract that actually shipped. The distinct-message behaviour is NOT
-    recoverable without a way to tell "v2 board that declares no review lane" from "v1 board whose
-    traits were synthesised empty", which the IR does not currently carry — flagged rather than
-    guessed at.
+      round 3 (greptile, #2801) — round 2 over-corrected. Falling back for EVERY empty set means a
+                               native v2 board that expresses traits and declares no review lane is
+                               told to move its card to `'in-review'` — a column it does not have.
+                               An impossible instruction is the defect this conversion set out to
+                               remove, reappearing inside its own fallback.
+
+    Round 2's note claimed the distinction was "NOT recoverable ... which the IR does not currently
+    carry". That was wrong, and this test asserted the wrong contract because of it: the IR DOES carry
+    it. A v1 upgrade emits every column with `traits: []`, so NO column expresses any trait; a native
+    v2 board that declares traits elsewhere expresses some. `workflowExpressesAnyTrait` in `pr.ts`
+    separates them, and the three states now get three answers — legacy fallback for unresolvable and
+    for v1, an explicit refusal naming no lane for a v2 board with no review column.
     */
     const noReviewIr = {
       ...RENAMED_IR,
@@ -196,12 +204,32 @@ describe("fn pr create resolves the board's own review lane", () => {
     await expect(runPrCreate("FN-001", { ai: false })).rejects.toThrow("process.exit:1");
 
     expect(store.updatePrInfo).not.toHaveBeenCalled();
-    // The legacy fallback, byte-identical to the pre-conversion single-lane message.
-    const refusal = errors.find((e) => e.includes("must be in"));
-    expect(refusal).toContain("'in-review'");
-    // And it must NOT name the renamed lanes this filtered board no longer declares.
+    /*
+    A v2 board that expresses traits and has no review lane is told exactly that — not sent to a
+    column it does not declare. Asserting the ABSENCE of `'in-review'` is the point of the case.
+    */
+    const refusal = errors.find((e) => e.includes("no review column"));
+    expect(refusal).toBeDefined();
+    expect(refusal).not.toContain("'in-review'");
     expect(refusal).not.toContain("signoff");
-    expect(refusal).not.toContain("waiting-on-a-human");
+  });
+
+  it("keeps the legacy fallback for a V1-UPGRADED board, whose columns express no traits at all", async () => {
+    /*
+    The other side of round 3, and the reason the predicate is trait-EXPRESSION rather than
+    review-set-emptiness: both boards resolve an empty review set, and only one of them should refuse.
+    `synthesizeDefaultColumns` emits every default column with `traits: []`, so `in-review` plainly
+    exists and holds this board's cards.
+    */
+    const v1Ir = {
+      ...RENAMED_IR,
+      columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+    };
+    const store = mockBoard("in-review", v1Ir);
+
+    await runPrCreate("FN-001", { ai: false });
+
+    expect(store.updatePrInfo).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the legacy literal when the workflow cannot be resolved", async () => {

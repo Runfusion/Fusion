@@ -121,6 +121,21 @@ export interface PrCreateOptions {
   reviewers?: string[];
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-14:15 (#2801 review):
+Does this workflow express ANY lifecycle trait? Separates a v1 upgrade (every column emitted with
+`traits: []` by `synthesizeDefaultColumns`, so EVERY role resolves empty) from a native v2 board that
+declares traits and simply has no review lane. The empty review set alone cannot tell them apart.
+
+Local rather than imported: the shared `declaresAnyLifecycleTrait` lands in `@fusion/core` on the
+batch-core branch and is not on `main` yet, and this fix should not wait on that merge. Collapse this
+into the core helper once it is available — the two are deliberately the same predicate.
+*/
+function workflowExpressesAnyTrait(ir: Parameters<typeof resolveReviewColumns>[0]): boolean {
+  const columns = (ir as unknown as { columns?: Array<{ traits?: unknown[] }> }).columns ?? [];
+  return columns.some((column) => Array.isArray(column.traits) && column.traits.length > 0);
+}
+
 export async function runPrCreate(id: string, options: PrCreateOptions = {}, projectName?: string) {
   let context: ProjectContext | undefined;
   try {
@@ -204,7 +219,32 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
     The general "an empty resolved set is an answer" rule still holds elsewhere; it fails here only
     because the v1 upgrade path manufactures empty traits for columns that do exist.
     */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2801 review — greptile):
+    THREE STATES, NOT TWO. This collapsed the last two and named a lane that cannot exist.
+
+      unresolvable            -> legacy id. We know nothing; keep today's behaviour.
+      resolved, NO traits     -> legacy id. A v1 upgrade: `synthesizeDefaultColumns` emits every
+                                 default column with `traits: []`, so `in-review` plainly exists and
+                                 holds the cards. Refusing here would break every pre-v2 project.
+      resolved, traits, none  -> REFUSE, and say so. A native v2 board that expresses traits and
+        carry review               declares no review lane genuinely has nowhere to open a PR from.
+                                 Naming `'in-review'` sends the operator to a column their board does
+                                 not have — an impossible instruction, which is the defect this
+                                 conversion set out to remove, reappearing in its own fallback.
+
+    `declaresAnyLifecycleTrait` is what separates the middle case from the last; the empty set alone
+    cannot, which is why the first pass got it wrong in the safe direction and this one in the loud one.
+    */
     const resolvedReviewColumns = prIr === undefined ? [] : resolveReviewColumns(prIr);
+    const traitsExpressed = prIr !== undefined && workflowExpressesAnyTrait(prIr);
+    if (traitsExpressed && resolvedReviewColumns.length === 0) {
+      console.error(
+        `Error: Task ${id}'s workflow declares no review column, so a PR cannot be created from it (current: ${task.column})`,
+      );
+      await closeProjectStore(context);
+      process.exit(1);
+    }
     const reviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
     if (!reviewColumns.has(task.column)) {
       /*
