@@ -2814,11 +2814,43 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (!recoverFn) return 0;
 
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (the query-filter class, seventeenth sweep):
+      A task whose steps are ALL done but whose session died before the executor could hand it to review.
+      The literal read meant that on a renamed board it was never found, so finished implementation work
+      sat in the wip lane with no session and nothing to move it on — the shape this sweep exists to
+      catch, made unreachable by the query above it.
+
+      The `t.column === "in-progress"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const stuckWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const stuckById = new Map<string, Task>();
+      for (const column of stuckWipColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) stuckById.set(task.id, task);
+      }
+      const tasks = [...stuckById.values()];
+      /*
+      NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT — the shape #2891 settled on.
+      `resolveWorkflowIrForTask` SUBSTITUTES the built-in IR rather than failing, so a card with an
+      unreadable selection would otherwise be rejected by the verdict that the project-scoped query had
+      just admitted it under.
+      */
+      const stuckLanes = new Map<string, Set<string>>();
+      for (const task of tasks) {
+        let lanes: Set<string>;
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          lanes = source === "default" ? new Set(stuckWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip"));
+        } catch {
+          lanes = new Set(stuckWipColumns);
+        }
+        stuckLanes.set(task.id, lanes);
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const stuckCompleted = tasks.filter((t) =>
-        t.column === "in-progress" &&
+        (stuckLanes.get(t.id) ?? stuckWipColumns).has(t.column) &&
         !t.paused &&
         !executingIds.has(t.id) &&
         t.steps.length > 0 &&

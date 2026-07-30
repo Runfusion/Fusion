@@ -899,4 +899,51 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:15 (the query-filter class, seventeenth sweep):
+  `recoverCompletedTasks` rescues a task whose steps are ALL done but whose session died before the
+  executor could hand it to review. The literal read meant that on a renamed board it was never found:
+  finished implementation work sat in the wip lane with no session and nothing to move it on.
+
+  The observable is the injected `recoverCompletedTask` callback — called once per rescued card, with no
+  git anywhere on the path, so it sits downstream of both the read and the per-card verdict.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-progress"` -> fails, the renamed wip lane does not match
+  */
+  it("rescues a step-complete card stranded on a RENAMED wip lane", async () => {
+    const stranded = {
+      ...shippedCard(),
+      id: "FN-STRANDED",
+      column: RENAMED_VOCAB.wip,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stranded]);
+    const recoverCompletedTask = vi.fn(async () => true);
+
+    await new SelfHealingManager(store, { rootDir: "/repo", recoverCompletedTask }).recoverCompletedTasks();
+
+    expect(recoverCompletedTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-STRANDED" }));
+  });
+
+  it("does not rescue a step-complete card that already reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. Same
+    board, same finished card — only its lane changes, and a card already in review needs no rescue.
+    */
+    const alreadyMoved = {
+      ...shippedCard(),
+      id: "FN-STRANDED",
+      column: RENAMED_VOCAB.review,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([alreadyMoved]);
+    const recoverCompletedTask = vi.fn(async () => true);
+
+    await new SelfHealingManager(store, { rootDir: "/repo", recoverCompletedTask }).recoverCompletedTasks();
+
+    expect(recoverCompletedTask).not.toHaveBeenCalled();
+  });
 });
