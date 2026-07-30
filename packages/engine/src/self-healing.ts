@@ -3769,15 +3769,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       reclaimed again against state that no longer exists. The lane-resolution loop above already
       guards with `reclaimLanes.has(task.id)`; this is the same guard the consumption side was missing.
 
-      Deduping by id preserves order — first bucket wins — so the roles keep their existing precedence
-      and nothing else about the sweep changes.
+      Deduping by id preserves iteration order, and the FIRST bucket's snapshot is the one kept. Spelled
+      out with an explicit `has` guard rather than `new Map(entries)`: that constructor keeps first
+      INSERTION ORDER but the LAST value for a repeated key, so it would have silently given last-bucket
+      precedence while this comment claimed the opposite.
       */
-      const candidates = [
-        ...new Map(
-          [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]
-            .map((task) => [task.id, task] as const),
-        ).values(),
-      ].filter((task) => allowsAutoMergeProcessing(task, settings));
+      const reclaimCandidateById = new Map<string, Task>();
+      for (const task of [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]) {
+        if (!reclaimCandidateById.has(task.id)) reclaimCandidateById.set(task.id, task);
+      }
+      const candidates = [...reclaimCandidateById.values()]
+        .filter((task) => allowsAutoMergeProcessing(task, settings));
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const activeTaskIds = await this.listActiveHeartbeatTaskIds();
 
