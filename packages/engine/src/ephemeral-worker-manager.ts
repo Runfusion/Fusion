@@ -20,6 +20,7 @@
  * sweep here close that gap.
  */
 import type { AgentStore, AgentState, Agent, TaskStore, Task, Settings } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { isEphemeralAgent } from "@fusion/core";
 
 export interface TaskOwner {
@@ -46,7 +47,30 @@ export interface EphemeralWorkerManagerOptions {
   getSettings?: () => Promise<Pick<Settings, "ephemeralAgentsEnabled">>;
 }
 
-const TERMINAL_TASK_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (batch-engine):
+Terminal and wip lanes for one task, unioned with the legacy ids — `resolveWorkflowIrForTask` returns the
+BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a degraded renamed
+board resolves sets that exclude its own lanes and the idle test inverts again.
+*/
+async function resolveIdleEvaluationLanes(
+  store: TaskStore,
+  taskId: string,
+): Promise<{ terminal: ReadonlySet<string>; wip: ReadonlySet<string> }> {
+  const terminal = new Set<string>(["done", "archived"]);
+  const wip = new Set<string>(["in-progress"]);
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      for (const flag of ["complete", "archived"] as const) {
+        for (const id of columnsWithFlag(ir, flag)) terminal.add(id);
+      }
+      for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
+    }
+  } catch { /* degraded: legacy ids */ }
+  return { terminal, wip };
+}
 
 export class EphemeralWorkerManager {
   private readonly agentStore: AgentStore;
@@ -339,8 +363,16 @@ export class EphemeralWorkerManager {
     try {
       const task = await this.taskStore.getTask(agent.taskId);
       if (!task) return true;
-      if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
-      return task.column !== "in-progress";
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (batch-engine — census-invisible membership, #2763 class):
+      "Is this agent idle?" — true when its bound task is terminal, or not actively being worked. Both
+      halves were hardcoded sets/ids, so on a renamed board an agent working a LIVE card in the wip lane
+      was reported idle and became eligible for teardown, while an agent bound to a FINISHED card was not.
+      Exactly inverted from the truth on both sides.
+      */
+      const idleLanes = await resolveIdleEvaluationLanes(this.taskStore, task.id);
+      if (idleLanes.terminal.has(task.column)) return true;
+      return !idleLanes.wip.has(task.column);
     } catch {
       // If we can't even read the task, assume the binding is broken.
       return true;
