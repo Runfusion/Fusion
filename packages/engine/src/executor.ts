@@ -12560,9 +12560,40 @@ export class TaskExecutor {
       reviewAddressingActivated = true;
       // Check dependencies
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:50 (batch-engine — dependency satisfaction, per DEPENDENCY):
+      Resolved from each DEPENDENCY's own workflow, not this task's: dependencies routinely span workflows,
+      so asking "is my blocker finished?" against the blocked task's vocabulary is the wrong question. That
+      is the answer main settled on in `branch-group-ops.ts` (#2720) and it is reused here rather than
+      re-derived.
+
+      MEMBERSHIP and unioned with the legacy trio, because a workflow may declare more than one complete or
+      review lane and `resolveWorkflowIrForTask` yields the BUILT-IN IR for a missing workflow rather than
+      throwing — without the union a degraded renamed board treats a finished blocker as unmet and the
+      dependent never runs.
+
+      NOTE the set is wider than the terminal pair: this guard has always counted `in-review` as satisfying
+      a dependency, so the review role is included. Narrowing it to terminal-only would be a behaviour
+      change, not a conversion.
+      */
+      const depIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const satisfiedByDep = new Map<string, ReadonlySet<string>>();
+      for (const depId of task.dependencies) {
+        if (satisfiedByDep.has(depId)) continue;
+        const satisfied = new Set<string>(["done", "in-review", "archived"]);
+        try {
+          const depIr = await resolveWorkflowIrForTask(this.store, depId, depIrCache);
+          if (depIr) {
+            for (const flag of ["complete", "archived", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+              for (const id of columnsWithFlag(depIr, flag)) satisfied.add(id);
+            }
+          }
+        } catch { /* degraded: the legacy trio */ }
+        satisfiedByDep.set(depId, satisfied);
+      }
       const unmetDeps = task.dependencies.filter((depId) => {
         const dep = allTasks.find((t) => t.id === depId);
-        return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+        return dep !== undefined && !satisfiedByDep.get(depId)!.has(dep.column);
       });
 
       if (unmetDeps.length > 0) {
