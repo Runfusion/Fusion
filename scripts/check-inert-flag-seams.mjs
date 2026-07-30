@@ -57,14 +57,7 @@ const ALLOWED = new Map([
       + "self-healing.ts and both supplying `reviewColumns`. This is the convenience wrapper over them, "
       + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
   ],
-  [
-    "evaluateMergeBlockerGuard",
-    "TEMPORARY: core-owned; reported on #2783. NOT 'test-only' — that was this entry's previous "
-      + "stated reason and it was false. Including __tests__ in the scan finds zero callers there too: "
-      + "the function has exactly one reference in the repo, its own declaration. It is never "
-      + "registered as a trait hook either, and the `evaluateDefaultWorkflowGuards` reader its file "
-      + "header credits does not exist. So its `lifecycleColumns` conversion was applied to dead code.",
-  ],
+
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
     "sortTasksForDisplayColumn",
@@ -351,8 +344,20 @@ if (declared.size === 0) {
   process.exit(1);
 }
 
+/*
+AN EXEMPTION FOR A FUNCTION THAT NO LONGER EXISTS ALSO ROTS.
+
+The staleness check above only fires for a seam the scan still FINDS — it asks "is this site supplied
+now?". Delete the declaration and the name is never iterated, so its entry sits in the list forever,
+silently exempting nothing and misleading the next reader about what is tolerated. Found by deleting
+`evaluateMergeBlockerGuard` and watching the gate stay quiet about its leftover entry.
+*/
+for (const fn of ALLOWED.keys()) {
+  if (!declared.has(fn)) stale.push(`  ${fn} — no such seam declared any more; remove its ALLOWED entry`);
+}
+
 if (stale.length > 0) {
-  console.error("\n[check-inert-flag-seams] STALE allow-list entries — the sites are supplied now:\n");
+  console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
   for (const line of stale.sort()) console.error(line);
   console.error("\nRemove them, or the check silently stops guarding those functions.\n");
   process.exit(1);
