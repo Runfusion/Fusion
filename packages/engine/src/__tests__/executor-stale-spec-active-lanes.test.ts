@@ -43,17 +43,37 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
 
 describe("the stale-spec skip resolves the board's own active lanes", () => {
-  it("resolves the task's lifecycle columns before deciding the skip", () => {
+  it("resolves the task's own workflow IR before deciding the skip", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-08-02-02:20 (the ratchet drifted behind an IMPROVEMENT):
+    THE GUARD GOT BETTER AND THIS FILE WENT RED. It used to read
+    `resolveLifecycleColumns(...)` and add `?.wip / ?.review / ?.complete`, which returns the FIRST
+    column carrying each trait — so a board with two wip lanes, or a review lane plus a second
+    merge-blocking one, had only one of each recognised as active, and a card in the other read as
+    INACTIVE. That was fixed by resolving the IR once and unioning `columnsWithFlag` over five flags,
+    which returns EVERY column carrying each.
+
+    The assertions are re-pointed at the new shape rather than loosened: this is a source ratchet in
+    the `engine-no-blocking-shellout` style, and its whole value is that it fails on a revert. A
+    substring that matched both shapes would keep the file green through exactly the regression it
+    exists to catch.
+
+    The header's standing note still applies — this is not a behavioural proof, and the guard sits
+    behind worktree and session setup that a unit test has no business standing up. Re-pointing it is
+    maintenance, not the end-to-end case it asks for.
+    */
     expect(source).toContain(
-      "const activeLifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id));",
+      "const activeIr = await resolveWorkflowIrForTask(this.store, task.id);",
     );
   });
 
-  it("adds the wip, review and complete lanes to the active set", () => {
+  it("unions EVERY column carrying each active-lane trait, not the first per role", () => {
+    /* `columnsWithFlag` over the five flags is the arity fix: `.has()` membership needs every lane,
+       not one per trait. Asserting the flag list too, so dropping one is caught here. */
     expect(source).toContain(
-      "for (const lane of [activeLifecycle?.wip, activeLifecycle?.review, activeLifecycle?.complete]) {",
+      'for (const flag of ["countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {',
     );
-    expect(source).toContain("if (lane !== undefined) activeColumns.add(lane);");
+    expect(source).toContain("for (const lane of columnsWithFlag(activeIr, flag)) activeColumns.add(lane);");
   });
 
   it("UNIONS rather than replaces, so a degraded IR cannot narrow the set", () => {
