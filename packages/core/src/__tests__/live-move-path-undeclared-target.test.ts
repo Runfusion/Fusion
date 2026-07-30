@@ -27,7 +27,9 @@ client — which is why the guard belongs here rather than only in the UI.
 This is NOT the full U2b convergence. It hoists ONE check out of the dead branch: a move into a
 column the task's own workflow does not declare is refused, when the workflow resolves and declares
 columns. Recovery re-homes (`recoveryRehome`) still bypass it, because that is the path that
-rescues cards already stranded in such a column.
+rescues cards already stranded in such a column — bypassing ADJACENCY on the way to the
+workflow's declared rebound target, which is the only direction production actually moves
+(see `reconcileUndeclaredTaskColumns`, self-healing.ts:6386).
 */
 import { it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import {
@@ -116,19 +118,55 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     expect(await column(task.id)).toBe("archived");
   });
 
-  it("still allows a recovery re-home to reach an undeclared column", async () => {
+  it("still allows a recovery re-home to reach the workflow's REBOUND TARGET past adjacency", async () => {
     /*
-    `reconcileUndeclaredTaskColumns` and the U5 recovery paths deliberately move cards across
-    undeclared columns to rescue them. Refusing those would break the repair that motivated this.
+    FNXC:MergedPlanningColumn 2026-07-30-10:20 (PR #2601 review — greptile P2):
+
+    REWRITTEN, and the direction is the whole point. This asserted that a recovery
+    move could reach an UNDECLARED column (`todo` -> `triage`), which is the inverse
+    of what recovery does. `reconcileUndeclaredTaskColumns` reads
+    `resolveReboundTarget(ir)` and moves a card OUT of an undeclared column INTO a
+    declared one — verified at `self-healing.ts:6386`. Nothing in production moves a
+    card deliberately INTO an undeclared column.
+
+    Keeping the old assertion would have been actively harmful: it pins the ability
+    to CREATE the stranded state that the sweep exists to repair, so the destination
+    validation this PR is a step toward would have to carve out an exception for it.
+
+    The capability is not entirely unexercised — the ~15 hard-coded
+    `moveTask(id, "todo", { recoveryRehome })` calls in self-healing DO land in an
+    undeclared column for any workflow that does not declare `todo`. But those are
+    the literals on the conversion backlog, so that is bug-compatibility, not an
+    invariant, and pinning it would cement the bug.
+
+    What recovery genuinely needs, and what is pinned instead: a recovery re-home
+    reaches the workflow's declared rebound target even from a column ADJACENCY
+    would refuse to leave. `done -> todo` is rejected by the legacy table and must
+    still succeed under `recoveryRehome`.
     */
     const store = h.store();
     const task = await store.createTask({ description: "recovery rehome" });
 
-    await store.moveTask(task.id, "triage" as never, {
+    /* `archived -> todo` is the discriminating pair: the legacy table's `archived`
+       row is `["done"]` only, so ordinary adjacency refuses it while recovery must
+       still reach the rebound target. (`done -> todo` would NOT discriminate — the
+       table permits it, so the assertion would pass with the flag removed.) */
+    await store.moveTask(task.id, "in-progress" as never, { moveSource: "user" } as never);
+    await store.moveTask(task.id, "in-review" as never, { moveSource: "user" } as never);
+    await store.moveTask(task.id, "done" as never, { moveSource: "user" } as never);
+    await store.moveTask(task.id, "archived" as never, { moveSource: "user" } as never);
+    expect(await column(task.id)).toBe("archived");
+
+    await expect(
+      store.moveTask(task.id, "todo" as never, { moveSource: "engine" } as never),
+    ).rejects.toThrow();
+    expect(await column(task.id)).toBe("archived");
+
+    await store.moveTask(task.id, "todo" as never, {
       moveSource: "engine",
       recoveryRehome: true,
     } as never);
 
-    expect(await column(task.id)).toBe("triage");
+    expect(await column(task.id)).toBe("todo");
   });
 });
