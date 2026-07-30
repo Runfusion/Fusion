@@ -21,12 +21,16 @@ interface Generation {
   readonly leases: Set<EmbeddedRuntimeLease>;
   latestRegistration: number;
   pendingOwnerStop: (() => Promise<void>) | null;
+  stopCompletion: Promise<void> | null;
   stopping: boolean;
 }
 
 export class EmbeddedRuntimeStoppingError extends Error {
-  constructor(readonly url: string) {
-    super(`Embedded PostgreSQL runtime is stopping: ${url}`);
+  constructor(
+    readonly url: string,
+    readonly completion: Promise<void>,
+  ) {
+    super("Embedded PostgreSQL runtime is stopping");
     this.name = "EmbeddedRuntimeStoppingError";
   }
 }
@@ -50,13 +54,27 @@ export function registerEmbeddedRuntimeUrl(
   options: { ownsProcess: boolean },
 ): EmbeddedRuntimeLease {
   let generation = generationsByUrl.get(url);
-  if (generation?.stopping) throw new EmbeddedRuntimeStoppingError(url);
+  if (generation?.stopping) {
+    if (!generation.stopCompletion) {
+      throw new Error("Embedded PostgreSQL runtime stop completion is missing");
+    }
+    throw new EmbeddedRuntimeStoppingError(url, generation.stopCompletion);
+  }
   // FNXC:PostgresBackup 2026-07-16-12:40: An owner started a new postmaster,
   // so URL reuse must create a new generation rather than retain stale leases.
   if (!generation || options.ownsProcess) {
     const id = (nextGenerationByUrl.get(url) ?? 0) + 1;
     nextGenerationByUrl.set(url, id);
-    generation = { url, epoch: registryEpoch, id, leases: new Set(), latestRegistration: 0, pendingOwnerStop: null, stopping: false };
+    generation = {
+      url,
+      epoch: registryEpoch,
+      id,
+      leases: new Set(),
+      latestRegistration: 0,
+      pendingOwnerStop: null,
+      stopCompletion: null,
+      stopping: false,
+    };
     generationsByUrl.set(url, generation);
   }
 
@@ -102,10 +120,15 @@ export async function releaseEmbeddedRuntimeLease(
       /*
       FNXC:PostgresLifecycle 2026-07-29-16:26:
       Keep the generation visible as stopping until the owner callback completes. A concurrent bootstrap must retry rather than join a postmaster that is already committed to termination.
+
+      FNXC:PostgresLifecycle 2026-07-29-17:43:
+      Publish the actual stop completion to rejected registrants. Startup waits on lifecycle completion instead of exhausting a fixed retry window while an orderly shutdown is still in progress.
       */
       generation.stopping = true;
+      const stopCompletion = Promise.resolve().then(stopOwner);
+      generation.stopCompletion = stopCompletion;
       try {
-        await stopOwner();
+        await stopCompletion;
       } finally {
         if (generationsByUrl.get(metadata.url) === generation) {
           generationsByUrl.delete(metadata.url);

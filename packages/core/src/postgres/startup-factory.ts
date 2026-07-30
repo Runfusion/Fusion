@@ -386,13 +386,12 @@ async function bootSchemaBackend(
     try {
       return await bootSchemaBackendOnce(options, bypassProjectIsolation);
     } catch (error) {
-      if (
-        error instanceof EmbeddedRuntimeStoppingError &&
-        joinedRetryAttempt < JOINED_INSTANCE_RETRY_DELAYS_MS.length
-      ) {
-        const delayMs = JOINED_INSTANCE_RETRY_DELAYS_MS[joinedRetryAttempt];
-        joinedRetryAttempt += 1;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (error instanceof EmbeddedRuntimeStoppingError) {
+        /*
+        FNXC:PostgresLifecycle 2026-07-29-17:43:
+        A replacement backend waits for the shared registry's actual owner-stop completion. Fixed backoff budgets can expire during a valid slow shutdown and turn orderly handoff into startup failure.
+        */
+        await error.completion;
         continue;
       }
       if (

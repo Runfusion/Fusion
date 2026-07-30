@@ -152,13 +152,15 @@ describe("CentralCore layer-less initialization", () => {
     }));
 
     const closing = central.close();
-    await vi.waitFor(() => expect(mocks.shutdown).toHaveBeenCalledOnce());
     const sharedLayer = { db: { shared: true } };
-
-    await expect(central.init()).rejects.toThrow("CentralCore is closed");
-    await expect(central.attachBackendLayer(
+    const initializationAfterClose = central.init();
+    const attachmentAfterClose = central.attachBackendLayer(
       sharedLayer as unknown as Parameters<CentralCore["attachBackendLayer"]>[0],
-    )).rejects.toThrow("CentralCore is closed");
+    );
+
+    await expect(initializationAfterClose).rejects.toThrow("CentralCore is closed");
+    await expect(attachmentAfterClose).rejects.toThrow("CentralCore is closed");
+    await vi.waitFor(() => expect(mocks.shutdown).toHaveBeenCalledOnce());
 
     finishShutdown();
     await closing;

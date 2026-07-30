@@ -84,12 +84,26 @@ describe("embedded backup runtime URL registry", () => {
     const finalRelease = releaseEmbeddedRuntimeLease(joiner);
     await vi.waitFor(() => expect(stopOwner).toHaveBeenCalledOnce());
     expect(getActiveEmbeddedRuntimeUrl()).toBeUndefined();
-    expect(() => registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false })).toThrow(
-      EmbeddedRuntimeStoppingError,
-    );
+    let stoppingError: EmbeddedRuntimeStoppingError | undefined;
+    try {
+      registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
+    } catch (error) {
+      if (error instanceof EmbeddedRuntimeStoppingError) stoppingError = error;
+    }
+    expect(stoppingError).toBeInstanceOf(EmbeddedRuntimeStoppingError);
+    if (!stoppingError) throw new Error("Expected stopping registration to expose completion");
+    const stopCompletion = stoppingError.completion;
+    let stopCompletionSettled = false;
+    void stopCompletion.then(() => {
+      stopCompletionSettled = true;
+    });
+    await Promise.resolve();
+    expect(stopCompletionSettled).toBe(false);
 
     finishStop();
+    await stopCompletion;
     await finalRelease;
+    expect(stopCompletionSettled).toBe(true);
     expect(registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true })).toBeDefined();
   });
 
