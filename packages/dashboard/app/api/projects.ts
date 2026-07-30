@@ -853,15 +853,17 @@ export function fetchGlobalConcurrency(): Promise<GlobalConcurrencyState> {
   return api<GlobalConcurrencyState>("/global-concurrency");
 }
 
-/** Update the system-wide concurrency limit shared across all projects. */
-export function updateGlobalConcurrency(input: {
-  globalMaxConcurrent: number;
-}): Promise<GlobalConcurrencyState> {
-  return api<GlobalConcurrencyState>("/global-concurrency", {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
-}
+/*
+FNXC:CapacityModel 2026-07-30-19:40 (finishing the cross-project cap deletion):
+`updateGlobalConcurrency` is DELETED. It PUT to `/api/global-concurrency`, a route removed when the
+machine-wide cap went (capacity is two numbers PER PROJECT), so the only thing this client could do was
+call an endpoint that no longer exists. Measured: ZERO callers — the sole reference was the barrel
+re-export in `legacy.ts`, which is gone with it.
+
+`fetchGlobalConcurrency` above SURVIVES on purpose: the GET route remains and serves live utilization
+TELEMETRY ("N running, all projects") for the footer and Command Center. Nothing gates on it; it is a
+read, not a limiter.
+*/
 
 /** Fetch tasks for a specific project */
 export function fetchProjectTasks(projectId: string, limit?: number, offset?: number): Promise<Task[]> {
