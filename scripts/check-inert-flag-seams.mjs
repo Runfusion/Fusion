@@ -92,6 +92,25 @@ const ALLOWED_OMISSIONS = new Map([
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
       + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
   ],
+  /*
+  The five engine sites below became VISIBLE only when barrel imports stopped being filtered out.
+  They are not new defects; they were always there and the check could not see them.
+
+  NOTE ON KEY GRANULARITY: the key is <file>::<function>, so a file with two omitting calls is
+  exempted for both. self-healing.ts and triage.ts each have more than one. That is coarser than I
+  would like and it is recorded rather than hidden — a second omission added to either file would be
+  covered by an entry written for the first.
+  */
+  [
+    "packages/engine/src/self-healing.ts::isNearDuplicateCanonicalInactive",
+    "TEMPORARY: engine-owned; reported on #2785. Two sites (the stale-marker sweep and the duplicate "
+      + "reconcile) pass the canonical alone, so a canonical resting in a RENAMED active column reads "
+      + "as inactive and its dependants' markers are cleared against live work.",
+  ],
+  [
+    "packages/engine/src/triage.ts::isNearDuplicateCanonicalInactive",
+    "TEMPORARY: engine-owned; reported on #2785. Three sites, same shape as the self-healing pair.",
+  ],
   [
     "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
     "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
@@ -266,7 +285,25 @@ const callSitesFor = (fn, declaringFile) => {
     if (site.file === declaringFile) return true;                       // the seam's own file
     if (site.shadowed) return false;                                    // a local same-named function
     if (site.from === undefined) return true;                           // not imported: ambiguous, count it
-    /* Imported: it must come from the seam's module, or it is a different function of that name. */
+    /*
+    BARREL AND PACKAGE IMPORTS CANNOT BE RESOLVED BY BASENAME, SO THEY COUNT.
+
+    Correction to a regression I shipped while closing the imported-shadow hole. Engine and CLI reach
+    core through `import { ... } from "@fusion/core"`, whose basename is "core" and never matches a
+    module name like "near-duplicate-canonical". Comparing basenames therefore classified EVERY
+    barrel-imported call site as "a different function of the same name" and dropped it — so the
+    check stopped seeing engine's and cli's calls into core at all, which is most of the
+    cross-package surface it exists to watch.
+
+    Measured: `isNearDuplicateCanonicalInactive` reported "supplied by 5/6 call sites" while FOUR
+    engine sites (self-healing.ts x2, triage.ts x2) omitted the argument and were invisible. The
+    check read cleaner and caught less — the exact failure mode this gate exists to document.
+
+    Only a RELATIVE specifier identifies a module well enough to exclude on. Anything else is
+    unresolved, and unresolved must mean COUNTED: an over-counted seam produces a false report
+    somebody investigates, an under-counted one produces silence.
+    */
+    if (!site.from.startsWith(".")) return true;
     return site.from.replace(/\.js$/, "").split("/").pop() === declaringModule;
   });
   return relevant;
