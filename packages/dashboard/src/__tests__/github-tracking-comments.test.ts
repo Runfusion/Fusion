@@ -415,6 +415,68 @@ describe("GitHubTrackingCommentService", () => {
     expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+  A TRACKED TASK ON A RENAMED BOARD MUST STILL GET ITS COMMENT.
+
+  The service resolved the wip/complete columns but tested `event.to` against the literal ids FIRST,
+  so on a renamed board it returned before reaching any resolved code and the comment was silently
+  skipped — no error, no log, just a tracked issue that stops being updated.
+
+  MEASURED: restoring that literal early return leaves all 101 existing cases green. Nothing here
+  drove a workflow at all — `MockStore` has no selection methods, so every case resolved to the
+  legacy fallback and the conversion was untestable by construction.
+  */
+  it("posts a comment when a tracked task moves to a RENAMED wip column", async () => {
+    const RENAMED_IR = {
+      version: "v2",
+      id: "wf-renamed",
+      name: "Renamed",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "backlog" }],
+      edges: [],
+    };
+    const widened = store as unknown as Record<string, unknown>;
+    widened.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-renamed" }));
+    widened.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-renamed" }));
+    widened.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-renamed", ir: RENAMED_IR }));
+
+    service.start();
+    store.emit("task:moved", { task: createTask(), from: "backlog", to: "building" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("still ignores a column the RENAMED board does not use for tracking", async () => {
+    /* The negative half: resolving must not make every move post a comment. */
+    const widened = store as unknown as Record<string, unknown>;
+    widened.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-renamed" }));
+    widened.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-renamed" }));
+    widened.getWorkflowDefinition = vi.fn(async () => ({
+      id: "wf-renamed",
+      ir: {
+        version: "v2", id: "wf-renamed", name: "Renamed",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }], edges: [],
+      },
+    }));
+
+    service.start();
+    store.emit("task:moved", { task: createTask(), from: "building", to: "backlog" });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).not.toHaveBeenCalled();
+  });
+
   it("ignores non-target columns", async () => {
     service.start();
 

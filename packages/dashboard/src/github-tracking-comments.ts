@@ -229,24 +229,36 @@ export class GitHubTrackingCommentService {
       return;
     }
 
-    if (event.to !== "in-progress" && event.to !== "done") {
-      return;
-    }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (fleet: github-tracking-comments.ts):
+    Resolved ONCE here — after the tracking-enabled gate — so a move on an UNTRACKED task pays nothing.
 
+    FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+    THE TRACKING GATE NOW RUNS FIRST, AND THE COLUMN TEST IS RESOLVED.
+
+    An earlier version kept a literal `to !== "in-progress" && to !== "done"` early return ABOVE the
+    tracking gate, on the reasoning that converting it would make every task move in the project
+    resolve a workflow. That reasoning was sound about cost and wrong about correctness: on a renamed
+    board the literal never matched, so the function returned before reaching any of the resolved
+    code below and the tracking comment was silently skipped. A conversion that cannot be reached is
+    not a conversion.
+
+    Reordering satisfies both. The tracking-enabled check is a plain property read on the event's own
+    task, so it costs nothing and still short-circuits every UNTRACKED move — which is the population
+    the cost argument was actually about. Only tracked tasks resolve a workflow, and those are the
+    ones that need the answer.
+    */
     if (event.task.githubTracking?.enabled !== true) {
       return;
     }
 
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (fleet: github-tracking-comments.ts):
-    Resolved ONCE here — after the tracking-enabled gate — so a move on an UNTRACKED task pays nothing.
-    The early return above still compares the legacy ids deliberately: converting it would move the
-    resolution ahead of that gate and make every task move in the project resolve a workflow to decide
-    it has no GitHub issue. Legacy ids remain each site's fallback.
-    */
     const movedLifecycle = await resolveTaskLifecycleColumns(this.store, event.task.id);
     const wipColumn = movedLifecycle?.wip ?? "in-progress";
     const completeColumn = movedLifecycle?.complete ?? "done";
+
+    if (event.to !== wipColumn && event.to !== completeColumn) {
+      return;
+    }
 
     const issue = event.task.githubTracking?.issue;
     if (!issue) {
@@ -290,9 +302,17 @@ export class GitHubTrackingCommentService {
     ) {
       return;
     }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+    `formatTrackingComment`'s second parameter is a TRANSITION KIND, not a column id — it chooses
+    which comment to build. Passing `event.to` only type-checked because the literal early return had
+    narrowed it to the two legacy ids, so the id and the kind coincided on the default board. They do
+    not coincide on a renamed one, which is the conflation this whole conversion is about. The role is
+    now passed explicitly.
+    */
     const body = event.to === completeColumn
-      ? formatTrackingComment(taskForComment, event.to, { owner, repo })
-      : formatTrackingComment(taskForComment, event.to);
+      ? formatTrackingComment(taskForComment, "done", { owner, repo })
+      : formatTrackingComment(taskForComment, "in-progress");
 
     let commentPosted = false;
     try {
