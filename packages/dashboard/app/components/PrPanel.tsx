@@ -324,7 +324,7 @@ function PrCard({
   );
 }
 
-export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, taskColumn, autoMerge = false, isManualPrFlow = false, prAuthAvailable, onPrUpdated, onPrUnlinked, onPrsRefreshed, onRequestCreatePr, directMergeCommitStrategy = "auto", addToast }: PrPanelProps) {
+export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, taskColumn, taskColumnFlags, autoMerge = false, isManualPrFlow = false, prAuthAvailable, onPrUpdated, onPrUnlinked, onPrsRefreshed, onRequestCreatePr, directMergeCommitStrategy = "auto", addToast }: PrPanelProps) {
   const { t } = useTranslation("app");
   const prList = prInfos ?? (prInfo ? [prInfo] : []);
 
@@ -352,6 +352,7 @@ export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, 
             prInfo={prEntry}
             automationStatus={automationStatus}
             taskColumn={taskColumn}
+            taskColumnFlags={taskColumnFlags}
             onPrUpdated={onPrUpdated}
             onPrUnlinked={onPrUnlinked}
             onPrsRefreshed={onPrsRefreshed}
