@@ -79,7 +79,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       const snapshot = await snapshotStore.read(deps.layer);
       const notifyOnColumns = new Set(getNotifyColumns(deps.settings));
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-03:05 (#2852 review — greptile P2, and it is right):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:05 (#2852 review — greptile P2, and it is right):
       Each card's OWN complete lane, resolved per task and ONLY when the flag that consumes it is on.
 
       `diffSnapshots` declared a per-task `completeColumnsByTaskId` that this — its only caller —
@@ -106,6 +106,29 @@ export function createNotifier(deps: NotifierDeps): Notifier {
 
       Best-effort per card: a card whose workflow cannot be resolved is simply absent from the map
       and falls back to the documented legacy default, rather than dropping the whole poll.
+      */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:10 (found while closing #2852's review — REPORTED,
+      not fixed):
+
+      THIS CONSTANT MAKES THE WHOLE COMPLETION PATH DEAD, AND THE SEAM CHECKER STILL READS IT AS WIRED.
+
+      `alsoNotifyOnDone` is a hardcoded `false` with no setting behind it — grep it: the only writer is
+      this line. So the block below never runs, `completeColumnsByTaskId` is ALWAYS `undefined`, and
+      `diffSnapshots`'s `isComplete && opts.alsoNotifyOnDone` can never fire. The per-task lane
+      resolution this change set exists to wire is therefore still inert in production, one level
+      further down than the omission it replaced.
+
+      AND THE INSTRUMENT CANNOT SEE IT. `check-inert-flag-seams.mjs` asks whether a call site SUPPLIES
+      the argument. Line 128 does supply it — as a variable that is always `undefined` because a
+      constant `false` guards its construction. "Supplied" and "supplied with a real value" are
+      different questions, and only the first is being asked. This is the sharpest instance of the
+      class the checker was built for, sitting inside the checker's own blind spot.
+
+      LEFT AS-IS DELIBERATELY. Turning this into a setting is a behaviour change — it makes the
+      glasses start emitting completion notifications nobody has opted into — and that belongs to
+      whoever owns this plugin's UX, not to a conversion batch. What must not happen is the seam being
+      counted as fixed. Recorded here so the count is read with the caveat attached.
       */
       const alsoNotifyOnDone = false;
       let completeColumnsByTaskId: Map<string, ReadonlySet<string>> | undefined;
