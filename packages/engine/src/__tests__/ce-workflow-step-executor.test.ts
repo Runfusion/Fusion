@@ -617,19 +617,37 @@ describe("CE workflow-step executor integration", () => {
         value: "implementation-incomplete",
       }));
       expect(mergeRequester).not.toHaveBeenCalled();
-      // FNXC:WorkflowMerge 2026-07-07-08:38: The merge boundary (executor.ts:6305, 6fc50d8d9e) now moves the task to in-review and logs the boundary move BEFORE the implementation-proof gate runs, then the proof failure is logged separately. The proof-failure text (executor.ts:6345) changed from the static "implementation steps are incomplete" to the parse-step-aware "implementation did not run: parsed coding steps are missing or incomplete". Assert both log entries so the new two-stage merge-boundary behavior is pinned.
+      /*
+      FNXC:WorkflowMerge 2026-07-30-11:40:
+      The boundary no longer MOVES then checks — it blocks first. `ensureWorkflowMergeBoundaryTask`
+      (executor.ts:7809) now returns early when a foreach step-execute region has incomplete proof,
+      logging "Workflow merge boundary blocked: <reason>" and leaving the card where it is. The
+      previous two-stage sequence this test pinned is gone: the string "Workflow merge boundary moved
+      task to in-review before requesting merge" no longer exists anywhere in production.
+
+      That change is an improvement worth asserting rather than tolerating, so this pins the stronger
+      property the new order gives us: an unproven card is NOT moved into the review column at all.
+      The old assertion could only say "it was moved, then blocked".
+
+      Log text asserted by its stable prefix, not the whole sentence — the reason clause enumerates
+      missing foreach instance ids, which is legitimately volatile detail, and pinning it verbatim
+      would make this test fail on unrelated node-id changes.
+      */
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
-        "Workflow merge boundary moved task to in-review before requesting merge",
+        expect.stringContaining("Workflow merge boundary blocked:"),
         undefined,
         undefined,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
-        "Workflow merge blocked before requester: implementation did not run: parsed coding steps are missing or incomplete",
+        expect.stringContaining("implementation did not run:"),
         undefined,
         undefined,
       );
+      // The card must never reach the review column on unproven implementation.
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything());
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review");
     });
 
     it("uses moveTask for workflow graph column transitions so lifecycle notifications fire", async () => {
@@ -678,6 +696,20 @@ describe("CE workflow-step executor integration", () => {
       let live = baseStepTask({
         column: "in-progress",
         steps: [{ name: "Implement", status: "done" }],
+        /*
+        FNXC:WorkflowMerge 2026-07-30-12:05:
+        The merge boundary now REFUSES a foreach step-execute region with no pre-merge node
+        proof (executor.ts:7808) — it logs "Workflow merge boundary blocked: no pre-merge node
+        result recorded" and returns without moving. This fixture must therefore model a run
+        that actually FINISHED its per-instance work, or it measures the block instead of the
+        behaviour its name describes.
+
+        Shape matched to the evaluator: `source: "node"` and `phase: "pre-merge"` are what it
+        filters on, and `passed` is terminal for it.
+        */
+        workflowStepResults: [
+          { workflowStepId: "steps#0:step-execute", workflowStepName: "Implement", source: "node", phase: "pre-merge", status: "passed" },
+        ],
       });
       store.getTask.mockImplementation(async () => live as any);
       store.moveTask.mockImplementation(async (_id: string, column: string) => {
@@ -744,6 +776,17 @@ describe("CE workflow-step executor integration", () => {
             source: "node",
             status: "passed",
           },
+          /*
+          FNXC:WorkflowMerge 2026-07-30-12:15:
+          A `plan` result alone no longer clears the boundary: it proves SOME pre-merge node ran,
+          but the gate also requires an instance result per foreach step-execute
+          (`missingInstanceIds`, executor.ts:7813). Without these two the boundary blocks with
+          "foreach step instances incomplete" and the checklist projection this test exists to
+          assert never happens — so the fixture would be measuring the block, not the projection.
+          One instance per declared step, matching the two steps above.
+          */
+          { workflowStepId: "steps#0:step-execute", workflowStepName: "Diagnose", phase: "pre-merge", source: "node", status: "passed" },
+          { workflowStepId: "steps#1:step-execute", workflowStepName: "Implement", phase: "pre-merge", source: "node", status: "passed" },
         ],
       });
       store.getTask.mockImplementation(async () => live as any);
