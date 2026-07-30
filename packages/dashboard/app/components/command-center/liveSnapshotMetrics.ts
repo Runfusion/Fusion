@@ -9,6 +9,19 @@ Control so custom and legacy board columns cannot silently show zero work.
 /** Whether a live board column belongs to the in-progress funnel stage. */
 export function isInProgressColumn(column: string): boolean {
   const normalized = column.trim().toLowerCase();
+  /*
+  DELIBERATE-LITERAL — ALIAS MATCHING, not a lifecycle guard.
+
+  This is a census false positive. The values here are DISPLAY-NAME aliases for a funnel stage
+  ("in progress" with a space, "doing"), matched case-insensitively against a snapshot's column
+  labels — there is no task and no workflow to resolve a trait from, which is why the signature takes
+  a bare string. `"in-progress"` appears because it is one of the alias spellings, not because a
+  lifecycle role is being asked for.
+
+  Converting it to a role helper is not possible without inventing a task to resolve, and widening
+  the alias list is the documented intent above: the aliases exist precisely so custom boards do NOT
+  show zero work.
+  */
   return normalized === "in-progress" || normalized === "in progress" || normalized === "doing";
 }
 

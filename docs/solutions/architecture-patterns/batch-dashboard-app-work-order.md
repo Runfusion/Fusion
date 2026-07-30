@@ -23,6 +23,33 @@ ALREADY CONVERTED IN GREEN PRs, so converting them here duplicates work and will
 
 Those are the next two entries in the list below by size. Skip them.
 
+SIZED AND NOT CONVERTED — seven single-guard components, u12, 2026-08-01
+
+These have NO column flags in scope. Adding an optional `columnFlags` parameter to each and calling
+it a conversion would be inert: no caller passes anything, behaviour is unchanged, and the census
+drops by seven. That is the half-conversion trap this program has hit repeatedly, so they are sized
+here instead of faked.
+
+Each needs its CALLER threaded, which is a per-component change, not a sweep:
+
+  MergeDetails.tsx            complete role   `task.column !== "done"` gates the whole panel
+  ChangesDiffModal.tsx        complete role   `const isDone = column === "done"`
+  RoutingTab.tsx              wip role        active-task check, same shape as taskActivity's
+  TaskPlannerChatTab.tsx      wip role        `const agentRunning = task.column === "in-progress"`
+  DevServerView.tsx           wip role        filters worktree-bearing wip cards
+  ResearchTaskActionModal.tsx archived role   filters archived out of a picker
+  PrPanel.tsx                 hold role       renders one hint string; lowest value of the seven
+
+The cheapest route for most of them is the prop their parent already resolves — `TaskCard` and
+`ListView` both hold per-task flags today, and four of these seven render beneath one of those.
+
+MARKED, NOT CONVERTED (census false positive):
+
+  command-center/liveSnapshotMetrics.ts  `isInProgressColumn` matches DISPLAY-NAME aliases
+    ("in progress", "doing") for a funnel stage against snapshot labels. No task, no workflow, bare
+    string signature. The aliases exist so custom boards do not show zero work — widening them is the
+    documented intent, converting them is impossible without inventing a task to resolve.
+
 DONE ON THIS BRANCH BY u12 (working the tail upward, so the largest-first pass does not collide):
 
   taskActivity.ts 3, worktreeGrouping.ts 3, taskRevert.ts 2, taskTiming.ts 2,
