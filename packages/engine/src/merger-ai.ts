@@ -53,7 +53,6 @@ import {
   resolveValidatorSettingsModel,
   resolveMergerFallbackModel,
   resolveReboundTarget,
-  resolveLifecycleColumns,
   resolveTerminalColumns,
   resolveWorkflowIrForTask,
   type MergeDetails,
