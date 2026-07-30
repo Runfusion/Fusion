@@ -151,6 +151,14 @@ describe("terminal and mid-flight column roles", () => {
     is finished but not COMPLETED. Surfaces that count throughput would double-count it otherwise.
     */
     expect(isCompleteColumnRole({ archived: true }, "archived")).toBe(false);
+    /*
+    FNXC:ColumnRoles 2026-07-30-16:05 (PR #2688 review — coderabbit):
+    RESOLVED METADATA WINS, asserted against the MATCHING legacy id. Every other false case here
+    passes a non-matching id, so a `trait || legacyId` implementation satisfies them all — the id
+    is false too, and the bug hides. Only a board that renamed the ROLE while keeping the legacy
+    NAME can tell the two apart.
+    */
+    expect(isCompleteColumnRole({ archived: true }, "done")).toBe(false);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
     expect(isCompleteColumnRole(undefined, "shipped")).toBe(false);
   });
@@ -158,6 +166,7 @@ describe("terminal and mid-flight column roles", () => {
   it("isArchivedColumnRole reads the archived trait", () => {
     expect(isArchivedColumnRole({ archived: true }, "cold-storage")).toBe(true);
     expect(isArchivedColumnRole({ complete: true }, "done")).toBe(false);
+    expect(isArchivedColumnRole({ complete: true }, "archived")).toBe(false);
     expect(isArchivedColumnRole(undefined, "archived")).toBe(true);
     expect(isArchivedColumnRole(undefined, "cold-storage")).toBe(false);
   });
@@ -170,6 +179,7 @@ describe("terminal and mid-flight column roles", () => {
     */
     expect(isWipColumnRole({ countsTowardWip: true }, "building")).toBe(true);
     expect(isWipColumnRole({ intake: true }, "backlog")).toBe(false);
+    expect(isWipColumnRole({ intake: true }, "in-progress")).toBe(false);
     expect(isWipColumnRole(undefined, "in-progress")).toBe(true);
     expect(isWipColumnRole(undefined, "building")).toBe(false);
   });
@@ -180,6 +190,7 @@ describe("terminal and mid-flight column roles", () => {
     expect(isReviewColumnRole({ mergeBlocker: true }, "signoff")).toBe(true);
     expect(isReviewColumnRole({ humanReview: true }, "signoff")).toBe(true);
     expect(isReviewColumnRole({ countsTowardWip: true }, "building")).toBe(false);
+    expect(isReviewColumnRole({ countsTowardWip: true }, "in-review")).toBe(false);
     expect(isReviewColumnRole(undefined, "in-review")).toBe(true);
     expect(isReviewColumnRole(undefined, "signoff")).toBe(false);
   });
