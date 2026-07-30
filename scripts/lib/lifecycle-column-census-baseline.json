@@ -1,24 +1,11 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
-  "totals": {
-    "column": 693,
-    "role": 5,
-    "status": 186,
-    "deliberate": 17
-  },
-  "byColumnId": {
-    "done": 182,
-    "in-progress": 136,
-    "in-review": 199,
-    "archived": 138,
-    "todo": 38
-  },
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
     "packages/dashboard/app/components/TaskCard.tsx": 42,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
-    "packages/engine/src/scheduler.ts": 27,
+    "packages/engine/src/scheduler.ts": 26,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts": 20,
     "packages/core/src/task-store/moves.ts": 15,
     "packages/core/src/store.ts": 12,
@@ -156,15 +143,15 @@
   "deliberateByFile": {
     "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
-    "packages/dashboard/app/components/RoutineEditor.tsx": 1,
-    "packages/dashboard/app/components/ScheduleForm.tsx": 1,
-    "packages/dashboard/app/components/ScheduleStepsEditor.tsx": 1,
-    "packages/dashboard/app/components/TaskCard.tsx\u0000todo": 1,
-    "packages/dashboard/app/components/TaskContextMenu.tsx\u0000triage": 1,
-    "packages/dashboard/app/components/TaskDetailModal.tsx\u0000todo": 1,
     "packages/dashboard/app/components/command-center/MissionControlPanel.tsx\u0000done": 1,
     "packages/dashboard/app/components/command-center/MissionControlPanel.tsx\u0000in-review": 1,
     "packages/dashboard/app/components/command-center/MissionControlPanel.tsx\u0000todo": 1,
+    "packages/dashboard/app/components/RoutineEditor.tsx\u0000triage": 1,
+    "packages/dashboard/app/components/ScheduleForm.tsx\u0000triage": 1,
+    "packages/dashboard/app/components/ScheduleStepsEditor.tsx\u0000triage": 1,
+    "packages/dashboard/app/components/TaskCard.tsx\u0000todo": 1,
+    "packages/dashboard/app/components/TaskContextMenu.tsx\u0000triage": 1,
+    "packages/dashboard/app/components/TaskDetailModal.tsx\u0000todo": 1,
     "packages/dashboard/app/utils/columnRoles.ts\u0000todo": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000todo": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000triage": 1,
@@ -172,18 +159,6 @@
     "packages/engine/src/hold-release.ts\u0000done": 1,
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
     "packages/engine/src/triage.ts\u0000triage": 1
-  },
-  "properties": {
-    "query": 83,
-    "definition": 43
-  },
-  "queryByColumnId": {
-    "todo": 10,
-    "archived": 7,
-    "done": 10,
-    "in-progress": 19,
-    "in-review": 35,
-    "triage": 2
   },
   "queryByFile": {
     "packages/engine/src/self-healing.ts": 48,

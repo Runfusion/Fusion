@@ -364,17 +364,30 @@ The flag is an explicit operator action, so it re-records unconditionally and PR
 under `ACCEPTED RISES`. Silently swallowing a rise is the real danger; refusing to let anyone re-record is
 the same danger one step later, wearing a red check nobody trusts.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-19:10 (fleet — the baseline was serialising the fleet):
+NO DERIVED AGGREGATES IN THE PIN. `totals`, `byColumnId`, `properties` and `queryByColumnId` are all
+recomputable from the per-file maps, and `--strict` never read any of them — it compares `byFile`,
+`deliberateByFile` and `queryByFile` and nothing else.
+
+They were not free. Every conversion PR changes at least one aggregate line, so EVERY fleet PR
+conflicted with EVERY other fleet PR in this file even when they converted different files. Six of my
+own branches were rebased for nothing but this, and the resolution was always "take main's, re-run
+--update-baseline" — never a real merge. Two PRs converting different files now touch disjoint lines.
+
+TRADE-OFF, stated because it undoes a deliberate choice: an earlier note kept the totals here so the
+new number would appear in the diff where a reviewer sees it. That signal is preserved elsewhere —
+the CLI prints the totals on every run, `--update-baseline` prints each tightened entry, and the
+fleet rules already require a census before/after in the PR body. Reversible if the diff-visible
+number turns out to matter more than the conflicts.
+*/
 function writeBaseline() {
   writeFileSync(
     BASELINE_PATH,
     `${JSON.stringify({
       generatedFrom: "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
-      totals: summary.totals,
-      byColumnId: summary.byColumnId,
       byFile: Object.fromEntries(summary.byFile),
       deliberateByFile: Object.fromEntries(summary.deliberateByFile ?? []),
-      properties: summary.properties,
-      queryByColumnId: summary.queryByColumnId,
       queryByFile: Object.fromEntries(summary.queryByFile),
     }, null, 2)}\n`,
   );

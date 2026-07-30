@@ -451,7 +451,14 @@ describe("the baseline can always be re-recorded", () => {
       const r = runCli(["--strict", "--update-baseline"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
       expect(r.status).toBe(0);
       const written = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
-      expect(written.totals.column).toBeGreaterThan(1);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-19:10:
+      Asserted on the per-file entry rather than `totals`, which the pin no longer stores — the
+      derived aggregates were the only lines every conversion PR rewrote, and so the sole cause of
+      fleet-wide conflicts in this file. The claim is unchanged and still specific: the stale pin
+      said 1, and the rewritten pin must carry the tree's real (higher) count for that same file.
+      */
+      expect(written.byFile["packages/engine/src/self-healing.ts"]).toBeGreaterThan(1);
       expect(r.stdout).toContain("ACCEPTED RISES");
     });
 
