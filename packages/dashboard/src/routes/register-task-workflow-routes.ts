@@ -280,10 +280,26 @@ async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Pr
     guard is converted, reads a real trait, and still disagrees with the authority. Unioning all three makes
     this resolver a superset of core's, so the routes cannot refuse a card the engine considers in review.
     */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-07:20 (PR #2723 review — greptile P1, and the narrower answer
+    is the right one):
+    ONLY THE FIRST `mergeOrchestration` COLUMN, because that is the one core picks. `resolveLifecycleColumns`
+    resolves `.review` as `columnsWithFlag(ir, "mergeOrchestration")[0]`, so unioning ALL of them would have
+    swapped one disagreement with the engine for another: a board declaring the trait on two columns would
+    have the dashboard re-engage, retry and recover cards from a lane the engine does not treat as review —
+    an over-admission, and this route's re-engagement MOVES the card, so it is a state change rather than
+    mere permissiveness.
+
+    The membership SET stays for `mergeBlocker`/`humanReview` (#2713's finding: those two can sit on
+    different columns and every caller here asks "is this card ALREADY in review"). The point of including
+    mergeOrchestration at all is to stop refusing a card the ENGINE considers in review; matching core's
+    choice of WHICH column achieves that without inventing a second definition.
+    */
+    const [primaryMergeLane] = columnsWithFlag(ir, "mergeOrchestration");
     const lanes = [
       ...columnsWithFlag(ir, "mergeBlocker"),
       ...columnsWithFlag(ir, "humanReview"),
-      ...columnsWithFlag(ir, "mergeOrchestration"),
+      ...(primaryMergeLane === undefined ? [] : [primaryMergeLane]),
     ];
     return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
   } catch {

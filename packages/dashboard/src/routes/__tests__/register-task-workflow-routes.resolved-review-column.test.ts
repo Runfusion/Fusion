@@ -229,3 +229,77 @@ describe("the re-engage open-PR guard survives a renamed board", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-07:35 (PR #2723 review — greptile P1):
+
+THE ROUTES MUST AGREE WITH CORE ON *WHICH* MERGE LANE, not just on the trait.
+
+My first version unioned every `mergeOrchestration` column into the review set. That fixed the
+under-inclusion (a board declaring only `merge` was in review for the engine and not for the routes) and
+introduced over-inclusion: `resolveLifecycleColumns().review` is `columnsWithFlag(ir, "mergeOrchestration")[0]`,
+so on a board declaring the trait TWICE the dashboard would have re-engaged, retried and recovered cards
+from a lane the engine does not treat as review.
+
+That direction is worse than it sounds. Re-engagement MOVES the card out of review into the wip lane — a
+state change the engine would never make for that column — so an over-inclusive read here is not
+permissiveness, it is the dashboard acting on a lane it does not own.
+
+The `mergeBlocker`/`humanReview` membership set stays (#2713's finding: those can sit on different columns).
+Only the mergeOrchestration axis is narrowed to core's choice.
+*/
+describe("the review set agrees with core on WHICH merge lane", () => {
+  const TWO_MERGE_LANES = {
+    version: "v2",
+    id: "wf-two-merge",
+    name: "Two Merge Lanes",
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
+      { id: "second-signoff", name: "Second Sign-off", traits: [{ trait: "merge" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [{ id: "start", kind: "start", column: "backlog" }],
+    edges: [],
+  } as unknown as WorkflowIr;
+
+  function storeFor(column: string) {
+    const task = { id: "FN-003", column, dependencies: [], steps: [], currentStep: 0 };
+    return {
+      getRootDir: vi.fn(() => process.cwd()),
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
+      getTask: vi.fn(async () => task),
+      getSettings: vi.fn(async () => ({})),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-two-merge" })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "wf-two-merge" })),
+      getWorkflowDefinition: vi.fn(async () => ({ id: "wf-two-merge", name: "Two", kind: "workflow", ir: TWO_MERGE_LANES })),
+      logEntry: vi.fn(async () => undefined),
+      updateTask: vi.fn(async () => task),
+    } as unknown as TaskStore;
+  }
+
+  async function refusalFor(column: string): Promise<string> {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(storeFor(column)));
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-003/recover-branch-binding", "{}", {
+      "content-type": "application/json",
+    });
+    const payload = res.body as { error?: string } | undefined;
+    return payload?.error ?? JSON.stringify(res.body ?? {});
+  }
+
+  it("accepts the FIRST mergeOrchestration column — the one core resolves", async () => {
+    expect(await refusalFor("signoff")).not.toContain("to recover branch binding");
+  });
+
+  it("REFUSES a second mergeOrchestration column, because core does not call it the review lane", async () => {
+    // Over-inclusion here would have the dashboard move a card out of a lane the engine does not own.
+    const message = await refusalFor("second-signoff");
+
+    expect(message).toContain("to recover branch binding");
+    // And the message names the lane the board actually uses for review.
+    expect(message).toContain("signoff");
+  });
+});
