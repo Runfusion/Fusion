@@ -54,6 +54,7 @@ import {
   getSafeAgentAssetIdSegment,
 } from "./types.js";
 import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "./types.js";
+import {resolveTaskLifecycleColumns} from "./workflow-lifecycle-traits.js";
 import type { TaskStore } from "./store.js";
 import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
 import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind } from "./agent-role-policy.js";
@@ -223,6 +224,15 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
   if (!linkedTask) {
     return `Current Task: ${taskId} (unresolved)`;
   }
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase — FLAGGED AND LEFT COUNTED):
+  A pure formatter over `Pick<Task, "column">` — no store, no task id, and its output PRINTS the column
+  name for a human reader. Same class as `github-tracking-comments.ts:165` and
+  `in-process-runtime`'s duration helpers: threading a resolution into a string builder to pick a word is
+  the wrong trade, and the line degrades gracefully (it says "(not active — <column>)" only for the two
+  legacy ids; on a renamed board it falls through to "(<column>)", which is still accurate, just less
+  specific).
+  */
   if (linkedTask.column === "done" || linkedTask.column === "archived") {
     return `Current Task: ${taskId} (not active — ${linkedTask.column})`;
   }
@@ -1466,7 +1476,17 @@ export class AgentStore extends EventEmitter {
       return { ok: false, reason: bindVerdict.reason, task };
     }
 
-    if (task.column === "done" || task.column === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+    The terminal guard on a claim. On a renamed board neither literal matched, so an agent could CLAIM a
+    finished card — the claim succeeded and the agent began work on completed output. `this.taskStore` is
+    already in hand two lines up, so this costs one resolution on a path that already does a task read.
+    */
+    const claimLifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
+    if (
+      task.column === (claimLifecycle?.complete ?? "done")
+      || task.column === (claimLifecycle?.archived ?? "archived")
+    ) {
       return { ok: false, reason: "terminal", task };
     }
 

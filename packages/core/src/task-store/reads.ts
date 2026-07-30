@@ -25,6 +25,7 @@ import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../task-age-staleness.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {detectStalledReview} from "../stalled-review-detector.js";
 import {computeRetrySummary} from "../retry-summary.js";
 // FNXC:TaskLookup404 2026-07-26-11:20: typed miss signal so API boundaries can
@@ -413,11 +414,21 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       Guard age-staleness: invalid threshold pairs throw RangeError — swallow so one bad setting cannot 500 the whole board list.
       */
       try {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+        Resolved through the SAME per-pass `listPassIrCache` the hold-column read above already uses, so
+        one workflow is read once per pass rather than once per card.
+
+        Cost stated: the hold-column read is conditional on `task.paused`, this one is not, because the
+        lanes it needs are exactly what decides whether the signal applies at all — there is no cheaper
+        gate available ahead of it. With the cache that is a struct build per card, not an IR read.
+        */
         task.ageStaleness = getTaskAgeStalenessSignal(task, {
           now,
           thresholds: staleThresholds,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
+          lifecycle: await resolveTaskLifecycleColumns(store, task.id, listPassIrCache),
         });
       } catch (err) {
         if (!(err instanceof RangeError)) throw err;
