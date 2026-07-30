@@ -5971,6 +5971,28 @@ describe("TaskCard", () => {
       const declaredBorderWidth = (selector: string): string =>
         resolveCssToken(declaredStyle(selector, "border").split(/\s+/)[0]);
       expect(declaredBorderWidth(".card-time-indicator")).toBe(declaredBorderWidth(".card-github-badge"));
+
+      /*
+      FNXC:TaskCardParity 2026-07-31-01:05 (PR #2782 review — greptile P2):
+      PARITY MUST SURVIVE A THEME, which the assertion above cannot see on its own.
+
+      It resolves --btn-border-width from `:root`, and the fixture deliberately does not mount
+      theme-data.css — so it only ever tested the default 1px. greptile pointed out that themes
+      override the token, and the concern was real: `factory` and `factory-mono` set
+      --btn-border-width: 2px, so the tokenized timer chip grew to 2px while this badge stayed
+      hardcoded at 1px. A live geometry break on two shipped themes, invisible to the test.
+
+      Fixed at the source — .card-github-badge now uses the token (styles.css), per the standing
+      rule against hardcoded pixels in component CSS. This case is the proof: override the token the
+      way a theme does, and BOTH chips must move together. It fails if either one is re-literalized.
+      */
+      document.documentElement.style.setProperty("--btn-border-width", "2px");
+      try {
+        expect(declaredBorderWidth(".card-github-badge")).toBe("2px");
+        expect(declaredBorderWidth(".card-time-indicator")).toBe("2px");
+      } finally {
+        document.documentElement.style.removeProperty("--btn-border-width");
+      }
       expect(githubStyles.gap).toBe(timeStyles.gap);
 
       if (githubBadge.offsetHeight > 0 || timeIndicator.offsetHeight > 0) {
@@ -5985,8 +6007,24 @@ describe("TaskCard", () => {
   });
 
   it("FN-4511 preserves transparent border slot on .card-github-badge", () => {
+    /*
+    FNXC:TaskCardParity 2026-07-31-01:20 (PR #2782 review — greptile P2):
+    THE SLOT IS THE INVARIANT, not the literal width.
+
+    This required `border: 1px solid transparent` verbatim. The badge now declares
+    `var(--btn-border-width)` so it tracks the sibling footer chips under a theme — the `factory`
+    and `factory-mono` themes set that token to 2px, and while this badge was pinned to a hardcoded
+    1px it visibly fell out of alignment with the timer chip on both.
+
+    What the test is NAMED for still holds and is still asserted: a transparent border slot is
+    reserved, so hover/focus states can colour it without shifting layout. The width is allowed to
+    be the token or a literal length; anything else — no border, or a non-transparent colour — still
+    fails.
+    */
     const css = loadAllAppCssBaseOnly();
-    expect(css).toMatch(/\.card-github-badge\s*\{[^}]*border:\s*1px\s+solid\s+transparent;[^}]*\}/);
+    expect(css).toMatch(
+      /\.card-github-badge\s*\{[^}]*border:\s*(?:var\(--btn-border-width\)|[\d.]+px)\s+solid\s+transparent;[^}]*\}/,
+    );
   });
 
   it.each([
