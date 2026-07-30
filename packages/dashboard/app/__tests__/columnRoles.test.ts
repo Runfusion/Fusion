@@ -20,7 +20,13 @@ LEGACY_….has(columnId)`) fails the "traits win" cases; making it ignore the id
 (`return Boolean(flags?.intake)`) fails the degraded cases.
 */
 import { describe, expect, it } from "vitest";
-import { isFieldEditableColumnRole, isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+isFieldEditableColumnRole, isIntakeColumnRole, isPreImplementationColumnRole
+} from "../utils/columnRoles";
 
 describe("isIntakeColumnRole", () => {
   it("uses the intake TRAIT when the column resolved", () => {
@@ -106,5 +112,56 @@ describe("isFieldEditableColumnRole", () => {
     expect(isFieldEditableColumnRole(undefined, "triage")).toBe(true);
     expect(isFieldEditableColumnRole(undefined, "backlog")).toBe(false);
     expect(isFieldEditableColumnRole(undefined, "in-progress")).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:00 (fleet phase):
+The four roles the helper set was missing. 680 of the 722 backlog guards target these — `done` 195,
+`in-review` 200, `archived` 147, `in-progress` 138 — against 42 for the two roles that already had
+helpers, so every fleet worker needs them on their first file.
+
+Each case asserts BOTH directions, because a helper that returns false unconditionally would satisfy
+a one-sided test while converting every site to a dead guard.
+*/
+describe("terminal and mid-flight column roles", () => {
+  it("isCompleteColumnRole reads the complete trait, and does NOT count archived", () => {
+    expect(isCompleteColumnRole({ complete: true }, "shipped")).toBe(true);
+    /*
+    The distinction the doc comment claims, asserted rather than asserted-in-prose: an archived card
+    is finished but not COMPLETED. Surfaces that count throughput would double-count it otherwise.
+    */
+    expect(isCompleteColumnRole({ archived: true }, "archived")).toBe(false);
+    expect(isCompleteColumnRole(undefined, "done")).toBe(true);
+    expect(isCompleteColumnRole(undefined, "shipped")).toBe(false);
+  });
+
+  it("isArchivedColumnRole reads the archived trait", () => {
+    expect(isArchivedColumnRole({ archived: true }, "cold-storage")).toBe(true);
+    expect(isArchivedColumnRole({ complete: true }, "done")).toBe(false);
+    expect(isArchivedColumnRole(undefined, "archived")).toBe(true);
+    expect(isArchivedColumnRole(undefined, "cold-storage")).toBe(false);
+  });
+
+  it("isWipColumnRole keys on countsTowardWip, the same flag capacity arithmetic uses", () => {
+    /*
+    Keyed on `countsTowardWip` deliberately: a board must not be able to have a column that counts
+    toward WIP for capacity but not for this predicate, which is what a separate `wip` trait name
+    would allow.
+    */
+    expect(isWipColumnRole({ countsTowardWip: true }, "building")).toBe(true);
+    expect(isWipColumnRole({ intake: true }, "backlog")).toBe(false);
+    expect(isWipColumnRole(undefined, "in-progress")).toBe(true);
+    expect(isWipColumnRole(undefined, "building")).toBe(false);
+  });
+
+  it("isReviewColumnRole accepts EITHER mergeBlocker or humanReview", () => {
+    // Separable traits — a lane can block merges with no human in it, and vice versa — but every
+    // converted caller asks "is this card in review", for which both qualify.
+    expect(isReviewColumnRole({ mergeBlocker: true }, "signoff")).toBe(true);
+    expect(isReviewColumnRole({ humanReview: true }, "signoff")).toBe(true);
+    expect(isReviewColumnRole({ countsTowardWip: true }, "building")).toBe(false);
+    expect(isReviewColumnRole(undefined, "in-review")).toBe(true);
+    expect(isReviewColumnRole(undefined, "signoff")).toBe(false);
   });
 });

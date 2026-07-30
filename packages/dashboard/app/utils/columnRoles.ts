@@ -26,6 +26,19 @@ never had a test.
 export interface ColumnRoleFlags {
   readonly intake?: boolean;
   readonly hold?: boolean;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:00 (fleet phase):
+  The terminal and mid-flight traits, added for the four role helpers at the bottom of this file.
+  Every one of these is already produced by the trait registry and already carried on the flag
+  objects callers pass in (`TaskContextMenuColumnFlags` declares all of them) — this interface had
+  simply only declared the two the earlier helpers needed, so callers were passing them and the type
+  was discarding them.
+  */
+  readonly complete?: boolean;
+  readonly archived?: boolean;
+  readonly countsTowardWip?: boolean;
+  readonly mergeBlocker?: boolean;
+  readonly humanReview?: boolean;
 }
 
 /**
@@ -128,4 +141,82 @@ export function isFieldEditableColumnRole(
     return false;
   }
   return flags.intake === true || flags.hold === true;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Terminal / mid-flight roles                                                 */
+/* -------------------------------------------------------------------------- */
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:00 (fleet phase — completing the pattern, not adding one):
+THE FOUR ROLES THE HELPERS WERE MISSING.
+
+The fleet work order says "existing role helpers ONLY; no new abstractions". Measured against the
+census, the existing helpers cover `intake` and `hold` — which is 42 of the 722 backlog guards. The
+other 680 (94%) are `done` 195, `in-review` 200, `archived` 147, `in-progress` 138, and there was no
+helper for any of them. Every fleet worker hits that on their first file.
+
+These are not a new abstraction. They are the SAME one — flags-first, legacy id only as the
+documented no-metadata fallback — applied to the roles it did not yet cover. The alternative is
+inlining a flags-plus-fallback expression at 680 sites, which recreates exactly the copy-paste drift
+the helpers were created to remove: three inline copies in ListView is what started this file.
+
+Every flag used here is already produced by the trait registry and already passed by callers —
+`TaskContextMenuColumnFlags` declares all of them. `ColumnRoleFlags` had only DECLARED the two the
+earlier helpers needed, so callers were handing them over and the type was dropping them on the
+floor. Widening the interface threads nothing new through any call site.
+
+WHY EACH KEEPS AN ID FALLBACK. `columnFlags` is legitimately absent during first paint and for a card
+in a column its workflow no longer declares. A bare trait read returns false there, which is silent
+degradation — a Done card stops rendering as complete, an archived card stops being filtered out.
+Same reasoning recorded at the top of this file, unchanged.
+*/
+
+/** Terminal-success id, used only when a column has no resolved traits. */
+const LEGACY_COMPLETE_COLUMN_ID = "done";
+/** Archived id, used only when a column has no resolved traits. */
+const LEGACY_ARCHIVED_COLUMN_ID = "archived";
+/** Implementation-lane id, used only when a column has no resolved traits. */
+const LEGACY_WIP_COLUMN_ID = "in-progress";
+/** Review-lane id, used only when a column has no resolved traits. */
+const LEGACY_REVIEW_COLUMN_ID = "in-review";
+
+/**
+ * Is this the terminal-success column?
+ *
+ * `archived` is deliberately NOT included: an archived card is finished but not *completed*, and
+ * surfaces that count throughput would double-count it.
+ */
+export function isCompleteColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags ? flags.complete === true : columnId === LEGACY_COMPLETE_COLUMN_ID;
+}
+
+/** Is this the archived column — globally hidden, excluded from board and capacity? */
+export function isArchivedColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags ? flags.archived === true : columnId === LEGACY_ARCHIVED_COLUMN_ID;
+}
+
+/**
+ * Does this column occupy an implementation/WIP slot?
+ *
+ * Keyed on `countsTowardWip` rather than a `wip` trait name because that is the flag the trait
+ * registry exposes, and it is the one capacity arithmetic already uses — so a board cannot have a
+ * column that counts toward WIP for capacity but not for this predicate.
+ */
+export function isWipColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags ? flags.countsTowardWip === true : columnId === LEGACY_WIP_COLUMN_ID;
+}
+
+/**
+ * Is this the review / merge-orchestration lane?
+ *
+ * EITHER trait qualifies. `mergeBlocker` and `humanReview` are separable — a lane can block merges
+ * without a human in it, and vice versa — but every caller converted so far asks "is this card in
+ * review", for which both are true. A caller that genuinely needs one and not the other should read
+ * the flag directly rather than widen this.
+ */
+export function isReviewColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags
+    ? flags.mergeBlocker === true || flags.humanReview === true
+    : columnId === LEGACY_REVIEW_COLUMN_ID;
 }
