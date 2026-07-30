@@ -5423,6 +5423,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const allTasks = await this.store.listTasks({ includeArchived: true });
       const taskById = new Map(allTasks.map((task) => [task.id, task]));
+
+
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
       /*
@@ -5469,6 +5471,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           : false;
         if (
           !candidates.has(taskId)
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (FLAGGED AND LEFT COUNTED):
+          This sits in a log-dedup closure defined BEFORE the per-referenced-task lane prefetch below, so
+          the resolved sets are not in scope here and tsc says so. Hoisting the prefetch above the closure
+          is not available either — it is keyed on `candidates`, which this closure helps build.
+
+          Left as the literal rather than restructured: the closure only decides whether to re-log an
+          already-logged blocker, so the degraded answer costs a duplicate log line on a renamed board, not
+          a wrong lifecycle decision. Restructuring a sweep's control flow to convert a logging guard is
+          the wrong trade.
+          */
           || memoTask?.column !== "todo"
           || memoTask.status !== "queued"
           || memoTask.overlapBlockedBy !== lastLoggedBlockerId
@@ -5478,6 +5491,55 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (batch-engine — every lane question here is about ANOTHER task):
+      This method classifies why a BLOCKER or a DEPENDENCY is no longer blocking, and those rows routinely
+      belong to a different workflow than the blocked card. So lanes are resolved PER REFERENCED TASK, not
+      from the blocked task — the same answer main settled on for dependency satisfaction in
+      branch-group-ops (#2720).
+
+      Prefetched once for the referenced ids only (blockers plus declared dependencies), through one shared
+      IR cache, so the predicates below stay synchronous and a board spanning three workflows reads three
+      IRs rather than one per row.
+
+      Membership, and unioned with the legacy ids: `resolveWorkflowIrForTask` returns the BUILT-IN IR for a
+      missing or corrupt workflow instead of throwing, so without the union a degraded renamed board reads
+      a finished blocker as still blocking and the card stays stuck — the exact stall this sweep exists to
+      clear.
+      */
+      const laneIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const lanesById = new Map<string, { complete: Set<string>; archived: Set<string>; hold: Set<string>; review: Set<string> }>();
+      const referencedIds = new Set<string>();
+      for (const task of candidates.values()) {
+        if (task.blockedBy) referencedIds.add(task.blockedBy);
+        for (const depId of task.dependencies ?? []) referencedIds.add(depId);
+        referencedIds.add(task.id);
+      }
+      for (const refId of referencedIds) {
+        const lanes = {
+          complete: new Set<string>(["done"]),
+          archived: new Set<string>(["archived"]),
+          hold: new Set<string>(["todo"]),
+          review: new Set<string>(["in-review"]),
+        };
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, refId, laneIrCache);
+          if (ir) {
+            for (const id of columnsWithFlag(ir, "complete")) lanes.complete.add(id);
+            for (const id of columnsWithFlag(ir, "archived")) lanes.archived.add(id);
+            for (const id of columnsWithFlag(ir, "hold")) lanes.hold.add(id);
+            for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+              for (const id of columnsWithFlag(ir, flag)) lanes.review.add(id);
+            }
+          }
+        } catch { /* degraded: legacy ids only */ }
+        lanesById.set(refId, lanes);
+      }
+      const lanesOf = (id: string) => lanesById.get(id) ?? {
+        complete: new Set(["done"]), archived: new Set(["archived"]),
+        hold: new Set(["todo"]), review: new Set(["in-review"]),
+      };
+
       for (const task of candidates.values()) {
         const blockerId = task.blockedBy;
 
@@ -5485,7 +5547,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const dep = taskById.get(depId);
           // listTasks excludes soft-deleted rows, so missing dependency IDs are
           // treated as resolved here by design.
-          return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+          if (!dep || dep.deletedAt) return false;
+          const depLanes = lanesOf(depId);
+          return !depLanes.complete.has(dep.column) && !depLanes.review.has(dep.column) && !depLanes.archived.has(dep.column);
         });
         const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(task, task.overlapBlockedBy);
 
@@ -5515,34 +5579,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           } else if (blocker.deletedAt) {
             reasonCode = "soft-deleted-blocker";
             reason = `blocker ${blockerId} soft-deleted at ${blocker.deletedAt}`;
-          } else if (blocker.column === "done") {
+          } else if (lanesOf(blocker.id).complete.has(blocker.column)) {
             reasonCode = "blocker-done";
             reason = `blocker ${blockerId} is done`;
-          } else if (blocker.column === "archived") {
+          } else if (lanesOf(blocker.id).archived.has(blocker.column)) {
             reasonCode = "blocker-archived";
             reason = `blocker ${blockerId} is archived`;
-          } else if (blocker.column === "todo") {
+          } else if (lanesOf(blocker.id).hold.has(blocker.column)) {
             reasonCode = "blocker-moved-todo";
             reason = `blocker ${blockerId} moved to todo`;
-          } else if (blocker.column === "in-review" && blocker.paused) {
+          } else if (lanesOf(blocker.id).review.has(blocker.column) && blocker.paused) {
             reasonCode = "in-review-paused";
             reason = `blocker ${blockerId} in-review + paused`;
           } else if (
-            blocker.column === "in-review" &&
+            lanesOf(blocker.id).review.has(blocker.column) &&
             blocker.status === "failed" &&
             (blocker.mergeRetries ?? 0) >= maxAutoMergeRetries
           ) {
             reasonCode = "failed-retry-exhausted";
             reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${maxAutoMergeRetries})`;
           } else if (
-            blocker.column === "in-review" &&
+            lanesOf(blocker.id).review.has(blocker.column) &&
             blocker.status === "failed" &&
             isMissingWorktreeSessionStartFailure(blocker.error)
           ) {
             reasonCode = "missing-worktree-session-start";
             reason = `blocker ${blockerId} in-review + failed (missing-worktree session start)`;
           } else if (
-            blocker.column === "in-review" &&
+            lanesOf(blocker.id).review.has(blocker.column) &&
             (blocker.status === "merging" || blocker.status === "merging-pr" || blocker.status == null) &&
             (!activeMergeTaskId || activeMergeTaskId !== blocker.id)
           ) {
