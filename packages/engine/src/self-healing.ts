@@ -9645,19 +9645,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
       /*
       FNXC:WorkflowColumns 2026-07-29-17:40 (PR #2560 review):
-      This trio is a UNION and is deliberately left on literals. For the merged
-      default lineage the `triage` read returns empty and `todo` supplies the cards;
-      for a legacy/custom workflow that still declares `triage` it supplies them.
-      Either way the union is complete, and the role filter below decides which rows
-      count as pre-WIP. Unlike the recoverAdvancedTriageTasks query this replaces
-      nothing and disables nothing — it is a redundant read, not a dead sweep.
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:20 (fleet: the union was NOT complete):
+
+      This trio was left on literals with the reasoning that "either way the union is complete" —
+      the merged default lineage supplies cards through `todo`, a legacy workflow through `triage`.
+      That covers two lineages and misses the third: a workflow that RENAMES its lanes matches none
+      of the three literals, so the union came back empty and this sweep had no candidates at all.
+
+      Measured, not inferred: on a live PostgreSQL store with a renamed board seeded alongside a
+      default one, the renamed rows existed and none appeared in this union (`renamedInsideUnion=0`).
+      The role filter below was correct and starved.
+
+      Read the board and filter by role, matching the #2560 repair earlier in this file. The three
+      covering suites all stub `listTasks` for the unfiltered shape, which is why this one is
+      convertible where `reclaimSelfOwnedBranchConflicts` is not.
       */
-      const triage = await this.store.listTasks({ column: "triage", slim: true });
-      const todo = await this.store.listTasks({ column: "todo", slim: true });
-      const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
+      const deadlockBoard = await this.store.listTasks({ slim: true, includeArchived: false });
+      const deadlockLaneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const preWipCandidates = await this.filterByPreWipRole(deadlockBoard, ["intake", "hold"], deadlockLaneCache);
+      const inProgress = await this.filterByWipRole(deadlockBoard, deadlockLaneCache);
 
       const dependentsByBlocker = new Map<string, Task[]>();
-      for (const task of [...triage, ...todo, ...inProgress]) {
+      for (const task of [...preWipCandidates, ...inProgress]) {
         if (!task.blockedBy) continue;
         const dependents = dependentsByBlocker.get(task.blockedBy) ?? [];
         dependents.push(task);
