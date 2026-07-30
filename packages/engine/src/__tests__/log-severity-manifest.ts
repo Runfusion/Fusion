@@ -42,7 +42,7 @@ export const logSeverityManifest: SeverityManifestEntry[] = [
   { pkg: "engine", file: "goal-anchoring-audit.ts", anchor: "goal retrieval audit emission skipped", priorSeverity: "console", severity: "debug" },
   { pkg: "engine", file: "runtimes/child-process-worker.ts", anchor: "Child process worker starting", priorSeverity: "log", severity: "debug" },
   /*
-  FNXC:EngineDiagnostics 2026-07-31-04:00:
+  FNXC:EngineDiagnostics 2026-07-30-04:00:
   REMOVED: the `local reattached project ${project.id}` demotion in central-core.ts. Its call site was
   deleted by 5ae6332563 ("collapse dead SQLite dual-path code") — verified absent from all of
   packages/core/src, not merely moved — so the entry pinned a demotion that no longer exists and the

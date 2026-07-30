@@ -332,7 +332,7 @@ asserted directly rather than recovered from a stubbed query's cutoff string.
 describe("duplicate-guard fingerprint window policy", () => {
 
   /*
-  FNXC:TaskCreationDeduplication 2026-07-31-04:20:
+  FNXC:TaskCreationDeduplication 2026-07-30-04:20:
   Asserted on the pure policy function instead of through a store fake. These three drove
   `findRecentTasksByContentFingerprintImpl` against a fake modelling the DELETED SQLite path
   (`db.prepare().all()`) and recovered the window by parsing a captured cutoff string; that fake broke
@@ -355,6 +355,19 @@ describe("duplicate-guard fingerprint window policy", () => {
 
   it("still clamps to the shared ceiling", () => {
     expect(resolveFingerprintWindowMs(24 * 60 * 60_000)).toBe(FINGERPRINT_WINDOW_MAX_MS);
+  });
+
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-05:40 (coderabbit, major):
+  Regression for a PRE-EXISTING crash the extraction exposed: `Math.trunc(NaN)` is NaN and both clamps
+  pass it through, so the caller's `new Date(Date.now() - windowMs).toISOString()` threw "Invalid time
+  value". Verified by running the old inline expression directly.
+  */
+  it("falls back to the default for a non-finite request instead of propagating NaN", () => {
+    expect(resolveFingerprintWindowMs(Number.NaN)).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    expect(resolveFingerprintWindowMs(Number.POSITIVE_INFINITY)).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    // The point of the guard: the value must be usable as a Date offset.
+    expect(() => new Date(Date.now() - resolveFingerprintWindowMs(Number.NaN)).toISOString()).not.toThrow();
   });
 
   it("floors at 1ms so a zero or negative request cannot produce a future cutoff", () => {

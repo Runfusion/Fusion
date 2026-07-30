@@ -247,7 +247,7 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
       buildRetryCount: 0,
       verificationFixRetries: 3,
       /*
-      FNXC:WorkflowOptionalStepCycle 2026-07-31-03:45:
+      FNXC:WorkflowOptionalStepCycle 2026-07-30-03:45:
       Driven off the exported constant, not a literal. `DEFAULT_MAX_POST_REVIEW_FIXES`
       (builtin-workflow-settings.ts:555) exists BECAUSE the declaration default and two inline
       literal 3s had drifted apart once; this file is the third place that pinned the stale 3, so a

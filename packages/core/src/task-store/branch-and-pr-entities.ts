@@ -374,7 +374,7 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
 }
 
 /*
-FNXC:TaskCreationDeduplication 2026-07-31-04:20:
+FNXC:TaskCreationDeduplication 2026-07-30-04:20:
 The duplicate-guard WINDOW POLICY as a pure function, extracted so it can be asserted without a
 TaskStore. Byte-identical to the expression that was inlined below.
 
@@ -386,6 +386,14 @@ already returns. Narrow seam over mock-the-world, per docs/testing.md.
 */
 export function resolveFingerprintWindowMs(requestedWindowMs?: number): number {
   const requested = requestedWindowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-05:40 (coderabbit, major):
+  NaN must fall back, not propagate. `Math.trunc(NaN)` is NaN and both clamps pass it through, so the
+  caller's `new Date(Date.now() - windowMs).toISOString()` threw "Invalid time value" — a crash rather
+  than a bounded window. This hole is PRE-EXISTING (the inline expression this replaced was
+  byte-identical); naming the policy is what made it reachable by a test.
+  */
+  if (!Number.isFinite(requested)) return FINGERPRINT_WINDOW_DEFAULT_MS;
   return Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requested)));
 }
 
