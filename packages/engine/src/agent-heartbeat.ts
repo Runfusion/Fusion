@@ -36,6 +36,7 @@ import {
   resolveEffectivePlannerHeartbeatPatrolEnabled,
   resolveReboundTarget,
   resolveWorkflowIrForTask,
+  resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -676,6 +677,35 @@ async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Setting
  * Detects missed heartbeats, auto-terminates unresponsive agents,
  * and provides the Paperclip-style execution engine via executeHeartbeat().
  */
+/**
+ * FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — heartbeat terminal checks):
+ * Is this task finished — resting in its OWN board's complete or archived lane?
+ *
+ * Both heartbeat call sites asked with `column === "done" || "archived"`. Neither is cosmetic:
+ *
+ *   - the linked-task check clears an agent's assignment once its card is finished. Keyed on the
+ *     literals, an agent on a renamed board stayed bound to a completed card indefinitely, so every
+ *     later heartbeat ran with stale task context instead of picking up new work.
+ *   - the worktree-acquisition retry gate runs its failure bookkeeping only for a NON-terminal task.
+ *     A card resting in a renamed complete lane read as non-terminal, so an acquisition failure
+ *     could stamp `status: "failed"` and an error onto work that was already done.
+ *
+ * Fail-soft to the legacy pair: an unresolvable workflow keeps exactly today's answer rather than
+ * treating every card as unfinished, which is the expensive direction here (the second site WRITES).
+ */
+export async function isTaskInTerminalLane(
+  taskStore: TaskStore,
+  task: { id: string; column: string },
+  cache?: Map<string, import("@fusion/core").WorkflowIr>,
+): Promise<boolean> {
+  const columns = await resolveTaskLifecycleColumns(taskStore, task.id, cache).catch(() => undefined);
+  /* DELIBERATE-LITERAL — the no-metadata fallback. Deleting it makes an unresolvable workflow read
+     as NEVER terminal, which is the direction that writes: the second call site would then run its
+     failure bookkeeping against finished work. Strictly worse than the legacy answer. */
+  if (!columns) return task.column === "done" || task.column === "archived";
+  return task.column === columns.complete || task.column === columns.archived;
+}
+
 export class HeartbeatMonitor {
   private store: AgentStore;
   private configStore: AgentStore;
@@ -2413,7 +2443,7 @@ export class HeartbeatMonitor {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
 
-          if (taskDetail.column === "done" || taskDetail.column === "archived") {
+          if (await isTaskInTerminalLane(taskStore, taskDetail)) {
             if (agent.taskId === resolvedTaskId) {
               heartbeatLog.log(
                 `Agent ${agentId} linked task ${resolvedTaskId} is ${taskDetail.column} — clearing assignment and running heartbeat without task context`,
@@ -2852,7 +2882,7 @@ export class HeartbeatMonitor {
             const attemptsSoFar = priorAttempts + 1;
             const retryCapExhausted = attemptsSoFar >= MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES;
 
-            if (taskDetail.column !== "done" && taskDetail.column !== "archived") {
+            if (!(await isTaskInTerminalLane(taskStore, taskDetail))) {
               if (retryCapExhausted) {
                 const exhaustionMessage = `Worktree acquisition failed after ${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} heartbeat attempts for branch "${taskDetail.branch ?? `fusion/${taskDetail.id.toLowerCase()}`}": ${detail}`;
                 await taskStore.updateTask(taskDetail.id, {
