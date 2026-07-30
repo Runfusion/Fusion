@@ -61,7 +61,14 @@ function createEmptyStep(type: AutomationStepType): AutomationStep {
     type,
     name: "New Create Task Step",
     taskDescription: "",
-    taskColumn: "triage",
+    /*
+    FNXC:Automations 2026-07-30-18:30 (greptile #2652 — the ADVANCED editor was the bigger hole):
+    No `taskColumn`. This template used to stamp `"triage"` on EVERY new create-task step, so the
+    advanced editor manufactured the defect the simple form had just been fixed for — and it did so by
+    default, not only on legacy data. U11 deletes `triage` from the default workflow, and an explicit
+    column of any value bypasses the workflow entry-column resolution used for column-less creates, so
+    the step must name no column and let each workflow resolve its own intake.
+    */
     continueOnFailure: false,
   };
 }
@@ -92,7 +99,14 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
   const [allowedTools, setAllowedTools] = useState<string[]>(() => resolveAllowedToolSelection(step));
   const [taskTitle, setTaskTitle] = useState(step.taskTitle ?? "");
   const [taskDescription, setTaskDescription] = useState(step.taskDescription ?? "");
-  const [taskColumn, setTaskColumn] = useState(step.taskColumn ?? "triage");
+  /*
+  FNXC:Automations 2026-07-30-18:30 DELIBERATE-LITERAL:
+  Coerces a PERSISTED legacy value, which is a migration and not a lifecycle decision — a step saved
+  before this fix holds a column the select no longer offers, invisible and unchangeable, and it would be
+  resubmitted by any unrelated edit. There is no workflow IR in scope here (a routine names no workflow),
+  so there is no role to resolve; recognising that exact legacy string is the whole point.
+  */
+  const [taskColumn, setTaskColumn] = useState(step.taskColumn === "triage" ? "" : step.taskColumn ?? "");
   const [timeoutMs, setTimeoutMs] = useState<number | undefined>(step.timeoutMs);
   const [continueOnFailure, setContinueOnFailure] = useState(step.continueOnFailure ?? false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -176,7 +190,8 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
       prompt: type === "ai-prompt" ? prompt.trim() : undefined,
       taskTitle: type === "create-task" && taskTitle.trim() ? taskTitle.trim() : undefined,
       taskDescription: type === "create-task" && taskDescription.trim() ? taskDescription.trim() : undefined,
-      taskColumn: type === "create-task" ? taskColumn : undefined,
+      // Empty means "let the workflow decide" — an explicit column overrides entry resolution.
+      taskColumn: type === "create-task" ? (taskColumn || undefined) : undefined,
       modelProvider: (type === "ai-prompt" || type === "create-task") && modelProvider.trim() ? modelProvider.trim() : undefined,
       modelId: (type === "ai-prompt" || type === "create-task") && modelId.trim() ? modelId.trim() : undefined,
       thinkingLevel: (type === "ai-prompt" || type === "create-task") && thinkingLevel.trim() ? thinkingLevel.trim() : undefined,
@@ -344,8 +359,14 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
               value={taskColumn}
               onChange={(e) => setTaskColumn(e.target.value)}
             >
-              <option value="triage">{t("schedule.triageColumn", "Planning")}</option>
-              <option value="todo">{t("schedule.todoColumn", "To Do")}</option>
+              {/*
+              `triage` is REMOVED, not merely un-defaulted: leaving it offered lets an operator pick a
+              column the default workflow no longer declares, and it was labelled "Planning" — the name
+              the merged `todo` column now displays — so it was the natural choice. `todo` is relabelled
+              to match the board, and "Automatic" resolves each workflow's own intake.
+              */}
+              <option value="">{t("schedule.autoColumn", "Automatic (workflow intake)")}</option>
+              <option value="todo">{t("schedule.planningColumn", "Planning")}</option>
             </select>
             <small>{t("schedule.targetColumnHelp", "Column where the new task will be created")}</small>
           </div>

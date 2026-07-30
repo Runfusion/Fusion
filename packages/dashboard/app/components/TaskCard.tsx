@@ -3415,8 +3415,14 @@ function TaskCardComponent({
         {/*
         FNXC:CodingIdeasWorkflow 2026-07-25-12:05:
         Started-but-not-yet-planned. Reuses the Ready badge's primitives with the queued modifier
-        rather than forking a new badge variant. The title names both caps, since the per-project
-        maxConcurrent and the cross-project globalMaxConcurrent can each be the binding one.
+        rather than forking a new badge variant.
+
+        FNXC:CapacityModel 2026-07-30-18:10 (capacity simplification — user-visible residue):
+        The title used to name "maxConcurrent / globalMaxConcurrent". The cross-project cap is DELETED
+        (capacity is two numbers per project), so that tooltip told the operator their planning was
+        waiting on a limiter that no longer exists — and pointed them at a setting they can no longer
+        find. Names the surviving dimension only. Worktrees can also be the binding gate, but only when
+        the operator has worktree limiting on, so it is not stated unconditionally here.
         */}
         {showQueuedToPlanBadge && (
           <span
@@ -3424,7 +3430,7 @@ function TaskCardComponent({
             data-testid={`card-queued-to-plan-${task.id}`}
             title={t(
               "tasks.queuedToPlanTitle",
-              "Waiting for a planning slot — planning starts when a concurrency slot frees up (maxConcurrent / globalMaxConcurrent)",
+              "Waiting for a planning slot — planning starts when an agent slot frees up",
             )}
           >
             {t("tasks.queuedToPlan", "Queued to plan")}

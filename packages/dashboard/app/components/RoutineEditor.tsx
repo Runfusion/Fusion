@@ -747,7 +747,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
                   left the operator able to pick a column the default workflow no longer declares — and
                   it was the option labelled "Planning", which is the name the merged `todo` column now
                   displays, so it was the natural choice. Removing it also retires that label inversion.
-                  An existing routine persisted with `taskColumn: "triage"` keeps the value until edited.
+                  A persisted `triage` is coerced to Automatic on load (see above), so no routine keeps it.
                   */}
                   <option value="">{t("schedule.taskColumnAuto", "Automatic (workflow intake)")}</option>
                   <option value="todo">{t("schedule.taskColumnPlanning", "Planning")}</option>

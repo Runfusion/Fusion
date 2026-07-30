@@ -7,43 +7,33 @@ import type { WorkflowIrColumn, WorkflowIrV2 } from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 
 /*
-FNXC:CodingIdeasWorkflow 2026-07-30-16:10 (why `ideas` + `todo` is NOT the default-lineage merge):
+FNXC:CodingIdeasWorkflow 2026-07-30-19:10 (ENFORCES #2651's finding, which landed as prose only):
 
-The default lineage merged its two pre-implementation columns into one (`triage` folded into `todo`,
-keeping the id). The obvious next step reads as "do the same to Coding (Ideas)". IT IS NOT THE SAME,
-and this file exists so the difference is checkable rather than remembered.
+#2651 implemented the `ideas` + `todo` collapse, found it broken, and reverted — recording why in
+`docs/solutions/.../u11-triage-literal-safety-audit.md`. It added no test, so nothing stops the next
+person reaching the same dead end. This is that test. Its argument is #2651's, not a second one:
 
-The default lineage's intake was AUTOMATIC: `triage` auto-planned, `todo` held for capacity, and the
-graph's plan nodes run in place, so folding one into the other changes nothing about who advances a
-card — the engine does, before and after.
+Triage's discovery keys on the COLUMN'S `autoTriage` config, not on the intake/hold roles. `ideas`
+(`autoTriage: false`) is not scanned, `todo` is, and "promote" means moving the card from the unscanned
+lane into the scanned one — that move IS the gate release. Merge them and one column must be both the
+unscanned manual intake and the scanned planning lane, so one of two things happens:
 
-Coding (Ideas)'s intake is MANUAL by definition. `ideas` carries `intake` with `autoTriage: false`,
-which is the entire reason the workflow exists: operators park work without the engine planning it.
-`todo` carries `hold` with `release: "capacity"` — the engine releases from it automatically.
+  - `autoTriage: false` wins -> the column is never scanned, nothing is ever planned, and cards sit with
+    a bootstrap-stub PROMPT.md until the CAPACITY HOLD releases them — sending UNPLANNED work into
+    in-progress, which is worse than stalling;
+  - scanning wins -> `autoTriage: false` means nothing, the manual gate is gone, and the preset is just
+    the default workflow wearing a different name.
 
-Merge them and one column must be both "wait for a human to promote this" and "auto-release this on
-capacity". The concrete failure is not a philosophical one:
+What the collapse actually requires is a release mechanism for a manual gate that is NOT a column
+move. That does not exist, and inventing one is a product decision rather than an IR edit.
 
-  - `resolveCreateIntakeLanes` (task-creation.ts) reports `manual: intakeTrait.config.autoTriage ===
-    false`, derived from the INTAKE column. After a merge, intake and hold are the SAME column, so
-    every created card is `manual` — never auto-planned.
-  - The operator's remedy for a manual card is to promote it forward. After a merge there is nowhere
-    to promote it TO: it is already in the only pre-implementation column, and the next column is
-    `in-progress`, which is gated on implementation capacity and expects a spec that was never written.
+SCOPE, from #2651 and worth keeping straight: `autoTriage` is a general trait field, so a custom
+workflow can still declare a manual intake with `intake !== hold`. Only THIS preset's collapse is
+dead — the manual-intake concept is not.
 
-So a merged Coding (Ideas) parks every card in a lane nothing advances. That is not a vocabulary
-regression that reconciliation repairs — it is the workflow's purpose deleted.
-
-The registry does NOT stop this (asserted below): the trait combination is structurally legal, so
-authoring it produces no error and the breakage is silent. That is precisely why this is a test and
-not a comment.
-
-If the goal is genuinely "Coding (Ideas) should have one Planning column", the honest routes are a
-PRODUCT decision, not an IR edit: either make its intake automatic (at which point it is the default
-workflow and the variant has no reason to exist), or drop the variant. Both are operator-visible
-choices about a shipped workflow.
-*/
-describe("Coding (Ideas): the manual intake cannot be merged into the hold column", () => {
+The registry does NOT reject the merged shape (asserted below), so the breakage is silent, which is
+exactly why prose was not enough.
+*/describe("Coding (Ideas): the manual intake cannot be merged into the hold column", () => {
   it("has a MANUAL intake, which is the fact that blocks the merge", () => {
     const columns = (BUILTIN_CODING_IDEAS_WORKFLOW_IR as WorkflowIrV2).columns;
     const ideas = columns.find((c) => c.id === "ideas");
