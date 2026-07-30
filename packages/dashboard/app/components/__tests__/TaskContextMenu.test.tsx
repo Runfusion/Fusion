@@ -146,7 +146,20 @@ describe("TaskContextMenu shared task action model", () => {
     expect(todoMoves.map((action) => action.column)).toEqual(["in-progress", "triage", "archived"]);
     expect(todoMoves.map((action) => action.label)).toEqual(["Move to in-progress", "Move to triage", "Move to archived"]);
 
-    const reviewMoves = buildTaskActionMenuModel({ task: makeTask({ column: "in-review" }), t, columnLabel: columnLabel as any }).moveTransitions;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-14:10 (stale expectation from #2521):
+    This expected "Back to In Progress" — a display label the PRE-#2521 code hardcoded next to the
+    `in-progress` literal. #2521 correctly made the label come from the host's `columnLabel`, and
+    this file's stub is `(column) => column`, so the honest output is the raw id. The old
+    expectation only ever passed because the label was hardcoded, and it has been RED on main since
+    #2521 landed.
+
+    Matching the raw id would satisfy the test while proving nothing, so the label function is made
+    display-like for this case instead: the assertion now fails both if the "Back to" prefix
+    regresses AND if the label stops routing through `columnLabel`. Strengthened, not relaxed.
+    */
+    const displayLabel = ((column: string) => (column === "in-progress" ? "In Progress" : column)) as any;
+    const reviewMoves = buildTaskActionMenuModel({ task: makeTask({ column: "in-review" }), t, columnLabel: displayLabel }).moveTransitions;
     expect(reviewMoves.map((action) => [action.column, action.label])).toEqual([
       ["todo", "Move to todo"],
       ["in-progress", "Back to In Progress"],
