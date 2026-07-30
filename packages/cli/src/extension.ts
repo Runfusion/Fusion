@@ -38,6 +38,7 @@ import {
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
   resolveReviewColumns,
+  resolveWorkflowColumnForRole,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -5237,10 +5238,30 @@ export default function kbExtension(pi: ExtensionAPI) {
         // Create task assigned to the target agent
         const store = await getStore(ctx.cwd);
         const workflowId = params.workflow_id?.trim() || undefined;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-22:05:
+        Delegation lands in the selected workflow's HOLD lane, not in the literal `todo`.
+
+        The tool's contract (see the description above) is "the task goes to the ready-to-work lane
+        and the target agent picks it up on its next heartbeat" — deliberately NOT intake, which is
+        why this cannot simply omit `column` and inherit `createTask`'s intake resolution: on a
+        manual-intake workflow the card would sit waiting for a human and never reach the agent it
+        was delegated to.
+
+        Hold is the role that names that lane. Keyed on the literal, a board whose ready lane is
+        renamed (or a workflow that declares `queued` instead of `todo`) received a card in an
+        undeclared column: it is written, reported as delegated, and never appears for the agent.
+
+        The literal survives ONLY for a workflow that declares NO hold column at all — an unreadable
+        or missing workflow resolves to the built-in IR (see `resolveWorkflowColumnForRole`), whose
+        hold lane is `todo`, so this fallback is narrower than it looks and matches the behaviour
+        this call site had before either way.
+        */
+        const holdColumn = await resolveWorkflowColumnForRole(store, "hold", workflowId) ?? "todo";
         const task = await store.createTask({
           description: params.description,
           dependencies: params.dependencies,
-          column: "todo",
+          column: holdColumn,
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           source: {

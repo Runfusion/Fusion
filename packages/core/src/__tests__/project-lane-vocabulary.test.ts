@@ -30,6 +30,7 @@ import {
   REVIEW_ROLES,
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
+  resolveWorkflowColumnForRole,
 } from "../project-lane-vocabulary.js";
 
 const RENAMED_IR = {
@@ -145,5 +146,86 @@ describe("resolveProjectColumnsForRoles", () => {
     for (const role of [...REVIEW_ROLES, ...TERMINAL_ROLES]) {
       expect(LEGACY_COLUMN_IDS_BY_ROLE[role]?.length ?? 0).toBeGreaterThan(0);
     }
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
+
+THE INVARIANT: a WRITE resolves ONE column from ONE workflow, and says so when it cannot.
+
+This is the mirror of the suite above, and the contrast is the point. `resolveProjectColumnsForRoles`
+answers a read and bakes the legacy ids in, because an extra id in a query set is inert.
+`resolveWorkflowColumnForRole` answers a write, where the same trick is a silent wrong destination:
+post-U12 an undeclared column is a `TransitionRejectionError` on move, and on create it is a phantom
+lane — the row is written, the caller reports success, and the card is not on the board.
+
+So it returns `undefined` and each caller keeps its own visible fallback rather than being handed a
+plausible-looking legacy id it never asked for.
+*/
+describe("resolveWorkflowColumnForRole", () => {
+  const definitionStore = (ir: unknown, defaultId = "wf-renamed") => ({
+    getWorkflowDefinition: vi.fn(async () => (ir === undefined ? undefined : { ir: ir as never })),
+    getDefaultWorkflowId: vi.fn(async () => defaultId),
+  });
+
+  it("returns the workflow's own column for the role", async () => {
+    expect(await resolveWorkflowColumnForRole(definitionStore(RENAMED_IR) as never, "hold")).toBe("backlog");
+    expect(await resolveWorkflowColumnForRole(definitionStore(RENAMED_IR) as never, "complete")).toBe("shipped");
+  });
+
+  it("honours an explicit workflow id over the project default", async () => {
+    const store = definitionStore(OTHER_IR);
+
+    expect(await resolveWorkflowColumnForRole(store as never, "complete", "wf-other")).toBe("released");
+    expect(store.getWorkflowDefinition).toHaveBeenCalledWith("wf-other");
+    // The default lookup must be skipped entirely — an explicit id is not a hint.
+    expect(store.getDefaultWorkflowId).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined — NOT a legacy id — when the workflow does not declare the role", async () => {
+    // OTHER_IR has no hold column. Handing back "todo" here is precisely the phantom-lane write
+    // this helper exists to avoid; the caller decides what its own degraded behaviour is.
+    expect(await resolveWorkflowColumnForRole(definitionStore(OTHER_IR) as never, "hold")).toBeUndefined();
+  });
+
+  it("yields the BUILT-IN lane, not undefined, when the workflow cannot be read", async () => {
+    /*
+    This case documents a contract I got wrong twice before reading the resolver. `undefined` means
+    "this workflow declares no such column" and NOTHING else: `resolveWorkflowIrById` never throws
+    and never returns nothing — an unregistered builtin id, a missing definition row and a failing
+    read all resolve to the default coding IR (branded by `markFellBack`). So an unreadable custom
+    workflow lands on the built-in hold lane.
+
+    Pinned rather than treated as an accident, because it is what makes the callers' own `?? "todo"`
+    fallbacks unreachable in practice — and a future change that made this path return `undefined`
+    would silently move every such create to the caller's literal instead.
+    */
+    const throwing = {
+      getWorkflowDefinition: vi.fn(async () => { throw new Error("db down"); }),
+      getDefaultWorkflowId: vi.fn(async () => "wf-custom"),
+    };
+
+    expect(await resolveWorkflowColumnForRole(throwing as never, "hold")).toBe("todo");
+  });
+
+  it("falls back to the built-in default workflow id when no default is persisted", async () => {
+    /*
+    A fresh project has no default row. Returning undefined here would send every create through its
+    literal fallback on a board that does in fact declare lanes — the FN-7591 gap that dropped cards
+    into the hard-coded `"triage"`.
+
+    My first draft of this case handed the mock a RENAMED ir and expected `backlog`, and it failed:
+    `resolveWorkflowIrById` resolves a `builtin:` id from the built-in registry and never consults
+    `getWorkflowDefinition` at all. The premise was wrong, not the product — so what is asserted is
+    the real contract: the BUILT-IN workflow's own hold lane, reached without a definition read.
+    */
+    const store = {
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      getDefaultWorkflowId: vi.fn(async () => undefined),
+    };
+
+    expect(await resolveWorkflowColumnForRole(store as never, "hold")).toBe("todo");
+    expect(store.getDefaultWorkflowId).toHaveBeenCalled();
   });
 });

@@ -4252,6 +4252,55 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.enabledWorkflowSteps).toHaveLength(2);
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:05:
+    THE INVARIANT: delegation lands in the selected workflow's HOLD lane, whatever it is named.
+
+    `fn_delegate_task` passed the literal `"todo"`. Its contract is the ready-to-work lane — the tool
+    tells the caller the target agent will pick the card up on its next heartbeat — so on a workflow
+    that names that lane `queued` the card went to a column the workflow does not declare: written,
+    reported as delegated, and never visible to the agent it was delegated to.
+
+    Note the seed IR: `queued` carries the `hold` trait, and `start` sits on it, so intake and hold
+    are the same lane here. That is deliberate — it keeps the case about the RESOLUTION and not about
+    which of the two roles wins, which the neighbouring cases already cover with the built-in board.
+
+    REVERT PROOF, measured: restore `column: "todo"` and this case fails with
+    `expected 'todo' to be 'queued'`. The two cases above it stay green, because the built-in and
+    `linearWorkflowIr` boards both call the lane `todo` — which is exactly why the literal survived.
+    */
+    it("delegates into the workflow's own hold lane, not the literal todo", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-renamed-lane" });
+      const store = h.store();
+      const renamed = await store.createWorkflowDefinition({
+        name: "Renamed hold lane",
+        ir: {
+          version: "v2",
+          name: "Renamed hold lane",
+          columns: [{ id: "queued", name: "Queued", traits: [{ trait: "intake" }, { trait: "hold" }] }],
+          nodes: [
+            { id: "start", kind: "start", column: "queued" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-renamed-lane",
+        { agent_id: agentId, description: "Work in a renamed lane", workflow_id: renamed.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).not.toBe(true);
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("queued");
+      expect(task.assignedAgentId).toBe(agentId);
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(

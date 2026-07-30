@@ -2265,7 +2265,7 @@ file (`scripts/build-engine-core-gate-bundle.mjs`), so an export added only to `
 an import error. That cost 88 red tests in `project-engine.test.ts`, all with the same misleading
 "columns is not iterable" a hundred lines from the actual cause.
 */
-export { resolveProjectColumnsForRoles, REVIEW_ROLES, TERMINAL_ROLES, LEGACY_COLUMN_IDS_BY_ROLE, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
+export { resolveProjectColumnsForRoles, resolveWorkflowColumnForRole, REVIEW_ROLES, TERMINAL_ROLES, LEGACY_COLUMN_IDS_BY_ROLE, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";
 export { LEGACY_STATUS_ADOPTION, resolveLegacyStatusAdoption, resolveReviewLevelBackfill, planLegacyAdoption, resolveOrphanedPendingStepResults, type LegacyAdoptionPlan, type LegacyAdoptionCandidate, type LegacyAdoptionAction, type LegacyAdoptionKind } from "./legacy-adoption.js";
