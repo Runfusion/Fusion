@@ -19,6 +19,7 @@
     "check:line-count": "node scripts/check-file-line-count.mjs",
     "check:routes-modular": "node scripts/check-routes-modular.mjs",
     "check:changesets": "node scripts/check-changeset-format.mjs",
+    "check:lifecycle-columns": "node scripts/lifecycle-column-census.mjs --strict",
     "census:lifecycle-columns": "node scripts/lifecycle-column-census.mjs",
     "check:quarantine-ledger": "node scripts/check-quarantine-ledger.mjs",
     "check:mock-completeness": "node scripts/check-mock-completeness.mjs",
