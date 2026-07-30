@@ -5296,7 +5296,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
     const reboundedIds: string[] = [];
     for (const task of tasks) {
-      if (task.column !== "in-progress" || task.paused !== true) continue;
+      if (task.column !== await this.resolveWipColumn(task.id) || task.paused !== true) continue;
       if (SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS.has(task.pausedReason ?? "")) continue;
       const followerCount = followersByHolder.get(task.id) ?? 0;
       if (followerCount <= 0) continue;
@@ -7799,8 +7799,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return { ...fallbackBudget, key: "pre-merge-optional-step", attempts: 0, label: fallbackBudget.unbounded ? "unbounded" : String(fallbackBudget.max) };
       };
 
+      const reviewLaneSync = (taskId: string) => {
+        try {
+          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId))?.review ?? "in-review";
+        } catch {
+          return "in-review";
+        }
+      };
       const candidates = tasks.filter((task) => {
-        if (task.column !== "in-review") return false;
+        if (task.column !== reviewLaneSync(task.id)) return false;
         if (!allowsAutoMergeProcessing(task, settings)) return false;
         if (task.paused) return false;
         /*
@@ -10198,7 +10205,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let recovered = 0;
 
       for (const task of tasks) {
-        if (task.column !== "in-review" || task.deletedAt) continue;
+        if (task.column !== await this.resolveReviewColumn(task.id) || task.deletedAt) continue;
         if (!allowsAutoMergeProcessing(task, settings)) continue;
         if (task.paused || task.userPaused) continue;
         if (task.status !== "failed") continue;
@@ -11004,7 +11011,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
           await this.store.logEntry(
             task.id,
-            fresh.column === "in-review"
+            fresh.column === await this.resolveReviewColumn(fresh.id)
               ? "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression"
               : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling",
           );
