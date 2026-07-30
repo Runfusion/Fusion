@@ -3,7 +3,6 @@
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
-    "packages/dashboard/app/components/TaskCard.tsx": 42,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
     "packages/engine/src/scheduler.ts": 26,
     "packages/core/src/store.ts": 12,
@@ -141,7 +140,6 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts": 1
   },
   "deliberateByFile": {
-    "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
     "packages/dashboard/app/components/command-center/MissionControlPanel.tsx\u0000done": 1,
     "packages/dashboard/app/components/command-center/MissionControlPanel.tsx\u0000in-review": 1,
@@ -149,7 +147,9 @@
     "packages/dashboard/app/components/RoutineEditor.tsx\u0000triage": 1,
     "packages/dashboard/app/components/ScheduleForm.tsx\u0000triage": 1,
     "packages/dashboard/app/components/ScheduleStepsEditor.tsx\u0000triage": 1,
+    "packages/dashboard/app/components/TaskCard.tsx\u0000done": 1,
     "packages/dashboard/app/components/TaskCard.tsx\u0000todo": 1,
+    "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 1,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000triage": 1,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000todo": 1,
     "packages/dashboard/app/utils/columnRoles.ts\u0000todo": 1,
