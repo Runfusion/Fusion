@@ -30,6 +30,7 @@ case.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task, WorkflowIr } from "@fusion/core";
+import { getBuiltinWorkflow } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 
 /** A workflow declaring `intake` + `hold` + `done`, with NO `todo` column. A card stored
@@ -222,5 +223,70 @@ describe("reconcileUndeclaredTaskColumns (U12 — R7)", () => {
     expect(store.moveTask.mock.calls[0]![0]).toBe("FN-6");
     expect(healthy.column).toBe("in-progress");
     expect(paused.column).toBe("todo");
+  });
+});
+
+/*
+FNXC:WorkflowColumns 2026-07-29-00:00 (PR #2600 review — greptile):
+"PLUGIN-GATED WORKFLOWS PASS PROOF" — checked, and the guard is CORRECT as written.
+
+The claim was that `getBuiltinWorkflow` finds a plugin-gated built-in's static definition
+even when the store would reject it, so the guard returns true while the resolver falls
+back to the default IR and the sweep guesses anyway.
+
+The second half does not hold. `resolveWorkflowIrById`'s built-in branch reads
+`getBuiltinWorkflow(workflowId)` and RETURNS ITS IR WITHOUT EVER CALLING THE STORE — a
+store rejection is unreachable for a built-in id. So a plugin-gated selection resolves to
+that workflow's OWN IR whether or not its plugin is installed, and there is no guess for
+the guard to have prevented.
+
+That is not a coincidence to leave undefended: the guard is right precisely BECAUSE it
+uses the same lookup the resolver uses. If someone later routes built-in resolution
+through the store, the guard and the resolver diverge and this coupling is what breaks
+first. Hence a test rather than a reply.
+
+The genuinely unresolvable built-in case — `builtin:`-prefixed but NOT in the registry,
+where `getBuiltinWorkflow` returns undefined and the resolver DOES fall back to the
+default — is the hole the parent commit closed, and is covered below it.
+*/
+describe("plugin-gated built-in selections (PR #2600 review)", () => {
+  it("resolves through the static registry, so a store rejection cannot force a guess", () => {
+    // Precondition: the static lookup still finds the plugin-gated built-in. If this ever
+    // returns undefined the case below is vacuous, so assert it rather than assume it.
+    expect(getBuiltinWorkflow("builtin:compound-engineering")).toBeDefined();
+  });
+
+  /*
+  THE FIXTURE IS THE ARGUMENT. `builtin:compound-engineering` declares `triage`; the
+  post-#2515 DEFAULT lineage does not (its columns are todo, in-progress, in-review, done,
+  archived) — both measured, not assumed.
+
+  So a card resting in `triage` separates the two worlds cleanly:
+    - resolver uses CE's own IR   -> `triage` is DECLARED   -> left alone  (asserted here)
+    - resolver fell back to default -> `triage` is UNDECLARED -> re-homed  (greptile's claim)
+  This case therefore FAILS in exactly the world the review describes, which is the only
+  way to answer "the guard passes proof it should not" with evidence instead of assertion.
+  */
+  it("leaves a plugin-gated card in a column ITS OWN workflow declares, even when the store rejects it", async () => {
+    const card = task({ id: "FN-9", column: "triage" });
+    const store = makeStore([card]);
+    // The plugin is unavailable: every store-side definition read fails.
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "builtin:compound-engineering" }));
+    store.getWorkflowDefinition = vi.fn(async () => {
+      throw new Error("plugin fusion-plugin-compound-engineering is not installed");
+    });
+
+    const rehomed = await manager(store).reconcileUndeclaredTaskColumns();
+
+    expect(rehomed).toBe(0);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(card.column).toBe("triage");
+    /*
+    And the mechanism, pinned directly: the IR came from the static registry, so the
+    store was never asked. This is the coupling the guard depends on — if built-in
+    resolution is ever routed through the store, this assertion breaks first and names
+    the reason.
+    */
+    expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
   });
 });
