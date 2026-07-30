@@ -8,7 +8,6 @@
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
 import {planLegacyAdoption} from "../legacy-adoption.js";
-import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {and, eq, sql} from "drizzle-orm";
 import {
   MIGRATION_BOOKKEEPING_TABLE,
@@ -1050,23 +1049,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
             ? await store.getTask(id).catch(() => null)
             : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
-            /*
-            FNXC:WorkflowLifecycleColumns 2026-08-01-01:20 (fleet — sync resolution is a no-op):
-            AWAITED. `resolveTaskWorkflowIrSync`'s selection reader returns `undefined`
-            unconditionally in PostgreSQL mode, so it hands back the DEFAULT workflow IR for every
-            task — proven in `__tests__/postgres/sync-workflow-ir-is-always-default.pg.test.ts`.
-
-            That matters more here than at a lane comparison. The hook runner RE-DERIVES ITS PENDING
-            SET FROM THIS IR (KTD-2), so after a crash a card on a renamed board had its plugin
-            column-transition hooks re-run against the default board's columns: the hooks that should
-            have fired were not in the derived set, and the recovery reported success. Silent, and it
-            only happens on the crash path, which is where it is least likely to be noticed.
-
-            Async is already available — the line above awaits `store.getTask` in backend mode — so
-            this adds no new ordering constraint. Fail-soft to the sync answer if resolution throws,
-            which is the pre-existing behaviour rather than skipping the re-run.
-            */
-            const ir = await resolveWorkflowIrForTask(store, id).catch(() => store.resolveTaskWorkflowIrSync(id));
+            const ir = store.resolveTaskWorkflowIrSync(id);
             // fromColumn is unknown post-crash; the marker only records toColumn.
             // The hook runner keys onEnter off toColumn (and onExit off fromColumn);
             // re-running onEnter for the destination is the recoverable, idempotent

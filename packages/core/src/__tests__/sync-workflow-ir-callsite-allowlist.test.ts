@@ -41,11 +41,7 @@ const ALLOWED_CALL_SITES: ReadonlyMap<string, string> = new Map([
   ],
   [
     "packages/core/src/task-store/lifecycle-ops.ts",
-    "FAIL-SOFT FALLBACK ONLY. The transitionPending hook re-run now awaits the authoritative "
-      + "resolver; this call is its `.catch(...)`, reached only if that throws. Kept rather than "
-      + "dropped because the alternative is skipping a crash-recovery hook re-run entirely, and the "
-      + "default IR is a strictly better answer than none. Caught by this ratchet when the entry was "
-      + "removed on the assumption the conversion had eliminated the call.",
+    "Synchronous lifecycle bookkeeping inside a transaction.",
   ],
   [
     "packages/core/src/task-store/task-store-helpers.ts",
