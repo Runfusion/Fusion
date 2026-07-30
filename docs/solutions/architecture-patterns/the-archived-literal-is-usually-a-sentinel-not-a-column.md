@@ -112,7 +112,8 @@ inside a `projectId`-scoped query. **Done in #2875** — the lanes resolve in th
 store; the query function takes a bare `db` handle) and arrive as parameterised equality fragments,
 tested against real PostgreSQL because a mocked store would assert the arguments and prove nothing
 about the query that runs. `scripts/check-sql-column-literals.mjs` (#2841) is the detector for the
-class and freezes the surface at 30 sites; the two are complementary.
+class and freezes the surface at 28 sites; the two are complementary. (That number moves as sites are
+converted and the baseline is re-recorded — the gate fails on a DROP too, so it cannot drift silently.)
 
 Sibling importers are the other half of the same lesson: the GitLab importer's `column: "triage"` was
 fixed in #2843 and the Linear importer — written from the same template — still had it, found only by
