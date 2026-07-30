@@ -1181,8 +1181,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async selectNextTaskForAgent( agentId: string, agent?: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>, ): Promise<InboxTask | null> {
     return selectNextTaskForAgentImpl(this, agentId, agent);
   }
-  public areAllDependenciesDone(dependencies: string[], tasksById: Map<string, Task>): boolean {
-    return areAllDependenciesDoneImpl(this, dependencies, tasksById);
+  public areAllDependenciesDone(dependencies: string[], tasksById: Map<string, Task>, satisfiedColumns?: ReadonlySet<string>): boolean {
+    return areAllDependenciesDoneImpl(this, dependencies, tasksById, satisfiedColumns);
   }
   public async readTaskForMove(id: string): Promise<Task> {
     return readTaskForMoveImpl(this, id);

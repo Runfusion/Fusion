@@ -99,3 +99,56 @@ describe("blocker staleness follows the caller's lanes", () => {
     expect(isStaleBlockedByBlocker(task({ column: "shipped" }), 3)).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-20:55 (PR #2745 review — greptile P1 x2, and the shape is worth its
+own name):
+
+A CAPABILITY WITH NO CALLER IS A HALF-CONVERSION TOO.
+
+Both findings were the same: I added the optional lane parameters and did not wire the production callers. The
+census would have shown converted sites and a renamed board would have behaved exactly as before — a branch-
+group task depending on a card that landed in a workflow-specific complete lane stayed excluded from dispatch,
+and a review row stranded by a missing-worktree session start stayed parked for a human.
+
+That is not the familiar direction (a gate reading the wrong board); it is the parameter existing and nobody
+passing it. It cannot be caught by testing the predicate — the predicate is correct — so this asserts the
+CALL SITES, which is the same reason #2728's classifier needed a structural case.
+*/
+describe("the production callers actually supply the lanes", () => {
+  it("branch-group dispatch resolves a satisfied set and passes it", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const code = (await readFile(new URL("../task-store/branch-group-ops.ts", import.meta.url), "utf8"))
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // It must RESOLVE lanes, not merely accept a parameter…
+    expect(code).toContain("resolveTaskLifecycleColumns");
+    // …and every areAllDependenciesDone call must pass the set it resolved.
+    const calls = [...code.matchAll(/areAllDependenciesDone\(([^)]*)\)/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[1], "areAllDependenciesDone called without satisfiedColumns").toContain("satisfiedColumns");
+    }
+  });
+
+  it("the missing-worktree recovery sweep passes a resolved review set to all three classifiers", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const code = (await readFile(new URL("../../../engine/src/self-healing.ts", import.meta.url), "utf8"))
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    /*
+    All three classifiers, by name: converting the sweep's admission and leaving the merge-active
+    classification on the legacy id would make the stage/audit labels disagree with the admission — which is
+    the defect one level down from the one the reviewer found.
+    */
+    for (const name of [
+      "isRecoverableMissingWorktreeReviewFailureWithProgress",
+      "isRecoverableMissingWorktreeReviewFailureNoProgress",
+      "isMergeActiveMissingWorktreeSessionStartFailure",
+    ]) {
+      const call = code.match(new RegExp(`${name}\\(([^)]*)\\)`));
+      expect(call, `${name} is not called in self-healing`).toBeTruthy();
+      expect(call?.[1], `${name} called without a resolved review set`).toContain("reviewColumns");
+    }
+  });
+});

@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, resolveLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -12025,11 +12025,36 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
-      const candidates = tasks.filter((task) =>
-        isRecoverableMissingWorktreeReviewFailureWithProgress(task)
-        || isRecoverableMissingWorktreeReviewFailureNoProgress(task)
-        || isMergeActiveMissingWorktreeSessionStartFailure(task),
-      );
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-20:20 (PR #2745 review — greptile P1: "recovery lanes are not
+      wired", and it is right):
+      THE PRODUCTION PATH SUPPLIES THE SET. Adding the optional parameter to the three classifiers gave them the
+      capability and changed nothing in production, which is a half-conversion of a different shape: not a gate
+      reading the wrong board, but a capability with no caller. The census would have shown three converted
+      sites and a renamed board would still have parked the card for a human.
+
+      Resolved per candidate with one shared IR cache. Note the QUERY above still reads `column: "in-review"` —
+      that is the query class, flagged in this PR's body and unfixable without a project-level lane resolution
+      before the read, so the wiring here matters for boards whose review lane IS `in-review` under a renamed
+      workflow (the common partial-rename case) and for the merge-active variant.
+      */
+      const recoveryIrCache = new Map<string, WorkflowIr>();
+      const reviewColumnsFor = async (taskId: string): Promise<ReadonlySet<string>> => {
+        const lifecycle = await resolveTaskLifecycleColumns(this.store, taskId, recoveryIrCache);
+        return new Set([lifecycle?.review ?? "in-review", "in-review"]);
+      };
+      const candidateChecks = await Promise.all(tasks.map(async (task) => {
+        const reviewColumns = await reviewColumnsFor(task.id);
+        return {
+          task,
+          recoverable: isRecoverableMissingWorktreeReviewFailureWithProgress(task, reviewColumns)
+            || isRecoverableMissingWorktreeReviewFailureNoProgress(task, reviewColumns)
+            || isMergeActiveMissingWorktreeSessionStartFailure(task, reviewColumns),
+          mergeActive: isMergeActiveMissingWorktreeSessionStartFailure(task, reviewColumns),
+        };
+      }));
+      const candidates = candidateChecks.filter((entry) => entry.recoverable).map((entry) => entry.task);
+      const mergeActiveByTaskId = new Map(candidateChecks.map((entry) => [entry.task.id, entry.mergeActive]));
 
       if (candidates.length === 0) return 0;
 
@@ -12038,7 +12063,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let recovered = 0;
       for (const task of candidates) {
         try {
-          const mergeActiveCandidate = isMergeActiveMissingWorktreeSessionStartFailure(task);
+          /* Reuses the classification computed with this task's resolved lanes above, so the stage/audit
+             labels cannot disagree with the admission decision. */
+          const mergeActiveCandidate = mergeActiveByTaskId.get(task.id) === true;
           const stage = mergeActiveCandidate ? "missing-worktree-merge-active" : "missing-worktree-review";
           const noActionEvent = mergeActiveCandidate ? "task:reconcile-missing-worktree-merge-active-no-action" : "task:missing-worktree-review-no-action";
           const recoveryEvent = mergeActiveCandidate ? "task:reconcile-missing-worktree-merge-active" : "task:missing-worktree-review";

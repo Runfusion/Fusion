@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import type {WorkflowIr} from "../workflow-ir-types.js";
 import type {Task, ColumnId, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, Agent} from "../types.js";
 import {runReconciliationAbort} from "../workflow-reconciliation.js";
 import "../builtin-traits.js";
@@ -88,7 +90,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     const tasksById = new Map(tasks.map((task) => [task.id, task]));
     const isCheckoutAware = "checkoutTask" in store && typeof (store as Record<string, unknown>).checkoutTask === "function";
-    const isDoneLike = (task: Task | undefined) => task?.column === "done" || task?.column === "archived";
+
     const sortByOldestColumnMove = (a: Task, b: Task) => {
       const aSortAt = a.columnMovedAt ?? a.createdAt;
       const bSortAt = b.columnMovedAt ?? b.createdAt;
@@ -125,6 +127,28 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     const roleCompatibleAssignedTasks = assignedTasks.filter(isBindCompatible);
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-20:35 (PR #2745 review — greptile P1: "dependency lanes remain
+    legacy-only"):
+    ONE SATISFIED SET FOR THE WHOLE BATCH, resolved from the dependency rows already loaded into `tasksById`.
+    The reviewer's point is the one that matters: adding `satisfiedColumns` to `areAllDependenciesDone` without
+    wiring this caller left the capability unused, so a branch-group task depending on a card that landed in a
+    workflow-specific complete lane stayed excluded from dispatch — unchanged from before the conversion.
+
+    Resolved per dependency through a shared IR cache (dependencies can span workflows) and unioned with the
+    legacy ids, matching the answer settled in #2720 and used by the merge blocker.
+    */
+    const satisfiedColumns = new Set<string>(["done", "archived"]);
+    const satisfiedIrCache = new Map<string, WorkflowIr>();
+    for (const dependencyId of new Set(
+      roleCompatibleAssignedTasks.flatMap((task) => task.dependencies ?? []),
+    )) {
+      const lifecycle = await resolveTaskLifecycleColumns(store, dependencyId, satisfiedIrCache);
+      if (lifecycle?.complete) satisfiedColumns.add(lifecycle.complete);
+      if (lifecycle?.archived) satisfiedColumns.add(lifecycle.archived);
+    }
+    const isDoneLike = (task: Task | undefined) => task !== undefined && satisfiedColumns.has(task.column);
+
     /** FNXC:TaskDispatch 2026-07-19-14:40: remembered ownership must not reselect an operator-parked task when `userPaused` remains true but legacy `paused` is false. */
     const todoCandidates = roleCompatibleAssignedTasks.filter(
       (task) => task.column === "todo" && task.paused !== true && task.userPaused !== true,
@@ -135,7 +159,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
         if (isCheckoutAware && task.checkedOutBy && task.checkedOutBy !== agentId) {
           return false;
         }
-        return store.areAllDependenciesDone(task.dependencies, tasksById);
+        return store.areAllDependenciesDone(task.dependencies, tasksById, satisfiedColumns);
       })
       .sort(sortByOldestColumnMove);
 
@@ -153,7 +177,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
           return false;
         }
 
-        if (store.areAllDependenciesDone(task.dependencies, tasksById)) {
+        if (store.areAllDependenciesDone(task.dependencies, tasksById, satisfiedColumns)) {
           return false;
         }
 
