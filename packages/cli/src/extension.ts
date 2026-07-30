@@ -5275,26 +5275,55 @@ export default function kbExtension(pi: ExtensionAPI) {
         });
 
         let landedColumn = task.column;
-        let landingNote = "";
+        let landingError: string | undefined;
         const holdColumn = (await resolveTaskLifecycleColumns(store, task.id))?.hold;
         if (holdColumn && holdColumn !== task.column) {
           try {
             await store.moveTask(task.id, holdColumn);
             landedColumn = holdColumn;
           } catch (moveError) {
-            landingNote = ` WARNING: could not move it out of "${task.column}" into the ready lane `
-              + `"${holdColumn}" (${moveError instanceof Error ? moveError.message : String(moveError)}), `
-              + "so it is waiting on intake rather than on the agent.";
+            landingError = moveError instanceof Error ? moveError.message : String(moveError);
           }
         }
 
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
         const workflow = workflowId ? ` (workflow: ${workflowId})` : "";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:10 (#2843 review — greptile P1, and it is right):
+        A FAILED landing is an ERROR result, not a success sentence with a warning appended.
+
+        My first version kept the "will be picked up by X on their next heartbeat cycle" text and
+        added a ` WARNING: ...` suffix. That still LEADS with a claim that is false: assigned-agent
+        selection skips cards outside the workflow's hold lane, so a card stranded on intake is never
+        dispatched, and a caller — usually another agent — reads the first sentence and moves on.
+        "Reported success with a caveat" is how the delegation silently goes nowhere.
+
+        The task id stays in `details` because the card DOES exist and the caller needs it to finish
+        the job by hand; what changes is that nothing in this branch claims the delegation completed.
+
+        UNTESTED, and stated rather than papered over: I could not construct a real failure. I tried
+        a workflow declaring `parked` with the `hold` trait and no node on it, expecting the move to
+        be rejected — it SUCCEEDED and the card landed in `parked`. `moveTask` accepts any column the
+        workflow DECLARES; node reachability does not gate it. Since `holdColumn` here always comes
+        from the task's own IR, `workflowHasColumn` passes by construction, so this catch is
+        defensive rather than a live path. A test that stubbed `moveTask` to throw would prove only
+        that the catch block runs, which is not what needed proving.
+        */
+        if (landingError) {
+          const text = `ERROR: Created ${task.id}${deps}${workflow} and assigned it to ${agent!.name} (${agent!.id}), `
+            + `but it could NOT be moved out of "${task.column}" into the ready lane "${holdColumn}": ${landingError}. `
+            + `It is stranded on intake and will NOT be picked up — move it to "${holdColumn}" to dispatch it.`;
+          return {
+            content: [{ type: "text" as const, text }],
+            isError: true,
+            details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn, error: landingError },
+          };
+        }
         return {
           content: [{
             type: "text" as const,
             text: `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. ` +
-              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.${landingNote}`,
+              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
           }],
           details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn },
         };
