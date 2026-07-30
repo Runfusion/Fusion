@@ -2878,7 +2878,7 @@ export function TaskDetailContent({
         addToast(getErrorMessage(retryErr), "error");
       }
     }
-  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice, confirmWithCheckbox]);
+  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice, confirmWithCheckbox, isArchivedColumn]);
 
   const handleMerge = useCallback(async () => {
     const shouldMerge = await confirm({
