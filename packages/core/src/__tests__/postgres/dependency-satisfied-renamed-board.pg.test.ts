@@ -111,3 +111,83 @@ pgDescribe("dependency satisfaction on a renamed board (PostgreSQL)", () => {
     expect(updated.blockedBy).toBeUndefined();
   });
 });
+
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-06:50 (PR #2720 review — the half the other fix did not cover):
+
+THE EMITTED `task:moved` ENDPOINTS, not just the persisted column.
+
+Someone else fixed the `columnMovedAt` finding on this branch while I was writing the same fix, and their
+suite in `task-dependency-mutation.pg.test.ts` covers the distinct-lane move and the merged-lane non-move
+properly — so those cases are theirs, not duplicated here.
+
+What neither covers is the EVENT. `task:moved` is what the GitHub tracking poster, the auto-merge handoff
+and the executor's listeners act on, and the old code emitted a hardcoded `from: "todo", to: "triage"` —
+announcing a column U11 deleted. The row write and the event are separate writes that can disagree, and the
+old code got both wrong in the same direction, which is exactly why asserting only the row would have looked
+sufficient.
+*/
+pgDescribe("the re-specification move announces its real endpoints (PostgreSQL)", () => {
+  const eh: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_respecify_event",
+  });
+
+  beforeAll(eh.beforeAll);
+  afterAll(eh.afterAll);
+  let eventStore: TaskStore;
+
+  beforeEach(async () => {
+    await eh.beforeEach();
+    eventStore = eh.store();
+  });
+
+  afterEach(eh.afterEach);
+
+  it("emits the board's own from/to, and emits nothing when the lanes are one column", async () => {
+    const definition = await eventStore.createWorkflowDefinition({
+      name: "Split Lanes Event",
+      ir: {
+        version: "v2", name: "split-lanes-event",
+        columns: [
+          { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+          { id: "ready", name: "Ready", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "inbox" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    const blocker = await eventStore.createTask({ description: "prerequisite", workflowId: definition.id } as never);
+    const dependent = await eventStore.createTask({ description: "dependent", workflowId: definition.id } as never);
+    await eventStore.moveTask(dependent.id, "ready" as never, { bypassGuards: true } as never);
+
+    const moves: Array<{ from: string; to: string }> = [];
+    eventStore.on("task:moved", (event: { from: string; to: string }) => {
+      moves.push({ from: event.from, to: event.to });
+    });
+
+    await eventStore.updateTaskDependencies(dependent.id, {
+      operation: "add",
+      dependency: blocker.id,
+    } as never);
+
+    // Pre-fix: { from: "todo", to: "triage" } — neither of which this board declares.
+    expect(moves).toEqual([{ from: "ready", to: "inbox" }]);
+
+    /* And the merged-lane case emits NO move: announcing a move into the column the card already occupies
+       re-runs reset-on-entry effects in every listener. */
+    const mergedBlocker = await eventStore.createTask({ description: "prerequisite 2" } as never);
+    const mergedDependent = await eventStore.createTask({ description: "dependent 2" } as never);
+    moves.length = 0;
+
+    await eventStore.updateTaskDependencies(mergedDependent.id, {
+      operation: "add",
+      dependency: mergedBlocker.id,
+    } as never);
+
+    expect(moves).toEqual([]);
+  });
+});
