@@ -11,6 +11,6 @@
   "packages/core/src/task-store/reads.ts": 1,
   "packages/core/src/task-store/task-artifacts-ops.ts": 1,
   "packages/core/src/task-store/workflow-definitions.ts": 2,
-  "packages/core/src/team-analytics.ts": 6,
+  "packages/core/src/team-analytics.ts": 3,
   "packages/core/src/workflow-analytics.ts": 6
 }
