@@ -63,6 +63,51 @@ async function resolveLanes(
   }
 }
 
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-00:30 (PR #2607 review — sixth finding, greptile P1):
+
+DEGRADED RESOLUTION LOOKS EXACTLY LIKE THE DEFAULT BOARD, and that is a third state these actions
+had no way to see. `resolveWorkflowIrForTask` is TOTAL by design: a missing workflow definition or a
+failed read silently returns the DEFAULT coding IR (`workflow-ir-resolver.ts` lines 201/206). So a
+card on a CUSTOM board whose definition could not be loaded resolved to `todo`/`in-progress`, and
+these actions then rejected a valid custom planning card, or moved it to a column its own workflow
+does not declare.
+
+`undefined` lanes cannot express this: that means "no workflow at all", where the legacy ids ARE the
+answer (the migration case). Degraded means "this board HAS a vocabulary and we could not read it",
+where acting on someone else's vocabulary is the one thing we must not do. So the actions refuse and
+say so — 409 with the column and status, which is what an operator can act on.
+
+Detected without new core API (#2618 adds provenance to the resolver but is not merged): the task
+names a workflow SELECTION whose definition does not come back. That is precisely the state the
+resolver papers over.
+*/
+async function workflowResolutionDegraded(
+  taskStore: AgentActionDeps["taskStore"],
+  taskId: string,
+): Promise<boolean> {
+  const store = taskStore as unknown as {
+    getTaskWorkflowSelectionAsync?: (id: string) => Promise<{ workflowId?: string } | undefined>;
+    getTaskWorkflowSelection?: (id: string) => { workflowId?: string } | undefined;
+    getWorkflowDefinition?: (id: string) => Promise<unknown>;
+  };
+  try {
+    const selection = (await store.getTaskWorkflowSelectionAsync?.(taskId))
+      ?? store.getTaskWorkflowSelection?.(taskId);
+    const workflowId = selection?.workflowId;
+    /*
+    No selection, or a builtin id, or a store that cannot answer: not degraded. A builtin resolves
+    through the catalog rather than a definition row, and a store without these readers is the
+    "no workflow at all" case the legacy fallback already covers.
+    */
+    if (!workflowId || workflowId.startsWith("builtin:") || !store.getWorkflowDefinition) return false;
+    return (await store.getWorkflowDefinition(workflowId)) == null;
+  } catch {
+    /* Cannot even ask -> treat as degraded: refusing is the safe direction for a MOVE. */
+    return true;
+  }
+}
+
 /**
  * Every column id the workflow DECLARES.
  *
@@ -145,9 +190,10 @@ function destination(
 async function laneContext(
   taskStore: AgentActionDeps["taskStore"],
   taskId: string,
-): Promise<{ lanes: Lanes | undefined; declared: Set<string> }> {
+): Promise<{ lanes: Lanes | undefined; declared: Set<string>; degraded: boolean }> {
+  const degraded = await workflowResolutionDegraded(taskStore, taskId);
   const lanes = await resolveLanes(taskStore, taskId);
-  return { lanes, declared: await declaredColumnIds(taskStore, taskId, lanes) };
+  return { lanes, declared: await declaredColumnIds(taskStore, taskId, lanes), degraded };
 }
 
 type AgentActionResult = {
@@ -186,7 +232,8 @@ async function toResult(taskStore: PluginContext["taskStore"], taskId: string): 
 export async function startWork(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  const { lanes: startLanes, declared: startDeclared } = await laneContext(deps.taskStore, taskId);
+  const { lanes: startLanes, declared: startDeclared, degraded: startDegraded } = await laneContext(deps.taskStore, taskId);
+  if (startDegraded) conflict("start-work", task);
   if (
     !isInPlanningLane(startLanes, String(task.column), startDeclared)
     || START_WORK_BLOCKED_STATUSES.has(String(task.status))
@@ -213,7 +260,8 @@ export async function requestReview(input: AgentActionInput, deps: AgentActionDe
 export async function approvePlan(input: AgentActionInput, deps: AgentActionDeps): Promise<AgentActionResult> {
   const taskId = normalizeTaskId(input.taskId);
   const task = await getTaskOrThrow(deps.taskStore, taskId);
-  const { lanes: approveLanes, declared: approveDeclared } = await laneContext(deps.taskStore, taskId);
+  const { lanes: approveLanes, declared: approveDeclared, degraded: approveDegraded } = await laneContext(deps.taskStore, taskId);
+  if (approveDegraded) conflict("approve-plan", task);
   if (
     !isInPlanningLane(approveLanes, String(task.column), approveDeclared)
     || task.status !== "awaiting-approval"
@@ -261,7 +309,8 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
     return toResult(deps.taskStore, taskId);
   }
 
-  const { lanes: retryLanes, declared: retryDeclared } = await laneContext(deps.taskStore, taskId);
+  const { lanes: retryLanes, declared: retryDeclared, degraded: retryDegraded } = await laneContext(deps.taskStore, taskId);
+  if (retryDegraded) conflict("retry", task);
   if (
     isInPlanningLane(retryLanes, String(task.column), retryDeclared) &&
     (RETRYABLE_TRIAGE_STATUSES.has(String(task.status)) || (typeof task.stuckKillCount === "number" && task.stuckKillCount > 0))

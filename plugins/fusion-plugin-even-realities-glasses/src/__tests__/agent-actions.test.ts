@@ -606,3 +606,68 @@ describe("a legacy id is not a destination once the workflow speaks columns", ()
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-00:35 (PR #2607 review — sixth finding):
+
+DEGRADED RESOLUTION LOOKS EXACTLY LIKE THE DEFAULT BOARD. `resolveWorkflowIrForTask` is TOTAL by
+design: a missing workflow definition or a failed read silently returns the DEFAULT coding IR. So a
+card on a CUSTOM board whose definition could not be loaded resolved to `todo`/`in-progress`, and
+these actions rejected a valid custom planning card or moved it to a column its own workflow does not
+declare.
+
+`undefined` lanes cannot express this — that means "no workflow at all", where the legacy ids ARE the
+answer. This is the third state: "this board HAS a vocabulary and we could not read it", where acting
+on someone else's vocabulary is the one thing we must not do.
+*/
+function createDegradedDeps(task: FakeTask) {
+  const base = createDeps(task);
+  const selection = { workflowId: "wf-custom", stepIds: [] };
+  return {
+    ...base,
+    taskStore: {
+      ...base.taskStore,
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      // The definition is GONE — the exact state the resolver papers over with the default IR.
+      getWorkflowDefinition: async () => undefined,
+    },
+  };
+}
+
+describe("a card whose custom workflow cannot be read is refused, not treated as default", () => {
+  it("refuses start-work rather than moving to the DEFAULT board's wip column", async () => {
+    // Pre-fix: lanes resolved to the default coding IR, so this moved the card to `in-progress` —
+    // a column the custom workflow may not declare at all.
+    const deps = createDegradedDeps(makeTask({ column: "backlog", status: null }));
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses approve-plan the same way", async () => {
+    const deps = createDegradedDeps(makeTask({ column: "backlog", status: "awaiting-approval" }));
+
+    await expect(approvePlan({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does NOT refuse when the workflow resolves properly (the paired positive)", async () => {
+    // "Refuse on degraded" must not become "refuse whenever a selection exists".
+    const deps = createResolvingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+
+  it("does NOT refuse a store that cannot answer at all (the migration case)", async () => {
+    // No workflow readers means "no workflow at all", where the legacy ids are the answer.
+    // Refusing here would break every pre-U11 board instead of protecting a custom one.
+    const deps = createDeps(makeTask({ column: "todo", status: null }));
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+  });
+});
