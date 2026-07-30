@@ -119,22 +119,32 @@ Widen the read and they become reachable for the first time. `recoverMergeableRe
 one of them. **The sweep would have found the cards and refused them** — strictly worse than not finding
 them, because it looks fixed.
 
-Measured across `self-healing.ts`: **6 sweeps hold both a literal column query and an unwired lane guard**,
-and 30 hold a literal query with no such guard.
+Measured across `self-healing.ts`: **4 sweeps hold both a literal column query and a genuinely unwired lane
+guard**; 32 hold a literal query with no such guard.
 
 ```text
-  finalizeNoOpReviewTasks                    getTaskMergeBlocker
-  recoverReviewTasksWithFailedPreMergeSteps  getTaskMergeBlocker ×2
-  recoverOrphanOnlyScopeViolations           getTaskHardMergeBlocker
-  recoverPostDoneNonContinuableWedge         getTaskHardMergeBlocker
-  recoverCompletionHandoffLimbo              getTaskMergeBlocker
-  recoverAlreadyMergedReviewTasks            getTaskHardMergeBlocker   (converted — guard now wired)
+  finalizeNoOpReviewTasks             getTaskMergeBlocker
+  recoverOrphanOnlyScopeViolations    getTaskHardMergeBlocker
+  recoverPostDoneNonContinuableWedge  getTaskHardMergeBlocker
+  recoverCompletionHandoffLimbo       getTaskMergeBlocker
 ```
 
-The last row is the cautionary one: I converted that sweep's query two commits before noticing its guard,
-so for two commits it found renamed-board cards and declined them. The scan is cheap — for each sweep, grep
-its body for a lane-sensitive helper called without a resolved set — and it must run **before** the query is
-widened, not after.
+**That number was 6 in the first version of this doc, and both extra rows were my scanner lying.** Worth
+recording, because the scan is the thing the next worker will re-run:
+
+- `recoverAlreadyMergedReviewTasks` was reported unwired **after I had wired it** — the options object sits
+  on the call's *last* line and the check read only the *first*. A multi-line call needs its whole span.
+- `recoverReviewTasksWithFailedPreMergeSteps` was reported with a second unwired guard that is **prose
+  inside a doc comment** (`"because getTaskMergeBlocker() correctly blocks incomplete steps"`).
+
+Both are the same failure this program keeps documenting about the census: **an instrument that matches
+syntax, read as if it measured meaning.** I published 6, corrected to 5, and only reached 4 by re-checking
+the correction itself. Re-run the scan with the span-aware and comment-skipping form, and spot-check each
+row against the source before acting on it.
+
+The scan must also run **before** the query is widened, not after: I converted
+`recoverAlreadyMergedReviewTasks` two commits before noticing its guard, so for two commits it found
+renamed-board cards and declined them.
 
 `getTaskHardMergeBlocker` was the blind spot for four of the six: it is a *wrapper*, it had no lane
 parameter at all, and every one of its callers sat behind a literal query. Nothing exercised it.
