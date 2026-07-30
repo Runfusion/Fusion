@@ -53,8 +53,8 @@ const SEAMS: ReadonlyArray<{ line: number; turnsOn: string }> = [
   { line: 1395, turnsOn: "records `workflowId` on the emitted move payload" },
 ];
 
-/** Every `useWorkflow` reference in the file, via the AST so comments cannot inflate the count. */
-function useWorkflowReferences(): number {
+/** Parse `moves.ts` once. Comments are absent from the tree, which is the whole point. */
+function parseMoves(): ts.SourceFile {
   const source = readFileSync(MOVES_PATH, "utf-8");
   const sf = ts.createSourceFile(MOVES_PATH, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
@@ -72,7 +72,12 @@ function useWorkflowReferences(): number {
     */
     throw new Error(`could not parse moves.ts: ${ts.flattenDiagnosticMessageText(parseErrors[0]!.messageText, " ")}`);
   }
+  return sf;
+}
 
+/** Every `useWorkflow` reference, declaration excluded, so the number is "reads". */
+function useWorkflowReferences(): number {
+  const sf = parseMoves();
   let count = 0;
   const visit = (node: ts.Node): void => {
     // Identifier references only: the declaration itself is excluded so the number is "reads".
@@ -110,10 +115,28 @@ describe("the move-path workflow flag (U12's actual completion criterion)", () =
     object directly, the flip would move five behaviours and leave one behind — and nothing else in
     the suite would notice, because both states are individually valid.
     */
-    const source = readFileSync(MOVES_PATH, "utf-8");
-    const declarations = source.match(/const\s+useWorkflow\s*=/g) ?? [];
+    /*
+    FNXC:WorkflowColumns 2026-07-30-22:00 (PR #2639 review — greptile, and it is the same defect one
+    level up): these were `toContain` substring checks against raw source, so they matched text in a
+    comment or a dead branch just as happily as real code. A test about structural drift that cannot
+    see structure is the exact failure this PR is documenting. Asserted on the AST now.
+    */
+    const sf = parseMoves();
+    const declarations: ts.VariableDeclaration[] = [];
+    const findDeclarations = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "useWorkflow") {
+        declarations.push(node);
+      }
+      ts.forEachChild(node, findDeclarations);
+    };
+    findDeclarations(sf);
+
     expect(declarations).toHaveLength(1);
-    expect(source).toContain("const useWorkflow = isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove);");
+    // And it is initialized from the raw compatibility-flag reader, not something else.
+    const initializer = declarations[0]!.initializer;
+    expect(initializer && ts.isCallExpression(initializer)).toBe(true);
+    const callee = (initializer as ts.CallExpression).expression;
+    expect(ts.isIdentifier(callee) ? callee.text : undefined).toBe("isWorkflowColumnsCompatibilityFlagEnabled");
   });
 
   it("still has the inline flag-OFF branch that the agreed sequencing DELETES", () => {
@@ -126,8 +149,30 @@ describe("the move-path workflow flag (U12's actual completion criterion)", () =
     the deletion step has a test naming the plan. It is deliberately a source assertion: the branch's
     behaviour is what the equivalence proof in seam 3 must cover, and that proof does not exist yet.
     */
-    const source = readFileSync(MOVES_PATH, "utf-8");
-    expect(source).toContain("Flag-OFF legacy inline side effects");
+    /*
+    Structural, not a comment match (PR #2639 review). The previous assertion looked for the string
+    "Flag-OFF legacy inline side effects" — which is a COMMENT. Deleting the entire legacy branch
+    while leaving its header comment in place would have passed, and the comment is exactly the kind
+    of prose this program deliberately keeps after deleting code.
+
+    What actually matters is that some `if (useWorkflow)` still has an ELSE: that else IS the legacy
+    inline path, and its existence is what the delete-with-the-branch sequencing depends on.
+    */
+    const sf = parseMoves();
+    let seamsWithElse = 0;
+    const findIfElse = (node: ts.Node): void => {
+      if (
+        ts.isIfStatement(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "useWorkflow" &&
+        node.elseStatement !== undefined
+      ) {
+        seamsWithElse++;
+      }
+      ts.forEachChild(node, findIfElse);
+    };
+    findIfElse(sf);
+    expect(seamsWithElse).toBeGreaterThan(0);
   });
 
   it("names the second reader that must flip atomically with this one", () => {
@@ -137,7 +182,19 @@ describe("the move-path workflow flag (U12's actual completion criterion)", () =
     one without the other either evaluates workflow move policies whose result is ignored, or
     validates against a preflight that was never computed.
     */
-    const source = readFileSync(MOVES_PATH, "utf-8");
-    expect(source).toContain("movePolicyPreflight");
+    /*
+    An IDENTIFIER reference, not a substring (PR #2639 review): this symbol is discussed by name in
+    the comments around the preflight, so a text match proved nothing about whether the code still
+    consumes it — and "moves.ts consumes the preflight" is the entire reason the two readers must
+    flip together.
+    */
+    const sf = parseMoves();
+    let references = 0;
+    const findReferences = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && node.text === "movePolicyPreflight") references++;
+      ts.forEachChild(node, findReferences);
+    };
+    findReferences(sf);
+    expect(references).toBeGreaterThan(0);
   });
 });
