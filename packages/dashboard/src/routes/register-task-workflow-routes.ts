@@ -220,6 +220,26 @@ function resolveMoveOrderIndices(
   };
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-14:30 (fleet: register-task-workflow-routes.ts):
+THE REVIEW-LANE SIBLING of the three resolvers above, and it completes this file's OWN pattern rather
+than adding an abstraction: `resolveReboundColumnForTask` (hold), `resolveIntakeColumnForTask` (intake)
+and `resolveWipColumnForTask` (wip) already exist in exactly this shape, and ten route guards needed the
+fourth. Adding it beside its siblings is what stops the fourth role being inlined ten times — the
+copy-paste drift the first three were extracted to remove.
+
+`mergeOrchestration` is the trait, matching core's `resolveLifecycleColumns().review`, and the legacy
+`in-review` stays the fallback for an unresolvable or column-less IR, so `builtin:coding` is unchanged.
+*/
+async function resolveReviewColumnForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return columnsWithFlag(ir, "mergeOrchestration")[0] ?? "in-review";
+  } catch {
+    return "in-review";
+  }
+}
+
 async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promise<string> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
@@ -797,7 +817,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     task: Task,
     wake: InReviewUserCommentReengagementInput,
   ): Promise<InReviewUserCommentReengagementResult> {
-    if (task.column !== "in-review") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-14:35 (fleet): the board's review lane. With the literal, a
+       user comment on a review card of a renamed board was suppressed as "not-in-review" — and that string
+       is returned by the API, so the operator was told their own review card was not in review. */
+    if (task.column !== await resolveReviewColumnForTask(scopedStore, task.id)) {
       return { task, reengaged: false, suppressedReason: "not-in-review" };
     }
     if (task.sessionFile) {
@@ -3780,8 +3803,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!task) {
         throw notFound(`Task ${req.params.id} not found`);
       }
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to recover branch binding");
+      const reviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      if (task.column !== reviewColumn) {
+        throw badRequest(`Task must be in the '${reviewColumn}' column to recover branch binding`);
       }
 
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
@@ -4098,7 +4122,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggerDetail: "task-comment",
       };
       if (normalizedAuthor === "user") {
-        if (task.column === "in-review" && !task.sessionFile) {
+        if (task.column === await resolveReviewColumnForTask(scopedStore, task.id) && !task.sessionFile) {
           const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
           res.json(reengagedTask);
           return;
@@ -4665,7 +4689,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
       };
-      if (task.column === "in-review" && !task.sessionFile) {
+      if (task.column === await resolveReviewColumnForTask(scopedStore, task.id) && !task.sessionFile) {
         const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
         res.json(reengagedTask);
         return;
@@ -5768,7 +5792,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      if (task.column === await resolveReviewColumnForTask(scopedStore, task.id)) {
         updatedTask = (await reengageInReviewTaskForUserComment(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: steeringCommentId ? [steeringCommentId] : undefined,
@@ -5803,8 +5827,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!prInfo) {
         throw badRequest("Task must have a linked pull request before PR feedback can be addressed");
       }
-      if (task.column !== "in-review" && task.column !== "in-progress") {
-        throw badRequest("PR feedback can only be addressed for in-review or in-progress tasks");
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-14:40 (fleet): both lanes resolved, and the 400 message
+         now names the board's actual columns — telling an operator their card must be "in-review" on a
+         board with no such column is a worse failure than the guard being wrong. */
+      const feedbackReviewColumn = await resolveReviewColumnForTask(scopedStore, task.id);
+      const feedbackWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
+      if (task.column !== feedbackReviewColumn && task.column !== feedbackWipColumn) {
+        throw badRequest(`PR feedback can only be addressed for ${feedbackReviewColumn} or ${feedbackWipColumn} tasks`);
       }
 
       /*
