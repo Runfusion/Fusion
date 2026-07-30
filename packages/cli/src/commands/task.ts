@@ -591,11 +591,28 @@ export async function runTaskList(projectName?: string) {
     if (colTasks.length === 0) continue;
 
     const label = COLUMN_LABELS[col];
-    const dot =
-      col === "triage" ? "●" :
-      col === "todo" ? "●" :
-      col === "in-progress" ? "●" :
-      col === "in-review" ? "●" : "○";
+    /*
+    FNXC:CliBoardGlyph 2026-07-29-22:40 (lifecycle-column vocabulary):
+    All four non-terminal columns rendered the SAME glyph, so the four id comparisons
+    were only ever asking "is this column terminal?". Naming `triage` here made it a
+    lifecycle-vocabulary site for no behavioural reason — the merged Planning column
+    dropped that id, and this comparison silently stopped matching while the output
+    stayed correct by accident (the fallthrough gave it `●` anyway).
+
+    Asking the terminal question directly removes the vocabulary dependency. It is
+    behaviour-identical ONLY because this loop iterates the legacy `COLUMNS` constant
+    (types/board.ts:27 — exactly the six ids), so `col` can never be a custom id. Worth
+    stating because the two forms DIVERGE outside that set: the old chain fell through
+    to `○` for an unrecognised id, this returns `●`. If this ever iterates
+    workflow-resolved columns, that difference becomes live and the right answer is a
+    trait lookup, not this.
+
+    NOT claimed as trait-resolved, and the deeper bug is left alone: because the loop
+    iterates the legacy enum, a card in a workflow-renamed column is not rendered AT
+    ALL. That is the R8/U10 surface change (no surface derives its column set from the
+    legacy enum) and a far bigger fix than this glyph.
+    */
+    const dot = col === "done" || col === "archived" ? "○" : "●";
 
     console.log(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
