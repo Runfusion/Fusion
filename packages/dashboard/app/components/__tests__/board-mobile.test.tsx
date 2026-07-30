@@ -90,14 +90,23 @@ function getMainMobileSection(css: string): string {
 }
 
 describe("mobile board magnetic column snap wiring (FN-8235)", () => {
-  it("shares the mobile scroll-end hook across legacy, selected, and aggregate live board renders", () => {
+  /*
+  FNXC:WorkflowColumns 2026-07-30-08:00:
+  Re-pinned to TWO board renders, not three. The third was the LEGACY board, deleted by U12/R9 —
+  `<main className="board" id="board" ref={setBoardRef}>` no longer appears in Board.tsx at all, so
+  both the count of 3 and the `toContain` for that markup were pinning removed code. The two that
+  remain are the selected and aggregate workflow-column renders, and the point of this guard is that
+  BOTH share the one scroll-snap hook, which still holds.
+  */
+  it("shares the mobile scroll-end hook across the selected and aggregate live board renders", () => {
     const boardSource = readAppFile("components/Board.tsx");
 
     expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
     expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
-    expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(3);
+    expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(2);
     expect(boardSource.match(/className="board board-workflow-columns"/g)).toHaveLength(2);
-    expect(boardSource).toContain('<main className="board" id="board" ref={setBoardRef}>');
+    // The legacy `<main className="board">` render is gone; assert it stays gone.
+    expect(boardSource).not.toContain('<main className="board" id="board" ref={setBoardRef}>');
   });
 });
 
