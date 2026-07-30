@@ -59,7 +59,6 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/assigned-task-ranking.ts": 1,
   "packages/core/src/async-mission-store-queries.ts": 2,
   "packages/core/src/async-mission-store.ts": 2,
-  "packages/core/src/blocker-fanout.ts": 1,
   "packages/core/src/duplicate-intake.ts": 1,
   "packages/core/src/eval-signal-collector.ts": 1,
   "packages/core/src/live-agent-count.ts": 1,
@@ -71,12 +70,10 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/task-store/async-comments-attachments.ts": 8,
   "packages/core/src/task-store/audit-ops.ts": 1,
   "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
-  "packages/core/src/task-store/branch-group-ops.ts": 1,
   "packages/core/src/task-store/lifecycle-ops.ts": 1,
   "packages/core/src/task-store/moves.ts": 1,
   "packages/core/src/task-store/symbol-locks.ts": 1,
   "packages/core/src/task-store/task-id-integrity.ts": 1,
-  "packages/core/src/task-store/task-store-helpers.ts": 1,
   "packages/core/src/task-store/update-task-deps.ts": 1,
 };
 
@@ -102,6 +99,15 @@ const AUDITED_SQL_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/task-store/async-lifecycle.ts": 1,
   "packages/core/src/task-store/async-search.ts": 1,
   "packages/core/src/task-store/async-self-healing.ts": 1,
+  /*
+  FNXC:ArchivedGateParity 2026-07-30-16:20:
+  Newly VISIBLE, not newly written. `branch-group-ops.ts:58` binds the table first
+  (`const table = schema.project.tasks`) and the scan previously required a literal `<x>.tasks`
+  receiver, so this predicate was never audited — the inventory claimed six files while seven
+  existed. Its TypeScript half was converted by #2745; this SQL half still compares the raw string,
+  which is precisely the split-brain this file exists to catch and could not see.
+  */
+  "packages/core/src/task-store/branch-group-ops.ts": 1,
   "packages/core/src/task-store/branch-and-pr-entities.ts": 2,
   "packages/core/src/task-store/task-mutation-ops.ts": 1,
 };
@@ -192,6 +198,25 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
       const lineOf = (node: import("typescript").Node): number =>
         sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
 
+      /*
+      FNXC:ArchivedGateParity 2026-07-30-16:20:
+      Locals bound to the tasks table — `const table = schema.project.tasks` — so an aliased Drizzle
+      predicate is not invisible to the SQL scan below. Collected in a first pass because the binding
+      can appear after its uses inside nested closures.
+      */
+      const tasksAliases = new Set<string>();
+      const collectAliases = (node: import("typescript").Node): void => {
+        if (ts.isVariableDeclaration(node)
+          && ts.isIdentifier(node.name)
+          && node.initializer
+          && ts.isPropertyAccessExpression(node.initializer)
+          && node.initializer.name.text === "tasks") {
+          tasksAliases.add(node.name.text);
+        }
+        ts.forEachChild(node, collectAliases);
+      };
+      collectAliases(sf);
+
       const visit = (node: import("typescript").Node): void => {
         /*
         TS half: `<something>.column === "archived"` (or `!==`). Keyed on the PROPERTY being named
@@ -238,16 +263,30 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
         SQL half: `eq(<...>.tasks.column, "archived")` / `ne(...)`. Drizzle builds the predicate as a
         call, so this is a CallExpression whose first argument is the tasks.column Column object and
         whose second is the literal.
+
+        FNXC:ArchivedGateParity 2026-07-30-16:20:
+        ALIASED TABLES COUNT TOO. This required the receiver to be literally `<x>.tasks`, so the very
+        common Drizzle shape
+
+            const table = schema.project.tasks;
+            ne(table.column, "archived")
+
+        was INVISIBLE to this scan — `branch-group-ops.ts:58` sat unaudited while the inventory
+        claimed six files. A parity guard that cannot see one of the encodings reports agreement it
+        never checked, which is the failure mode this whole file exists to prevent. Alias bindings are
+        now collected per file and accepted as the receiver.
         */
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
           const fn = node.expression.text;
           if ((fn === "eq" || fn === "ne") && node.arguments.length === 2) {
             const [columnArg, valueArg] = node.arguments;
+            const receiverIsTasks = (expr: ts.Expression): boolean =>
+              (ts.isPropertyAccessExpression(expr) && expr.name.text === "tasks")
+              || (ts.isIdentifier(expr) && tasksAliases.has(expr.text));
             const isTasksColumn = columnArg
               && ts.isPropertyAccessExpression(columnArg)
               && columnArg.name.text === "column"
-              && ts.isPropertyAccessExpression(columnArg.expression)
-              && columnArg.expression.name.text === "tasks";
+              && receiverIsTasks(columnArg.expression);
             if (isTasksColumn && valueArg && ts.isStringLiteral(valueArg) && valueArg.text === "archived") {
               sqlSites.push({ file, line: lineOf(node) });
             }
