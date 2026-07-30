@@ -79,3 +79,39 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
   return flags ? flags.hold === true : columnId === "todo";
 }
+
+/** Legacy pre-implementation id pair, used only when a column has no resolved traits. */
+const LEGACY_FIELD_EDITABLE_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
+
+/**
+ * May a card's title/description be edited in this column?
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — one affordance, two components):
+ * Editing belongs to PRE-IMPLEMENTATION lanes: the card has no session, no worktree, and no plan
+ * being executed against the text. Any terminal, executing or review trait VETOES it even when
+ * `intake`/`hold` is also present — a column carrying both is still one where work is underway, and
+ * rewriting a description out from under a running plan is the failure being prevented.
+ *
+ * Extracted because `TaskDetailModal` resolved this from traits (U10/R8) while `TaskCard` kept a
+ * hardcoded `{triage, todo}` set with NO trait path at all, even though `taskColumnFlags` was already
+ * in scope there. On a renamed board the operator could edit a task's title in the detail modal but
+ * the pencil button was absent from its card. One affordance living in two components with one of
+ * them converted is the FN-6115 -> FN-6118 -> FN-6123 shape; a shared definition is what stops it
+ * recurring, not a second conversion.
+ */
+export function isFieldEditableColumnRole(
+  flags: (ColumnRoleFlags & {
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+  }) | undefined,
+  columnId: string,
+): boolean {
+  if (!flags) return LEGACY_FIELD_EDITABLE_COLUMN_IDS.has(columnId);
+  if (flags.complete || flags.archived || flags.countsTowardWip || flags.mergeBlocker || flags.humanReview) {
+    return false;
+  }
+  return flags.intake === true || flags.hold === true;
+}

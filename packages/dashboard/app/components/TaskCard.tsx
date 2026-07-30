@@ -34,6 +34,7 @@ import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import { isTaskStuck } from "../utils/taskStuck";
+import { isFieldEditableColumnRole } from "../utils/columnRoles";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import { getRevertOfId, isTaskReverted } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
@@ -309,7 +310,6 @@ function isSameAgentIdentity(
 
 // Issue 1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (which are not members and correctly resolve to false).
-const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
 
 const ACTIVE_MERGE_STATUSES = new Set(
   [...ACTIVE_STATUSES].filter((status) => ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(status)),
@@ -1498,7 +1498,15 @@ function TaskCardComponent({
   const isDraggable = !disableDrag && !queued && !isPaused && !isEditing && !isArchived && !isCoarsePointer; // Disable drag during edit/archived, host embedding, or touch
 
   // Check if this card can be edited inline
-  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — R8 drift conversion):
+  THE ASYMMETRY: this read a hardcoded `{triage, todo}` set with no trait path, while
+  TaskDetailModal resolved the SAME affordance from column traits (U10/R8). So on a renamed board an
+  operator could edit a task's title in the detail modal but the pencil was missing from its card,
+  and after #2515 the `triage` half was dead weight. `taskColumnFlags` was already in scope here —
+  the card simply never asked.
+  */
+  const canEdit = isFieldEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const githubTrackedIssue = task.githubTracking?.issue;
   const hasGithubTrackingLink = Boolean(githubTrackedIssue);
   const isGitHubImportedTask = task.sourceType === "github_import";

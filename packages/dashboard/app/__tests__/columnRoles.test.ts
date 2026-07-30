@@ -20,7 +20,7 @@ LEGACY_….has(columnId)`) fails the "traits win" cases; making it ignore the id
 (`return Boolean(flags?.intake)`) fails the degraded cases.
 */
 import { describe, expect, it } from "vitest";
-import { isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
+import { isFieldEditableColumnRole, isIntakeColumnRole, isPreImplementationColumnRole } from "../utils/columnRoles";
 
 describe("isIntakeColumnRole", () => {
   it("uses the intake TRAIT when the column resolved", () => {
@@ -69,5 +69,42 @@ describe("isPreImplementationColumnRole", () => {
     expect(isPreImplementationColumnRole(undefined, "todo")).toBe(true);
     expect(isPreImplementationColumnRole(undefined, "triage")).toBe(true);
     expect(isPreImplementationColumnRole(undefined, "in-review")).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:15 (U12 — one affordance, two components):
+FIELD EDITABILITY. TaskDetailModal resolved this from traits in U10/R8; TaskCard kept a hardcoded
+`{triage, todo}` set with no trait path, so a renamed board lost the pencil on the card while the
+modal kept it — the same one-surface-missed shape as the FN-6115 chevron chain.
+
+The VETO cases are the ones worth pinning: a column can legally carry `hold` AND a WIP or review
+trait, and a plain `intake || hold` check would let an operator rewrite a description while a session
+executes against it.
+*/
+describe("isFieldEditableColumnRole", () => {
+  it("allows editing in a renamed pre-implementation column", () => {
+    expect(isFieldEditableColumnRole({ intake: true }, "backlog")).toBe(true);
+    expect(isFieldEditableColumnRole({ hold: true }, "parked")).toBe(true);
+  });
+
+  it("VETOES editing when a terminal, executing or review trait is also present", () => {
+    expect(isFieldEditableColumnRole({ hold: true, countsTowardWip: true }, "parked")).toBe(false);
+    expect(isFieldEditableColumnRole({ intake: true, mergeBlocker: true }, "backlog")).toBe(false);
+    expect(isFieldEditableColumnRole({ intake: true, humanReview: true }, "backlog")).toBe(false);
+    expect(isFieldEditableColumnRole({ intake: true, complete: true }, "backlog")).toBe(false);
+    expect(isFieldEditableColumnRole({ intake: true, archived: true }, "backlog")).toBe(false);
+  });
+
+  it("refuses a resolved column with no pre-implementation trait", () => {
+    expect(isFieldEditableColumnRole({ countsTowardWip: true }, "building")).toBe(false);
+  });
+
+  it("falls back to the legacy id pair when traits are absent", () => {
+    // First paint, and what every caller got before the conversion.
+    expect(isFieldEditableColumnRole(undefined, "todo")).toBe(true);
+    expect(isFieldEditableColumnRole(undefined, "triage")).toBe(true);
+    expect(isFieldEditableColumnRole(undefined, "backlog")).toBe(false);
+    expect(isFieldEditableColumnRole(undefined, "in-progress")).toBe(false);
   });
 });
