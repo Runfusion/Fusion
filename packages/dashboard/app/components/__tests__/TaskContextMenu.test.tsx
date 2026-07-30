@@ -376,3 +376,54 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
     expect(model("backlog", { intake: true })).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-08:00 (U12 — the last `triage` column guard):
+THE INVERSION. `isPreExecutionHoldColumn` ORed the legacy id with the traits unconditionally, so a
+resolved column merely NAMED `triage` answered true even when its own traits said work was underway
+— offering Plan, which re-plans, on a card that is already executing.
+
+The existing cases here all pass a column with no flags or with hold/intake set, so every one of them
+agrees under both the old and new form. That is why this defect survived the file's earlier
+conversion: nothing exercised a resolved column whose name and traits disagree.
+
+REVERT CHECK: restore the `column === "triage" ||` prefix and the first case fails — Plan reappears
+on a mid-flight card.
+*/
+describe("pre-execution hold resolves traits, not the column's name", () => {
+  it("does NOT treat a mid-flight column NAMED `triage` as a planning target", () => {
+    const model = buildTaskActionMenuModel({
+      task: makeTask({ column: "triage" }),
+      t,
+      columnLabel: columnLabel as any,
+      currentColumnFlags: { intake: false, hold: false, countsTowardWip: true } as any,
+      onPlan: vi.fn(),
+    } as never);
+    expect(model.actions.map((a: { id: string }) => a.id)).not.toContain("plan");
+  });
+
+  it("still offers Plan on a RENAMED hold column", () => {
+    // The narrowing guard: traits decide, so a board that never uses the legacy name still works.
+    const model = buildTaskActionMenuModel({
+      task: makeTask({ column: "backlog" as never }),
+      t,
+      columnLabel: columnLabel as any,
+      currentColumnFlags: { intake: true, hold: true } as any,
+      onPlan: vi.fn(),
+    } as never);
+    expect(model.actions.map((a: { id: string }) => a.id)).toContain("plan");
+  });
+
+  it("keeps the flagless degraded answer for `triage` and withholds it for flagless `todo`", () => {
+    /*
+    The asymmetry the file documents: with no flags, `triage` is the only pre-execution hold. A
+    flagless `todo` must NOT offer Plan, because re-planning an already-planned card is not
+    recoverable by the operator.
+    */
+    const forColumn = (column: string) =>
+      buildTaskActionMenuModel({ task: makeTask({ column: column as never }), t, columnLabel: columnLabel as any, onPlan: vi.fn() } as never)
+        .actions.map((a: { id: string }) => a.id);
+    expect(forColumn("triage")).toContain("plan");
+    expect(forColumn("todo")).not.toContain("plan");
+  });
+});

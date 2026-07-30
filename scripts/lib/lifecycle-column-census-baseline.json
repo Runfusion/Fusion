@@ -1,10 +1,10 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "totals": {
-    "column": 769,
+    "column": 768,
     "role": 5,
     "status": 187,
-    "deliberate": 12
+    "deliberate": 13
   },
   "byColumnId": {
     "done": 201,
@@ -12,7 +12,7 @@
     "in-review": 209,
     "archived": 148,
     "todo": 60,
-    "triage": 5
+    "triage": 4
   },
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
@@ -24,9 +24,9 @@
     "packages/dashboard/src/routes/register-task-workflow-routes.ts": 20,
     "packages/core/src/store.ts": 12,
     "packages/engine/src/project-engine.ts": 12,
-    "packages/dashboard/app/components/TaskContextMenu.tsx": 10,
     "packages/engine/src/mission-execution-loop.ts": 10,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
+    "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
     "packages/dashboard/src/github-tracking-comments.ts": 9,
     "packages/dashboard/src/github-tracking-reconciler.ts": 9,
     "packages/engine/src/notification/notification-service.ts": 9,

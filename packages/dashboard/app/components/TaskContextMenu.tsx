@@ -176,7 +176,31 @@ export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenu
   Same shape, different degraded answer: the trait path is identical and the fallbacks are not
   interchangeable. Kept separate with the difference recorded, rather than made to look shared.
   */
-  return column === "triage" || flags?.intake === true || flags?.hold === true;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-08:00 (U12 — the LAST `triage` column guard):
+  FLAGS-FIRST, id only as the degraded answer. It used to OR the legacy id with the traits
+  UNCONDITIONALLY, which is not a fallback: a resolved column that happens to be named `triage` but
+  whose traits say it is mid-flight answered true, offering Plan on a card that is already executing.
+
+  The degraded set stays {triage} ALONE — deliberately not the {todo, triage} used by
+  `isPreImplementationColumnRole`, for the reason recorded above: that helper drives the
+  preserve-progress prompt where a flagless `todo` should prompt, while this drives the Plan
+  affordance where a flagless `todo` must not offer to re-plan a possibly-planned card.
+
+  Behaviour delta is exactly the inversion. Flags absent: unchanged (`column === "triage"`). Flags
+  present and intake/hold: unchanged (true). Flags present, name `triage`, traits mid-flight: was
+  true, now false — which is the defect.
+
+  DELIBERATE-LITERAL: the surviving `triage` is the DEGRADED answer, not an unconverted guard, and it
+  is the last `triage` comparison in production source. Converting it is not available — there is no
+  trait to read when `flags` is undefined, which happens during first paint and for a card in a column
+  its workflow no longer declares. Deleting it would silently withdraw Plan from exactly the stranded
+  cards that need re-planning most.
+
+  So the census reaching zero for `triage` means "no unconverted guards remain", not "the string is
+  gone". Recorded here rather than achieved by deleting a fallback to move a number.
+  */
+  return flags ? (flags.intake === true || flags.hold === true) : column === "triage";
 }
 
 
