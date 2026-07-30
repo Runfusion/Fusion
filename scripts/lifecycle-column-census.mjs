@@ -117,22 +117,6 @@ if (compare) {
   const regressions = ["column", "role", "status", "deliberate"].filter(
     (kind) => text.totals[kind] > summary.totals[kind],
   );
-  /*
-The query ratchet, same both-directions rule as the guard ratchet above and pinned separately.
-Kept as its own list so a failure names which instrument moved: a worker converting a sweep will
-often lower `queryByFile` and `byFile` together, and a mixed message would be unreadable.
-*/
-const baselineQueryByFile = new Map(Object.entries(baseline.queryByFile ?? {}));
-const currentQueryByFile = new Map(summary.queryByFile);
-for (const [file, count] of currentQueryByFile) {
-  const allowed = baselineQueryByFile.get(file) ?? 0;
-  if (count > allowed) regressions.push({ file, count, allowed, kind: "query" });
-  else if (count < allowed) stale.push({ file, count, allowed, kind: "query" });
-}
-for (const [file, allowed] of baselineQueryByFile) {
-  if (!currentQueryByFile.has(file) && allowed > 0) stale.push({ file, count: 0, allowed, kind: "query" });
-}
-
 if (regressions.length > 0) {
     console.error(
       `\nlifecycle-column-census --compare: the regex found MORE than the parser for ${regressions.join(", ")}.\n` +
@@ -175,6 +159,39 @@ deleted or renamed file leaving its allowance behind is the same hole.
 for (const [file, allowed] of baselineByFile) {
   if (!currentByFile.has(file) && allowed > 0) stale.push({ file, count: 0, allowed });
 }
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-06:10 (PR #2650 review — greptile):
+MOVED OUT OF THE `--compare` BRANCH, where it could not work in either mode.
+
+Inside `--compare` it read `baseline`, `regressions` and `stale` — all declared
+BELOW, in the `--strict` section — so the documented `--compare` command died with
+`ReferenceError: Cannot access 'baseline' before initialization` before printing
+anything. And `--strict` on its own never reached the block at all, so the query
+ratchet it adds was enforcing nothing in the one mode that gates.
+
+Reproduced both halves before moving it: `--compare` threw, and `--strict` ran to
+completion without a single query comparison.
+
+It belongs here, after the strict guards are declared and beside the guard ratchet
+whose both-directions rule it mirrors.
+*/
+/*
+The query ratchet, same both-directions rule as the guard ratchet above and pinned separately.
+Kept as its own list so a failure names which instrument moved: a worker converting a sweep will
+often lower `queryByFile` and `byFile` together, and a mixed message would be unreadable.
+*/
+const baselineQueryByFile = new Map(Object.entries(baseline.queryByFile ?? {}));
+const currentQueryByFile = new Map(summary.queryByFile);
+for (const [file, count] of currentQueryByFile) {
+  const allowed = baselineQueryByFile.get(file) ?? 0;
+  if (count > allowed) regressions.push({ file, count, allowed, kind: "query" });
+  else if (count < allowed) stale.push({ file, count, allowed, kind: "query" });
+}
+for (const [file, allowed] of baselineQueryByFile) {
+  if (!currentQueryByFile.has(file) && allowed > 0) stale.push({ file, count: 0, allowed, kind: "query" });
+}
+
 
 if (regressions.length > 0) {
   console.error("\nlifecycle-column-census --strict: column-guard count ROSE\n");
