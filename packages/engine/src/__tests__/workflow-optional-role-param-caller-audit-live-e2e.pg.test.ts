@@ -24,7 +24,7 @@ stale-link bug turned into a DROPPED-link bug. The four unconverted callers are 
 
 SCOPE, STATED HONESTLY. The behavioural differential is driven end to end: real persisted rows from a
 live PostgreSQL store, the real exported predicate, both call shapes. The CALL-SITE SPLIT is asserted
-against source text, not driven through the heartbeat and self-healing sweeps — reaching all six
+against each module's SYNTAX (parsed, not string-matched), not driven through the heartbeat and self-healing sweeps — reaching all six
 sites needs harnesses I did not build. The audit case says so in its own comment. Its job is to be an
 alarm and a counter: it fails when a new unconverted caller appears AND when someone converts an
 existing one, so the number cannot drift silently in either direction.
@@ -35,6 +35,7 @@ unaffected. Throwaway per-file database; never port 4040.
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import "@fusion/core"; // registers the built-in column traits
 import type { Task, TaskStore } from "@fusion/core";
 
@@ -130,35 +131,52 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
   it("AUDIT — the call-site split for both measured seams is 2-of-6 and 2-of-4", async () => {
     /*
     NOT driven: reaching all six sites needs the heartbeat and self-healing harnesses. Asserted
-    against source text and labelled as such rather than dressed up as an end-to-end result.
+    against each module's SYNTAX and labelled as such.
 
-    An alarm in BOTH directions. A new unconverted caller pushes the count up and fails; converting
-    an existing one pushes it down and also fails, which is deliberate — that is the moment someone
+    FNXC:WorkflowLifecycleColumns 2026-07-31-10:55 (pre-empting PR #2799's review finding):
+    AST, not string splitting. An audit that splits on the callee name and reasons about the following
+    text can be broken — or silently misled — by a formatting-only change, which is the failure mode
+    this whole series is about. Parsing also removes the special case the string version needed for
+    `task-agent-sync.ts`, where the DECLARATION was one of the splits: a declaration is not a call
+    expression, so it is now excluded structurally. Matches the repo's precedent in
+    `core/.../sync-workflow-ir-callsite-allowlist.test.ts`.
+
+    An alarm in BOTH directions. A new unconverted caller pushes the count up and fails; converting an
+    existing one pushes it down and also fails, which is deliberate — that is the moment someone
     should read the three cases above and update this number on purpose.
     */
-    const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
+    const callSitesIn = (relative: string, callee: string): ts.NodeArray<ts.Expression>[] => {
+      const file = join(__dirname, "..", relative);
+      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const found: ts.NodeArray<ts.Expression>[] = [];
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === callee) {
+          found.push(node.arguments);
+        }
+        ts.forEachChild(node, visit);
+      };
+      ts.forEachChild(sf, visit);
+      return found;
+    };
 
-    const parkedSites = [
-      ...read("agent-heartbeat.ts").split("evaluateParkedAgentTaskLink(").slice(1),
-      ...read("self-healing.ts").split("evaluateParkedAgentTaskLink(").slice(1),
-      ...read("scheduler.ts").split("evaluateParkedAgentTaskLink(").slice(1),
-      ...read("task-agent-sync.ts").split("evaluateParkedAgentTaskLink(").slice(1),
+    /** Checked as an options-object PROPERTY NAME, so an unrelated identifier or a comment mentioning
+     *  the option cannot be mistaken for one being passed. */
+    const passes = (option: string) => (args: ts.NodeArray<ts.Expression>): boolean =>
+      args.some((arg) => ts.isObjectLiteralExpression(arg) && arg.properties.some((prop) =>
+        prop.name && ts.isIdentifier(prop.name) && prop.name.text === option));
+
+    const parkedCalls = [
+      ...callSitesIn("agent-heartbeat.ts", "evaluateParkedAgentTaskLink"),
+      ...callSitesIn("self-healing.ts", "evaluateParkedAgentTaskLink"),
+      ...callSitesIn("scheduler.ts", "evaluateParkedAgentTaskLink"),
+      ...callSitesIn("task-agent-sync.ts", "evaluateParkedAgentTaskLink"),
     ];
-    /* `task-agent-sync.ts` also DECLARES the function, so its export line is one of the splits; the
-       declaration is not a call site and is excluded by requiring an options object to follow. */
-    const parkedCalls = parkedSites.filter((s) => s.trimStart().startsWith("{"));
-    const parkedConverted = parkedCalls.filter((s) => s.slice(0, s.indexOf("})")).includes("parkedColumns"));
+    expect(parkedCalls).toHaveLength(6);
+    expect(parkedCalls.filter(passes("parkedColumns"))).toHaveLength(2);
 
-    expect(parkedCalls.length).toBe(6);
-    expect(parkedConverted.length).toBe(2);
-
-    const leaseCalls = read("self-healing.ts").split("shouldHoldActiveFileScopeLease(").slice(1);
-    const leaseConverted = leaseCalls.filter((s) => {
-      const w = s.slice(0, s.indexOf("})"));
-      return w.includes("isWipColumn") || w.includes("isReviewColumn");
-    });
-
-    expect(leaseCalls.length).toBe(2);
-    expect(leaseConverted.length).toBe(0); // both scheduler sites are converted; both here are not
+    const leaseCalls = callSitesIn("self-healing.ts", "shouldHoldActiveFileScopeLease");
+    expect(leaseCalls).toHaveLength(2);
+    /* Both scheduler call sites are converted; both here are not. */
+    expect(leaseCalls.filter((a) => passes("isWipColumn")(a) || passes("isReviewColumn")(a))).toHaveLength(0);
   });
 });
