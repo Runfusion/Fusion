@@ -166,3 +166,49 @@ describe("legacy planner ids are accepted only when orphaned", () => {
     expect(d.kind).toBe("noop");
   });
 });
+
+/*
+FNXC:MissionFeatureSyncLanes 2026-07-30-05:40 (PR #2602 review — greptile P1):
+A per-role legacy fallback must never claim a column the workflow assigned to a
+DIFFERENT role. Unguarded, a workflow that omits `hold` but names its REVIEW lane
+`todo` got `lane.hold = "todo"`, so a card awaiting merge matched the planner-lane
+branch and its feature was walked BACKWARDS from in-progress to triaged.
+*/
+describe("legacy per-role fallbacks never alias a declared role", () => {
+  /** No hold role, and the REVIEW lane is named with the legacy hold id. */
+  function holdlessTodoIsReviewIr(): WorkflowIr {
+    return {
+      version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Intake", traits: [{ trait: "intake" }] },
+        { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        // `merge` is what makes this resolve as the REVIEW role — see the note above
+        // `todoIsReviewIr` in the sibling suite for why that detail matters.
+        { id: "todo", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }] },
+        { id: "shipped", name: "Complete", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+  }
+
+  it("does NOT walk an in-progress feature back to triaged for a card in the REVIEW lane", async () => {
+    const d = await reconcileMissionFeatureState(
+      storeWith(holdlessTodoIsReviewIr()),
+      task("todo"),
+      feature("in-progress"),
+    );
+
+    // The review role governs: the feature stays in-progress rather than regressing.
+    expect(d.kind).toBe("noop");
+  });
+
+  it("still advances a feature to in-progress from that same REVIEW lane", async () => {
+    // The other side, so "always noop" cannot pass for "correctly not a planner lane".
+    const d = await reconcileMissionFeatureState(
+      storeWith(holdlessTodoIsReviewIr()),
+      task("todo"),
+      feature("triaged"),
+    );
+
+    expect(d.kind === "update" && d.status).toBe("in-progress");
+  });
+});

@@ -78,16 +78,31 @@ export async function reconcileMissionFeatureState(
   silent, which is the exact failure being fixed here.
   */
   const roles = await resolveTaskLifecycleColumns(taskStore, task.id);
+  /*
+  FNXC:MissionFeatureSyncLanes 2026-07-30-05:40 (PR #2602 review — greptile P1):
+  A per-role legacy fallback must NEVER claim a column the workflow assigned to a
+  DIFFERENT role. Unguarded, a workflow that omits `hold` but names its REVIEW lane
+  `todo` got `lane.hold = "todo"` — so a card awaiting merge matched the planner-lane
+  branch and its feature was walked BACKWARDS from in-progress to triaged.
+
+  The fallback exists for a workflow that declares no such role at all; it is not a
+  licence to alias one that does. Same over-reach greptile caught in the plugin gates
+  (#2607) and in the recovery acceptance (#2593) — three variations of "a legacy id is
+  not a role".
+  */
+  const declared = new Set(Object.values(roles ?? {}).filter((v): v is string => typeof v === "string"));
+  const laneOr = (resolved: string | undefined, legacy: string): string | undefined =>
+    resolved ?? (declared.has(legacy) ? undefined : legacy);
   const lane = {
-    intake: roles?.intake ?? "triage",
-    hold: roles?.hold ?? "todo",
-    wip: roles?.wip ?? "in-progress",
-    review: roles?.review ?? "in-review",
-    complete: roles?.complete ?? "done",
-    archived: roles?.archived ?? "archived",
+    intake: laneOr(roles?.intake, "triage"),
+    hold: laneOr(roles?.hold, "todo"),
+    wip: laneOr(roles?.wip, "in-progress"),
+    review: laneOr(roles?.review, "in-review"),
+    complete: laneOr(roles?.complete, "done"),
+    archived: laneOr(roles?.archived, "archived"),
   };
 
-  if (task.column === lane.complete) {
+  if ((lane.complete !== undefined && task.column === lane.complete)) {
     const blocker = await getTaskCompletionBlockerForStore(taskStore, task);
     if (blocker) {
       return { kind: "blocked", reason: blocker };
@@ -121,16 +136,16 @@ export async function reconcileMissionFeatureState(
   status untouched so a terminal/duplicate archive cannot fabricate roadmap
   progress; callers may still recompute hierarchy idempotently.
   */
-  if (task.column === lane.archived) return { kind: "noop" };
+  if ((lane.archived !== undefined && task.column === lane.archived)) return { kind: "noop" };
 
   if (
-    (task.column === lane.wip || task.column === lane.review)
+    ((lane.wip !== undefined && task.column === lane.wip) || (lane.review !== undefined && task.column === lane.review))
     && (feature.status === "triaged" || feature.status === "defined")
   ) {
     return {
       kind: "update",
       status: "in-progress",
-      reason: task.column === lane.review
+      reason: (lane.review !== undefined && task.column === lane.review)
         ? `task ${task.id} is in review`
         : `task ${task.id} started`,
     };
@@ -153,10 +168,24 @@ export async function reconcileMissionFeatureState(
   legitimately name a NON-planner lane `triage` (its review column), and mapping a card there
   to `triaged` would misreport the roadmap.
   */
-  const declaresColumn = (id: string): boolean => Object.values(lane).includes(id);
+  /*
+  FNXC:MissionFeatureSyncLanes 2026-07-31-00:10 (rebase onto main's independent conversion):
+  Three sources of truth, in priority order, and each is here for a reason main's version and
+  this PR's version each covered only half of:
+    1. `context.plannerColumns` — a caller that KNOWS the board's planner columns (main's
+       conversion). Most specific, so it wins.
+    2. the task's own resolved intake / hold roles (this PR's conversion), for callers that
+       pass no planner columns.
+    3. an ORPHANED legacy id — a card resting in `triage`/`todo` on a workflow that does NOT
+       declare it. Those are pre-#2515 rows U11's re-homing has not reached; without this their
+       feature silently stops being tracked, which is the going-silent failure being fixed.
+  Scoped per greptile on #2593: a custom workflow may legitimately name a NON-planner lane
+  `triage`, and mapping a card there to `triaged` would misreport the roadmap.
+  */
+  const declaresColumn = (id: string): boolean => Object.values(lane).includes(id) || declared.has(id);
   const inPlannerLane = (context.plannerColumns ?? []).includes(task.column)
-    || task.column === lane.intake
-    || task.column === lane.hold
+    || (lane.intake !== undefined && task.column === lane.intake)
+    || (lane.hold !== undefined && task.column === lane.hold)
     || (LEGACY_PLANNER_COLUMNS.includes(task.column) && !declaresColumn(task.column));
   if (inPlannerLane && feature.status === "in-progress") {
     return {
