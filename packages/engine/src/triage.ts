@@ -41,7 +41,7 @@ import {
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
-  isNearDuplicateCanonicalInactive,
+  isNearDuplicateCanonicalInactive, resolveColumnFlags,
   detectImageMimeFromBytes,
   applyFrontendUxCriteria,
   applyOriginalDescription,
@@ -331,6 +331,34 @@ derived from the IR, since the point is to recognise a column the CURRENT workfl
 no longer has.
 */
 const LEGACY_PLANNER_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-04:10:
+The canonical's OWN resolved column flags, for `isNearDuplicateCanonicalInactive`.
+
+Omitted, that predicate falls back to the legacy `done`/`archived` ids, so on a renamed board a
+canonical that has SHIPPED reads as still ACTIVE. Every "the canonical is inactive, so clear the
+marker" branch below then fails to fire, and FN-8356's fix — inactive canonicals flow through marker
+cleanup rather than parking the card — is inert. The card keeps its "Needs your decision" badge
+pointing at work that finished days ago, and no decision can ever resolve it.
+
+Module-private rather than shared: `findColumn` is already duplicated this way in hold-release.ts,
+merge-trait.ts, and workflow-capacity.ts, so this follows the established shape instead of adding a
+cross-module helper for it.
+
+`undefined` on any failure is deliberate — it degrades to the legacy id rather than to absent traits
+that match nothing.
+*/
+async function resolveNearDuplicateCanonicalFlags(
+  store: TaskStore,
+  canonical: { id: string; column?: string | null } | null | undefined,
+): Promise<ReturnType<typeof resolveColumnFlags> | undefined> {
+  if (!canonical?.column) return undefined;
+  const ir = await resolveWorkflowIrForTask(store, canonical.id).catch(() => undefined);
+  if (!ir || ir.version !== "v2") return undefined;
+  const column = ir.columns.find((candidate) => candidate.id === canonical.column);
+  return column ? resolveColumnFlags(column) : undefined;
+}
 
 export class TriageProcessor {
   private running = false;
@@ -3596,7 +3624,8 @@ export class TriageProcessor {
       marker cleanup instead of being rejected here. The detail banner cannot offer a decision for
       an inactive canonical, so parking the card would strand its Needs your decision badge.
       */
-      if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+      const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+      if (isNearDuplicateCanonicalInactive(canonicalTask, canonicalFlags)) {
         planLog.log(`${task.id} explicit duplicate marker targets inactive ${canonicalId}; clearing marker for replanning`);
       } else {
         planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
@@ -3752,7 +3781,8 @@ export class TriageProcessor {
       remove only the marker and return eligible work to planning instead of stranding its badge;
       explicit, implicit, and unrelated pauses are preserved.
       */
-      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
+      const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined, canonicalFlags)) {
         if (canClearInactiveMarker) {
           if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
             await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
@@ -4099,7 +4129,8 @@ export class TriageProcessor {
            * FNXC:NearDuplicateDetection 2026-06-14-12:00:
            * FN-6439 makes the triage backstop defense-in-depth: never persist a user-decision duplicate flag when the canonical is inactive, even if candidate filtering regresses or a stale snapshot slips through.
            */
-          if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+          const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+          if (isNearDuplicateCanonicalInactive(canonicalTask, canonicalFlags)) {
             planLog.log(`${task.id}: near-duplicate candidate ${canonical.id} is inactive; skipping near-duplicate flag`);
             return;
           }
