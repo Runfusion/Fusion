@@ -92,6 +92,28 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
         + "allowlist became per-expression — the file-level version was hiding it.",
     },
     {
+      file: "packages/engine/src/scheduler.ts",
+      expr: "slack: maxWorktreesLimit - maxWorktreesUsed",
+      reason:
+        "The gate's own slack arithmetic on the RESOLVED limit. Surfaced only once this scan followed "
+        + "aliases: `maxWorktreesLimit` holds resolveWorktreeCapacityLimit's result, and the whole block "
+        + "is skipped when that is null, so OFF mode never reaches it.",
+    },
+    {
+      file: "packages/engine/src/self-healing.ts",
+      expr: "if (dirs.length <= cap) return;",
+      reason:
+        "enforceWorktreeCap's early exit. `cap` is the alias of `(settings.maxWorktrees ?? 4) * 2` — "
+        + "on-disk hygiene, not admission (see the entry below). Invisible to a line-based scan.",
+    },
+    {
+      file: "packages/engine/src/self-healing.ts",
+      expr: "const excess = dirs.length - cap;",
+      reason:
+        "The same hygiene sweep deciding HOW MANY idle worktrees to remove. Same alias, same reason: it "
+        + "bounds directories on disk, never admission.",
+    },
+    {
       file: "packages/engine/src/self-healing.ts",
       expr: "(settings.maxWorktrees ?? 4) * 2",
       reason:
@@ -100,58 +122,121 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     },
   ];
 
+  /*
+  FNXC:CapacityModel 2026-07-31-04:20 (coderabbit #2652 — AST, because the regex could be walked around):
+  This scan was line-based, and two shapes bypassed it while leaving the suite green:
+
+      const limit = settings.maxWorktrees;   // read and bound on DIFFERENT lines
+      if (used >= limit) { ... }
+
+      resolveWorktreeCapacityLimit(          // call split across lines
+        settings,
+      )
+
+  A ratchet a reviewer can walk around by extracting a local is not a ratchet. It now PARSES: every
+  read of `.maxWorktrees` is found in the AST, then followed through a single alias hop (a local
+  initialised from that read) to see whether the value reaches a comparison, arithmetic or min/max.
+  Formatting and generics stop mattering — `Pick<Settings, "maxWorktrees" | ...>` is a type node, not
+  an expression, so the false positive the old `stripGenerics` hack existed for cannot occur.
+  */
   it("every file bounding on maxWorktrees is audited", async () => {
     const { execFileSync } = await import("node:child_process");
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
+    const { createRequire } = await import("node:module");
+    const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
     const root = resolve(__dirname, "../../../..");
 
     const files = execFileSync("git", ["ls-files", "--", "packages"], { cwd: root, encoding: "utf-8" })
       .split("\n")
       .filter((f) => f && /\/src\//.test(f) && /\.tsx?$/.test(f) && !f.includes("__tests__"));
 
-    /*
-    A bounding use: `maxWorktrees` on a line that also compares or does arithmetic with it.
-    TypeScript generic spans are removed first — `Pick<Settings, "maxWorktrees" | ...>` ends in `">`,
-    which reads as a comparison and made this ratchet flag its own resolver's signature.
-    */
-    const stripGenerics = (line: string): string => {
-      let previous;
-      let current = line;
-      do { previous = current; current = current.replace(/<[^<>]*>/g, " "); } while (current !== previous);
-      return current;
+    const BOUNDING_OPS = new Set<number>([
+      ts.SyntaxKind.GreaterThanToken,
+      ts.SyntaxKind.GreaterThanEqualsToken,
+      ts.SyntaxKind.LessThanToken,
+      ts.SyntaxKind.LessThanEqualsToken,
+      ts.SyntaxKind.AsteriskToken,
+      ts.SyntaxKind.SlashToken,
+      ts.SyntaxKind.MinusToken,
+      ts.SyntaxKind.PlusToken,
+    ]);
+
+    /** Does this expression feed a comparison / arithmetic / Math.min|max? */
+    const feedsABound = (node: import("typescript").Node): boolean => {
+      let current: import("typescript").Node | undefined = node;
+      // Walk out through parentheses, `??`, `!`, and `as` so `(x ?? 4) * 2` still counts.
+      while (current?.parent) {
+        const parent: import("typescript").Node = current.parent;
+        if (ts.isBinaryExpression(parent)) {
+          if (BOUNDING_OPS.has(parent.operatorToken.kind)) return true;
+          if (parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) { current = parent; continue; }
+          return false;
+        }
+        if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) || ts.isNonNullExpression(parent)) {
+          current = parent;
+          continue;
+        }
+        if (ts.isCallExpression(parent)) {
+          const callee = parent.expression.getText(parent.getSourceFile());
+          return callee === "Math.min" || callee === "Math.max";
+        }
+        return false;
+      }
+      return false;
     };
-    const BOUNDING = /(>=|<=|[^=!<>]>[^=>]|[^=!<>]<[^=<]|\*|Math\.(min|max))/;
 
     const offenders: string[] = [];
     for (const file of files) {
-      const src = await stripComments(readFileSync(resolve(root, file), "utf-8"));
-      if (!src.includes("maxWorktrees")) continue;
-      for (const line of src.split("\n")) {
-        if (!line.includes("maxWorktrees")) continue;
-        const bare = stripGenerics(line);
-        if (!bare.includes("maxWorktrees")) continue;
-        if (!BOUNDING.test(bare)) continue;
-        // Per-EXPRESSION: an audited file does not get a blanket pass for a new bound.
-        const audited = AUDITED_BOUNDS.some((a) => a.file === file && bare.includes(a.expr));
-        if (!audited) offenders.push(`${file}: ${line.trim()}`);
-      }
+      const raw = readFileSync(resolve(root, file), "utf-8");
+      if (!raw.includes("maxWorktrees")) continue;
+      const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true, /\.tsx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+
+      /* Locals initialised from a `maxWorktrees` read — the alias hop the regex missed. */
+      const aliases = new Set<string>();
+      const collectAliases = (node: import("typescript").Node): void => {
+        if (
+          ts.isVariableDeclaration(node)
+          && node.initializer
+          && ts.isIdentifier(node.name)
+          && /\bmaxWorktrees\b/.test(node.initializer.getText(sf))
+        ) {
+          aliases.add(node.name.text);
+        }
+        ts.forEachChild(node, collectAliases);
+      };
+      collectAliases(sf);
+
+      const report = (node: import("typescript").Node): void => {
+        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        const text = raw.split("\n")[line - 1]?.trim() ?? node.getText(sf);
+        const audited = AUDITED_BOUNDS.some((a) => a.file === file && text.includes(a.expr));
+        if (!audited) offenders.push(`${file}:${line}: ${text}`);
+      };
+
+      const visit = (node: import("typescript").Node): void => {
+        // A direct read: `settings.maxWorktrees`, `this.options.maxWorktrees`, …
+        if (ts.isPropertyAccessExpression(node) && node.name.text === "maxWorktrees" && feedsABound(node)) report(node);
+        // An aliased read: `limit` where `const limit = settings.maxWorktrees`.
+        if (ts.isIdentifier(node) && aliases.has(node.text) && !ts.isVariableDeclaration(node.parent) && feedsABound(node)) report(node);
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
     }
 
     expect(
       offenders,
-      "a new raw maxWorktrees bound appeared. Admission must resolve through "
-      + "resolveWorktreeCapacityLimit (null = worktrees are not a capacity dimension). If the bound is "
-      + "genuinely not about admission, add it to AUDITED_BOUNDS with the reason.",
+      "a new maxWorktrees bound appeared. Admission must resolve through resolveWorktreeCapacityLimit "
+      + "(null = worktrees are not a capacity dimension). If the bound is genuinely not about admission, "
+      + "add it to AUDITED_BOUNDS with the reason.",
     ).toEqual([]);
 
     /*
-    The allowlist must not rot: a stale entry naming an expression that no longer exists is a hole a
-    real new bound can hide behind, because the file keeps its audited status. Checked per EXPRESSION
-    for the same reason the offender check is.
+    The allowlist must not rot: an entry naming an expression that no longer exists is a hole a real
+    new bound can hide behind, because the file keeps its audited status.
     */
     for (const entry of AUDITED_BOUNDS) {
-      const src = stripGenerics(await stripComments(readFileSync(resolve(root, entry.file), "utf-8")));
+      const src = readFileSync(resolve(root, entry.file), "utf-8");
       expect(
         src.includes(entry.expr),
         `${entry.file} no longer contains the audited bound \`${entry.expr}\` — update or drop that entry`,
