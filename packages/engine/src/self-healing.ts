@@ -8972,8 +8972,31 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
         if (task.firstExecutionAt || task.executionStartedAt) return false;
-        // Columns where a card is active or queued to become active.
-        if (task.column === "todo" || task.column === "in-progress" || task.column === "in-review" || task.column === "done") return false;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-17:00 (fleet: self-healing.ts):
+        Columns where a card is active or queued to become active — hold, WIP, review, complete.
+
+        Resolved through the store's SYNCHRONOUS reader because this predicate is a sync `.filter`
+        over an already-unfiltered board read. Restructuring it into an async loop would work too
+        and would change the sweep's shape for no behavioural gain; the sync reader keeps the
+        conversion to the guard itself.
+
+        The literal form was dangerous in the releasing direction: on a renamed board none of the
+        four matched, so an ACTIVE card's worktree looked parked and was eligible for release.
+        */
+        const activeLanes = (() => {
+          try {
+            return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id));
+          } catch {
+            return undefined;
+          }
+        })();
+        if (
+          task.column === (activeLanes?.hold ?? "todo")
+          || task.column === (activeLanes?.wip ?? "in-progress")
+          || task.column === (activeLanes?.review ?? "in-review")
+          || task.column === (activeLanes?.complete ?? "done")
+        ) return false;
         /*
         WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
         needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
