@@ -398,6 +398,72 @@ describe("the baseline can always be re-recorded", () => {
     expect(sliceBetween(cli, "column-guard count ROSE", "baseline is STALE")).toContain("process.exit(1)");
   });
 
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-18:30 (PR #2668 review — greptile):
+  END-TO-END, because every assertion above reads this file's SOURCE TEXT. Substrings,
+  marker ordering and `writeFileSync` counts cannot see control flow: move the exit,
+  reorder the branches, or return before the write, and all of them stay green while
+  the contract is broken.
+
+  The contract is three observable things — the EXIT CODE, what lands in the baseline
+  file, and what is printed. These drive the real CLI against a throwaway baseline via
+  `FUSION_CENSUS_BASELINE_PATH` and assert exactly those, so a control-flow change
+  fails here even when the source still contains every string the tests above look for.
+  */
+  describe("driven end to end", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execFileSync } = require("node:child_process");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("node:os");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path");
+
+    const repoRoot = new URL("../../../..", import.meta.url).pathname;
+
+    function runCli(args: string[], baseline: unknown): { status: number; stdout: string } {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-census-"));
+      const baselinePath = path.join(dir, "baseline.json");
+      fs.writeFileSync(baselinePath, JSON.stringify(baseline));
+      try {
+        const stdout = execFileSync("node", [cliPath, ...args], {
+          encoding: "utf8",
+          /* The CLI globs with `git ls-files` relative to CWD, and vitest runs from the
+             package dir where that finds nothing — the run then exits on "file list is
+             EMPTY". Without this the rise test would pass for the wrong reason. */
+          cwd: repoRoot,
+          env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
+        }) as string;
+        return { status: 0, stdout, ...{ baselinePath } } as never;
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string };
+        return { status: e.status ?? -1, stdout: e.stdout ?? "", ...{ baselinePath } } as never;
+      } finally {
+        // Read-back happens in the caller via the returned path; cleanup is per-test.
+      }
+    }
+
+    it("exits 0 and REWRITES the baseline under --update-baseline, even when the count rose", () => {
+      /* The case the ordering bug broke: a rise used to exit before the write, so the
+         one command whose whole job is re-recording could not re-record. */
+      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const r = runCli(["--strict", "--update-baseline"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
+      expect(r.status).toBe(0);
+      const written = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
+      expect(written.totals.column).toBeGreaterThan(1);
+      expect(r.stdout).toContain("ACCEPTED RISES");
+    });
+
+    it("exits 1 and LEAVES the baseline alone on a rise without --update-baseline", () => {
+      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const r = runCli(["--strict"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
+      expect(r.status).toBe(1);
+      const after = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
+      expect(after.totals.column).toBe(1);
+    });
+  });
+
   it("names what it accepted instead of swallowing it", () => {
     // A silent re-record would hide a genuine regression behind a routine command.
     expect(cliSource()).toContain("ACCEPTED RISES");

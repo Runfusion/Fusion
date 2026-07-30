@@ -45,7 +45,21 @@ import {
 } from "./lib/lifecycle-column-census.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BASELINE_PATH = join(HERE, "lib", "lifecycle-column-census-baseline.json");
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-18:20 (PR #2668 review — greptile):
+BASELINE PATH IS OVERRIDABLE so the CLI can be driven END TO END in a test.
+
+The suite could only assert this file's SOURCE TEXT — substrings, marker ordering,
+`writeFileSync` call counts — because a test that actually ran the CLI would rewrite
+the repo's real baseline. Source assertions cannot see control flow: move the exit,
+reorder the branches, or return before the write, and every one of them still passes.
+
+An env override is the smallest seam that makes the real contract testable: exit
+code, what lands in the baseline file, and what is printed. Production never sets it,
+so the default is unchanged.
+*/
+const BASELINE_PATH = process.env.FUSION_CENSUS_BASELINE_PATH
+  ?? join(HERE, "lib", "lifecycle-column-census-baseline.json");
 
 let files;
 try {
