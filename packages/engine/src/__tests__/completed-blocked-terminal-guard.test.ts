@@ -53,7 +53,7 @@ function completedTaskIn(column: string) {
   };
 }
 
-function harness(ir: WorkflowIr | undefined, column: string) {
+function harness(ir: WorkflowIr | undefined, column: string, gate?: Promise<void>) {
   const store = createMockStore();
   let task: Record<string, unknown> = completedTaskIn(column);
   const moves: Array<[string, string]> = [];
@@ -61,7 +61,17 @@ function harness(ir: WorkflowIr | undefined, column: string) {
   const widened = store as unknown as Record<string, unknown>;
   widened.getTaskWorkflowSelection = () => (ir ? selection : undefined);
   widened.getTaskWorkflowSelectionAsync = async () => (ir ? selection : undefined);
-  widened.getWorkflowDefinition = async () => (ir ? { id: "wf-renamed", ir } : undefined);
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-09:15 (#2670 review):
+  `gate` holds workflow resolution open so a test can change the STORED card while the
+  resolution is still pending. Without it every await in this file settles immediately,
+  and the post-await re-read of the task is unreachable — a test can only observe the
+  column it started with, which is what let the re-read look covered when it was not.
+  */
+  widened.getWorkflowDefinition = async () => {
+    if (gate) await gate;
+    return ir ? { id: "wf-renamed", ir } : undefined;
+  };
 
   store.getTask.mockImplementation(async () => ({ ...task }));
   store.updateTask.mockImplementation(async (_id: string, updates: Record<string, unknown>) => {
@@ -81,7 +91,10 @@ function harness(ir: WorkflowIr | undefined, column: string) {
       parkCompletedBlockedTask: (task: unknown, blocker: string, source: string, workComplete?: boolean) => Promise<boolean>;
     }).parkCompletedBlockedTask(t, "unmet dependency FN-OTHER", "test", true);
 
-  return { store, moves, park };
+  /** Mutates the STORED card only — the caller keeps its own stale copy, as the real caller does. */
+  const setStoredColumn = (to: string) => { task = { ...task, column: to }; };
+
+  return { store, moves, park, setStoredColumn };
 }
 
 describe("the terminal guard covers the ARCHIVED role and refuses to guess", () => {
@@ -116,5 +129,36 @@ describe("the terminal guard covers the ARCHIVED role and refuses to guess", () 
     const h = harness(RENAMED_IR, "some-column-this-board-lacks");
 
     await expect(h.park(completedTaskIn("some-column-this-board-lacks"))).resolves.toBe(true);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-09:15 (#2670 review):
+    The boolean alone is satisfied by an implementation that reports success and moves nothing, or
+    moves to the wrong lane. The parked card must land in the workflow's HOLD column, resolved by
+    role — `queued` here, not `todo`.
+    */
+    expect(h.moves).toEqual([["FN-DONE", "queued"]]);
+  });
+
+  it("re-reads the card AFTER resolving the workflow, so a mid-await move into a terminal lane is honoured", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-09:15 (#2670 review):
+    Resolving the workflow is an await, and the card can reach a terminal lane inside that window —
+    a concurrent archive, or the merge path completing. The guard therefore has to judge the card as
+    it is NOW, not as the caller found it. Every other test here settles immediately and starts in
+    the column it asserts on, so none of them can distinguish the re-read from the caller's stale
+    copy; this one holds resolution open and moves the STORED card underneath it.
+    */
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const h = harness(RENAMED_IR, "building", gate);
+
+    /* The caller's copy says `building` — mid-pipeline, and parkable on its face. */
+    const stale = completedTaskIn("building");
+    const parked = h.park(stale);
+
+    h.setStoredColumn("attic");
+    release();
+
+    await expect(parked).resolves.toBe(false);
+    expect(h.moves).toEqual([]);
   });
 });
