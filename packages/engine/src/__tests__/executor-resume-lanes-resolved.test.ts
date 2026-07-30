@@ -50,6 +50,51 @@ function harness(ir: WorkflowIr | undefined) {
   return { store, executor, lanes };
 }
 
+describe("one lane snapshot per recovery decision", () => {
+  it("resolves the workflow ONCE when a memo is shared, not once per half", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (PR #2640 review, greptile P2):
+    Eligibility and re-entry are two halves of the SAME decision. Resolving separately is not just
+    extra I/O: a workflow edit landing between the two calls would have the halves reading DIFFERENT
+    boards — eligibility admits a card in review, then re-entry resolves a board where that column
+    is not the review lane. The memo makes that impossible by construction.
+    */
+    const h = harness(RENAMED_IR);
+    let reads = 0;
+    (h.store as unknown as Record<string, unknown>).getWorkflowDefinition = async () => {
+      reads += 1;
+      return { ir: RENAMED_IR };
+    };
+    const memo: { lanes?: { hold: string; wip: string; review: string } } = {};
+    const resolve = (executorOf: typeof h.executor) =>
+      (executorOf as unknown as {
+        resolveResumeLanes: (id: string, memo?: unknown) => Promise<{ hold: string }>;
+      }).resolveResumeLanes("FN-1", memo);
+
+    const first = await resolve(h.executor);
+    const second = await resolve(h.executor);
+
+    expect(first).toEqual(second);
+    expect(reads).toBe(1);
+  });
+
+  it("resolves per call when no memo is passed, so callers cannot share a stale snapshot by accident", async () => {
+    // The memo is CALLER-OWNED on purpose: a process-lifetime cache would have to guess when a
+    // mid-flight workflow edit invalidates it. Without a memo each call is independent.
+    const h = harness(RENAMED_IR);
+    let reads = 0;
+    (h.store as unknown as Record<string, unknown>).getWorkflowDefinition = async () => {
+      reads += 1;
+      return { ir: RENAMED_IR };
+    };
+
+    await h.lanes("FN-1");
+    await h.lanes("FN-1");
+
+    expect(reads).toBe(2);
+  });
+});
+
 describe("resume lanes come from the task's own workflow", () => {
   it("resolves the renamed hold, wip and review columns", async () => {
     // Pre-fix these three were the default lineage's names, so every resume-safety comparison on a

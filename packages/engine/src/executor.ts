@@ -10375,6 +10375,7 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     /*
     FNXC:WorkflowLifecycle 2026-06-28-18:32:
@@ -10411,7 +10412,7 @@ export class TaskExecutor {
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
-    const resumeLanes = await this.resolveResumeLanes(live.id);
+    const resumeLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
     return live.column === resumeLanes.hold
       || live.column === resumeLanes.review
       || live.column === resumeLanes.wip;
@@ -10440,16 +10441,34 @@ export class TaskExecutor {
   become one resolver returning the full lane set — two resolvers for the same question is the
   drift this program keeps paying for. Kept separate now only to avoid a cross-branch dependency.
   */
-  private async resolveResumeLanes(taskId: string): Promise<{ hold: string; wip: string; review: string }> {
+  private async resolveResumeLanes(
+    taskId: string,
+    memo?: { lanes?: { hold: string; wip: string; review: string } },
+  ): Promise<{ hold: string; wip: string; review: string }> {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:00 (PR #2640 review, greptile P2):
+    ONE RESOLUTION PER RECOVERY, and the reason is correctness as much as I/O. Eligibility and
+    re-entry ran this separately, so a workflow edit landing between the two calls would have the
+    two halves of one decision reading DIFFERENT lane sets — the eligibility check admits a card in
+    review, the re-entry then resolves a board where that column is not the review lane. The memo is
+    caller-owned and per-recovery, which is the same shape as the IR caches elsewhere in the engine:
+    one snapshot for one decision, never a process-lifetime cache that has to guess when a
+    mid-flight workflow edit invalidates it.
+    */
+    if (memo?.lanes) return memo.lanes;
     try {
       const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
-      return {
+      const lanes = {
         hold: lifecycle?.hold ?? "todo",
         wip: lifecycle?.wip ?? "in-progress",
         review: lifecycle?.review ?? "in-review",
       };
+      if (memo) memo.lanes = lanes;
+      return lanes;
     } catch {
-      return { hold: "todo", wip: "in-progress", review: "in-review" };
+      const lanes = { hold: "todo", wip: "in-progress", review: "in-review" };
+      if (memo) memo.lanes = lanes;
+      return lanes;
     }
   }
 
@@ -10457,6 +10476,7 @@ export class TaskExecutor {
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
+    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string } },
   ): Promise<boolean> {
     const nodeId = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const priorRetries = live.graphResumeRetryCount ?? 0;
@@ -10469,7 +10489,7 @@ export class TaskExecutor {
     four independent literal comparisons, so on a renamed board `preservedInReview` was false for
     a card in review AND the recheck rejected it, and the re-entry silently never happened.
     */
-    const reentryLanes = await this.resolveResumeLanes(live.id);
+    const reentryLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
     const preservedInReview = live.column === reentryLanes.review;
     this.clearPausedAborted(live.id);
     this.activeWorktrees.delete(live.id);
@@ -10868,8 +10888,14 @@ export class TaskExecutor {
           `Pause abort classified: provenance=${abortProvenance ?? "unknown"}; node=${failedNodeForLog}; interrupted=${result.interruptedNodeId ?? "none"}; abortKind=${result.interruptedAbortKind ?? "none"}; column=${live.column}; status=${live.status ?? "none"}; paused=${live.paused === true}; userPaused=${live.userPaused === true}; value=${failureValueForLog}; genuine=${genuinePauseAbort}; mergeSeam=${mergeSeamAborted}; completionSuppressed=${suppressFinalizedCompletionAbort}`,
         );
       }
-      if (genuinePauseAbort && await this.isReentrantPausedAbortedInFlightNode(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id))) {
-        if (await this.reenterPausedAbortedWorkflowNode(live, result, abortProvenance)) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:05 (PR #2640 review, greptile P2): one lane
+      snapshot for one recovery decision — see `resolveResumeLanes`. Eligibility and re-entry are two
+      halves of the SAME decision and must not read different boards.
+      */
+      const resumeLanesMemo: { lanes?: { hold: string; wip: string; review: string } } = {};
+      if (genuinePauseAbort && await this.isReentrantPausedAbortedInFlightNode(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
+        if (await this.reenterPausedAbortedWorkflowNode(live, result, abortProvenance, resumeLanesMemo)) {
           return;
         }
       }
