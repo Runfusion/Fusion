@@ -5,6 +5,7 @@ import { NotificationService } from "../notification/notification-service.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
 import { DEFAULT_NTFY_EVENTS } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 vi.mock("../logger.js", () => ({
   schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -110,7 +111,7 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledWith(
       "in-review",
@@ -165,7 +166,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:created", task({ id: "FN-202", sourceAgentId: undefined }));
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -178,7 +179,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:created", task({ id: "FN-203", sourceAgentId: "agent-1", sourceType: "agent_heartbeat" as any }));
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -219,7 +220,7 @@ describe("NotificationService", () => {
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledTimes(2);
   });
@@ -249,7 +250,7 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input, key] = sendMessageOnce.mock.calls[0];
@@ -313,7 +314,7 @@ describe("NotificationService", () => {
       "task:updated",
       task({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
     );
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input] = sendMessageOnce.mock.calls[0];
@@ -350,7 +351,7 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input, key] = sendMessageOnce.mock.calls[0];
@@ -370,8 +371,8 @@ describe("NotificationService", () => {
 
     expect(() => store.emit("task:updated", task({ status: "awaiting-approval" }))).not.toThrow();
     // Allow the fire-and-forget mailbox write (and its catch) to settle.
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushAsyncHandlers();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     expect(schedulerLog.log).toHaveBeenCalledWith(
@@ -394,7 +395,7 @@ describe("NotificationService", () => {
     await service.stop();
 
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
-    await Promise.resolve();
+    await flushAsyncHandlers();
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
@@ -663,7 +664,7 @@ describe("NotificationService", () => {
 
     chatStore.emit("chat:room:message:added", createRoomMessage({ role: "user" }));
     chatStore.emit("chat:room:message:added", createRoomMessage({ id: "rmsg-2", senderAgentId: null }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -758,7 +759,7 @@ describe("NotificationService", () => {
     await service.start();
 
     messageStore.emit("message:sent", createMessage({ type: "user-to-agent", fromType: "user", toType: "agent" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -813,7 +814,7 @@ describe("NotificationService", () => {
     await service.start();
 
     messageStore.emit("message:sent", createMessage());
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -837,7 +838,7 @@ describe("NotificationService", () => {
     expect(messageStore.listenerCount("message:sent")).toBe(0);
 
     messageStore.emit("message:sent", createMessage());
-    await Promise.resolve();
+    await flushAsyncHandlers();
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
@@ -865,7 +866,7 @@ describe("NotificationService", () => {
       worktreeRemoved: true,
       branchDeleted: true,
     });
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledTimes(2);
 
@@ -928,7 +929,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:moved", { task: task({ id: "FN-302", column: "done" }), from: "in-review", to: "done" });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalledWith("merged", expect.anything());
     });
@@ -997,7 +998,7 @@ describe("NotificationService", () => {
         from: "in-review",
         to: "done",
       });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1083,7 +1084,7 @@ describe("NotificationService", () => {
         worktreeRemoved: true,
         branchDeleted: false,
       });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1140,7 +1141,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:moved", { task: task({ id: "FN-106" }), from: "todo", to: "in-progress" });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1262,8 +1263,8 @@ describe("NotificationService", () => {
     const failed = task({ id: "FN-5627", status: "failed", column: "in-review", error: "spawn git ENOENT" });
     store.setTask(failed);
     store.emit("task:updated", failed);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushAsyncHandlers();
+    await flushAsyncHandlers();
 
     expect(claimTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
     expect(sendNotification).not.toHaveBeenCalledWith("task-wedged", expect.anything());
