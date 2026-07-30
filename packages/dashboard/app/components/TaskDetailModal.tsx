@@ -897,6 +897,22 @@ export function TaskDetailContent({
   Hoisting the state and its derivation above this block is the actual fix, and it is a hook-ordering
   change in a 5000-line component, which is what the original note meant by not attempting it under
   batch pressure. Left counted.
+
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (the hoist would have been WRONG, not just costly):
+  Correcting the paragraph above before someone acts on it. Hoisting applies to the two terminal
+  checks on `task.column`, where `detailColumnFlags` is the right flags. It does NOT extend to the
+  `isNearDuplicateCanonicalInactive` call on the next line, which the seam check reports as an
+  omitted supplier — and that is a case where satisfying the check would introduce a bug.
+
+  `detailColumnFlags` describes THIS modal's task, guarded by `detailFlagsAreForThisTask`. The
+  canonical is a DIFFERENT task, on a column this component never resolves. Passing the modal's flags
+  would answer "is the canonical's column active?" using the open task's column traits — the per-task
+  vs union confusion that `column-role-degraded-flags.test.ts` exists to catch, and it would type-check
+  and read as a conversion.
+
+  Supplying it correctly needs the canonical's own resolved flags, which means fetching them: a data
+  change, out of scope here. So the omission is deliberate and is exempted BY CALL SITE rather than by
+  function name, so core's sibling site stays guarded.
   */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true

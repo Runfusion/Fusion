@@ -62,6 +62,32 @@ const ALLOWED = new Map([
   ],
 ]);
 
+/*
+PARTIAL-SUPPLY exemptions are keyed by CALL SITE, not by function name.
+
+A name-level entry would waive every call site of the seam at once, which is the opposite of what a
+partially-supplied seam needs: the whole point is that its OTHER sites are correct and must stay
+guarded. `<file>::<function>` keeps the exemption to the one site whose omission is deliberate.
+
+An omission earns an entry only when supplying the argument would be WRONG, not when it is awkward.
+"Awkward" means wire it; the check exists to make that the cheaper path.
+*/
+const ALLOWED_OMISSIONS = new Map([
+  [
+    "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
+    "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
+      + "component never resolves. Passing them would type-check, read as a conversion, and answer "
+      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
+  ],
+  [
+    "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",
+    "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
+      + "wireable — `clearNearDuplicateReferencesToImpl` is async and already holds `store` and "
+      + "`canonicalId`, so the canonical's own flags are one await away. Its five sibling call sites "
+      + "already supply, so on a renamed board this is the single path that answers from legacy ids.",
+  ],
+]);
+
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
@@ -186,7 +212,7 @@ A call in a file that declares its OWN function of the same name belongs to that
 file is where the seam itself is declared. Resolved here, once the declaring file for each seam is
 known.
 */
-const bestArgsFor = (fn, declaringFile) => {
+const callSitesFor = (fn, declaringFile) => {
   const sites = callSites.get(fn) ?? [];
   /* Basename of the seam's module, e.g. `near-duplicate-canonical` — enough to tell core's
      `task-priority` from the dashboard's `taskSorting` without resolving the module graph. */
@@ -198,14 +224,37 @@ const bestArgsFor = (fn, declaringFile) => {
     /* Imported: it must come from the seam's module, or it is a different function of that name. */
     return site.from.replace(/\.js$/, "").split("/").pop() === declaringModule;
   });
-  return relevant.reduce((best, site) => Math.max(best, site.args), 0);
+  return relevant;
 };
 
 const offenders = [];
+const partial = [];
 const stale = [];
 for (const [fn, { file, arity }] of declared) {
-  const best = bestArgsFor(fn, file);
+  const sites = callSitesFor(fn, file);
+  const best = sites.reduce((max, site) => Math.max(max, site.args), 0);
   const unsupplied = best < arity;
+  /*
+  THE ONE-SUPPLIER FLOOR. `best < arity` asks only whether SOME caller supplies the argument, so one
+  correct call site clears the seam while every other caller silently takes the legacy fallback. That
+  is not hypothetical: `isTaskStuck` shipped with two of its three call sites omitting the flags, and
+  review caught it, not this gate — the gate was green because the third call site was right.
+
+  A partially-supplied seam is the harder defect of the two. A wholly-unsupplied one is at least
+  uniformly wrong; this one works on the board you tested and degrades on the column you did not.
+  */
+  const omitting = sites
+    .filter((site) => site.args < arity)
+    .filter((site) => !ALLOWED_OMISSIONS.has(`${site.file}::${fn}`));
+
+  /* Same staleness rule as the name-level list: an exemption whose site now supplies is dead. */
+  for (const [key, reason] of ALLOWED_OMISSIONS) {
+    const [siteFile, siteFn] = key.split("::");
+    if (siteFn !== fn) continue;
+    const site = sites.find((candidate) => candidate.file === siteFile);
+    if (!site) stale.push(`  ${key} — no such call site; remove its ALLOWED_OMISSIONS entry`);
+    else if (site.args >= arity) stale.push(`  ${key} — now supplied; remove its entry (${reason.slice(0, 40)}...)`);
+  }
   if (ALLOWED.has(fn)) {
     /*
     An allow-list entry whose site is now SUPPLIED is stale, and a stale exemption is how a guard
@@ -215,7 +264,13 @@ for (const [fn, { file, arity }] of declared) {
     if (!unsupplied) stale.push(`  ${fn} — now supplied; remove its ALLOWED entry`);
     continue;
   }
-  if (unsupplied) offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+  if (unsupplied) {
+    offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+  } else if (omitting.length > 0) {
+    const where = omitting.map((site) => `${site.file}:${site.args}`).join(", ");
+    partial.push(`  ${file}: ${fn}() — supplied by ${sites.length - omitting.length}/${sites.length}`
+      + ` call sites; omitted at ${where} (of ${arity})`);
+  }
 }
 
 /*
@@ -251,4 +306,17 @@ if (offenders.length > 0) {
   process.exit(1);
 }
 
-console.log(`[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied.`);
+if (partial.length > 0) {
+  console.error("\n[check-inert-flag-seams] lane/flag parameter supplied at SOME call sites only:\n");
+  for (const line of partial.sort()) console.error(line);
+  console.error(
+    "\nThe listed call sites take the legacy fallback while their siblings resolve the real column,\n"
+    + "so the guard is correct on the board you tested and degrades on the one you did not. Supply the\n"
+    + "argument at every site, or delete the parameter and leave the literal counted.\n",
+  );
+  process.exit(1);
+}
+
+console.log(
+  `[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied at every call site.`,
+);
