@@ -417,7 +417,20 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
         task.column = intakeColumn;
         movedToTriage = true;
         task.status = undefined;
-        task.columnMovedAt = task.updatedAt;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
+        `columnMovedAt` IS THE MOVE TIMESTAMP, so it may only move when the column does. On the default
+        lineage post-U11 hold and intake are the SAME column, so this branch runs without the card going
+        anywhere — and refreshing the stamp there restarts time-in-column and every staleness calculation
+        that reads it, on a card that has not moved. A dependency edit would quietly look like a fresh
+        arrival to the stall sweeps.
+
+        The move EVENT below already guards on exactly this condition; the timestamp did not, so the two
+        disagreed about whether a move had happened. Same condition, one answer.
+        */
+        if (intakeColumn !== respecifyFromColumn) {
+          task.columnMovedAt = task.updatedAt;
+        }
         task.log.push({
           timestamp: task.updatedAt,
           action: intakeColumn === respecifyFromColumn

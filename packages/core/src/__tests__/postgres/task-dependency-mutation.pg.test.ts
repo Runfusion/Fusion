@@ -87,6 +87,73 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     expect(taskJson.column).toBe("todo");
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
+  DISTINCT HOLD AND INTAKE LANES, the configuration the default lineage does not exercise.
+
+  Post-U11 the default board merges hold and intake into one column, so every existing case here runs
+  the branch where the re-specification "move" goes nowhere. A board that declares them SEPARATELY is
+  supported and takes the other path — and both halves of this branch (the destination write and the
+  move timestamp) behave differently there.
+
+  Paired with the merged-lane case below, these pin the rule: the column moves only when the lanes
+  differ, and `columnMovedAt` moves only when the column does.
+  */
+  async function splitLaneWorkflow() {
+    return store.createWorkflowDefinition({
+      name: "split-lanes",
+      ir: {
+        version: "v2",
+        name: "split-lanes",
+        columns: [
+          { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+          { id: "ready", name: "Ready", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "inbox" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+  }
+
+  it("sends a HOLD-lane card back to a DISTINCT intake lane when a dependency is added", async () => {
+    const definition = await splitLaneWorkflow();
+    const blocker = await store.createTask({ description: "prerequisite", workflowId: definition.id } as never);
+    const dependent = await store.createTask({ description: "dependent", workflowId: definition.id } as never);
+    await store.moveTask(dependent.id, "ready" as never, { bypassGuards: true } as never);
+
+    const before = await store.getTask(dependent.id);
+
+    const updated = await store.updateTaskDependencies(dependent.id, {
+      operation: "add",
+      dependency: blocker.id,
+    } as never);
+
+    expect(updated.column).toBe("inbox");
+    // A real move, so the move timestamp advances.
+    expect(updated.columnMovedAt).not.toBe(before.columnMovedAt);
+  });
+
+  it("does NOT refresh columnMovedAt when hold and intake are the SAME column", async () => {
+    /*
+    The default lineage. The card does not move, so the move timestamp must not advance — refreshing it
+    restarts time-in-column and every staleness sweep that reads it, making a dependency edit look like
+    a fresh arrival.
+    */
+    const blocker = await store.createTask({ description: "prerequisite" });
+    const dependent = await store.createTask({ description: "dependent" });
+    const before = await store.getTask(dependent.id);
+
+    const updated = await store.updateTaskDependencies(dependent.id, {
+      operation: "add",
+      dependency: blocker.id,
+    } as never);
+
+    expect(updated.column).toBe(before.column);
+    expect(updated.columnMovedAt).toBe(before.columnMovedAt);
+  });
+
   it("removes dependencies and recomputes stale blockers", async () => {
     const active = await store.createTask({ description: "active prerequisite" });
     const resolved = await store.createTask({ description: "resolved prerequisite", column: "done" });
