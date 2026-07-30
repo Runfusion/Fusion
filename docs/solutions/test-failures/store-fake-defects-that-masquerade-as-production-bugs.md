@@ -175,3 +175,8 @@ build it instead and link it here.
 - `docs/testing.md` — testing lanes and the taxonomy for trim-vs-keep.
 - AGENTS.md → "Standing Rule: Fix the Invariant, Not the Repro" — the same
   discipline applied to regression coverage.
+- `docs/solutions/test-failures/optional-flags-seam-hides-unconverted-column-guards.md` — the mirror
+  image of this entry. HERE a fake is MISSING a method, so a branch silently does not run. THERE the
+  fake is complete and the test is correct, but an OPTIONAL parameter is omitted, so the production path
+  takes its documented legacy fallback and the suite stays green through a conversion AND through a
+  broken one.
