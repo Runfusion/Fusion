@@ -180,8 +180,25 @@ pgDescribe("live lease-rebound E2E: where a recovered lease lands, and what the 
       WHERE id = ${taskId}
     `;
     store.taskCache.delete(taskId);
+    /*
+    GUARD THE SEED (PR #2539 review). Without this the case passes for the wrong reason:
+    a no-op UPDATE leaves the card with no `checkedOutBy`, `isLeaseRecoverable` returns
+    `no_lease`, recovery declines, and the assertion below is satisfied — while proving
+    nothing about lease FRESHNESS, which is the only thing this case exists to check.
+    The sibling `seedStaleLease` already asserts its seed; this inline one did not, which
+    is the same one-of-two omission this suite's own findings keep turning up.
+    */
+    const seeded = await store.getTask(taskId);
+    expect(seeded.checkedOutBy).toBe("agent-live");
 
-    const recovered = await new MeshLeaseManager({ taskStore: store }).recoverAbandonedLease(taskId, "e2e-fresh");
+    const manager = new MeshLeaseManager({ taskStore: store });
+    /* Assert the REASON, not merely the refusal: `no_lease` and a fresh lease both
+       return false, and only one of them is this test's subject. */
+    const verdict = await manager.isLeaseRecoverable(seeded);
+    expect(verdict.reason).not.toBe("no_lease");
+    expect(verdict.recoverable).toBe(false);
+
+    const recovered = await manager.recoverAbandonedLease(taskId, "e2e-fresh");
 
     expect(recovered).toBe(false);
     expect(await persistedColumn(taskId)).toBe(RENAMED_VOCAB.wip);
