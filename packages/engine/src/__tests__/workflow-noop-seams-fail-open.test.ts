@@ -24,9 +24,9 @@ These tests PIN the current behavior rather than change it. Making the remaining
 is a behavior change across ~15 call sites that construct handlers from noop seams, and it belongs
 in its own PR with those call sites surveyed — not smuggled in beside an audit.
 */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkflowIrNode } from "@fusion/core";
-import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflow-node-handlers.js";
+import { createDefaultNodeHandlers, createNoopLegacySeams, FOREACH_ACTIVE_CONTEXT_KEY } from "../workflow-node-handlers.js";
 
 function promptNode(seam: string): WorkflowIrNode {
   return { id: `${seam}-node`, kind: "prompt", column: "in-progress", config: { seam } } as WorkflowIrNode;
@@ -45,21 +45,59 @@ describe("noop legacy seams fail OPEN (characterization — not an endorsement)"
     },
   );
 
-  it("step-execute is the one seam that fails CLOSED", async () => {
+  it("step-execute reached with NO active instance throws on the precondition", async () => {
     /*
-    The asymmetry this file is really about. This node carries an active-instance requirement, so
-    reaching it without one throws rather than succeeding — either way it does not silently pass,
-    which is the property the other six lack.
+    FNXC:WorkflowExecutionOwnership 2026-07-29-19:40 (PR #2585 review):
+    Split out and renamed. The original single case asserted `rejects.toThrow()` and claimed to
+    characterize the fail-CLOSED branch — but it could not reach it. The handler throws on the
+    missing-active-instance precondition FIRST, and the fail-closed branch RETURNS
+    `{ outcome: "failure", value: "step-execute-unwired" }` rather than throwing, so an assertion
+    on a throw can never observe it. Right outcome, wrong cause: the test passed while the
+    property it named went unexercised.
     */
-    await expect(handlers.prompt!(promptNode("step-execute"), ctx)).rejects.toThrow();
+    await expect(handlers.prompt!(promptNode("step-execute"), ctx)).rejects.toThrow(
+      /without an active foreach instance/i,
+    );
   });
 
-  it("supplying primitives is what makes the fail-open path unreachable", () => {
-    /* The production wiring. If this preference is ever removed, the six seams above become
-       reachable from `executeWorkflowGraph` too. */
-    const withPrimitives = createDefaultNodeHandlers(createNoopLegacySeams(), undefined, {
-      primitives: {} as never,
+  it("step-execute WITH an active instance and no seam wired fails CLOSED", async () => {
+    /* The branch the file is actually about: supply the active instance so the precondition
+       passes, then assert the explicit failure VALUE rather than merely "did not succeed". */
+    const activeCtx = {
+      task: { id: "FN-NOOP" },
+      context: { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 0 } },
+    } as never;
+
+    const result = await handlers.prompt!(promptNode("step-execute"), activeCtx);
+
+    expect(result.outcome).toBe("failure");
+    expect(result.value).toBe("step-execute-unwired");
+  });
+
+  it("supplying primitives ROUTES AWAY from the seams — asserted by call, not by identity", async () => {
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-19:40 (PR #2585 review):
+    Was `expect(withPrimitives.prompt).not.toBe(handlers.prompt)`, which proved only that two
+    closures were created. VERIFIED VACUOUS: two IDENTICAL `createDefaultNodeHandlers` calls —
+    both without primitives — already return different closures, so that assertion passed no
+    matter what primitives did. It could not fail.
+
+    Asserted by behaviour instead: with primitives supplied, invoking the handler must call the
+    PRIMITIVE and must NOT call the seam. That fails if the preference is ever removed, which is
+    the property this case exists to protect.
+    */
+    const runPlanningSession = vi.fn(async () => ({ outcome: "success" as const }));
+    const seams = createNoopLegacySeams();
+    const planningSeam = vi.spyOn(seams, "planning");
+
+    const withPrimitives = createDefaultNodeHandlers(seams, undefined, {
+      primitives: { runPlanningSession } as never,
     });
-    expect(withPrimitives.prompt).not.toBe(handlers.prompt);
+
+    const result = await withPrimitives.prompt!(promptNode("planning"), ctx);
+
+    expect(runPlanningSession).toHaveBeenCalledTimes(1);
+    expect(planningSeam).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("success");
   });
 });
