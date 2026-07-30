@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
+import { isIntakeColumnRole, isPreExecutionHoldColumnRole } from "../utils/columnRoles";
 // `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
 // the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
 // the note at `moveTransitions`); every workflow-resolved path now reads the payload's
@@ -147,9 +148,21 @@ function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags)
   return column !== "done" && column !== "archived";
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+The legacy id was ORed with the traits UNCONDITIONALLY, not used as a fallback. So a
+resolved column that happens to be named `triage` but whose traits say it is mid-flight
+answered true, offering Plan on a card that is already executing. Flags-first fixes that
+inversion; the id survives only for the no-metadata window, once, in the role helpers —
+and deliberately WITHOUT `todo`, because offering Plan on a card that may be executing is
+not a safe guess. See `isPreExecutionHoldColumnRole`.
+
+The complete/archived veto stays ahead of it: a finished card is never a planning target,
+whatever the intake/hold traits claim.
+*/
 export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags?.complete === true || flags?.archived === true) return false;
-  return column === "triage" || flags?.intake === true || flags?.hold === true;
+  return isPreExecutionHoldColumnRole(flags, column);
 }
 
 
@@ -448,8 +461,19 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions,
     moveTransitions: getTaskMoveTransitions(task, t, columnLabel, workflowMoveColumns),
     reviewAction: getTaskReviewAction(task, options),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+    Suppress the overflow menu on an INTAKE card that has nothing actionable in it.
+
+    This one drifted in the direction that is hardest to notice: nothing stopped firing,
+    it started firing on everything. Excluding the legacy `triage` id is TRUE for every
+    card once #2515 removes that id from the lineage, so every planning card now renders an
+    actions menu — including the ones whose menu is empty, which is precisely the orphaned
+    click target the Surface Enumeration rule exists to catch. Resolving the intake ROLE
+    restores the suppression the id comparison used to provide.
+    */
     shouldShowActionsMenu:
-      task.column !== "triage" ||
+      !isIntakeColumnRole(currentColumnFlags, task.column) ||
       task.status === "awaiting-approval" ||
       canRetryTask ||
       isTaskPaused ||

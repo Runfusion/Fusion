@@ -552,10 +552,19 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   }, [shouldPaginate, tasks, visibleTaskCount]);
 
   const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  `workflowMode` is `Boolean(boardWorkflows?.workflows.length)`, so it is false ONLY in the
+  pre-load window — this disjunct is what offers quick-create there. It named `triage`, an
+  id no lineage declares since #2515, so during first paint the quick-create affordance
+  appeared on NO column at all instead of on the planning one. Resolving the role restores
+  it, and the helper's id fallback is exactly the right tool: no flags have loaded yet
+  either, so this is the one place the legacy ids are all there is to go on.
+  */
   const canCreateInColumn = Boolean(
     onQuickCreate &&
     !isArchived &&
-    (workflowMode || column === "triage"),
+    (workflowMode || isPreImplementationColumnRole(columnFlags, column)),
   );
 
   const handleQuickCreate = useCallback(

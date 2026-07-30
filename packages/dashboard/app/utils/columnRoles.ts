@@ -81,3 +81,24 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
   return flags ? flags.hold === true : columnId === LEGACY_HOLD_COLUMN_ID;
 }
+
+/**
+ * May a card in this column be sent back to PLANNING — i.e. is it a pre-execution hold?
+ *
+ * Traits behave like {@link isPreImplementationColumnRole}: either `intake` or `hold`
+ * qualifies. The FALLBACK is deliberately narrower — the legacy INTAKE id only, never
+ * `todo`.
+ *
+ * Why the asymmetry, which is easy to mistake for an oversight: the pre-implementation
+ * fallback guards a PROMPT ("keep your progress?"), so guessing generously costs one extra
+ * confirmation. This one gates an ACTION that re-plans a task, and pre-U11 `todo` was the
+ * ready-to-execute lane, so guessing generously would offer Plan on a card that is running.
+ * Widening it is a behaviour change with a real failure mode, not a vocabulary conversion —
+ * so it stays faithful, and `packages/dashboard/app/components/__tests__/TaskContextMenu.test.tsx`
+ * fails if it is widened (that is how the asymmetry was found rather than assumed).
+ */
+export function isPreExecutionHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags
+    ? Boolean(flags.intake || flags.hold)
+    : columnId === LEGACY_INTAKE_COLUMN_ID;
+}

@@ -320,3 +320,61 @@ describe("TaskContextMenu shared task action model", () => {
     expect(pause).toHaveFocus();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+The overflow menu must be suppressed by the intake ROLE, not by the legacy intake id.
+
+WHY THIS DIRECTION IS THE DANGEROUS ONE. The cases above cover a card whose column IS
+literally `triage`, which is the only shape the id comparison ever got right — and they
+passed both before and after the conversion, so they prove nothing about it. What #2515
+broke is the opposite: with `triage` gone from the lineage, `task.column !== "triage"` is
+TRUE for every real card, so the suppression stopped applying anywhere and every planning
+card started rendering an actions menu, empty ones included. Nothing threw and no existing
+case noticed.
+
+REVERT CHECK, measured: restoring the id comparison fails the first case below with
+`expected true to be false`.
+*/
+describe("actions-menu suppression resolves the intake ROLE (post-#2515)", () => {
+  const INTAKE_FLAGS = { intake: true, hold: true } as const;
+
+  it("suppresses the menu for an intake card whose column id is NOT the legacy one", () => {
+    // `todo` is the merged planning column: intake by trait, and nothing actionable on it.
+    const model = buildTaskActionMenuModel({
+      task: makeTask({ column: "todo" }),
+      t,
+      columnLabel: columnLabel as any,
+      currentColumnFlags: INTAKE_FLAGS as any,
+    });
+    expect(model.shouldShowActionsMenu).toBe(false);
+  });
+
+  it("still shows the menu for an intake card that HAS something actionable", () => {
+    // The suppression must narrow, not swallow: a retryable planning card keeps its menu.
+    const model = buildTaskActionMenuModel({
+      task: makeTask({ column: "todo", status: "failed" as any }),
+      t,
+      columnLabel: columnLabel as any,
+      currentColumnFlags: INTAKE_FLAGS as any,
+      canRetryTask: true,
+      hasRetryHandler: true,
+    });
+    expect(model.shouldShowActionsMenu).toBe(true);
+  });
+
+  it("does NOT suppress the menu for a mid-flight card, whatever its id", () => {
+    /*
+    The inversion guard. `isPreExecutionHoldColumn` previously ORed the legacy id with the
+    traits unconditionally, so a column named `triage` whose traits say it is executing
+    answered true and offered Plan on a running card. Traits decide now.
+    */
+    const model = buildTaskActionMenuModel({
+      task: makeTask({ column: "triage" }),
+      t,
+      columnLabel: columnLabel as any,
+      currentColumnFlags: { intake: false, hold: false, countsTowardWip: true } as any,
+    });
+    expect(model.shouldShowActionsMenu).toBe(true);
+  });
+});
