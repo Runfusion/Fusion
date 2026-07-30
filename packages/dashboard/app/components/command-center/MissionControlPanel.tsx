@@ -70,6 +70,14 @@ receiver is a column id, purpose is presentation, not a lifecycle decision.
 */
 const TRIAGE_STAGE_COLUMN_ALIASES: ReadonlySet<string> = new Set(["triage", "signal", "backlog"]);
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:55 DELIBERATE-LITERAL: alias table, not lifecycle guards.
+Same rationale as the marker above, which covers `TRIAGE_STAGE_COLUMN_ALIASES` but NOT this separate
+declaration — the census excuses the construct a marker is attached to, so a sibling const needs its
+own. These arms map arbitrary OPERATOR-CHOSEN column names ("to do", "ready", "shipped") onto the
+five canonical funnel stages. They are not asking "what lifecycle role does this column play?" —
+they are normalising free text before any role lookup can happen, so there is no trait to read.
+*/
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
   { id: "triage", match: (c) => TRIAGE_STAGE_COLUMN_ALIASES.has(c) },
   { id: "todo", match: (c) => c === "todo" || c === "to-do" || c === "to do" || c === "ready" },

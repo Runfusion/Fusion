@@ -75,6 +75,11 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
  *
  * Same shape, different degraded answer — the asymmetry U11 verified for
  * `isPreExecutionHoldColumn` and this file already documents elsewhere.
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-30-01:55 DELIBERATE-LITERAL: the fallback arm only.
+ * The reasoning above was already reviewed; only the machine-readable token was missing, so the
+ * census counted this as an unconverted guard. Traits decide when present; the id answers only
+ * when the column has no resolved flags, where there is nothing to resolve from.
  */
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
   return flags ? flags.hold === true : columnId === "todo";
