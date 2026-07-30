@@ -1445,7 +1445,64 @@ export class Scheduler {
   }
 
   private async emitHighOverlapFanoutWarnings(tasks: Task[]): Promise<void> {
-    const fanoutMap = computeBlockerFanoutMap(tasks, 3);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-11:10:
+    WIRING THE ESCALATION LANES — the option existed and nothing in production filled it.
+
+    `computeBlockerFanoutMap`'s `escalationColumns` was added as an optional resolved answer and this,
+    its only production caller, passed nothing. So on a renamed board `shouldEscalate` was false for
+    every blocker and the warning below reported a long-standing bottleneck as `temporary` forever.
+    The fan-out COUNT was correct throughout, which is what makes it quiet: the message names a real
+    problem and mis-states its age.
+
+    FLAT SET, DELIBERATELY, and the limit is worth naming: `escalationColumns` is board-wide, so on a
+    board spanning workflows this unions every workflow's active lanes. An id one workflow calls wip
+    and another calls something else is therefore treated as active for both. That over-approximates
+    in the CHEAP direction here — the cost is a bottleneck warning reading `long-lived` slightly too
+    eagerly, never a missed one — and it matches how `terminalColumns`/`reviewColumns` are already
+    passed in this file. A per-task answer would need the `classify`-shaped option this module
+    documents for the cases where the distinction actually bites.
+
+    One IR cache for the sweep, per the caller-owned-cache contract.
+    */
+    const escalationIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    const escalationColumns = new Set<string>();
+    const holdByTaskId = new Map<string, boolean>();
+    const terminalByTaskId = new Map<string, boolean>();
+    for (const task of tasks) {
+      const ir = await resolveWorkflowIrForTask(this.store, task.id, escalationIrCache).catch(() => undefined);
+      if (!ir) continue;
+      for (const id of columnsWithFlag(ir, "countsTowardWip")) escalationColumns.add(id);
+      for (const id of columnsWithFlag(ir, "mergeOrchestration")) escalationColumns.add(id);
+      for (const id of columnsWithFlag(ir, "mergeBlocker")) escalationColumns.add(id);
+      for (const id of columnsWithFlag(ir, "humanReview")) escalationColumns.add(id);
+      holdByTaskId.set(task.id, columnsWithFlag(ir, "hold").includes(task.column));
+      terminalByTaskId.set(
+        task.id,
+        columnsWithFlag(ir, "complete").includes(task.column) || columnsWithFlag(ir, "archived").includes(task.column),
+      );
+    }
+    const fanoutMap = computeBlockerFanoutMap(tasks, 3, {
+      ...(escalationColumns.size > 0 ? { escalationColumns } : {}),
+      /*
+      `classify` is PER TASK, which this module documents as the only correct option on a board
+      spanning workflows — and it is required here for a reason the escalation half alone would have
+      hidden: `overlapBlockedTodoCount` counts dependents in the HOLD lane, whose flat default is
+      `"todo"`. On a renamed board that count was ZERO, so the threshold check below skipped every
+      blocker and no warning was emitted AT ALL. Wiring only `escalationColumns` would have fixed the
+      long-lived/temporary label on a message that never printed.
+
+      A task whose workflow did not resolve is absent from both maps and falls back to the legacy
+      answer, matching the documented default.
+      */
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default for both halves, reviewed
+         2026-07-31-11:10. A task absent from the maps above had no readable workflow, so it keeps
+         the answer `computeBlockerFanoutMap` would have given it with no options at all. */
+      classify: (task: Task) => ({
+        isHold: holdByTaskId.get(task.id) ?? task.column === "todo",
+        isTerminal: terminalByTaskId.get(task.id) ?? (task.column === "done" || task.column === "archived"),
+      }),
+    });
     const seenBlockers = new Set<string>();
 
     for (const [blockerId, fanout] of fanoutMap) {
