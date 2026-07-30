@@ -11,7 +11,7 @@ import type {
   Task,
 } from "@fusion/core";
 import type { LifecycleColumns, WorkflowIrResolverStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, NotificationDispatcher, resolveTaskLifecycleColumns } from "@fusion/core";
+import { DASHBOARD_USER_ID, NotificationDispatcher, columnsWithFlag, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
@@ -245,6 +245,29 @@ export class NotificationService {
     return resolveTaskLifecycleColumns(this.store as WorkflowIrResolverStore, taskId);
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+  REVIEW IS A SET, AND `humanReview` COUNTS. `resolveLifecycleColumns().review` reads the
+  `mergeOrchestration` flag only, so a lane carrying the `human-review` trait and NOT the merge trait
+  resolves to nothing — the guard fell back to the literal `in-review`, and on a renamed board the
+  operator's "ready for review" notification simply never fired. Silent: no error, no log, the card
+  just arrives unannounced.
+
+  Same union the dashboard routes already use (`resolveReviewColumnsForTask`), so this is that
+  established idiom applied here rather than a new notion of "review". Membership, not equality: a
+  workflow may declare more than one review lane, and asking "is this card ALREADY there" is a set
+  question — the arity rule #2713 wrote down after fixing it twice.
+  */
+  private async resolveReviewColumnsForTask(taskId: string): Promise<Set<string>> {
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store as WorkflowIrResolverStore, taskId);
+      const lanes = [...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")];
+      return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
+    } catch {
+      return new Set(["in-review"]);
+    }
+  }
+
   private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {
     void this.handleTaskMovedAsync(data);
   };
@@ -254,7 +277,7 @@ export class NotificationService {
 
     const movedLifecycle = await this.resolveLifecycleColumnsForTask(data.task.id);
 
-    if (data.to === (movedLifecycle?.review ?? "in-review")) {
+    if ((await this.resolveReviewColumnsForTask(data.task.id)).has(data.to)) {
       if (!this.notificationsEnabled) {
         await this.refreshNotificationState("task:moved");
         if (!this.notificationsEnabled) {

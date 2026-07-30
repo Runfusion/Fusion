@@ -119,6 +119,59 @@ describe("NotificationService", () => {
     );
   });
 
+  it("notifies for a review lane that carries human-review WITHOUT the merge trait", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+    `resolveLifecycleColumns().review` reads the `mergeOrchestration` flag ONLY, so a lane carrying
+    `human-review` and not the merge trait resolved to nothing and the guard fell back to the literal
+    `in-review`. On a renamed board the operator's "ready for review" notification never fired — no
+    error, no log, the card just arrives unannounced, which is the failure mode an operator cannot
+    even report because nothing happened.
+
+    REVERT CHECK: restore `data.to === (movedLifecycle?.review ?? "in-review")` and this fails while
+    the default-board case above still passes — which is exactly how the gap survived the conversion.
+    */
+    const HUMAN_REVIEW_IR = {
+      version: "v2",
+      id: "wf-signoff",
+      name: "Sign-off Flow",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "backlog" }],
+      edges: [],
+    };
+
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-signoff" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-signoff" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-signoff", ir: HUMAN_REVIEW_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({
+      getProviderId: () => "mock",
+      isEventSupported: () => true,
+      sendNotification,
+    } as NotificationProvider);
+    await service.start();
+
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:moved", {
+      task: task(),
+      from: "building",
+      to: "signoff",
+    });
+    await flushAsyncHandlers();
+
+    expect(sendNotification).toHaveBeenCalledWith(
+      "in-review",
+      expect.objectContaining({ taskId: "FN-1", event: "in-review" }),
+    );
+  });
+
   describe("task-created notifications", () => {
     it("dispatches exactly once for agent-created tasks when enabled", async () => {
       const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: ["task-created"] as any });
