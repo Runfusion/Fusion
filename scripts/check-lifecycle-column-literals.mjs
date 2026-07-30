@@ -109,6 +109,46 @@ function patternFor(literal) {
 }
 
 /*
+FNXC:LifecycleColumnCensus 2026-07-30-01:50:
+MEMBERSHIP forms, tracked separately because the `===`/`!==` census is BLIND to them and that
+blindness hid a live defect: the routine editor defaulted new tasks to `triage`, a column U11
+deleted, and no count showed it. A hardcoded set of column ids gates behaviour exactly as a
+comparison does — `new Set(["triage", "todo"])`, `[...].includes(col)`, `switch (col) case "triage"`,
+and a plain `?? "triage"` default.
+
+Reported and ratcheted SEPARATELY from the comparison count rather than folded into it: the tracked
+bar is the comparison number, and silently inflating it would make the program's progress metric
+jump for reasons unrelated to anyone's conversion work. This category exists to stop NEW ones
+appearing, not to add work — most current entries are legitimate (explicitly-named LEGACY_* fallback
+sets, i18n display keys, agent-role prose that merely contains the word).
+*/
+const MEMBERSHIP_PATTERNS = (literal) => [
+  new RegExp(`new Set\\(\\[[^\\]]*"${literal}"`),
+  new RegExp(`\\[[^\\]]*"${literal}"[^\\]]*\\]\\s*\\.\\s*(includes|indexOf|some)`),
+  new RegExp(`(includes|has)\\(\\s*"${literal}"\\s*\\)`),
+  new RegExp(`case\\s+"${literal}"`),
+  new RegExp(`\\?\\?\\s*"${literal}"`),
+];
+
+export function membershipCensusFor(files, readFile = (f) => readFileSync(resolve(REPO_ROOT, f), "utf-8")) {
+  const perFile = new Map();
+  for (const file of files) {
+    const stripped = stripComments(readFile(file));
+    const hits = [];
+    stripped.split("\n").forEach((line, index) => {
+      for (const literal of LITERALS) {
+        if (MEMBERSHIP_PATTERNS(literal).some((re) => re.test(line))) {
+          hits.push({ line: index + 1, literal });
+          break;
+        }
+      }
+    });
+    if (hits.length > 0) perFile.set(file, hits);
+  }
+  return perFile;
+}
+
+/*
 Paths from `git ls-files` are REPO-RELATIVE, so they must be resolved against the repo root, not the
 process cwd — a vitest worker (or any invocation from a subdirectory) has a different cwd and every
 read would ENOENT. Reporting and ledger keys stay repo-relative so the ledger is stable.
@@ -199,6 +239,11 @@ function main() {
   console.log(`\nscanned ${files.length} non-test source files`);
   console.log(`CODE-ONLY TOTAL: ${total}`);
 
+  const membership = membershipCensusFor(files);
+  const membershipCounts = Object.fromEntries([...membership].map(([f, hits]) => [f, hits.length]));
+  const membershipTotal = Object.values(membershipCounts).reduce((a, b) => a + b, 0);
+  console.log(`MEMBERSHIP-FORM TOTAL (tracked separately, not part of the bar): ${membershipTotal}`);
+
   if (mode === "report") return;
 
   if (mode === "update") {
@@ -213,6 +258,8 @@ function main() {
       literals: LITERALS,
       total,
       ceilings: counts,
+      membershipTotal,
+      membershipCeilings: membershipCounts,
     }, null, 2)}\n`);
     console.log(`\nledger updated: ${LEDGER_PATH}`);
     return;
@@ -226,10 +273,15 @@ function main() {
     if (count > ceiling) regressions.push({ file, count, ceiling });
   }
 
+  for (const [file, count] of Object.entries(membershipCounts)) {
+    const ceiling = (ledger.membershipCeilings ?? {})[file] ?? 0;
+    if (count > ceiling) regressions.push({ file, count, ceiling, kind: "membership" });
+  }
+
   if (regressions.length > 0) {
     console.error("\nLIFECYCLE-COLUMN CENSUS REGRESSION — these files gained hard-coded column comparisons:");
     for (const r of regressions) {
-      console.error(`  ${r.file}: ${r.count} (ceiling ${r.ceiling})`);
+      console.error(`  ${r.file}: ${r.count} (ceiling ${r.ceiling})${r.kind === "membership" ? " [membership form: a hardcoded column-id set/case/default]" : ""}`);
     }
     console.error(
       "\nResolve the column from the task's workflow instead of comparing against a literal id.\n"
