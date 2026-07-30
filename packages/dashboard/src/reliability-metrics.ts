@@ -61,6 +61,21 @@ function incrementDayCount(counts: Record<string, number>, day: string): void {
   counts[day] = (counts[day] ?? 0) + 1;
 }
 
+/*
+FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values, not live columns.
+These ids come from `metadataColumn(entry, ...)` — the `from`/`to` recorded ON A PAST MOVE EVENT in
+the activity log. They are not a question about a task's current column, so there is no workflow to
+resolve them against: the event was written under whatever the board looked like at the time, and a
+column renamed since leaves every older entry carrying the OLD id forever.
+
+Converting these to a trait read would ask "what role does the column named X play TODAY?" about a
+record written months ago, possibly under a different workflow — which is a different question with
+a different answer, and it would silently drop history from the metric rather than improve it.
+
+The correct fix for renamed boards is at the WRITER (record a role alongside the id when the event is
+emitted), not at this reader. Until events carry that, matching the recorded literal is the only
+answer that keeps old data in the series.
+*/
 export function tasksEnteredInReviewPerDay(activity: ActivityLogEntry[], startMs: number, endMs: number): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const entry of collectTaskMovedEvents(activity, startMs, endMs)) {
@@ -71,6 +86,9 @@ export function tasksEnteredInReviewPerDay(activity: ActivityLogEntry[], startMs
   return counts;
 }
 
+/* FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values — `from`/`to`
+   as RECORDED on a past move event, matched as recorded. Full reasoning above
+   `tasksEnteredInReviewPerDay`. */
 export function tasksBouncedToInProgressPerDay(activity: ActivityLogEntry[], startMs: number, endMs: number): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const entry of collectTaskMovedEvents(activity, startMs, endMs)) {
@@ -101,6 +119,9 @@ function percentile(sortedValues: number[], p: number): number {
   return sortedValues[Math.min(sortedValues.length - 1, Math.max(0, index))] ?? 0;
 }
 
+/* FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values — `from`/`to`
+   as RECORDED on a past move event, matched as recorded. Full reasoning above
+   `tasksEnteredInReviewPerDay`. */
 export function inReviewDurationMetrics(activity: ActivityLogEntry[], startMs: number, endMs: number): InReviewDurationMetric {
   const moved = activity
     .filter((entry) => entry.type === "task:moved")

@@ -17,7 +17,6 @@
     "packages/core/src/task-store/branch-group-ops.ts": 6,
     "packages/core/src/task-store/task-artifacts-ops.ts": 6,
     "packages/dashboard/app/components/ListView.tsx": 6,
-    "packages/dashboard/src/reliability-metrics.ts": 6,
     "packages/engine/src/runtimes/in-process-runtime.ts": 6,
     "packages/core/src/task-store/merge-queue-ops-2.ts": 5,
     "packages/dashboard/app/components/TaskDetailModal.tsx": 5,
@@ -137,6 +136,7 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts": 1
   },
   "deliberateByFile": {
+    "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 4,
     "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 2,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
@@ -155,6 +155,8 @@
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000triage": 1,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000todo": 1,
     "packages/dashboard/app/utils/columnRoles.ts\u0000todo": 1,
+    "packages/dashboard/src/reliability-metrics.ts\u0000done": 1,
+    "packages/dashboard/src/reliability-metrics.ts\u0000in-progress": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000todo": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000triage": 1,
     "packages/engine/src/hold-release.ts\u0000archived": 1,
