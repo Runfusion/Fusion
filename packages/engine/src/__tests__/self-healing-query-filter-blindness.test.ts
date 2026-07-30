@@ -444,4 +444,37 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.hold }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.wip }));
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:50 (the query-filter class, fourth sweep):
+  `recoverInterruptedMergingTasks` rescues a task interrupted mid-merge — status still `merging`, no live
+  session behind it. Its read was the literal review lane, so on a renamed board that task sat in
+  `merging` indefinitely.
+
+  Also asserts the LOG, because the old message hardcoded "in in-review" and would have reported a lane
+  the sweep did not search. A message that names the wrong board is its own small lie.
+
+  REVERT CHECK, measured: restoring the literal read fails this — the board's own review lane is never
+  asked for.
+  */
+  it("the interrupted-merge recovery asks for the board's OWN review lane and names it", async () => {
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-MERGING",
+      column: RENAMED_VOCAB.review,
+      status: "merging",
+      updatedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    } as unknown as Task;
+    const { store, listTasks } = productionFaithfulStore([stuck]);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      globalPause: false,
+      enginePaused: false,
+      taskStuckTimeoutMs: 60_000,
+    } as Settings);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverInterruptedMergingTasks();
+
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
+  });
 });

@@ -8492,23 +8492,62 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
-      const statusCandidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-19:50 (the query-filter class, fourth sweep):
+      Same shape as its three siblings: `listTasks({ column: "in-review" })` returns EMPTY on a renamed
+      board, so a task interrupted mid-merge — status still `merging`, no live session behind it — was
+      never recovered and sat in that state indefinitely.
+
+      Project union for the READ; per-card verdict for the MUTATION, since this sweep rewrites status and
+      clears merge state. Provenance so an unresolvable card is reported rather than silently skipped —
+      identical to `recoverAlreadyMergedReviewTasks` and `recoverStuckMergeDeadlocks`, so the four cannot
+      drift apart.
+      */
+      const interruptedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const interruptedById = new Map<string, Task>();
+      for (const column of interruptedReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) interruptedById.set(task.id, task);
+      }
+      const interruptedIrCache = new Map<string, WorkflowIr>();
+      const unresolvedInterruptedCards: string[] = [];
+      const inOwnReviewLaneForInterrupted = async (task: Task): Promise<boolean> => {
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, interruptedIrCache)
+          .catch(() => undefined);
+        const own = resolved
+          ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
+          : [];
+        if (!resolved || resolved.source === "default") unresolvedInterruptedCards.push(task.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-19:50. */
+        return own.length > 0 ? own.includes(task.column) : task.column === "in-review";
+      };
+      const statusCandidates = [...interruptedById.values()].filter((task) =>
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         Boolean(task.status && ACTIVE_MERGE_STATUSES.has(task.status)),
       );
       const candidates: Task[] = [];
       for (const task of statusCandidates) {
+        if (!(await inOwnReviewLaneForInterrupted(task))) continue;
         if (await this.isPastInterruptedMergeGraceAsync(task, timeoutMs)) {
           candidates.push(task);
         }
       }
 
+      if (unresolvedInterruptedCards.length > 0) {
+        log.warn(
+          `interrupted-merge recovery: ${unresolvedInterruptedCards.length} card(s) measured against the `
+          + `built-in review lane because their own workflow could not be resolved `
+          + `(${unresolvedInterruptedCards.slice(0, 5).join(", ")}); a renamed review lane there stays stuck.`,
+        );
+      }
+
       if (candidates.length === 0) return 0;
 
-      log.warn(`Found ${candidates.length} stale merging task(s) in in-review`);
+      /* Names the lanes actually searched rather than the literal `in-review`, which is no longer what
+         was queried and would misreport the board this ran against. */
+      log.warn(
+        `Found ${candidates.length} stale merging task(s) in ${[...interruptedReviewColumns].join(", ")}`,
+      );
 
       let recovered = 0;
       for (const task of candidates) {

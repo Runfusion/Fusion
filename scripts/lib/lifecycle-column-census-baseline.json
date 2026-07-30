@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 94,
+    "packages/engine/src/self-healing.ts": 93,
     "packages/engine/src/scheduler.ts": 12,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/engine/src/executor.ts": 8,
@@ -42,6 +42,7 @@
   "deliberateByFile": {
     "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 4,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
+    "packages/engine/src/self-healing.ts\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
     "packages/core/src/store.ts\u0000in-review": 2,
@@ -58,7 +59,6 @@
     "packages/engine/src/scheduler.ts\u0000done": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
     "packages/engine/src/scheduler.ts\u0000in-review": 2,
-    "packages/engine/src/self-healing.ts\u0000in-review": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000done": 2,
     "plugins/fusion-plugin-reports/src/store/report-store.ts\u0000archived": 2,
@@ -132,7 +132,7 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 42,
+    "packages/engine/src/self-healing.ts": 41,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
     "packages/core/src/task-store/moves.ts": 2,
