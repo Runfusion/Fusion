@@ -50,7 +50,26 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const preUpdateDescription = task.description;
 
       if (updates.nodeId !== undefined) {
-        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null, await resolveNodeOverrideLanes(store, id));
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (#2821 review — greptile, second call site):
+        THE COLUMN IS RE-READ AFTER THE AWAIT.
+
+        `task` was loaded above, and awaiting lane resolution here opened a window: another process
+        moving the card into a resolved WIP lane during that await left the guard judging a STALE
+        non-WIP column, so the mid-flight refusal passed for a task that had started running.
+
+        I fixed exactly this at the sibling call site in `branch-and-pr-entities.ts` by resolving lanes
+        BEFORE the task read, and missed it here — the same half-conversion this program keeps
+        finding, in my own fix. Hoisting is not available at this site because `task` is the working
+        copy the whole function mutates, so the column is re-read instead and only for the guard.
+
+        The re-read is best-effort: if it fails, the already-loaded copy is used, which is strictly no
+        worse than before this change.
+        */
+        const overrideLanes = await resolveNodeOverrideLanes(store, id);
+        const freshForGuard = await store.getTask(id).catch(() => null);
+        const guardTask = freshForGuard ?? task;
+        const validation = validateNodeOverrideChange(guardTask, updates.nodeId ?? null, overrideLanes);
         if (!validation.allowed) {
           throw new Error(validation.message);
         }
