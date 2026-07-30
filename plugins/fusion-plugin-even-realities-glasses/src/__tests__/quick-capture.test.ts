@@ -107,7 +107,14 @@ describe("quick capture accepts the columns the board actually declares", () => 
     } as never;
   }
 
-  it("accepts a column the default workflow declares", async () => {
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-19:45 (PR #2607 review — CodeRabbit): this case is
+  VACUOUS with respect to the change and is kept only as a smoke test for the happy path —
+  `in-progress` belongs to both the legacy five and the declared set, so it passed before the fix
+  too. The non-vacuous half (a column the legacy five never contained IS accepted) needs control of
+  the resolved workflow and lives in `quick-capture-renamed-board.test.ts`.
+  */
+  it("accepts a column the default workflow declares (smoke; see the renamed-board suite)", async () => {
     const d = deps();
 
     await runQuickCapture({ text: "ship the thing", column: "in-progress" }, d);
