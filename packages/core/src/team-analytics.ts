@@ -1,4 +1,5 @@
 import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -215,6 +216,25 @@ function makeSummary(agentId: string, agent?: AgentRow): TeamAgentSummary {
 export async function aggregateTeamAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: TeamAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:10:
+  The store, used ONLY to resolve which columns carry the complete / wip / human-review traits.
+
+  These queries filtered on `"column" = 'done'` and `IN ('in-progress','in-review')`. Those ids are
+  invisible to the lifecycle census, which parses TypeScript comparisons and not SQL strings, so the
+  conversion sweep that fixed this file's TS guards left the queries alone. On a board whose lanes are
+  renamed, every one of them counts ZERO: completed-task totals, per-agent throughput and the
+  in-flight breakdown all read as an idle project, with no error anywhere.
+
+  Resolved PER PROJECT rather than per task, which is what makes a bound array enough here: analytics
+  aggregates a whole project, so the union of a role's columns across its workflows is the right set.
+  (The merge-queue cleanup needed the superset-then-decide-in-JS shape instead, because its lanes are
+  genuinely per task and SQL cannot know a task's workflow.)
+
+  Omitted, the legacy ids answer — the same degraded contract the role helpers use, so an unconverted
+  caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<TeamAnalytics> {
   // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
   // Backend (PostgreSQL) path. Fetch agents + the four task-derived row sets
@@ -222,7 +242,7 @@ export async function aggregateTeamAnalytics(
   // connection has no `project` on search_path), then run the identical pure
   // per-agent aggregation as the sync branch via buildTeamAnalytics.
   if ("ping" in dbOrLayer) {
-    return aggregateTeamAnalyticsAsync(dbOrLayer, query);
+    return aggregateTeamAnalyticsAsync(dbOrLayer, query, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -295,7 +315,24 @@ export async function aggregateTeamAnalytics(
 async function aggregateTeamAnalyticsAsync(
   layer: AsyncDataLayer,
   query: TeamAnalyticsQuery,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<TeamAnalytics> {
+  /* Bound as arrays, never interpolated: these ids come from workflow definitions, which are
+     operator-authored data. `= ANY($n)` keeps them parameters rather than SQL text. */
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  const activeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["countsTowardWip", "humanReview"])]
+    : ["in-progress", "in-review"];
+  /*
+  Built as an IN list of individual parameters rather than `= ANY(${array})`: drizzle expands a JS
+  array in a template into a comma-separated tuple, so ANY received `(($1,$2,$3))` and PostgreSQL
+  rejected it with "op ANY/ALL (array) requires array on right side". Each id stays a bound
+  parameter either way — these come from operator-authored workflow definitions and are never
+  interpolated as SQL text.
+  */
+  const inList = (lanes: readonly string[]) => sql.join(lanes.map((lane) => sql`${lane}`), sql`, `);
   const agents = (await layer.db.execute(
     sql`SELECT id, name, role, state FROM project.agents ORDER BY id`,
   )) as unknown as AgentRow[];
@@ -335,14 +372,14 @@ async function aggregateTeamAnalyticsAsync(
   const completedRows = (await layer.db.execute(
     sql`SELECT assigned_agent_id AS "agentId", count(*)::int AS count
         FROM project.tasks
-        WHERE assigned_agent_id IS NOT NULL AND "column" = 'done' AND column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        WHERE assigned_agent_id IS NOT NULL AND "column" IN (${inList(completeLanes)}) AND column_moved_at IS NOT NULL ${compFrom} ${compTo}
         GROUP BY assigned_agent_id`,
   )) as unknown as CountByAgentRow[];
 
   const currentRows = (await layer.db.execute(
     sql`SELECT assigned_agent_id AS "agentId", "column" AS "columnName", count(*)::int AS count
         FROM project.tasks
-        WHERE assigned_agent_id IS NOT NULL AND "column" IN ('in-progress', 'in-review')
+        WHERE assigned_agent_id IS NOT NULL AND "column" IN (${inList(activeLanes)})
         GROUP BY assigned_agent_id, "column"`,
   )) as unknown as Array<CountByAgentRow & { columnName: string }>;
 
