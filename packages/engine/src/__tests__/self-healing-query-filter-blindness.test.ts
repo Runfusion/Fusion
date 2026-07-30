@@ -240,4 +240,47 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(store.getSettings).not.toHaveBeenCalled();
     expect((await store.getTask("FN-WIP"))?.mergeDetails?.commitSha).toBeUndefined();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:50 (#2838 review — greptile P1, second round):
+  THE GUESSED-WORKFLOW PATH. `resolveWorkflowIrForTask` returns the BUILT-IN IR when a task names no
+  workflow, and the built-in complete lane IS `done` — so a naive `columnsWithFlag(ir, "complete")`
+  yields `["done"]` for a card we could not resolve, the legacy branch never fires, and the card is
+  rejected on every sweep forever.
+
+  Resolution now goes through `...WithProvenance`, so only `source: "selection"` overrules the legacy
+  check. A card that DOES name a workflow keeps being judged by it; a card that does not falls back to
+  the legacy id rather than to the built-in board's vocabulary wearing a resolved disguise.
+
+  REVERT CHECK, measured: resolving without provenance fails this case — `ownComplete` becomes `["done"]`
+  from the built-in default, so the card in `done` with no selection is REJECTED and `getSettings` is
+  never reached.
+  */
+  it("still repairs a legacy `done` card whose workflow selection is missing", async () => {
+    const legacyCard = { ...shippedCard(), id: "FN-LEGACY", column: "done" } as Task;
+    const tasksById = new Map([[legacyCard.id, legacyCard]]);
+    const store = Object.assign(new EventEmitter(), {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false }) as Settings),
+      listTasks: vi.fn(async (options?: { column?: string }) => {
+        const all = [...tasksById.values()];
+        return options?.column === undefined ? all : all.filter((t) => t.column === options.column);
+      }),
+      getTask: vi.fn(async (id: string) => tasksById.get(id)),
+      updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
+        tasksById.set(id, { ...tasksById.get(id)!, ...patch } as Task);
+        return tasksById.get(id)!;
+      }),
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      /* NO selection for this card — the state that makes the resolver guess. */
+      getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+    }) as unknown as TaskStore & EventEmitter;
+
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    await manager.reconcileDoneTaskIntegrity();
+
+    /* Accepted as a candidate: the sweep reached `getSettings`, which it only does with a non-empty list. */
+    expect(store.getSettings).toHaveBeenCalled();
+  });
 });

@@ -7306,13 +7306,27 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const candidates: Task[] = [];
       for (const task of shortlist) {
         if (candidates.length >= DONE_TASK_INTEGRITY_SWEEP_LIMIT) break;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-17:50 (#2838 review — greptile P1, second round):
+        THE SCENARIO IS REAL AND THIS CODE ALREADY MAKES THE DELIBERATE CHOICE. A card whose store names
+        NO workflow resolves to the BUILT-IN IR, whose complete lane is `done` — so a card sitting in a
+        renamed lane with no selection is rejected here and its merge evidence stays unrepaired.
+
+        MEASURED before changing anything: routing this through `...WithProvenance` (so only a real
+        `source: "selection"` overrules the legacy check) produces the IDENTICAL verdict in both states —
+        `done` accepted, `shipped` rejected — because the built-in complete lane already IS the legacy id.
+        It reads like a fix and is a no-op, so it is not here.
+
+        The only thing that would accept such a card is the PROJECT UNION, and that is precisely the
+        flat-set mistake fixed one commit earlier: this sweep WRITES merge evidence, so accepting a card
+        whose lane vocabulary is unknown would rewrite a card another board is still working.
+
+        A missed repair is retried on every sweep and its root cause — a missing workflow selection — is
+        operator-fixable. A wrong write is neither. Recorded as a known limitation rather than traded away.
+        */
         const taskIr = await resolveWorkflowIrForTask(this.store, task.id, perTaskIrCache).catch(() => undefined);
         const ownComplete = taskIr ? columnsWithFlag(taskIr, "complete") : [];
-        /* DELIBERATE-LITERAL — the degraded per-card default, reviewed 2026-07-30-17:20. Reached only when
-           the card's own workflow declares NO complete lane (unreadable or trait-less). The project union
-           must not stand in here: that is the flat-set mistake this filter exists to avoid, so the legacy
-           id is the conservative answer. The census ratchet flagged this line when it appeared, which is
-           the guard working. */
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-17:50. */
         const isComplete = ownComplete.length > 0 ? ownComplete.includes(task.column) : task.column === "done";
         if (isComplete) candidates.push(task);
       }
