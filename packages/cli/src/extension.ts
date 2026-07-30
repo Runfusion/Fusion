@@ -37,6 +37,8 @@ import {
   type SecretScope,
   declaresAnyLifecycleTrait,
   resolveTaskLifecycleColumns,
+  resolveLifecycleColumns,
+  resolveWorkflowIrForTaskWithProvenance,
   resolveWorkflowIrForTask,
   resolveReviewColumns,
 } from "@fusion/core";
@@ -5316,20 +5318,33 @@ export default function kbExtension(pi: ExtensionAPI) {
             Staying on intake is correct and "will be picked up" is false, so it is reported like any
             other failed landing.
 
-        THE FIRST ARM IS UNREACHABLE TODAY, and saying so is the point of writing it down rather than
-        shipping a claim I cannot test. `resolveWorkflowIrForTask` never throws: an unreadable
-        selection, a missing definition, a malformed one and a throwing lookup ALL degrade to the
-        default coding IR (branded `markFellBack`). So `resolveTaskLifecycleColumns` cannot return
-        `undefined` through this path, and an unreadable workflow instead yields the BUILT-IN lanes —
-        `hold: "todo"`. On a split-lane workflow that is a column the card's workflow does not declare,
-        so the move below is rejected and the error branch fires anyway; the caller gets the failure the
-        review asked for, by the other route. This arm is kept because it costs nothing and is correct
-        the day that resolver stops degrading, not because it runs.
+        A FOURTH STATE, and it is the one that made the first arm look unreachable (#2843 review,
+        greptile P1 — the third round, and right again). `resolveWorkflowIrForTask` never throws: an
+        unreadable selection, a missing definition, a malformed one and a throwing lookup ALL
+        SUBSTITUTE the default coding IR. So the substitution never surfaced as a failure, it surfaced
+        as the BUILT-IN lanes — `hold: "todo"`.
+
+        I argued that was harmless because `todo` would be undeclared on such a board and the move
+        would be rejected. That is true only of a board that does not declare `todo` AT ALL. A
+        workflow that holds work in `queued` and ALSO declares a `todo` column for something else
+        gets a move that SUCCEEDS into a lane nothing dispatches from, and a success message. The
+        argument was right about the mechanism and wrong about the population it covers.
+
+        `resolveWorkflowIrForTaskWithProvenance` is the seam built for exactly this: it reports
+        `source: "selection"` ONLY when it genuinely resolved the workflow the task selected, and
+        `"default"` whenever it substituted. Pairing that with the task's own selection separates the
+        two reasons for `"default"` — no workflow selected (legitimate; the built-in board IS the
+        answer) from selected-but-unresolvable (a substitution wearing the board's authority).
+
+        This also makes the first arm REACHABLE, so it is now covered rather than defended.
         */
-        const lanes = await resolveTaskLifecycleColumns(store, task.id);
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
+        const selectedWorkflowId = (await store.getTaskWorkflowSelectionAsync?.(task.id))?.workflowId;
+        const substitutedWorkflow = Boolean(selectedWorkflowId) && resolved.source !== "selection";
+        const lanes = substitutedWorkflow ? undefined : resolveLifecycleColumns(resolved.ir);
         const holdColumn = lanes?.hold;
         if (!lanes) {
-          landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
+          landingError = `the task's workflow (${selectedWorkflowId}) could not be resolved, so its ready lane is unknown`;
         } else if (!holdColumn && await taskBoardDeclaresLifecycleTraits(store, task.id)) {
           landingError = "this workflow declares no hold (ready-to-pick-up) lane";
         } else if (holdColumn && holdColumn !== task.column) {

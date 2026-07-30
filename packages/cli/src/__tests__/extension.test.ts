@@ -4531,6 +4531,75 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.details.agentId).toBe(agentId);
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:45 (#2843 review — greptile P1, third round):
+    THE INVARIANT: a SUBSTITUTED workflow is not the board's answer, even when its lane exists.
+
+    `resolveWorkflowIrForTask` never throws — it substitutes the default coding IR — so a failed
+    resolution surfaced as the BUILT-IN lanes, `hold: "todo"`. I argued that was harmless because
+    `todo` would be undeclared on such a board and the move would be rejected. Right about the
+    mechanism, wrong about the population: a workflow that holds work in `queued` and ALSO declares a
+    `todo` column for something else gets a move that SUCCEEDS into a lane nothing dispatches from,
+    and a success message with it.
+
+    The fixture is exactly that shape — `ideas` (intake), `queued` (hold), and a plain `todo` that
+    carries no lifecycle trait — which is why the older cases could not have caught this: theirs
+    declared no `todo` at all, so the wrong move was rejected for the wrong reason.
+
+    The stub targets `getTaskWorkflowSelectionAsync`, the READER, not the writer `createTask` uses,
+    so creation is untouched and only the post-create resolution sees a workflow id that resolves to
+    nothing. That is what makes this the first case to reach the "could not be resolved" arm rather
+    than defending it in a comment.
+
+    REVERT PROOF, measured: resolve through `resolveTaskLifecycleColumns` again (no provenance) and
+    this fails — the tool moves the card to `todo` and reports a successful delegation.
+    */
+    it("does not trust a SUBSTITUTED workflow's lanes even when the board declares that column", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-substituted-workflow" });
+      const store = h.store();
+      const declaresTodo = await store.createWorkflowDefinition({
+        name: "Queued hold, unrelated todo",
+        ir: {
+          version: "v2",
+          name: "Queued hold, unrelated todo",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+            /* Declared, carries no lifecycle role — the column the built-in fallback would name. */
+            { id: "todo", name: "Someday", traits: [] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      /* Reader only: `createTask` writes the selection, it does not read it through this method. */
+      const selection = vi.spyOn(store, "getTaskWorkflowSelectionAsync")
+        .mockResolvedValue({ workflowId: "wf-vanished", stepIds: [] });
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-substituted",
+          { agent_id: agentId, description: "Workflow resolves to a substitute", workflow_id: declaresTodo.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        selection.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      /* The card must NOT have been moved into the built-in fallback's lane. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).not.toBe("todo");
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(
