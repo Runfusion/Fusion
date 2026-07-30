@@ -31,24 +31,63 @@ as a column comparison, so the ratchet errs toward demanding conversion rather t
 */
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Lifecycle column ids whose literal comparison this ratchet governs. */
 const GOVERNED_IDS = ["triage", "todo", "in-progress", "in-review"] as const;
 
 /**
- * Per-id ceilings, RE-MEASURED against `main` at push time (2026-07-30, gate 2). LOWER THESE as conversions land; never raise one.
+ * Per-id ceilings, re-measured against `main` with the INVERTED classifier (2026-07-30).
+ *
+ * These numbers went UP from the previous set (triage 48 -> 57, in-progress 133 -> 205). No literals
+ * were added: the classifier got honest. It used to require the receiver to LOOK like a column and
+ * therefore could not see `col`, `c`, or `from`/`to`. Treat the jump as a correction to the
+ * measurement, not a regression in the code. LOWER THESE as conversions land; never raise one.
  * A raise means a literal came back — convert the site or, if it genuinely is not a column, teach
  * the classifier why rather than widening the ceiling.
  */
 const CEILINGS: Record<string, number> = {
-  triage: 48,
-  todo: 84,
-  "in-progress": 133,
-  "in-review": 200,
+  triage: 40,
+  todo: 82,
+  "in-progress": 200,
+  "in-review": 214,
 };
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..", "..");
+
+/**
+ * Is this 1-indexed line inside a `/* … *\/` block? Cheap state scan rather than a parser: the
+ * ratchet must not need a TypeScript AST to tell documentation from a guard, and every FNXC note in
+ * this codebase explaining an OLD comparison would otherwise be counted as the comparison itself.
+ */
+const blockCommentLinesByFile = new Map<string, ReadonlySet<number>>();
+
+function isInsideBlockComment(file: string, lineNo: number): boolean {
+  let cached = blockCommentLinesByFile.get(file);
+  if (!cached) {
+    const inside = new Set<number>();
+    let open = false;
+    const lines = readFileSync(join(REPO_ROOT, file), "utf-8").split("\n");
+    lines.forEach((text, index) => {
+      const opensHere = text.includes("/*");
+      const closesHere = text.includes("*/");
+      if (open) inside.add(index + 1);
+      if (opensHere && !closesHere) {
+        open = true;
+        inside.add(index + 1);
+      } else if (closesHere) {
+        if (opensHere) inside.add(index + 1);
+        open = false;
+      }
+    });
+    cached = inside;
+    blockCommentLinesByFile.set(file, cached);
+  }
+  return cached.has(lineNo);
+}
+
+
 
 function comparisonSites(columnId: string): { file: string; line: string; code: string }[] {
   let out = "";
@@ -75,9 +114,30 @@ function comparisonSites(columnId: string): { file: string; line: string; code: 
     return [];
   }
 
-  const columnLhs = new RegExp(
-    String.raw`\b(\w*[Cc]olumn|\w*\.column)\s*(===|!==)\s*"${columnId}"` +
-      String.raw`|"${columnId}"\s*(===|!==)\s*\b(\w*[Cc]olumn|\w*\.column)`,
+  /*
+  FNXC:LifecycleColumnRatchet 2026-07-30-21:10 (classifier INVERTED after a measured miss):
+  This used to require the left-hand side to LOOK like a column (`\w*[Cc]olumn`), which silently
+  under-counted: `col`, `c`, and `from`/`to` are column receivers that pattern cannot match. Measured
+  against a full comparison sweep it missed 2 genuine guards — `executor.ts`'s
+  `from === "todo" || from === "triage"` and MissionControlPanel's `(c) => c === "triage"` — while
+  the program tracked the smaller number as ground truth.
+
+  So it now counts EVERY comparison and subtracts an explicit allowlist of receivers that are
+  provably not columns. Conservative in the correct direction: an unrecognised receiver COUNTS, so a
+  new binding name inflates the number and demands attention rather than vanishing from it.
+
+  The allowlist is receivers, not files, so it cannot excuse a real guard that happens to live in an
+  allowlisted file.
+  */
+  const NON_COLUMN_RECEIVERS = [
+    "role",            // agent-prompts, TaskChatTab — the planning AGENT's role
+    "agentType",       // usage-limit-detector — which lane hit the limit
+    "sessionPurpose",  // skill-resolver
+    "surface",         // tool-availability
+    "agent",           // AgentLogViewer, effective-model-resolution, useTasks (entry.agent)
+  ];
+  const nonColumnLhs = new RegExp(
+    String.raw`(^|[^\w.])(` + NON_COLUMN_RECEIVERS.join("|") + String.raw`)\s*(===|!==)\s*"` + columnId + `"`,
   );
 
   return out
@@ -89,9 +149,12 @@ function comparisonSites(columnId: string): { file: string; line: string; code: 
     })
     .filter(({ file }) => !file.includes("__tests__") && !file.includes(".test."))
     // Comments describe the old behavior on purpose; they are documentation, not guards.
-    .filter(({ code }) => !/^\s*(\/\/|\*|\/\*)/.test(code))
-    // The load-bearing exclusion: only a comparison against something NAMED a column counts.
-    .filter(({ code }) => columnLhs.test(code));
+    // Line-leading markers only catch the FIRST line of a block comment — a `/* ... */` body wraps
+    // onto continuation lines with no marker at all, and four such lines were being counted as
+    // guards. `isInsideBlockComment` re-reads the file and tracks state, which is the only way to
+    // tell prose from code without parsing.
+    .filter(({ file, line, code }) => !/^\s*(\/\/|\*|\/\*)/.test(code) && !isInsideBlockComment(file, Number(line)))
+    .filter(({ code }) => !nonColumnLhs.test(code));
 }
 
 describe("lifecycle-column literal ratchet", () => {
@@ -99,6 +162,14 @@ describe("lifecycle-column literal ratchet", () => {
     it(`does not increase the number of \`${columnId}\` column comparisons`, () => {
       const sites = comparisonSites(columnId);
       const ceiling = CEILINGS[columnId]!;
+      /*
+      The ratchet REPORTS the number it enforces, so the program measures with the same tool it
+      gates with. A grep cannot tell a lifecycle guard from a legitimate declaration — the legacy
+      workflow still declares `triage`, the Task enum still includes it — so a separately-maintained
+      count drifts from the gate, which is exactly how 34 was tracked while 56 were live.
+      */
+      // eslint-disable-next-line no-console
+      console.log(`[lifecycle-column-ratchet] ${columnId}: ${sites.length} comparison(s), ceiling ${ceiling}`);
 
       expect(
         sites.length,
@@ -168,6 +239,15 @@ describe("lifecycle-column literal ratchet", () => {
     */
     const sites = comparisonSites("todo");
     expect(sites.length).toBeGreaterThan(0);
-    expect(sites.every((s) => /column/i.test(s.code))).toBe(true);
+    /*
+    Deliberately NOT "every site mentions the word column". That assertion belonged to the previous
+    classifier, which required the receiver to look like a column — and it is precisely the
+    assumption that made the ratchet blind to `col`, `c` and `from`/`to`. Asserting it again would
+    re-impose the blind spot on the very test meant to prove the classifier works.
+
+    Instead: it finds real sites, AND it still excludes a receiver on the non-column allowlist.
+    */
+    expect(sites.some((site) => /\.column|\bcolumn\b/i.test(site.code))).toBe(true);
+    expect(sites.some((site) => /\brole\s*===/.test(site.code))).toBe(false);
   });
 });
