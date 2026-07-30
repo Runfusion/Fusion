@@ -101,6 +101,23 @@ export interface LifecycleIrOptions {
  * ROLES onto one column from any change of vocabulary.
  */
 export const MERGED_VOCAB: Vocabulary = {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-00:10 (fix-forward, surfaced by a typecheck that reaches here):
+  `intake` was MISSING, which is a type error `Vocabulary` already forbade — invisible because the engine
+  tsconfig has `exclude: ["src/__tests__/**"]`, so nothing in this directory is typechecked. It surfaced
+  only when a test OUTSIDE that directory (`src/notification/__tests__/`) imported this fixture.
+
+  Not cosmetic. `lifecycleIr` derives `merged` from `options.mergedIntakeAndHold === true || v.intake ===
+  v.hold`; with `intake` undefined the second test was false, so MERGED_VOCAB alone produced a SEPARATE
+  intake column whose `id` was `undefined` — a malformed IR, and precisely the "assertions pass for the
+  wrong reason" failure the note at the top of this file warns about.
+
+  `todo` is the correct value: this vocabulary documents itself as the board where intake and hold are one
+  column, and `todo` is genuinely the merged Planning id after U11. Behaviour-neutral for every current
+  caller — all four pass `mergedIntakeAndHold: true`, so `merged` was already true and `v.intake` was
+  never read. It now also holds for a caller that forgets the option.
+  */
+  intake: "todo",
   hold: "todo",
   wip: "in-progress",
   review: "in-review",
