@@ -216,6 +216,31 @@ passes with either fixed. Measured: `expect(message).toContain("must be in")` pa
 reverted, because the completion guard caught the card instead. Assert something that names the site —
 here the message prefix (`Cannot merge` vs `Cannot move … to done`) — so the sites fail independently.
 
+## When the conservative verdict needs reporting — and when it does not
+
+`resolveWorkflowIrForTask` **substitutes** the built-in IR rather than failing, so `resolved.length > 0`
+reads as *"this board answered"* when nobody did. Both self-healing sweeps in #2838 hit this: a card whose
+workflow could not be resolved was measured against the built-in lane, rejected, and rejected again on
+every pass **with nothing recorded**. They now use `...WithProvenance` — not to change the verdict
+(measured: identical in every state, because the built-in lane already *is* the legacy id) but to make the
+unrepaired card **reportable**.
+
+The merge-blocker sites in this PR sit on the same shape and deliberately do **not** get that treatment.
+Measured the verdict first — also identical — then checked visibility, which is where they differ:
+
+```ts
+throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);
+//  → "Cannot merge FN-1: task is in 'checking', must be in 'in-review'"
+```
+
+The refusal is already surfaced to the operator, and the message **names the lane it expected**, which is
+the diagnostic a report would have added. A sweep that skips silently needs the report; a call that throws
+with the expected lane in the string does not.
+
+**The rule, so this is not applied by reflex:** provenance buys *visibility*, never a different answer.
+Add it where the conservative verdict would otherwise be invisible. Adding it where the failure already
+surfaces is ceremony — and, since it changes no behaviour, ceremony that reads like a fix.
+
 ## Related
 
 - `docs/solutions/architecture-patterns/hardcoded-movetask-destinations-are-census-invisible.md` — the
