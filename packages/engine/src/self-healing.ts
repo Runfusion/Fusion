@@ -2752,16 +2752,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // `.fusion/tasks/{id}/` on disk, which downstream agents are told they
       // may read for sibling-spec context (executor prompt). Done/archived
       // dependents have already consumed the spec and don't block.
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:25 (fleet: self-healing.ts):
+      Terminal lanes resolved per task through the store's synchronous reader — both loops here are
+      sync and iterate an already-unfiltered board read, so there is no query half to pair and no
+      reason to restructure them.
+
+      Unlike the worktree-release sweep, this one failed CLOSED on a renamed board: no card matched
+      `done`, so nothing was ever archived and every dependent counted as active. Benign, but the
+      auto-archive lifecycle simply stopped existing there.
+      */
+      const terminalLanesFor = (taskId: string) => {
+        try {
+          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
+        } catch {
+          return undefined;
+        }
+      };
       const tasksWithActiveDependents = new Set<string>();
       for (const t of tasks) {
-        if (t.column === "done" || t.column === "archived") continue;
+        const depLanes = terminalLanesFor(t.id);
+        if (t.column === (depLanes?.complete ?? "done") || t.column === (depLanes?.archived ?? "archived")) continue;
         for (const depId of t.dependencies ?? []) {
           tasksWithActiveDependents.add(depId);
         }
       }
 
       const stale = tasks.filter((t) => {
-        if (t.column !== "done") return false;
+        if (t.column !== (terminalLanesFor(t.id)?.complete ?? "done")) return false;
         // Prefer columnMovedAt (when the task entered done); fall back to updatedAt
         // for legacy tasks that lack the field.
         const ts = t.columnMovedAt || t.updatedAt;
