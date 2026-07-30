@@ -23,11 +23,10 @@ assertions exact rather than inferred from absence of change.
 
 MECHANISM COVERAGE, measured rather than claimed. Deleting the user-pause guard fails 2
 cases; deleting the already-declared short-circuit fails 2 cases. The
-unresolvable-workflow case was REWRITTEN after PR #2543 review: chasing per-task isolation
-proved the sweep's unresolvable-workflow guard is UNREACHABLE (the IR resolver never
-rejects), so the case now asserts what actually happens — resolution falls back to the
-default workflow and the card is re-homed on a guess — plus the isolation property the
-review asked for. See the note at that case.
+unloadable-workflow case asserts the guard that now EXISTS: the sweep proves the resolved
+IR belongs to the task before moving its card. Before that fix the resolver never rejected
+and the card was re-homed against the DEFAULT workflow — a guess. See the note at that
+case.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task, WorkflowIr } from "@fusion/core";
@@ -140,44 +139,33 @@ describe("reconcileUndeclaredTaskColumns (U12 — R7)", () => {
   });
 
   /*
-  FNXC:WorkflowColumns 2026-07-29-00:00 (PR #2543 review — CodeRabbit, and a real finding):
-  THE SWEEP'S "UNRESOLVABLE WORKFLOW" GUARD CANNOT FIRE. Chasing the review's request to
-  prove per-task isolation, I could not make the case fail under any mutation — including
-  simulating a whole-sweep abort. The reason is upstream: `resolveWorkflowIrById` catches
-  EVERY failure and returns `defaultCodingWorkflowIr()`, and `resolveWorkflowIrForTask`
-  does the same for a failed selection read. So `resolveWorkflowIrForTask` never rejects,
-  the sweep's `try/catch` around it is unreachable, and its comment — "do not guess a
-  column" — describes protection that does not exist.
+  FNXC:WorkflowColumns 2026-07-29-00:00 (U12 — the guard now EXISTS):
+  A card whose workflow cannot be loaded is SKIPPED, and its neighbour is still repaired.
 
-  What ACTUALLY happens to a card whose workflow cannot be read: it is judged against the
-  DEFAULT workflow. If its column is not one the default declares, the sweep re-homes it
-  to the default's rebound target — i.e. it guesses, using a workflow that is not the
-  card's own. That is the exact outcome the guard was written to prevent.
+  History, because it matters for reading this file: the sweep's `catch` around IR
+  resolution was dead code. `resolveWorkflowIrById` swallows every failure and returns
+  `defaultCodingWorkflowIr()`, so the resolver never rejected and a card with an
+  unloadable workflow was judged against the DEFAULT and re-homed to the DEFAULT's
+  rebound target — the sweep guessed with someone else's workflow, the exact outcome the
+  guard's comment claimed to prevent. Discovered by being unable to make a test of that
+  guard fail (PR #2543); the protection is added in this change.
 
-  This test now asserts the real behaviour rather than the intended behaviour, because a
-  test asserting the intent would pass for the wrong reason and hide the gap. The fix
-  belongs upstream (the resolver needs to signal failure, or the sweep needs to detect
-  "I was handed the default IR but this task selects something else") and is a behaviour
-  change, not test work — flagged in the PR body rather than smuggled in here.
-
-  The per-task isolation the review asked for IS pinned: two stranded cards, one with an
-  unreadable workflow, and the sweep must still process both rather than dying on the
-  first.
+  Both halves are asserted deliberately: the unloadable card must NOT move (no guessing),
+  and the neighbour MUST move (one bad card cannot disable the sweep for everyone else —
+  the per-task isolation property, which a single-task fixture cannot distinguish from a
+  whole-sweep abort).
   */
-  it("resolves an unreadable workflow to the DEFAULT and keeps processing other cards", async () => {
-    const unreadable = task({ id: "FN-3", column: "custom-lane" as Task["column"] });
+  it("skips a card whose workflow cannot be loaded, and still repairs its neighbour", async () => {
+    const unloadable = task({ id: "FN-3", column: "custom-lane" as Task["column"] });
     const neighbour = task({ id: "FN-3b", column: "todo" });
-    const store = makeStore([unreadable, neighbour], { unresolvableWorkflowFor: "FN-3" });
+    const store = makeStore([unloadable, neighbour], { unresolvableWorkflowFor: "FN-3" });
 
-    const rehomed = await manager(store).reconcileUndeclaredTaskColumns();
+    expect(await manager(store).reconcileUndeclaredTaskColumns()).toBe(1);
+    expect(store.moveTask).toHaveBeenCalledTimes(1);
+    expect(store.moveTask.mock.calls[0]![0]).toBe("FN-3b");
 
-    /*
-    Both cards move: the neighbour correctly (its own workflow lacks `todo`), and FN-3 on a
-    GUESS against the default workflow. A failure here of `2 -> 0` would mean the resolver
-    exception aborted the whole sweep, which is the isolation property under test.
-    */
-    expect(rehomed).toBe(2);
-    expect(store.moveTask.mock.calls.map((call) => call[0]).sort()).toEqual(["FN-3", "FN-3b"]);
+    // No guess: the card stays exactly where it was.
+    expect(unloadable.column).toBe("custom-lane");
     expect(neighbour.column).toBe("triage");
   });
 
