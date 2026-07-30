@@ -196,11 +196,30 @@ function comparisonSites(columnId: string): Site[] {
  * A raise means a guard came back — convert it, or if the receiver genuinely is not a column, add it
  * to NON_COLUMN_RECEIVERS with a reason.
  */
+/*
+FNXC:LifecycleColumnRatchet 2026-07-31-01:30 (PR #2647 review — greptile, and worse than reported):
+TIGHTENED TO THE MEASURED COUNTS, because slack made this a ratchet in name only.
+
+The review's finding was that this test is not in the blocking gate, so a regression can merge. True,
+and fixed (`packages/core/package.json` -> `test:unit-gate`). But admitting it to the gate proved the
+bigger problem: I reintroduced `task.column === 'triage'` and the gate STAYED GREEN at 158 passed.
+
+The ceilings carried 26 free `triage` slots (11 measured vs 37), plus 18 for `todo`, 4 for
+`in-progress` and 4 for `in-review`. A ceiling with slack does not ratchet — it permits exactly as
+many regressions as the gap, silently, which is the same "guard that cannot fire" this whole program
+keeps finding. Being in the gate was necessary and not sufficient.
+
+Every number here is now the measured count, so ANY reintroduction fails. Proven, not assumed: with
+these values the same single-guard probe takes the gate red.
+
+LOWER these as conversions land; a raise means a literal came back OR detection improved — and if it
+is the latter, say which sites in the commit, as previous revisions of this file did.
+*/
 const CEILINGS: Record<string, number> = {
-  triage: 37,
-  todo: 82,
-  "in-progress": 201,
-  "in-review": 217,
+  triage: 11,
+  todo: 64,
+  "in-progress": 197,
+  "in-review": 213,
 };
 
 describe("lifecycle-column literal ratchet (AST)", () => {
