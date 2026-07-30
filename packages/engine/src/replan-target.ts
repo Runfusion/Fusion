@@ -343,10 +343,11 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     planning column and the right replan target. `triage` still matches for the workflows that
     genuinely declare it (Lead generation, PR review — where it is the intake/planning lane).
 
-    STILL A REAL FOLLOW-UP, unchanged by the correction: the `return "triage"` fallbacks on the
-    no-match and throw paths name a column the default lineage no longer declares, so a workflow
-    with neither `triage` nor `todo` is handed a nonexistent target. Behavior change, so it is
-    flagged rather than fixed in a comment correction.
+    FOLLOW-UP DONE (#2598), and this note is kept only so the history reads straight: the
+    `return "triage"` fallbacks it flagged are gone. The no-match path now resolves the
+    workflow's own planner lane and the throw path returns `undefined` rather than guessing a
+    column, which is the stronger answer — an unresolvable workflow is a case callers must
+    handle, not one to paper over with a plausible id. See the two blocks below.
     */
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
