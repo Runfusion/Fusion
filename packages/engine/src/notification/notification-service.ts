@@ -529,6 +529,21 @@ export class NotificationService {
 
       Left COUNTED with no exemption marker — four of this file's five remaining entries are here, and the
       census should keep saying so.
+
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (ATTEMPTED, MEASURED, REVERTED — do not retry as written):
+      I converted these four ids to a resolved `progressedLanes` set and it broke an existing gate test
+      (`task-wedge-notification.test.ts` -> "sends one actionable push and mailbox message per active
+      terminal episode": 1 message delivered, 2 expected).
+
+      The cause is the paragraph directly above, and it is stronger than it reads: the hazard is not
+      specific to the resolve/claim ordering, it is ANY await added before the resolve. Column resolution
+      needs one, so a resolved answer here costs a dropped operator notification whenever a re-wedge
+      arrives close behind a recovery. The `task:updated` listeners fire synchronously, so the second
+      emit reaches `claim` while the first episode is still open.
+
+      This is therefore blocked on serialising wedge handling per task, NOT on the conversion being hard.
+      Convert these four only in a change that already owns the wedge-episode contract, and re-run that
+      test as the acceptance check — it fails loudly, which is why this is recorded rather than exempted.
       */
       const hasProgressed = task.column === "todo" || task.column === "in-progress" || task.column === "done" || task.column === "archived"
         || (!isActiveSelfHealingNoAction && typeof task.status === "string" && task.status !== "failed")
