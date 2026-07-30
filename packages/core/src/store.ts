@@ -2040,8 +2040,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async archiveTaskAndCleanup(id: string): Promise<Task> {
     return this.archiveTask(id, true);
   }
-  public resolveUnarchiveTargetColumn(preArchiveColumn: unknown): Column {
-    return resolveUnarchiveTargetColumnImpl(this, preArchiveColumn);
+  /* FNXC:WorkflowLifecycleColumns 2026-08-02-16:30 (fleet): async because the restore destination is resolved
+     from the task's workflow; `taskId` is optional so any caller that has not been updated keeps the legacy
+     answer rather than silently resolving the wrong board. */
+  public resolveUnarchiveTargetColumn(preArchiveColumn: unknown, taskId?: string): Promise<Column> {
+    return resolveUnarchiveTargetColumnImpl(this, preArchiveColumn, taskId);
   }
   public async readPreArchiveColumnFromTaskFile(dir: string): Promise<Column | undefined> {
     return readPreArchiveColumnFromTaskFileImpl(this, dir);
