@@ -859,4 +859,58 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
       .filter(([id, patch]) => id === "FN-WAITING" && (patch as { blockedBy?: unknown }).blockedBy === null);
     expect(clearingWrites).toHaveLength(1);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (#2883 review — "overbroad dependency satisfaction"):
+  A dependency is satisfied when it reaches a TERMINAL lane or a REVIEW lane, and review here means
+  `mergeBlocker ∪ humanReview` — NOT merge orchestration. My first version unioned all three review
+  roles, which counts a merge-orchestration-only column as satisfied and clears `blockedBy` while the
+  dependency is still being merged.
+
+  The fix is to call `resolveDependencySatisfactionColumns`, the answer the scheduler already uses for
+  this exact question, rather than to re-derive it. This case pins the narrowed semantics so a future
+  "simplification" back to the three-role union fails here.
+
+  REVERT CHECK, measured: widening the satisfaction set to include `mergeOrchestration` fails this — the
+  dependent is released while its dependency is still mid-merge.
+  */
+  it("does NOT treat a merge-orchestration-only dependency as satisfied", async () => {
+    /* A board whose merge lane is SEPARATE from its human-review lane. */
+    const splitReviewIr = {
+      ...RENAMED_IR,
+      columns: [
+        ...RENAMED_IR.columns.map((column) =>
+          column.id === RENAMED_VOCAB.review
+            ? { ...column, traits: column.traits.filter((t: { trait: string }) => t.trait !== "merge") }
+            : column,
+        ),
+        { id: "merging", name: "Merging", traits: [{ trait: "merge" }] },
+      ],
+    } as typeof RENAMED_IR;
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const midMerge = { ...shippedCard(), id: "FN-MIDMERGE", column: "merging" } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      /*
+      The HOLD lane is load-bearing. A card in the wip lane takes the sweep's `else` branch, which clears
+      `blockedBy` without consulting `unresolvedDeps` at all — so the first version of this test passed
+      with the satisfaction set widened. Eighth vacuous assertion here, eighth caught by the revert.
+      Only the hold branch re-points the card at its next unmet dependency.
+      */
+      column: RENAMED_VOCAB.hold,
+      blockedBy: "FN-DONE",
+      dependencies: ["FN-MIDMERGE"],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, midMerge, waiting]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: splitReviewIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: splitReviewIr } : undefined)),
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    // Its dependency is still merging, so the card is RE-POINTED at it rather than released.
+    expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: "FN-MIDMERGE" }));
+  });
 });
