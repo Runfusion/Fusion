@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Routines no longer create tasks into a column the board does not have.
+summary: Routines and scheduled tasks no longer create work into a column the board does not have.
 category: fix
-dev: The routine editor's "Target Column" defaulted to `triage`, which U11 removes from the default workflow. An explicit column bypasses the intake fallback added for column-less creates, so routines saved with the untouched default seeded tasks into an undeclared column. Defaults to `todo` (the merged pre-implementation column). The option labels remain inverted against the board and are left as a follow-up.
+dev: Create-task steps defaulted their target column to `triage`, which U11 removes from the default workflow. An explicit column bypasses workflow entry-column resolution, so tasks landed in an undeclared column. Now no column is sent by default and each workflow's own intake resolution decides, which is correct for custom boards where `todo` may not exist either. `routine-runner.ts` and `cron-runner.ts` both substituted `"triage"` at execution time and defeated the form-level fix; both now omit it. The `triage` option is removed from the editor and a persisted `triage` is coerced to Automatic on load.

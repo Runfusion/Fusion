@@ -233,7 +233,20 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   workflow's own intake resolution decides — the only answer correct for every board. `taskColumn` is
   optional on the step, and an empty selection submits as `undefined`.
   */
-  const [taskColumn, setTaskColumn] = useState(isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "" : "");
+  const persistedTaskColumn = isSimpleCreateTask ? routine.steps?.[0]?.taskColumn ?? "" : "";
+  /*
+  FNXC:Automations 2026-07-30-17:15 DELIBERATE-LITERAL:
+  A MIGRATION of a stored legacy value, not a lifecycle decision. It recognises the exact string a
+  routine was persisted with before this fix; there is no workflow IR in scope (a routine names no
+  workflow), so there is no role to resolve — and resolving one would be wrong anyway, since the point
+  is to identify that specific legacy value and discard it.
+
+  Why coerce at all: the select no longer offers `triage`, so a routine saved earlier held a value the
+  operator could neither see nor change, and saving an unrelated edit resubmitted it — keeping the old
+  behaviour alive indefinitely. Coercing on load means the next save of any routine repairs it, and the
+  control shows what will actually happen.
+  */
+  const [taskColumn, setTaskColumn] = useState(persistedTaskColumn === "triage" ? "" : persistedTaskColumn);
   const [modelProvider, setModelProvider] = useState(
     isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.modelProvider ?? "" : ""
   );

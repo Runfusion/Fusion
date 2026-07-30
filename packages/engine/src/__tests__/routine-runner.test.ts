@@ -431,6 +431,43 @@ describe("RoutineRunner", () => {
       expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
     });
 
+    /*
+    FNXC:Automations 2026-07-30-16:55 (greptile #2652):
+    The runner substituted `|| "triage"` for a step with no target column, so it created tasks into a
+    column U11 deletes from the default workflow — for EVERY routine, including ones saved through the
+    fixed editor, because the substitution happens after the step is read. Fixing the form alone changed
+    nothing at runtime, which is why this test drives the RUNNER.
+
+    Omitting the column is the fix, not defaulting it to `todo`: `createTask` resolves the workflow's own
+    intake column when none is given, which is the only answer correct for a custom board too.
+    */
+    it("omits the column for a create-task step that names none, so workflow intake decides", async () => {
+      const routine = createMockRoutine({
+        id: "routine-task-no-column",
+        agentId: undefined,
+        steps: [
+          { id: "step-no-col", type: "create-task", name: "No column", taskDescription: "Resolve my own intake" },
+          { id: "step-explicit", type: "create-task", name: "Explicit", taskDescription: "Honour my column", taskColumn: "in-progress" },
+        ],
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const createTask = vi
+        .fn()
+        .mockResolvedValueOnce({ id: "FN-7101", title: "", description: "Resolve my own intake" })
+        .mockResolvedValueOnce({ id: "FN-7102", title: "", description: "Honour my column" });
+      const taskStore = { ...createMockTaskStore(), createTask } as unknown as TaskStore;
+      const runner = createRoutineRunner({ routineStore, taskStore });
+
+      const result = await runner.executeRoutine("routine-task-no-column", "api");
+      expect(result.success).toBe(true);
+
+      // No column at all — NOT "triage", and not a substituted "todo" either.
+      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ column: undefined }));
+      expect(createTask.mock.calls[0][0].column).toBeUndefined();
+      // An explicit column is still honoured.
+      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ column: "in-progress" }));
+    });
+
     it("cleans up inFlightExecutions map even on error", async () => {
       const routine = createMockRoutine({ id: "routine-error-cleanup", enabled: false });
       const routineStore = createMockRoutineStore([routine]);
