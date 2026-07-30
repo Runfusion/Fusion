@@ -2577,8 +2577,23 @@ export class ProjectEngine {
     column: string;
     error?: string | null;
     log?: Array<{ action?: string }>;
-  }, maxAutoMergeRetries: number): boolean {
-    if (task.column !== "in-review") return false;
+  }, maxAutoMergeRetries: number, isReviewColumn?: boolean): boolean {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+    The review-lane question is a parameter with a documented literal default, the shape
+    `shouldHoldActiveFileScopeLease` already uses in scheduler.ts. Both call sites pass the resolved
+    answer; the default exists so an unconverted caller keeps exactly today's behaviour rather than
+    silently changing meaning.
+
+    Keyed on the literal, this returned false for every card on a renamed board, so a task whose
+    merge verification died on a buffer-overflow error was never auto-healed — it sat retry-exhausted
+    until a human reset it. The failure is invisible because "no auto-heal" looks identical to
+    "nothing to heal".
+
+    DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-30-21:40.
+    */
+    const inReviewLane = isReviewColumn ?? task.column === "in-review";
+    if (!inReviewLane) return false;
     if ((task.mergeRetries ?? 0) < maxAutoMergeRetries) return false;
     const err = task.error ?? "";
     const matchesVerificationError =
@@ -2625,7 +2640,7 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }, maxAutoMergeRetries: number): boolean {
+  }, maxAutoMergeRetries: number, isReviewColumn?: boolean): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
@@ -2639,7 +2654,7 @@ export class ProjectEngine {
     if (task.status === "failed") return false;
     return (
       (task.mergeRetries ?? 0) < maxAutoMergeRetries ||
-      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries) ||
+      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries, isReviewColumn) ||
       this.isRetryCooldownElapsed(task)
     );
   }
@@ -2865,7 +2880,32 @@ export class ProjectEngine {
     // FNXC:PostgresCutover 2026-07-10: allowInReviewMergeProcessing awaits the
     // async getBranchGroup read on the PG branch, so eligibility resolves per
     // task before the sync priority sort.
-    const candidates = tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries)) as Task[];
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+    Resolve each unpaused card's review lane BEFORE the sync filter, sharing ONE IR cache across the
+    sweep per the caller-owned-cache contract on `resolveTaskLifecycleColumns` — a board spanning
+    three workflows must read three IRs, not one per card.
+
+    Resolution is restricted to cards that survive the `paused` check so a paused backlog cannot make
+    this sweep resolve an IR per card for nothing.
+    */
+    const reviewLaneIrCache = new Map<string, WorkflowIr>();
+    const unpaused = tasks.filter((t) => !t.paused);
+    const reviewLaneByTaskId = new Map<string, string | undefined>();
+    for (const t of unpaused) {
+      reviewLaneByTaskId.set(
+        t.id,
+        (await resolveTaskLifecycleColumns(this.runtime.getTaskStore(), t.id, reviewLaneIrCache).catch(() => undefined))?.review,
+      );
+    }
+    const candidates = unpaused.filter((t) => {
+      const reviewLane = reviewLaneByTaskId.get(t.id);
+      return this.canMergeTask(
+        t as any,
+        maxAutoMergeRetries,
+        reviewLane === undefined ? undefined : t.column === reviewLane,
+      );
+    }) as Task[];
     const allowFlags = await Promise.all(candidates.map((t) => this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())));
     const eligible = sortTasksByPriorityThenAgeAndId(
       candidates.filter((_, i) => allowFlags[i]),
@@ -3283,7 +3323,19 @@ export class ProjectEngine {
 
             // Intentional cast to access Task properties needed by merge validation
 
-            if (!this.canMergeTask(task as any, maxAutoMergeRetries)) {
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+            The merge worker's own review-lane answer, resolved from this task's workflow. Same
+            undefined-vs-false distinction as the sweep above: an unresolvable board passes
+            `undefined` so the predicate keeps its documented literal default rather than being told
+            "not in review", which would disable auto-heal outright.
+            */
+            const mergeLoopReviewLane = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.review;
+            if (!this.canMergeTask(
+              task as any,
+              maxAutoMergeRetries,
+              mergeLoopReviewLane === undefined ? undefined : task.column === mergeLoopReviewLane,
+            )) {
               continue;
             }
 
@@ -4230,6 +4282,30 @@ export class ProjectEngine {
           const taskOnErr = await store.getTask(taskId).catch(() => null);
           const mergeStrategyOnErr =
             this.options.getMergeStrategy?.(settingsOnErr as Settings) ?? "direct";
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+          "Did this task already land?" resolved from the task's OWN workflow, ONCE for this whole
+          error path — the three checks below must agree with each other, and re-resolving per check
+          is how two of them end up on different answers.
+
+          All three ask `column === "done" && mergeDetails.mergeConfirmed`. That pair is the
+          already-finalized fast path: the merge DID land, so the verification error being handled is
+          post-finalize noise and the task must be left alone. Keyed on the literal, a renamed
+          complete column made every one of them false, so a task that had genuinely merged took the
+          bounce-back path instead — re-queued, retry-counted, and in the capped branch parked
+          `failed` with a merge sitting on main. The visible symptom is a card that merged and then
+          reports a verification failure it cannot recover from.
+
+          `null` is deliberate and is NOT the same as "not complete": it means this board declares no
+          complete lane, so the question is unanswerable. Each site below then falls through to the
+          bounce path, which is the pre-existing behaviour for an unresolvable board — the fast path
+          is an optimisation that may be skipped, never a claim that may be invented.
+          */
+          const completeColumnOnErr = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.complete ?? null;
+          const isConfirmedLandedOnErr = (candidate: Task | null | undefined): boolean =>
+            completeColumnOnErr !== null
+            && candidate?.column === completeColumnOnErr
+            && candidate.mergeDetails?.mergeConfirmed === true;
 
           // Deterministic verification failure: move back to in-progress
           const isVerificationError =
@@ -4239,11 +4315,8 @@ export class ProjectEngine {
 
           if (taskOnErr && isVerificationError) {
             const refreshedTaskOnVerificationError = await store.getTask(taskId).catch(() => null);
-            if (
-              refreshedTaskOnVerificationError?.column === "done"
-              && refreshedTaskOnVerificationError.mergeDetails?.mergeConfirmed === true
-            ) {
-              const commitSha = refreshedTaskOnVerificationError.mergeDetails.commitSha;
+            if (isConfirmedLandedOnErr(refreshedTaskOnVerificationError)) {
+              const commitSha = refreshedTaskOnVerificationError!.mergeDetails!.commitSha;
               const shortSha = typeof commitSha === "string" && commitSha.length > 0
                 ? commitSha.slice(0, 8)
                 : "unknown";
@@ -4306,8 +4379,8 @@ export class ProjectEngine {
               */
               try {
                 const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
-                if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
-                  const commitSha = checkBeforeWrite.mergeDetails.commitSha;
+                if (isConfirmedLandedOnErr(checkBeforeWrite)) {
+                  const commitSha = checkBeforeWrite!.mergeDetails!.commitSha;
                   const shortSha = typeof commitSha === "string" && commitSha.length > 0
                     ? commitSha.slice(0, 8)
                     : "unknown";
@@ -4371,8 +4444,8 @@ export class ProjectEngine {
             // Under cap — bounce back as before, but record the increment.
             try {
               const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
-              if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
-                const commitSha = checkBeforeWrite.mergeDetails.commitSha;
+              if (isConfirmedLandedOnErr(checkBeforeWrite)) {
+                const commitSha = checkBeforeWrite!.mergeDetails!.commitSha;
                 const shortSha = typeof commitSha === "string" && commitSha.length > 0
                   ? commitSha.slice(0, 8)
                   : "unknown";
@@ -4672,10 +4745,22 @@ export class ProjectEngine {
           // the waiter(s) were set but not consumed above. Resolve them now.
           if (this.hasMergeResolvers(taskId)) {
             const finalTask = await store.getTask(taskId).catch(() => null);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+            The `merged` a manual-merge caller awaits, resolved from the task's own workflow. On a
+            renamed board `column === "done"` was false for a card that HAD merged, so `fn task merge`
+            and the dashboard's merge button reported failure on a successful merge — the merge is
+            already committed at this point, so the report is the only thing that was wrong.
+
+            An unresolvable complete lane yields `false`, matching the pre-existing answer for a board
+            this code cannot read. `false` is the safe direction: it under-claims a merge that
+            happened rather than claiming one that did not.
+            */
+            const finalCompleteColumn = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.complete;
             this.resolveMergeResolvers(taskId, {
               task: finalTask!,
               branch: finalTask?.branch ?? "",
-              merged: finalTask?.column === "done",
+              merged: finalCompleteColumn !== undefined && finalTask?.column === finalCompleteColumn,
               worktreeRemoved: false,
               branchDeleted: false,
             } as MergeResult);
