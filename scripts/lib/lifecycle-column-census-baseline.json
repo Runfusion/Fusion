@@ -3,7 +3,7 @@
   "byFile": {
     "packages/engine/src/self-healing.ts": 110,
     "packages/engine/src/executor.ts": 57,
-    "packages/engine/src/scheduler.ts": 26,
+    "packages/engine/src/scheduler.ts": 22,
     "packages/core/src/store.ts": 12,
     "packages/core/src/task-store/async-comments-attachments.ts": 9,
     "packages/dashboard/app/components/TaskContextMenu.tsx": 9,
