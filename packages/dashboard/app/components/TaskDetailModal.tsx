@@ -5426,17 +5426,17 @@ export function TaskDetailContent({
                   onToggleExpanded={() => setActivityExpanded((value) => !value)}
                   effectiveModels={{
                     triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
-                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
-                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
                   }}
                 />
               ) : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
                   loading={agentLogLoading}
-                  executorModel={resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings)}
-                  validatorModel={resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings)}
+                  executorModel={resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings, detailColumnFlags)}
+                  validatorModel={resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings, detailColumnFlags)}
                   planningModel={resolveEffectivePlanning(task, agentLogEntries, settings)}
                   hasMore={agentLogHasMore}
                   onLoadMore={loadMoreAgentLogs}
