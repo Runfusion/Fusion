@@ -316,6 +316,25 @@ describe("state, phase and result enums are not column guards", () => {
     expect(totals(source).column).toBe(0);
   });
 
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-17:15 (PR #2692 review — greptile):
+  THE NAME-BASED EXCLUSIONS NEED A SOURCE WITH NO SIBLING TO LEAN ON. Every case above supplies
+  non-column siblings (`busy`, `pushing`, `stopped`), which the SIBLING mechanism already classifies
+  on its own — so deleting the entire `type`/`mode`/`kind`/`phase`/`agentState` list left all 38
+  tests green. Measured, not suspected.
+
+  A bare comparison isolates the name rule: nothing else in the expression can produce the answer.
+  */
+  it.each([
+    ["type", `if (type === "done") return;`],
+    ["mode", `if (mode === "archived") return;`],
+    ["kind", `if (kind === "done") return;`],
+    ["phase", `if (phase === "done") return;`],
+    ["agentState", `if (agentState === "done") return;`],
+  ])("excludes a bare `%s` comparison with no sibling to classify it", (_label, source) => {
+    expect(totals(source).column).toBe(0);
+  });
+
   it("STILL counts a column held in a variable called `state`", () => {
     /* The case that makes a receiver-name rule wrong. This is the real shape from
        comments-ops.ts, and it must stay in the backlog. */
