@@ -54,9 +54,10 @@ recorded at its site with the reason and what would actually unblock it:
                              pointing at the class"; not overridden from outside.
   1  useTasks.ts             CROSS-BATCH — see below. Converting core's stall gate alone regresses.
 
-ONE FIX CLOSES TWO OF THEM: add per-task flags to `OverflowViewRenderProps` and source them where
-RightDock builds `renderProps`. That closes DockTaskList (3) and DevServerView's second surface in
-the same change — a dock-wide change, not two component-shaped ones.
+DONE 2026-08-02-04:00: the dock-wide fix landed. `OverflowViewRenderProps` now carries
+`columnFlagsByTaskId`, threaded from App (reusing the map it already builds for the footer) through
+`useRightDockController` into the registry. That closed DockTaskList (3) and DevServerView's second
+surface together, as predicted — remaining batch total is 3.
 
 CROSS-BATCH COUPLING — for whoever owns batch-core (u12, 2026-08-01-22:40)
 

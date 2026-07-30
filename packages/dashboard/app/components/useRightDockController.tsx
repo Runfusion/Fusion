@@ -21,6 +21,14 @@ export interface RightDockControllerInput {
   researchReadinessVersion: number;
   goalAnchorId?: string;
   tasks: Array<Task | TaskDetail>;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-02-04:00 (batch-dashboard-app — the dock-wide fix):
+  Per-task column traits for every view the dock hosts. The registry's render props carried none, so
+  DockTaskList and DevServerView's dock surface both had no parent to resolve from and stayed on
+  legacy ids — sized as blocked in two separate places. This is the single change that closes both.
+  Reuses the map App already builds for the footer; no new resolution.
+  */
+  columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; archived?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
@@ -186,6 +194,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     readinessVersion: input.researchReadinessVersion,
     anchorGoalId: input.goalAnchorId,
     tasks: input.tasks,
+    columnFlagsByTaskId: input.columnFlagsByTaskId,
     workflowSteps: input.workflowSteps,
     pluginContext: {
       projectId: input.projectId,

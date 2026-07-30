@@ -256,14 +256,11 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
   its other children, and an id-keyed map would answer with a neighbouring workflow's traits when
   two workflows reuse a column id.
 
-  TWO RENDER SURFACES, ONE CONVERTED — stated because the census cannot see the difference. This view
-  also mounts through `overflowViewRegistry` into the right dock, and `OverflowViewRenderProps` does
-  not carry per-task flags. That path therefore still takes the `undefined` fallback and answers on
-  the legacy id, which is today's behaviour rather than a regression, but it is NOT fixed.
-
-  Threading it means adding the prop to `OverflowViewRenderProps` and sourcing it wherever RightDock
-  builds `renderProps` — a dock-wide change with its own surfaces, not a DevServerView one. Sized
-  here so the next reader does not assume the file is done because its guard count is zero.
+  BOTH RENDER SURFACES ARE NOW COVERED. This view also mounts through `overflowViewRegistry` into the
+  right dock, and that path used to answer on the legacy id because the registry's render props
+  carried no flags — recorded here as unfixed while it was. `OverflowViewRenderProps` now carries
+  `columnFlagsByTaskId`, threaded from App through `useRightDockController`, so the dock surface
+  resolves the same way this one does.
   */
   const executingTasks = useMemo(
     () => (tasks ?? []).filter((task) =>

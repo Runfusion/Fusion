@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
+import { isArchivedColumnRole, isCompleteColumnRole } from "../utils/columnRoles";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
 import "./DockTaskList.css";
 
 export interface DockTaskListProps {
+  /** Per-task resolved column traits, from the dock's render props. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>;
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
@@ -21,7 +24,7 @@ The Tasks tab empty state is a real compact task list, not a blank placeholder. 
 FNXC:RightDockTasks 2026-06-28-18:25:
 The compact right-dock Tasks list is an active-work queue by default. It hides completed work until the local Show Done toggle is enabled and never renders archived tasks, including in the expanded dock modal that reuses this component.
 */
-export function DockTaskList({
+export function DockTaskList({ columnFlagsByTaskId,
   tasks,
   projectId,
   onOpenTask,
@@ -37,27 +40,27 @@ export function DockTaskList({
   }, [onOpenTask]);
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-02-02:10 (batch-dashboard-app — SIZED, same blocker as
-  DevServerView's dock surface):
-  STILL LITERALS. These three decide what the right dock lists: completed cards are counted, archived
-  ones hidden, and done ones shown only behind `showDone`. On a renamed board none matches, so the
-  dock shows archived cards and never groups completed ones.
+  FNXC:WorkflowResolvedColumns 2026-08-02-04:00 (batch-dashboard-app — the dock-wide fix landed):
+  These three decide what the right dock lists: completed cards grouped, archived hidden, done shown
+  only behind `showDone`. Keyed on the literals none matched on a renamed board, so the dock showed
+  ARCHIVED cards and never grouped completed ones.
 
-  Not converted because this component mounts ONLY through `overflowViewRegistry`, and
-  `OverflowViewRenderProps` carries no per-task flags — there is no parent here to thread from, which
-  is the same gap that leaves DevServerView's dock surface unconverted. Adding an optional
-  `columnFlagsByTaskId` prop that the sole caller cannot supply would be inert.
-
-  ONE FIX CLOSES BOTH: add per-task flags to `OverflowViewRenderProps` and source them where
-  RightDock builds `renderProps`. Sized here so the pair is visible as one dock-wide change rather
-  than two component-shaped ones.
+  Previously sized as blocked, because this component mounts only through `overflowViewRegistry` and
+  those render props carried no flags. That gap is now closed at the source — App threads the map it
+  already builds for the footer through useRightDockController into the registry — so the same change
+  also fixes DevServerView's dock surface. Per TASK, not per column id.
   */
-  const doneTasks = useMemo(() => tasks.filter((task) => task.column === "done"), [tasks]);
+  const isTerminal = useCallback((task: Task | TaskDetail) => {
+    const flags = columnFlagsByTaskId?.get(task.id);
+    return { complete: isCompleteColumnRole(flags, task.column), archived: isArchivedColumnRole(flags, task.column) };
+  }, [columnFlagsByTaskId]);
+  const doneTasks = useMemo(() => tasks.filter((task) => isTerminal(task).complete), [tasks, isTerminal]);
   const visibleTasks = useMemo(() => tasks.filter((task) => {
-    if (task.column === "archived") return false;
-    if (task.column === "done") return showDone;
+    const roles = isTerminal(task);
+    if (roles.archived) return false;
+    if (roles.complete) return showDone;
     return true;
-  }), [showDone, tasks]);
+  }), [showDone, tasks, isTerminal]);
   const hasDoneTasks = doneTasks.length > 0;
   const isEmpty = visibleTasks.length === 0;
   const emptyTitle = tasks.length === 0 ? "No tasks yet" : "No active tasks";
