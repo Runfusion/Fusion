@@ -94,6 +94,30 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(task.column).not.toBe("triage");
   });
 
+  /*
+  FNXC:MergedPlanningColumn 2026-07-29-17:05 (PR #2589 review — greptile):
+  `_createTaskInternalImpl` (the reserved-id / legacy path) had the same gap the backend path did:
+  it assigns `fallbackIntakeColumn` to the task's column but omitted it from `isIntakeColumn`, so a
+  create down that path lands in the resolved intake column and is then classified NOT-intake —
+  receiving `generateSpecifiedPrompt` instead of the bootstrap seed. Triage admits a card for
+  planning only when its PROMPT.md reads as a seed, so the card would rest in Planning already
+  looking "planned" and never be planned.
+
+  Exercised through `createTaskWithReservedId`, which is the path the engine and mesh replication
+  use; the backend path is covered by the test above. Both paths need the assertion because they
+  are two independent copies of the same predicate.
+  */
+  it("writes a bootstrap PROMPT.md on the RESERVED-ID path too (both create paths)", async () => {
+    const store = h.store();
+    const task = await store.createTaskWithReservedId(
+      { description: "reserved-id create, no default workflow row" },
+      { taskId: "FN-RSV-1" },
+    );
+    expect(task.column).toBe("todo");
+    const prompt = await readFile(join(store.getTasksDir(), task.id, "PROMPT.md"), "utf-8");
+    expect(prompt).toBe(buildBootstrapPrompt(task.id, task.title, task.description));
+  });
+
   it("still writes a bootstrap PROMPT.md for that create, so triage can discover it", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "plain create, no default workflow row" });

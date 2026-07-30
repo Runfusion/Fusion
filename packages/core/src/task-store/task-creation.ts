@@ -920,8 +920,24 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     const isUnplannedStartCreate = options?.resolvedEntryColumn !== undefined
       && options.resolvedEntryColumn !== "triage"
       && task.column === "todo";
+    /*
+    FNXC:MergedPlanningColumn 2026-07-29-17:15 (PR #2589 review — greptile):
+    `fallbackIntakeColumn` must appear here, not only in the `column:` assignment above. Otherwise
+    this path lands the card in the resolved intake column and then classifies it NOT-intake,
+    writing `generateSpecifiedPrompt` instead of the bootstrap seed — and triage admits a card for
+    planning only when its PROMPT.md reads as a seed, so the card would rest in Planning already
+    looking "planned" and never be planned.
+
+    HONEST SCOPE: I could not construct a failing test for this through a public API. The only
+    in-tree caller of `_createTaskInternal` is `createTaskWithReservedIdImpl`, which passes its own
+    `resolvedEntryColumn` through options, so the second disjunct already matches and this path's
+    own fallback never decides. The fix is for the DIVERGENCE, which is a latent bug: two copies of
+    one predicate that disagree, where the backend copy needed exactly this clause. A direct
+    `_createTaskInternal` call — which the signature invites — would hit it.
+    */
     const isIntakeColumn = task.column === "triage"
       || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn)
+      || (fallbackIntakeColumn !== undefined && task.column === fallbackIntakeColumn)
       || isUnplannedStartCreate;
     const usedBootstrapPrompt = !options?.promptOverride && isIntakeColumn;
     const prompt = options?.promptOverride
