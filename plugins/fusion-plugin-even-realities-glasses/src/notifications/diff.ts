@@ -4,7 +4,7 @@ import type { NotificationEvent, Snapshot } from "./types.js";
 export function diffSnapshots(
   prev: Snapshot,
   next: ReadonlyArray<Task>,
-  opts: { notifyOnColumns: ReadonlySet<ColumnId>; alsoNotifyOnDone?: boolean },
+  opts: { notifyOnColumns: ReadonlySet<ColumnId>; alsoNotifyOnDone?: boolean; completeColumnsByTaskId?: ReadonlyMap<string, ReadonlySet<string>> },
 ): NotificationEvent[] {
   const events: NotificationEvent[] = [];
 
@@ -43,7 +43,26 @@ export function diffSnapshots(
       });
     }
 
-    if (task.column === "done" && opts.alsoNotifyOnDone) {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:25 (batch-cli-plugins):
+    The completion notification asks each card's OWN complete column.
+
+    Keyed on the literal, a renamed board would never fire a "completed" card to the glasses — the
+    wearer would be notified of every column transition EXCEPT the one they care about. The map is
+    per task, not a flat set, because the poll spans the whole board and one workflow's complete
+    column id can be another workflow's WIP id.
+
+    CURRENTLY UNREACHABLE, stated plainly: the only production caller (`notifier.ts`) passes
+    `alsoNotifyOnDone: false`, so this branch does not run today and this change is not observable at
+    runtime. It is converted rather than marked DELIBERATE-LITERAL because the literal is not
+    deliberate — it is simply wrong, and would ship the bug the day someone turns the flag on.
+
+    DELIBERATE-LITERAL — the unresolved-workflow default, reviewed 2026-07-30-22:25.
+    */
+    const completeColumns = opts.completeColumnsByTaskId?.get(task.id);
+    /* DELIBERATE-LITERAL — the unresolved-workflow default documented above, reviewed 2026-07-30-22:25. */
+    const isComplete = completeColumns ? completeColumns.has(task.column) : task.column === "done";
+    if (isComplete && opts.alsoNotifyOnDone) {
       events.push({
         taskId: task.id,
         reason: "completed",

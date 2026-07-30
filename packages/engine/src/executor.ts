@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -1789,7 +1789,17 @@ EXPORTED rather than copied. `eval-followups.ts` and `pr-comment-handler.ts` eac
 and fourth copy of the union-with-legacy reasoning is exactly the drift this program exists to remove.
 Nothing else about the function changes.
 */
-export async function resolveTerminalColumnsFor(store: TaskStore, taskId: string): Promise<readonly string[]> {
+export async function resolveTerminalColumnsFor(
+  store: TaskStore,
+  taskId: string,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
+  Optional CALLER-OWNED IR cache, matching the contract on `resolveTaskLifecycleColumns`. Sweeps that
+  call this once per card on a whole board must read one IR per WORKFLOW, not one per task; callers
+  resolving a single task pass nothing and are unaffected.
+  */
+  irCache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+): Promise<readonly string[]> {
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-12:20 (PR #2568 review — greptile):
   THE UNION IS DELIBERATE, and the `catch` alone was not enough.
@@ -1812,7 +1822,7 @@ export async function resolveTerminalColumnsFor(store: TaskStore, taskId: string
   column, which is the failure the conversion exists to prevent.
   */
   try {
-    const resolved = resolveTerminalColumns(await resolveWorkflowIrForTask(store, taskId));
+    const resolved = resolveTerminalColumns(await resolveWorkflowIrForTask(store, taskId, irCache));
     return [...new Set([...resolved, ...LEGACY_TERMINAL_COLUMNS])];
   } catch {
     return LEGACY_TERMINAL_COLUMNS;
@@ -12560,9 +12570,40 @@ export class TaskExecutor {
       reviewAddressingActivated = true;
       // Check dependencies
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:50 (batch-engine — dependency satisfaction, per DEPENDENCY):
+      Resolved from each DEPENDENCY's own workflow, not this task's: dependencies routinely span workflows,
+      so asking "is my blocker finished?" against the blocked task's vocabulary is the wrong question. That
+      is the answer main settled on in `branch-group-ops.ts` (#2720) and it is reused here rather than
+      re-derived.
+
+      MEMBERSHIP and unioned with the legacy trio, because a workflow may declare more than one complete or
+      review lane and `resolveWorkflowIrForTask` yields the BUILT-IN IR for a missing workflow rather than
+      throwing — without the union a degraded renamed board treats a finished blocker as unmet and the
+      dependent never runs.
+
+      NOTE the set is wider than the terminal pair: this guard has always counted `in-review` as satisfying
+      a dependency, so the review role is included. Narrowing it to terminal-only would be a behaviour
+      change, not a conversion.
+      */
+      const depIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const satisfiedByDep = new Map<string, ReadonlySet<string>>();
+      for (const depId of task.dependencies) {
+        if (satisfiedByDep.has(depId)) continue;
+        const satisfied = new Set<string>(["done", "in-review", "archived"]);
+        try {
+          const depIr = await resolveWorkflowIrForTask(this.store, depId, depIrCache);
+          if (depIr) {
+            for (const flag of ["complete", "archived", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+              for (const id of columnsWithFlag(depIr, flag)) satisfied.add(id);
+            }
+          }
+        } catch { /* degraded: the legacy trio */ }
+        satisfiedByDep.set(depId, satisfied);
+      }
       const unmetDeps = task.dependencies.filter((depId) => {
         const dep = allTasks.find((t) => t.id === depId);
-        return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+        return dep !== undefined && !satisfiedByDep.get(depId)!.has(dep.column);
       });
 
       if (unmetDeps.length > 0) {
