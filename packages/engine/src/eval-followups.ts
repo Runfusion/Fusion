@@ -7,13 +7,24 @@ import {
   type FollowUpDraft,
   type TaskStore,
 } from "@fusion/core";
+import { resolveTerminalColumnsFor } from "./executor.js";
 
 const OPEN_COLUMNS = new Set(["triage", "todo", "in-progress", "in-review"]);
 /*
 FNXC:Evals 2026-07-26-00:00:
 Eval follow-ups are a real product feature, but they used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature actually needs is inlined here: never create a second card for the same `suggestionId` under the same parent while one is still open. Closed columns (done/archived) are excluded so a re-run after the follow-up is finished can legitimately file a fresh card.
 */
-const CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"]);
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (the dedup blocked new follow-ups forever on a renamed board):
+The comment above states the intent exactly — "closed columns (done/archived) are excluded so a re-run
+after the follow-up is finished can legitimately file a fresh card". Keyed on the literal pair, a finished
+follow-up in a RENAMED complete lane still read as OPEN, so the dedup matched it forever and the fresh card
+was never filed. The feature silently stopped working on any board that renamed its terminals.
+
+Resolved per candidate through the shared `resolveTerminalColumnsFor`, which unions the task's real
+terminals with the legacy pair — see its note: a missing custom workflow silently yields the BUILT-IN IR,
+so the union is what keeps a renamed board's own terminal recognised.
+*/
 const GENERIC_TITLE_PATTERNS = [/^follow\s*-?up$/i, /^todo$/i, /^fix\s+issue$/i, /^improve\s+task$/i, /^investigate$/i];
 
 export interface NormalizeEvalFollowUpsInput {
@@ -198,14 +209,21 @@ async function findOpenEvalFollowUpTaskId(
   suggestionId: string,
 ): Promise<string | undefined> {
   const tasks = await store.listTasks({ slim: true }).catch(() => []);
-  const match = tasks.find(
+  /*
+  Cheap identity filters FIRST, so only genuine candidates for this parent+suggestion pay a workflow
+  resolution — usually zero or one card rather than the whole board.
+  */
+  const candidates = tasks.filter(
     (task) =>
       task.id !== parentTaskId &&
-      !CLOSED_FOLLOWUP_COLUMNS.has(task.column) &&
       task.sourceParentTaskId === parentTaskId &&
       task.sourceMetadata?.suggestionId === suggestionId,
   );
-  return match?.id;
+  for (const task of candidates) {
+    const terminal = await resolveTerminalColumnsFor(store, task.id);
+    if (!terminal.includes(task.column)) return task.id;
+  }
+  return undefined;
 }
 
 export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {

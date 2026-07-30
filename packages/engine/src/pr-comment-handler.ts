@@ -1,12 +1,21 @@
 import type { TaskStore } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "./logger.js";
+import { resolveTerminalColumnsFor } from "./executor.js";
 
 /*
 FNXC:PullRequestReview 2026-07-26-00:00:
 The PR-feedback follow-up card is a real product feature, but it used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature needs is inlined below: never file a second card for the same PR number under the same parent while one is still open. Closed columns (done/archived) are excluded so a later close/reopen of the same PR can legitimately file a fresh card.
 */
-const CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"]);
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:15 (the SECOND copy of the same dedup, converted with the first):
+Byte-identical to `eval-followups.ts`'s constant and used for the same question — "is an earlier follow-up
+for this parent still open?" — so it had the same defect: on a renamed board a FINISHED follow-up read as
+open, the dedup matched it forever, and no fresh PR-feedback card was ever filed.
+
+Converting one and leaving the other is the FN-6115 -> FN-6118 -> FN-6123 shape, so both move together and
+both now call the shared `resolveTerminalColumnsFor` instead of carrying a private copy of the pair.
+*/
 
 interface PrComment {
   id: number;
@@ -235,13 +244,18 @@ Please review the PR comments and address any remaining issues.`;
 
     try {
       const openTasks = await this.store.listTasks({ slim: true }).catch(() => []);
-      const existing = openTasks.find(
+      /* Cheap identity filters first; only real candidates pay a workflow resolution. */
+      const candidates = openTasks.filter(
         (task) =>
           task.id !== originalTaskId &&
-          !CLOSED_FOLLOWUP_COLUMNS.has(task.column) &&
           task.sourceParentTaskId === originalTaskId &&
           task.sourceMetadata?.prNumber === prInfo.number,
       );
+      let existing: (typeof candidates)[number] | undefined;
+      for (const task of candidates) {
+        const terminal = await resolveTerminalColumnsFor(this.store, task.id);
+        if (!terminal.includes(task.column)) { existing = task; break; }
+      }
 
       if (existing) {
         prMonitorLog.log(`Reused follow-up task ${existing.id} for PR #${prInfo.number}`);
