@@ -9,7 +9,6 @@ import {
 } from "@fusion/core";
 import { resolveTerminalColumnsFor } from "./executor.js";
 
-const OPEN_COLUMNS = new Set(["triage", "todo", "in-progress", "in-review"]);
 /*
 FNXC:Evals 2026-07-26-00:00:
 Eval follow-ups are a real product feature, but they used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature actually needs is inlined here: never create a second card for the same `suggestionId` under the same parent while one is still open. Closed columns (done/archived) are excluded so a re-run after the follow-up is finished can legitimately file a fresh card.
@@ -105,9 +104,33 @@ export function resolveEvalFollowUpPolicyMode(policy?: "off" | "suggest" | "crea
 
 export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {
   const { parentTaskId, runId, drafts, overallBand, store, policyMode } = input;
-  const openTasks = (await store.listTasks({ slim: true, includeArchived: false })).filter((task) =>
-    OPEN_COLUMNS.has(task.column)
-  );
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (engine feed):
+  "Open" is the negation of the task's OWN terminal lanes, not a hard-coded list of four ids.
+
+  Census-invisible: `OPEN_COLUMNS` is a `Set` literal — a definition, not a comparison — so nothing
+  in the lifecycle backlog pointed here. Found by grepping for lane-shaped list literals.
+
+  Consequence on a renamed board: the set matched NOTHING, so `openTasks` was empty and the
+  dedupe below had no live work to compare against. Every eval run then re-filed follow-ups it had
+  already filed — the failure is DUPLICATE TASK CREATION, which looks like the evaluator being
+  thorough rather than like a bug.
+
+  Uses `resolveTerminalColumnsFor` — ALREADY IMPORTED IN THIS FILE for the candidate loop below, and
+  the same helper the executor uses. It unions the task's resolved terminals with the legacy pair for
+  the degraded-IR reason documented at its definition, so there is no fallback to hand-write here.
+
+  My first draft manufactured synthetic trait flags from lane equality to call `isTerminalColumnRole`
+  instead. That is the anti-pattern I flagged in `task-update.ts` two commits ago — a longer way to
+  write the same comparison while LOOKING like it consulted the trait registry — and it ignored a
+  correct helper sitting three lines above the import. Replaced before commit.
+  */
+  const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false });
+  const openTasks: typeof allLiveTasks = [];
+  for (const task of allLiveTasks) {
+    const terminal = await resolveTerminalColumnsFor(store, task.id);
+    if (!terminal.includes(task.column)) openTasks.push(task);
+  }
   // FNXC:Evals 2026-06-27-12:40:
   // getEvalStore() returns EvalStore | AsyncEvalStore (PG backend mode); await
   // resolves the sync array and the async promise alike.
