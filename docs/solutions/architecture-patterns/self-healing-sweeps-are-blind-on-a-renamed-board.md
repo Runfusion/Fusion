@@ -84,6 +84,33 @@ The two shapes that work:
 - When you touch a self-healing test, make its `listTasks` fake **honor `options.column`**. That is a one-line change per fake and it converts this whole class from invisible to failing-loudly.
 - Read `self-healing.ts: N` in the census as "N comparisons", never as "N remaining defects" — in this file the two numbers are not related.
 
+## Converting a sweep: the four-part shape, and the part that is easy to miss
+
+Four sweeps are converted (`reconcileDoneTaskIntegrity`, `recoverAlreadyMergedReviewTasks`,
+`recoverStuckMergeDeadlocks`, `recoverInterruptedMergingTasks`). They are deliberately identical, because
+the second one drifted from the first — it was written from the pre-review version and reproduced a flaw
+review had already fixed one commit earlier.
+
+1. **Read** — `resolveProjectColumnsForRoles(store, ROLES)`, then query each column and dedupe by id. A
+   read happens before any task is in hand, so there is nothing to resolve a per-task lane from. The
+   legacy ids are unioned in, so a board mid-rename whose rows are still stored under the old id is not
+   skipped.
+2. **Verdict** — resolved per card against **its own** workflow. Widening the read and widening the
+   verdict are different decisions: a missed row is invisible, a wrong row is a write. Using the project
+   union as a per-card test claims a card because *some other board* calls its column that role.
+3. **Provenance** — `resolveWorkflowIrForTaskWithProvenance`, because the resolver **substitutes** the
+   built-in IR rather than failing. Without it, `columnsWithFlag(ir, role).length > 0` reads as "this card
+   answered" when nobody did. It does not change the verdict (measured: identical, since the built-in lane
+   already *is* the legacy id) — it makes the unrepaired card **reportable** instead of invisible.
+4. **The log strings.** Widening a query silently invalidates every message naming the old literal.
+   `recoverInterruptedMergingTasks` logged `"stale merging task(s) in in-review"` after its read covered
+   several lanes — an operator debugging a renamed board would have been told the wrong column.
+
+Part 4 is the one to check last and forget first. It is invisible to the census (string contents, not
+comparisons), invisible to types, and survives indefinitely because nobody diffs log strings. Each of the
+**44 remaining queries** carries the same risk: grep the enclosing sweep for its own lane names after
+widening its read.
+
 ## Related
 
 - `docs/solutions/test-failures/optional-flags-seam-hides-unconverted-column-guards.md` — the same lesson one level down: the census counts syntax, and a green suite that omits the new parameter carries no information about the change.
