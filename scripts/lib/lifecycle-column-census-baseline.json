@@ -1,16 +1,16 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "totals": {
-    "column": 781,
-    "role": 2,
+    "column": 776,
+    "role": 0,
     "status": 182,
     "deliberate": 16
   },
   "byColumnId": {
-    "done": 206,
-    "in-progress": 147,
-    "in-review": 210,
-    "archived": 153,
+    "done": 205,
+    "in-progress": 146,
+    "in-review": 208,
+    "archived": 152,
     "todo": 60,
     "triage": 5
   },
@@ -47,7 +47,6 @@
     "packages/core/src/task-store/merge-queue-ops-2.ts": 5,
     "packages/dashboard/app/hooks/useTaskDiffStats.ts": 5,
     "packages/engine/src/merger.ts": 5,
-    "packages/engine/src/mission-feature-sync.ts": 5,
     "packages/engine/src/restart-recovery-coordinator.ts": 5,
     "packages/core/src/agent-store.ts": 4,
     "packages/core/src/blocker-fanout.ts": 4,
