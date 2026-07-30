@@ -5050,9 +5050,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       let repaired = 0;
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-03:40 (batch-engine — reconcileTaskWorktreeMetadata):
+      Lanes per iterated task through one IR cache for the sweep; the loop body is async, so the await sits
+      at the top of it rather than inside the predicates.
+      */
+      const worktreeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const worktreeLanesFor = async (taskId: string) => {
+        const lanes = {
+          wip: new Set<string>(["in-progress"]),
+          review: new Set<string>(["in-review"]),
+          terminal: new Set<string>(["done", "archived"]),
+        };
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, worktreeIrCache);
+          if (ir) {
+            for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
+            for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+              for (const id of columnsWithFlag(ir, flag)) lanes.review.add(id);
+            }
+            for (const flag of ["complete", "archived"] as const) {
+              for (const id of columnsWithFlag(ir, flag)) lanes.terminal.add(id);
+            }
+          }
+        } catch { /* degraded: legacy ids */ }
+        return lanes;
+      };
+
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        const worktreeLanes = await worktreeLanesFor(task.id);
+        if (!options?.includeTaskIds?.has(task.id) && worktreeLanes.terminal.has(task.column)) {
           continue;
         }
 
@@ -5089,8 +5117,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          && !worktreeLanes.wip.has(task.column)
+          && (!worktreeLanes.review.has(task.column) || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
