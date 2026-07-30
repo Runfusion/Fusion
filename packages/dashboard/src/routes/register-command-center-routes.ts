@@ -13,6 +13,9 @@ import {
   composeLiveSnapshot,
   LITELLM_PRICING_SOURCE_URL,
   parseLiteLLMPricing,
+  resolveColumnFlags,
+  parseWorkflowIr,
+  type TaskStore,
   type TokenGroupBy,
   type TokenTimeGranularity,
 } from "@fusion/core";
@@ -388,6 +391,47 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
    * FNXC:CommandCenter 2026-06-18-16:57:
    * The Team endpoint must inherit Command Center auth and resolve getScopedStore(req) before aggregation so project-A callers cannot read project-B agent rows or task metrics. It intentionally omits GitHub issue stats; FN-6653 owns that overlay.
    */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-12:20:
+Board-wide column trait flags for the analytics tallies, keyed by column ID.
+
+WIRING AN OPTION NOTHING FILLED. `columnFlagsByName` was added to both aggregators so
+`tasksInProgress`/`tasksInReview` come from column ROLES; neither route passed it, so both surfaces
+kept reporting **0 in-progress and 0 in-review** on a renamed board beside token and cost totals that
+were entirely correct. A zero next to a populated neighbour reads as "nobody is working".
+
+THE LIMIT, STATED RATHER THAN GLOSSED. This map is FLAT — one entry per column id, unioned across
+every workflow the project declares. On a board where two workflows use the SAME id for different
+roles, the merged flags make that column count for both roles. That is a real ambiguity and it cannot
+be resolved here for `team` analytics: its rows are already aggregated to `{agentId, columnName}` by
+SQL, so the workflow identity is gone before this code sees the data. Fixing that properly means
+grouping by workflow in the query, which is a change to the aggregation, not to this wiring.
+
+`workflow` analytics is different — its rows DO carry `workflowId`, so a per-workflow map is possible
+there and would be exact. I have not taken it in this change because it needs a second option shape
+on the aggregator; it is the obvious follow-up and is called out on the PR rather than left implied.
+*/
+async function resolveColumnFlagsByName(
+  store: Pick<TaskStore, "listWorkflowDefinitions" | "getWorkflowDefinition">,
+): Promise<Map<string, ReturnType<typeof resolveColumnFlags>>> {
+  const byColumn = new Map<string, ReturnType<typeof resolveColumnFlags>>();
+  try {
+    const definitions = await store.listWorkflowDefinitions();
+    for (const definition of definitions) {
+      const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+      const columns = ir && "columns" in ir ? ir.columns : undefined;
+      for (const column of columns ?? []) {
+        const flags = resolveColumnFlags(column);
+        const existing = byColumn.get(column.id);
+        byColumn.set(column.id, existing ? { ...existing, ...flags } : flags);
+      }
+    }
+  } catch {
+    /* Unreadable definitions leave the map empty, so both aggregators keep their legacy ids. */
+  }
+  return byColumn;
+}
+
   router.get("/command-center/team", async (req, res) => {
     try {
       const store = await getScopedStore(req);
@@ -400,6 +444,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         to: range.to,
         now: Date.now(),
         pricingOverrides: settings.modelPricingOverrides,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
       });
       res.json(result);
     } catch (err: unknown) {
@@ -427,6 +472,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         now: Date.now(),
         pricingOverrides: settings.modelPricingOverrides,
         defaultWorkflowId,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
       });
       if (wantsCsv(req.query)) {
         sendCsv(res, "command-center-workflows.csv", workflowAnalyticsToTable(result));
