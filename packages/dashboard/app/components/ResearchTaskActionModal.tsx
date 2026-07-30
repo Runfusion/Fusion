@@ -46,6 +46,23 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     if (mode === "enrich") {
       setLoadingTasks(true);
       void fetchTasks(50, 0, projectId)
+        /*
+        FNXC:WorkflowResolvedColumns 2026-08-01-20:10 (batch-dashboard-app — SIZED, NOT CONVERTED):
+        STILL A LITERAL, and threading the board's flags map here would be the WRONG fix.
+
+        The guard is real: on a renamed board `archived` matches nothing, so filed-away tasks stay in
+        this picker and an operator can attach research findings to work they deliberately archived.
+
+        But this modal fetches its OWN page (`fetchTasks(50, 0, projectId)`), which is not the board's
+        task set. The obvious move — thread `columnFlagsByTaskId` down from MainContent through
+        ResearchView — resolves only rows that happen to be board-resident, and the rows THIS filter
+        cares about are archived ones, which are exactly the rows a board-built map does not contain.
+        It would look converted, drop the guard count, and leave the case it exists for unresolved.
+
+        The honest fix is for this modal to resolve lanes for the page it fetched — either a
+        `fetchTasks` variant that returns resolved flags, or a per-task resolution over the 50 rows.
+        That is a data-fetch change, not a prop-threading one, so it is sized here rather than faked.
+        */
         .then((rows) => setTasks(rows.filter((task) => task.column !== "archived")))
         .finally(() => setLoadingTasks(false));
     }

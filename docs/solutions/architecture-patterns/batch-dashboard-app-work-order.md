@@ -23,7 +23,27 @@ ALREADY CONVERTED IN GREEN PRs, so converting them here duplicates work and will
 
 Those are the next two entries in the list below by size. Skip them.
 
-SIZED AND NOT CONVERTED — seven single-guard components, u12, 2026-08-01
+SIZED AND NOT CONVERTED — the ORIGINAL seven, u12: six now wired, one genuinely blocked
+
+UPDATE 2026-08-01-20:10. Six of the seven below are now converted end to end, each threaded from a
+parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or MainContent's
+`columnFlagsByTaskId`). The exception is the last one, and it is worth reading before anyone
+"finishes" it:
+
+  ResearchTaskActionModal — threading the board's flags map here is the WRONG fix. The modal fetches
+    its OWN page via `fetchTasks(50, 0, projectId)`, not the board's task set, and the rows this
+    filter cares about are ARCHIVED ones — exactly the rows a board-built map does not contain. It
+    would look converted, drop the count, and leave the case it exists for unresolved. The honest fix
+    is resolving lanes for the page it fetched: a `fetchTasks` variant returning flags, or a per-task
+    resolution over the 50 rows. Data-fetch change, not prop threading.
+
+  DevServerView — converted on its MainContent surface; the right-dock `overflowViewRegistry` path
+    still falls back, because `OverflowViewRenderProps` carries no per-task flags. Guard count is 0
+    for the file either way, so do not read it as done.
+
+ORIGINAL SIZING (kept for the reasoning):
+
+
 
 These have NO column flags in scope. Adding an optional `columnFlags` parameter to each and calling
 it a conversion would be inert: no caller passes anything, behaviour is unchanged, and the census
