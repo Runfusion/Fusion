@@ -141,3 +141,62 @@ describe("the LIVE implementation primitive announces the exit", () => {
     expect(calls.some((c) => c.startsWith("prim:"))).toBe(true);
   });
 });
+
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-29-20:20 (U8 / R4, R12, PR #2590 review — greptile):
+The compat path for user-authored graphs, and the shape that proved the first version of it could
+not fire. `graphFailureValue` reads only the LAST visited node's value; a custom graph may route
+its generic `failure` edge THROUGH another node, whose value then becomes terminal. The
+pending-review ending is still recorded in the run context, so that is where it is read from.
+
+Without this the card falls to the terminal park — `status: failed` on work that was only WAITING
+for a reviewer, which is exactly the merge-queue deadlock the inline handoff existed to prevent.
+*/
+describe("compat park for graphs that do not route review-pending", () => {
+  beforeEach(() => { resetExecutorMocks(); resetWorkflowEventBusForTesting(); });
+  afterEach(() => resetWorkflowEventBusForTesting());
+
+  function failureRun(overrides: Record<string, unknown>) {
+    return {
+      disposition: "failed" as const,
+      outcome: "failure" as const,
+      visitedNodeIds: ["execute", "cleanup"],
+      context: overrides,
+    };
+  }
+
+  function parkHarness() {
+    const store = createMockStore();
+    const live = { id: "FN-COMPAT", column: "in-progress", status: null, error: null, steps: [], log: [], paused: false, userPaused: false } as unknown as TaskDetail;
+    store.getTask.mockResolvedValue(live);
+    store.handoffToReview = vi.fn().mockImplementation(async (id: string) => store.moveTask(id, "in-review"));
+    return { store, live, executor: new TaskExecutor(store, "/tmp/test") };
+  }
+
+  it("parks in review when a DOWNSTREAM node's value ended the walk", async () => {
+    const { store, live, executor } = parkHarness();
+
+    await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
+      .handleGraphFailure(live, failureRun({
+        "node:execute:value": "review-pending",
+        "node:cleanup:value": "cleanup-done",
+      }));
+
+    expect(store.handoffToReview).toHaveBeenCalledWith("FN-COMPAT", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-COMPAT",
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+  });
+
+  it("does NOT park for an ordinary failure with no pending-review value anywhere", async () => {
+    /* The guard must stay narrow — a genuine execute failure still belongs to the terminal sink. */
+    const { store, live, executor } = parkHarness();
+
+    await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
+      .handleGraphFailure(live, failureRun({ "node:execute:value": "implementation-incomplete" }));
+
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+  });
+});

@@ -9622,6 +9622,31 @@ export class TaskExecutor {
     setTimeout(scheduleRetry, delayMs).unref?.();
   }
 
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-20:10 (U8 / R4, PR #2590 review — greptile):
+  The compat classifier keyed on `graphFailureValue`, which reads only the LAST visited node's
+  value. That is correct when the generic `failure` edge goes straight to `end` — the built-in
+  shape — but a user-authored graph may route its generic failure THROUGH another node, and that
+  node's value then becomes the terminal one. The classifier would miss the pending-review ending
+  entirely and the card would fall to the terminal park: `status: failed` on work that was only
+  WAITING for a reviewer, which is the deadlock the inline handoff existed to avoid. A guard that
+  cannot fire for the exact shape it was written for.
+
+  The ending is durable in the run context — the graph publishes `node:<id>:value` for every node
+  it runs — so detect it there rather than trusting whichever node happened to end the walk.
+  */
+  private graphRunReportedPendingReview(
+    result: WorkflowGraphTaskRunResult,
+    failureValue: string | undefined,
+  ): boolean {
+    if (failureValue === "review-pending") return true;
+    const context = result.context;
+    if (!context) return false;
+    return Object.entries(context).some(
+      ([key, value]) => key.startsWith("node:") && key.endsWith(":value") && value === "review-pending",
+    );
+  }
+
   private graphFailureValue(result: WorkflowGraphTaskRunResult): string | undefined {
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (!failedNode || !result.context) return undefined;
@@ -10994,7 +11019,7 @@ export class TaskExecutor {
       still executor-performed. What changes is that it is one named classifier in the failure
       ladder rather than a call buried two thousand lines into a session loop.
       */
-      if (failureValue === "review-pending") {
+      if (this.graphRunReportedPendingReview(result, failureValue)) {
         const compatMessage = "Implementation stopped on a pending review — parking in review (this workflow does not route the review-pending outcome)";
         executorLog.log(`${task.id}: ${compatMessage}`);
         await this.store.logEntry(task.id, compatMessage, undefined, this.getRunContextFor(task.id));
