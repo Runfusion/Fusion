@@ -198,13 +198,36 @@ export async function resolveWorkflowIrById(
 
   try {
     const def = await store.getWorkflowDefinition(workflowId);
-    if (!def) return defaultCodingWorkflowIr();
+    if (!def) return markFellBack(defaultCodingWorkflowIr());
     const ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
     irCache?.set(cacheKey, ir);
     return ir;
   } catch {
-    return defaultCodingWorkflowIr();
+    return markFellBack(defaultCodingWorkflowIr());
   }
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2618 review — greptile P1, both rounds):
+FALLBACK IS REPORTED, NOT INFERRED. Two review findings pulled in opposite directions and
+together proved the id cannot answer this: requiring `ir.id === workflowId` denied trust to a
+valid selection whose IR carries no id, while accepting an absent id let the default fallback —
+which also has none — pass as a selection. There is no rule over the returned value that
+separates them, because the two shapes are genuinely identical.
+
+So the function that KNOWS marks it. A non-enumerable brand keeps the IR structurally unchanged
+for every existing consumer, deep-equal comparisons included, while letting the provenance form
+read the one fact only the resolver has.
+*/
+const FELL_BACK_TO_DEFAULT = Symbol.for("fusion.workflowIr.fellBackToDefault");
+
+function markFellBack(ir: WorkflowIr): WorkflowIr {
+  Object.defineProperty(ir, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
+  return ir;
+}
+
+function didFallBackToDefault(ir: WorkflowIr): boolean {
+  return (ir as unknown as Record<symbol, unknown>)[FELL_BACK_TO_DEFAULT] === true;
 }
 
 /**
@@ -275,8 +298,23 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   it has no column vocabulary either, so it is reported as a default rather than guessed at.
   */
   const ir = await resolveWorkflowIrById(store, workflowId, irCache);
+  if (didFallBackToDefault(ir)) return { ir, source: "default" };
   const resolvedId = (ir as { id?: unknown }).id;
-  if (typeof resolvedId !== "string" || resolvedId !== workflowId) {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-16:20 (PR #2618 review — greptile P1, 2nd):
+  Only a CONTRADICTION proves a fallback. Requiring a matching id also reported `default` for a
+  perfectly good selection whose IR simply carries no id of its own — a valid v1, or a stored v2
+  that omits it. That direction errs safe (the caller keeps its legacy compat) but it silently
+  denies those workflows the very trust this API exists to grant, so the conversion would quietly
+  not take effect for them.
+
+  An ABSENT id is no evidence either way, so it is treated as the selection it was asked for. A
+  PRESENT id that differs is positive proof of a fallback, and it still catches the three ways
+  `resolveWorkflowIrById` degrades — missing definition, malformed definition, throwing lookup —
+  because every one of them returns the default coding IR, whose id is `builtin:coding` and
+  therefore differs from the custom id that was requested.
+  */
+  if (typeof resolvedId === "string" && resolvedId !== workflowId) {
     return { ir, source: "default" };
   }
   return { ir, source: "selection", workflowId };

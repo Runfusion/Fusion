@@ -140,3 +140,33 @@ describe("a named selection that does not actually resolve is a default", () => 
     expect(resolved.workflowId).toBe(WF);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:25 (PR #2618 review — greptile P1, 2nd):
+An ABSENT IR id is no evidence of a fallback. Requiring a match also denied trust to valid
+selections whose IR carries no id — a v1, or a stored v2 that omits it — so the conversion those
+callers were promised would quietly not take effect. Only a PRESENT, DIFFERING id proves a
+fallback, and that still catches all three degradation paths because each returns the default
+coding IR under a different id than the one requested.
+*/
+describe("an absent IR id is not evidence of a fallback", () => {
+  const WF = "custom:no-id";
+  const base = {
+    getTaskWorkflowSelectionAsync: async () => ({ workflowId: WF, stepIds: [] }),
+    getTaskWorkflowSelection: () => ({ workflowId: WF, stepIds: [] }),
+  };
+
+  it("reports `selection` for a valid v2 IR that carries no id", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => ({ id: WF, ir: { version: "v2", nodes: [], edges: [], columns: [{ id: "inbox", traits: [{ trait: "intake" }] }] } }) } as never,
+      "FN-1");
+    expect(resolved.source).toBe("selection");
+    expect(resolved.workflowId).toBe(WF);
+  });
+
+  it("still reports `default` when the definition is missing (differing id is the proof)", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => undefined } as never, "FN-1");
+    expect(resolved.source).toBe("default");
+  });
+});
