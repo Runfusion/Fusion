@@ -135,8 +135,8 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
           The convertible site is `getLiveTaskColumn`'s own `row.column === "archived"` test, and it
           is deferred with its cost stated: that helper takes a `db` handle with no task, no workflow
           and no lane vocabulary, so resolving there threads a lane set through a low-level query on a
-          hot path. See docs/solutions/architecture-patterns/
-          the-archived-literal-is-usually-a-sentinel-not-a-column.md.
+          hot path. The same distinction governs the eight downstream comparisons in
+          `async-comments-attachments.ts`, which are sentinels for the same reason.
           */
           if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
