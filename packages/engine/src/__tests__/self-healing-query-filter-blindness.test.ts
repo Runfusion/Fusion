@@ -148,6 +148,50 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "done" }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (#2838 review — greptile P1):
+
+  A CARD WHOSE WORKFLOW CANNOT BE RESOLVED MUST NOT BE MISTAKEN FOR ONE THAT ANSWERED.
+
+  `resolveWorkflowIrForTask` does not throw when a task's selection is unresolvable — it SUBSTITUTES
+  the built-in coding IR, whose complete lane is `done`. The candidate filter therefore saw a non-empty
+  `columnsWithFlag(ir, "complete")` and treated the built-in vocabulary as this card's own answer, so a
+  renamed-lane card was rejected on every sweep and its missing merge evidence stayed unrepaired
+  forever. The provenance form separates the two, and only a real selection counts as an answer.
+
+  WHY THE STORE FAKE DROPS ONLY THE SELECTION READERS. That is precisely the production shape being
+  modelled: the workflow DEFINITION is fine, the card's link to it is what cannot be read. Deleting the
+  definition instead would take a different branch and prove nothing about this one.
+  */
+  it("a card whose workflow selection cannot be resolved is not judged by the BUILT-IN complete lane", async () => {
+    const { store } = productionFaithfulStore([shippedCard()]);
+    /* No selection for this card: `resolveWorkflowIrForTaskWithProvenance` reports source "default". */
+    (store as unknown as { getTaskWorkflowSelectionAsync: unknown }).getTaskWorkflowSelectionAsync =
+      vi.fn(async () => undefined);
+    (store as unknown as { getTaskWorkflowSelection: unknown }).getTaskWorkflowSelection = vi.fn(() => undefined);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    let warned = "";
+    try {
+      await manager.reconcileDoneTaskIntegrity();
+    } finally {
+      /* Read BEFORE restoring: `mockRestore` clears the recorded calls, so reading afterwards yields
+         an empty string and the assertion fails for a reason that has nothing to do with the code. */
+      warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      warn.mockRestore();
+    }
+
+    /*
+    The observable claim: the card is REPORTED as unresolvable rather than silently discarded. The
+    verdict itself is deliberately unchanged — a sweep that WRITES merge evidence must not guess a lane
+    — so asserting "it got repaired" would be asserting the wrong fix. What must not survive is the
+    silence, which is what made this unrepairable-forever instead of merely unrepaired.
+    */
+    expect(warned).toContain("done-task integrity sweep");
+    expect(warned).toContain("FN-BLIND");
+  });
+
   it("proves the fake is what hides it: an ignoring `listTasks` hands the sweep rows production would not", async () => {
     /*
     The control, and the reason a green self-healing suite is not evidence that self-healing runs. This

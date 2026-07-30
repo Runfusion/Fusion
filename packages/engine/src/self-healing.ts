@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   resolveProjectColumnsForRoles,
 } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
@@ -7304,31 +7304,62 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       );
       const perTaskIrCache = new Map<string, WorkflowIr>();
       const candidates: Task[] = [];
+      /* Cards whose own workflow could not be resolved. Collected so an unrepairable backlog is
+         reportable rather than silent — see the provenance note in the loop. */
+      const unresolvedWorkflowCards: string[] = [];
       for (const task of shortlist) {
         if (candidates.length >= DONE_TASK_INTEGRITY_SWEEP_LIMIT) break;
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-30-17:50 (#2838 review — greptile P1, second round):
-        THE SCENARIO IS REAL AND THIS CODE ALREADY MAKES THE DELIBERATE CHOICE. A card whose store names
-        NO workflow resolves to the BUILT-IN IR, whose complete lane is `done` — so a card sitting in a
-        renamed lane with no selection is rejected here and its merge evidence stays unrepaired.
+        FNXC:WorkflowResolvedColumns 2026-07-30-17:55 (#2838 review — greptile P1, "workflow fallback
+        drops renamed completions"):
 
-        MEASURED before changing anything: routing this through `...WithProvenance` (so only a real
-        `source: "selection"` overrules the legacy check) produces the IDENTICAL verdict in both states —
-        `done` accepted, `shipped` rejected — because the built-in complete lane already IS the legacy id.
-        It reads like a fix and is a no-op, so it is not here.
+        PROVENANCE, BECAUSE THIS RESOLVER DOES NOT FAIL — IT SUBSTITUTES.
 
-        The only thing that would accept such a card is the PROJECT UNION, and that is precisely the
-        flat-set mistake fixed one commit earlier: this sweep WRITES merge evidence, so accepting a card
-        whose lane vocabulary is unknown would rewrite a card another board is still working.
+        `resolveWorkflowIrForTask` degrades to the BUILT-IN coding IR rather than throwing, so the
+        `.catch(() => undefined)` protected almost nothing: when a task's selection cannot be resolved
+        the call SUCCEEDS and hands back a board whose complete lane is `done`. The old line then read
+        `ownComplete.length > 0` as "this card answered", so a renamed-lane card was measured against
+        the built-in vocabulary, rejected, and — because this sweep is the thing that would have
+        repaired its missing merge evidence — rejected again on every subsequent sweep.
 
-        A missed repair is retried on every sweep and its root cause — a missing workflow selection — is
-        operator-fixable. A wrong write is neither. Recorded as a known limitation rather than traded away.
+        The provenance form separates "the card's own workflow says complete = X" from "nobody could
+        say, here is the default". Only the first is an answer.
+
+        THE VERDICT IS DELIBERATELY UNCHANGED, AND I MEASURED THAT RATHER THAN ASSUMING IT. My first
+        version also gated `ownComplete` on the provenance, which READS like the fix and is inert: a
+        defaulted card resolves to the built-in `complete = ["done"]`, and gating it to `[]` falls
+        through to the literal `done` — the same verdict by a different route. Mutating the gate away
+        left the suite green, which is how I found it. Shipping it would have been a conversion that
+        scores as a win and changes nothing, so it is gone.
+
+        The verdict SHOULD stay conservative here: this sweep WRITES merge evidence, and guessing a lane
+        to rewrite history onto the wrong card is worse than leaving one unrepaired. What the provenance
+        buys is the thing that was actually missing — the unresolvable card is now REPORTED instead of
+        being indistinguishable from a card that answered, so "unrepaired" stops meaning "unrepairable
+        and invisible forever".
         */
-        const taskIr = await resolveWorkflowIrForTask(this.store, task.id, perTaskIrCache).catch(() => undefined);
-        const ownComplete = taskIr ? columnsWithFlag(taskIr, "complete") : [];
-        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-30-17:50. */
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, perTaskIrCache)
+          .catch(() => undefined);
+        const ownComplete = resolved ? columnsWithFlag(resolved.ir, "complete") : [];
+        /* A THROW is unresolvable too. Checking only `source === "default"` left the rarer path — the
+           resolver raising rather than substituting — silently discarded, which is the same invisibility
+           this change exists to remove, one branch over. */
+        if (!resolved || resolved.source === "default") unresolvedWorkflowCards.push(task.id);
+        /* DELIBERATE-LITERAL — the degraded per-card default, reviewed 2026-07-30-17:20. Reached when the
+           card's own workflow could not be resolved AT ALL, or resolves and declares no complete lane. The
+           project union must not stand in here: that is the flat-set mistake this filter exists to avoid,
+           so the legacy id is the conservative answer. The census ratchet flagged this line when it
+           appeared, which is the guard working. */
         const isComplete = ownComplete.length > 0 ? ownComplete.includes(task.column) : task.column === "done";
         if (isComplete) candidates.push(task);
+      }
+
+      if (unresolvedWorkflowCards.length > 0) {
+        log.warn(
+          `done-task integrity sweep: ${unresolvedWorkflowCards.length} card(s) measured against the `
+          + `built-in complete lane because their own workflow could not be resolved `
+          + `(${unresolvedWorkflowCards.slice(0, 5).join(", ")}); a renamed completion lane there stays unrepaired.`,
+        );
       }
 
       if (candidates.length === 0) return 0;
