@@ -16,14 +16,30 @@ pnpm --filter @fusion/engine exec vitest run \
 node scripts/lifecycle-column-census.mjs
 ```
 
-## Recorded pass — 2026-07-30, `origin/main` @ `be63e72f1`
+## Recorded passes
+
+### 2026-07-30, `origin/main` @ `a6138abeff` (latest)
+
+| Check | Result |
+|---|---|
+| `pnpm test:gate` | PASS |
+| E2E families | **14 files / 112 tests PASS**, exit 0 |
+| census | COLUMN 748 · ROLE 5 · STATUS 186 · DELIBERATE-LITERAL 17 · QUERY 83 · IR-node 43 |
+
+### 2026-07-30, `origin/main` @ `be63e72f1` (first pass)
 
 | Check | Result |
 |---|---|
 | `pnpm test:gate` | PASS — 132 + 10 + 487 + 71 tests |
 | `pnpm verify:fast` | PASS — 13 steps in 89.9s; boot smoke `GET /api/health 200`, clean shutdown |
-| E2E families | 13 files / 109 tests PASS **with the planning-lane seed fix applied** (2 failed without it) |
-| census | COLUMN 787 · ROLE 0 · STATUS 182 · DELIBERATE-LITERAL 3 · triage **10** |
+| E2E families | 13 files / 109 tests — 2 failed until the planning-lane seed fix (#2658) |
+| census | COLUMN 787 · ROLE 0 · STATUS 182 · DELIBERATE-LITERAL 3 · triage 10 |
+
+**Both numbers moved within a few hours**, which is the point of recording the commit
+alongside the result: a bare count in an instruction is stale by the time it is read. The
+family count went 13 → 14 and the backlog 787 → 748 between these two passes, and the
+census grew two categories (`QUERY filters`, `IR node definitions`) that did not exist in
+the first run.
 
 ## Findings
 
