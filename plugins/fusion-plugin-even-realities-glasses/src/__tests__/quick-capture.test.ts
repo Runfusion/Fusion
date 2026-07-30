@@ -78,3 +78,60 @@ describe("quick-capture parsing", () => {
     ).rejects.toThrowError(GlassesInputError);
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-13:20 (Phase C convergence — quick capture):
+
+The accepted capture columns are the BOARD's, not a hand-listed five. The old list was wrong in
+both directions after U11 (#2515): it accepted `triage`, which the default board no longer
+declares (so the create failed at the server, at the far end of a voice interaction), and it
+rejected every column of a renamed or custom board.
+
+Note on severity, corrected from my own PR description: this was never SILENT substitution —
+`runQuickCapture` compares the normalized value against the request and throws 400 on a
+mismatch. An unusable column was visibly rejected. The defect is the accept/reject SET.
+*/
+describe("quick capture accepts the columns the board actually declares", () => {
+  function deps(defaultColumn = "todo") {
+    const created: Array<Record<string, unknown>> = [];
+    return {
+      created,
+      taskStore: {
+        createTask: async (input: Record<string, unknown>) => {
+          created.push(input);
+          return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-30T00:00:00.000Z" };
+        },
+      },
+      pluginId: "glasses",
+      defaultColumn,
+    } as never;
+  }
+
+  it("accepts a column the default workflow declares", async () => {
+    const d = deps();
+
+    await runQuickCapture({ text: "ship the thing", column: "in-progress" }, d);
+
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("in-progress");
+  });
+
+  it("rejects `triage` now that the default lineage no longer declares it", async () => {
+    // Pre-fix this was ACCEPTED and forwarded, and the server rejected the create — the
+    // failure surfaced after the voice interaction had already succeeded from the operator's
+    // point of view.
+    await expect(runQuickCapture({ text: "ship it", column: "triage" }, deps())).rejects.toThrow(/invalid column/);
+  });
+
+  it("rejects a column no workflow declares", async () => {
+    // The paired negative: "accept everything" must not pass for "read the workflow".
+    await expect(runQuickCapture({ text: "ship it", column: "nonsense" }, deps())).rejects.toThrow(/invalid column/);
+  });
+
+  it("uses the configured default when no column is requested", async () => {
+    const d = deps("todo");
+
+    await runQuickCapture({ text: "ship it" }, d);
+
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("todo");
+  });
+});
