@@ -505,7 +505,7 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
 export function getTaskWorkflowSelectionImpl(_store: TaskStore, _taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     /*
     FNXC:PostgresCutover 2026-07-04-00:00:
-    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
+    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync reader (resolveTaskWorkflowIrSync) fall back to its default. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
     */
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync selection reader is incomplete-PG; use getTaskWorkflowSelectionAsync. */
     return undefined;
