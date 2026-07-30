@@ -114,6 +114,48 @@ export function resolvePlannerLanes(store: TaskStore, taskId: string): PlannerLa
   }
 }
 
+/**
+ * The ASYNC twin of {@link resolvePlannerLanes}, and the one that actually resolves.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (fleet — the sync resolver is a no-op):
+ * `resolvePlannerLanes` reads `store.resolveTaskWorkflowIrSync`, whose selection reader returns
+ * `undefined` unconditionally in PostgreSQL mode — the shipped backend. So it resolves the DEFAULT
+ * workflow for every task and answers with the legacy ids no matter what board the card is on, while
+ * reporting `resolvedFromWorkflow: true` because an IR did come back. A caller branching on that flag
+ * is told the lanes are workflow-resolved and handed the defaults. Proven in
+ * `core/src/__tests__/postgres/sync-workflow-ir-is-always-default.pg.test.ts`.
+ *
+ * Identical logic and identical fallbacks — the ONLY difference is awaiting the authoritative
+ * resolver — so a caller in an async method can switch to this and get the same answers on the
+ * default lineage and correct ones everywhere else.
+ *
+ * `cache` is caller-owned, matching `resolveTaskLifecycleColumns`: a sweep over many cards spanning
+ * three workflows reads three IRs, not one per card.
+ */
+export async function resolvePlannerLanesForTaskAsync(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<PlannerLanes> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache);
+    const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
+    if (!lifecycle) return LEGACY_PLANNER_LANES;
+    return {
+      /* Same individual hold/intake fallback as the sync twin — see the note there for why the
+         forward lanes deliberately do NOT fall back. */
+      hold: lifecycle.hold ?? lifecycle.intake ?? "todo",
+      intake: lifecycle.intake ?? lifecycle.hold ?? "triage",
+      wip: lifecycle.wip,
+      review: lifecycle.review,
+      complete: lifecycle.complete,
+      resolvedFromWorkflow: true,
+    };
+  } catch {
+    return LEGACY_PLANNER_LANES;
+  }
+}
+
 /*
  * FNXC:WorkflowReplan 2026-07-15-13:15:
  * FN-7977: a planning/provider recovery may finish after another engine lane has

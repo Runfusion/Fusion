@@ -20,7 +20,7 @@ import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, eval
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./replan-target.js";
+import { moveTaskToReplanColumn, resolvePlannerLanes, resolvePlannerLanesForTaskAsync, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
@@ -5158,7 +5158,20 @@ export class TaskExecutor {
       recovery of last resort — a literal here means the last resort does not exist off the
       default lineage.
       */
-      const plannerLanes = resolvePlannerLanes(this.store, task.id);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (the sync resolver never resolved):
+      AWAITED, because this method is async and the sync twin is a no-op in production.
+
+      The note above says a literal here "means the last resort does not exist off the default
+      lineage". `resolvePlannerLanes` was that literal wearing a trait lookup: its selection reader
+      returns undefined unconditionally in PostgreSQL mode, so it resolved the DEFAULT workflow for
+      every card and `promotedFromPlannerColumn` was false on every renamed board — the exact
+      stranding this recovery exists to fix, with the conversion in place and the census counting it.
+
+      Same struct, same fallbacks, one await. `recoverCompletedTask` has already awaited store reads
+      by this point, so this adds no ordering constraint it did not already have.
+      */
+      const plannerLanes = await resolvePlannerLanesForTaskAsync(this.store, task.id);
       const promotedFromPlannerColumn = originColumn === plannerLanes.hold || originColumn === plannerLanes.intake;
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2628 review, greptile P1):
