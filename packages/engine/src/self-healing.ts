@@ -904,6 +904,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     settings: Settings,
     isExecuting: boolean,
   ): WorkflowRecoveryRoute {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:35 (fleet: self-healing.ts):
+    Synchronous classifier, so it uses the store's synchronous IR reader — the same seam the
+    `task:moved` listener uses — rather than becoming async, which would ripple into every caller
+    and is a signature change rather than a conversion.
+
+    Per-role fallbacks: a workflow declaring only some roles degrades one role at a time instead of
+    the whole classification reverting to legacy ids.
+    */
+    const routeLanes = (() => {
+      try {
+        return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id));
+      } catch {
+        return undefined;
+      }
+    })();
+    const routeHoldLane = routeLanes?.hold ?? "todo";
+    const routeWipLane = routeLanes?.wip ?? "in-progress";
+    const routeReviewLane = routeLanes?.review ?? "in-review";
     const isPausedAbortPark =
       task.status === "failed" &&
       typeof task.error === "string" &&
@@ -923,13 +942,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       && task.steps.every((step) => step.status === "done" || step.status === "skipped");
     const sharedBranchMember = isSharedBranchGroupMemberIntegration(task);
     const hasReviewProgress =
-      task.column === "in-review"
+      task.column === routeReviewLane
       && allowsAutoMergeProcessing(task, settings)
       && task.mergeDetails?.mergeConfirmed !== true
       && !isTerminalMergePark
       && completedSteps;
     const hasManualMergeHoldProgress =
-      task.column === "in-review"
+      task.column === routeReviewLane
       && (!allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
       && !sharedBranchMember
       && task.mergeDetails?.mergeConfirmed !== true
@@ -952,7 +971,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (hasReviewProgress) {
       return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
     }
-    if (task.column === "todo" || task.column === "in-progress") {
+    if (task.column === routeHoldLane || task.column === routeWipLane) {
       return { kind: "node-requeue", reason: "pause-abort-active-work" };
     }
     return { kind: "no-action", reason: "unsafe-or-not-routable" };
