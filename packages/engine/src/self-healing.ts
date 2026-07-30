@@ -1433,23 +1433,45 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.store.on("settings:updated", this.settingsListener);
 
     this.taskMovedFanoutListener = ({ task, from, to }) => {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-15:40 (fleet: self-healing.ts, sync listener):
+      `task:moved` is delivered synchronously, so the async IR resolution used elsewhere in this
+      file is unavailable here. `resolveTaskWorkflowIrSync` is the store's synchronous reader and
+      makes the conversion possible without deferring the counter increment below into a microtask
+      — which would have been a behaviour change, not a conversion.
+
+      Each role keeps its own legacy fallback, so a workflow declaring only some roles degrades
+      per-role rather than collapsing the whole set.
+      */
+      const lanes = (() => {
+        try {
+          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(task.id));
+        } catch {
+          return undefined;
+        }
+      })();
+      const holdLane = lanes?.hold ?? "todo";
+      const wipLane = lanes?.wip ?? "in-progress";
+      const reviewLane = lanes?.review ?? "in-review";
+      const completeLane = lanes?.complete ?? "done";
+      const archivedLane = lanes?.archived ?? "archived";
       if (
-        from === "in-progress"
-        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
+        from === wipLane
+        && (to === holdLane || to === reviewLane || to === completeLane || to === archivedLane)
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.
         this.boardStallWindow.transitionsOutOfInProgressInWindow++;
       }
-      if (to === "in-review") {
+      if (to === reviewLane) {
         void this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
         });
       }
       const shouldReconcile =
-        (from === "in-review" && to === "done") ||
-        (from === "done" && to === "archived");
+        (from === reviewLane && to === completeLane) ||
+        (from === completeLane && to === archivedLane);
       if (!shouldReconcile) return;
       void this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
