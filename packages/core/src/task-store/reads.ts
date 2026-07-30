@@ -163,6 +163,32 @@ async function resolveReviewColumnForTask(
   }
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-04:10 (fleet — the third sibling role):
+The WIP twin of `resolveReviewColumnForTask`, for age-staleness hydration.
+
+`getTaskAgeStalenessSignal` returns undefined unless the card is in wip OR review, and then picks its
+warning/critical thresholds by which of the two it is. Keyed on the literals, a renamed board got NO
+age-staleness badge at all — the signal that says "this card has been sitting in progress for a day"
+simply never fired, which is invisible because the absence of a warning looks like health.
+
+Third role, same file, same shape as the hold/review pair above — and the same fail-soft, because
+this is read-path badge hydration where a workflow lookup failure must degrade to today's behaviour
+rather than break a board list.
+*/
+async function resolveWipColumnForTask(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<string> {
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
+    return lifecycle?.wip ?? "in-progress";
+  } catch {
+    return "in-progress";
+  }
+}
+
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {
       // FNXC:RuntimePersistenceAsync 2026-06-24-10:50:
@@ -426,6 +452,11 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         task.ageStaleness = getTaskAgeStalenessSignal(task, {
           now,
           thresholds: staleThresholds,
+          /* BOTH active lanes, or the badge is silent on a renamed board. Omitting the role at one
+             hydration site while the helper takes it is precisely the PR #2470 defect this file
+             already carries two notes about. */
+          wipColumn: await resolveWipColumnForTask(store, task.id, listPassIrCache),
+          reviewColumn: reviewColumnForRow,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
           lifecycle: await resolveTaskLifecycleColumns(store, task.id, listPassIrCache),
@@ -559,11 +590,13 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     apply to any row, so this resolves for every row on the page.
     */
     const reviewColumnByTaskId = new Map<string, string>();
+    const wipColumnByTaskId = new Map<string, string>();
     {
       const irCache = new Map<string, WorkflowIr>();
       for (const pgRow of pageRows) {
         const row = store.pgRowToTaskRow(pgRow);
         reviewColumnByTaskId.set(row.id, await resolveReviewColumnForTask(store, row.id, irCache));
+        wipColumnByTaskId.set(row.id, await resolveWipColumnForTask(store, row.id, irCache));
         if (store.rowToTask(row).paused !== true) continue;
         holdColumnByTaskId.set(row.id, await resolveHoldColumnForTask(store, row.id, irCache));
       }
@@ -618,6 +651,9 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
           task.ageStaleness = getTaskAgeStalenessSignal(task, {
             now,
             thresholds: staleThresholds,
+            /* Same pair as the sibling site above — see the note there. */
+            wipColumn: wipColumnByTaskId.get(task.id) ?? "in-progress",
+            reviewColumn: reviewColumnForRow,
             engineActiveSinceMs: settings.engineActiveSinceMs,
             engineActivationGraceMs: settings.engineActivationGraceMs,
           });
