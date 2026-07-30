@@ -115,6 +115,20 @@ export function migrateLegacyArchiveEntriesToArchiveDbImpl(store: TaskStore): vo
 }
 
 export async function migrateActiveArchivedTasksToArchiveDbImpl(store: TaskStore): Promise<void> {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:10 DELIBERATE-LITERAL:
+    `'archived'` here is the STATE marker, not a board lane, and must NOT be widened to the resolved
+    archived columns.
+
+    This finds live rows that Fusion's own archive path stamped (`archive-lifecycle-2.ts` and
+    `serialization.ts` both hardcode `column: "archived"`) so they can be migrated into the archive
+    DB. A workflow may also declare an archived-TRAIT lane under any id — `resolveLifecycleColumns`
+    resolves it, and a card can be moved there — but such a card was never archived by Fusion, has no
+    archive-store row, and migrating it would move live work out of the board.
+
+    So the resolved set is the wrong question at this site even though it is the right one for the
+    live-view exclusions that share this literal. See issue #2839 for the split.
+    */
     const rows = store.db.prepare(`SELECT * FROM tasks WHERE "column" = 'archived'`).all() as unknown as TaskRow[];
     if (rows.length === 0) {
       return;
@@ -904,6 +918,12 @@ export function pruneAgentLogFilesImpl(store: TaskStore, retentionDays: number):
     if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
       return { prunedFiles: 0, prunedEntries: 0, freedBytes: 0 };
     }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:14 DELIBERATE-LITERAL:
+    STATE marker again, same reasoning as migrateActiveArchivedTasksToArchiveDbImpl above: this prunes
+    agent-log files for rows Fusion archived or soft-deleted. A card in a workflow's archived-TRAIT
+    lane is live work whose logs must survive, so the resolved set would delete data here.
+    */
     // Only prune JSONL files for tasks that are no longer active (soft-deleted or archived)
     const inactiveTaskIds = new Set(
       (
