@@ -1782,7 +1782,14 @@ not see it. Each site now resolves once and uses the same value for both.
 /** The terminal ids from before workflows owned the vocabulary. */
 const LEGACY_TERMINAL_COLUMNS: readonly string[] = ["done", "archived"];
 
-async function resolveTerminalColumnsFor(store: TaskStore, taskId: string): Promise<readonly string[]> {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (exported for the follow-up dedup paths):
+EXPORTED rather than copied. `eval-followups.ts` and `pr-comment-handler.ts` each carried their own
+`CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"])` for the same question this answers, and a third
+and fourth copy of the union-with-legacy reasoning is exactly the drift this program exists to remove.
+Nothing else about the function changes.
+*/
+export async function resolveTerminalColumnsFor(store: TaskStore, taskId: string): Promise<readonly string[]> {
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-12:20 (PR #2568 review — greptile):
   THE UNION IS DELIBERATE, and the `catch` alone was not enough.
