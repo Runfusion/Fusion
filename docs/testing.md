@@ -235,6 +235,46 @@ it to run — the curated-gate hole that silently skipped unenumerated files is 
 (see "Curated-gate completeness" below). Add a file to a curated `qualityApp*`/`qualityApi`
 list only when you want it in a specific fast lane rather than the backfill catch-all.
 
+## When a dashboard element is "missing", probe before theorising
+
+`getByText` / `getByRole` failures name the element that was not found, which is almost never where
+the fault is. Three separate causes in `App.test.tsx` and `board-mobile-view-switch.test.tsx` all
+presented identically as a missing element, and in each case the DOM looked healthy:
+
+| what the test said | what was actually wrong |
+|---|---|
+| `Unable to find "+ New Task"` | `ListView` rendered its workflow SKELETON, which carries the same `list-view` class as the real body, so the preceding `waitFor(".list-view")` passed |
+| `Unable to find role="heading" "New Task"` | `NewTaskModal` THREW — an incomplete `vi.mock` was missing `isShortViewport` — and an `ErrorBoundary` swallowed it |
+| `Unable to find [data-testid="switch-to-board"]` | an uncaught render error unmounted the entire React root; the DOM was empty three lines earlier |
+
+**Three theories were offered for these before any probe, and all three were wrong** ("the board
+renders nothing", "i18n is returning keys", "the FloatingWindow rework"). Three probes each landed
+the cause on the first try. The technique is simply to print what is really there at the failing
+assertion:
+
+```ts
+// eslint-disable-next-line no-console
+console.log(
+  "PROBE testids:", JSON.stringify([...document.querySelectorAll("[data-testid]")]
+    .map((e) => e.getAttribute("data-testid")).slice(0, 12)),
+  "| boundary:", document.querySelector('[class*="error-boundary"]')?.textContent?.trim() ?? "none",
+);
+```
+
+What each signal means:
+
+- **an `error-boundary` class in the DOM** — a component threw and the boundary ate it. Read its
+  text; for a mock-related throw it names the missing export exactly.
+- **an empty DOM with no boundary** — an uncaught render error unmounted the root. Everything after
+  it fails misleadingly, so trust the FIRST failing assertion, not the reported one.
+- **the element's container present but its contents absent** — a skeleton or empty state is
+  standing in. Check whether the selector you waited on is shared with that state; `list-view` is,
+  which is why `list-view-body` exists.
+
+Corollary for writing assertions: **wait on a marker only the real thing has.** A class shared with a
+loading or empty state turns "the list rendered" into "something rendered", and the test then fails
+one line later against a DOM that looks fine.
+
 ## Curated-gate completeness and the skip-list
 
 The dashboard quality gate is a chain of curated lanes plus two backfill lanes.
