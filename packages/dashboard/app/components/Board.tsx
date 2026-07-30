@@ -586,7 +586,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       const isWorkflowDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       grouped[column.id] = isWorkflowDoneLikeColumn
         ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true);
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true, column.flags.hold === true);
     }
     return grouped;
   }, [doneSortMode, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
@@ -770,7 +770,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       grouped[column.id] = isDoneLikeColumn
         ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true);
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true, column.flags.hold === true);
     }
     return grouped;
   }, [aggregateBoardColumns, aggregateQuickCreateTarget, boardWorkflows, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);

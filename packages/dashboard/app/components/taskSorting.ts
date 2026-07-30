@@ -54,6 +54,20 @@ export function sortTasksForDisplayColumn(
   column: Column,
   doneSortMode: DoneColumnSortMode = "completion-date-desc",
   isArchivedColumn: boolean = column === "archived",
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Does this column HOLD planned work waiting for capacity? Follows the same
+  caller-supplies-the-trait shape `isArchivedColumn` already established, and defaults to
+  the legacy id so the callers that do not resolve flags (Lane, ListView) keep today's
+  behaviour exactly.
+
+  The priority-then-FIFO order below is the hold lane's queue order — it is what makes a
+  high-priority card visibly next. Keyed on the id, it silently degrades to the generic
+  sort on any board whose hold column is not named `todo`, so a renamed lineage loses
+  priority ordering with nothing failing. Not a rename: `todo` gained the hold trait in
+  U11, so the id and the role stopped being the same question.
+  */
+  isHoldColumn: boolean = column === "todo",
 ): Task[] {
   /*
   FNXC:ArchivePagination 2026-07-08-00:00:
@@ -70,7 +84,7 @@ export function sortTasksForDisplayColumn(
     return [...tasks];
   }
 
-  if (column === "todo") {
+  if (isHoldColumn) {
     return [...tasks].sort((a, b) => {
       const priorityCmp = compareTaskPriority(a.priority, b.priority);
       if (priorityCmp !== 0) return priorityCmp;
