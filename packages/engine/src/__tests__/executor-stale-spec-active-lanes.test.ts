@@ -43,17 +43,53 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
 
 describe("the stale-spec skip resolves the board's own active lanes", () => {
-  it("resolves the task's lifecycle columns before deciding the skip", () => {
-    expect(source).toContain(
-      "const activeLifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id));",
-    );
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-13:30:
+  RE-POINTED AT MEMBERSHIP, and SCOPED to this site.
+
+  The two cases here pinned the old implementation verbatim —
+  `resolveLifecycleColumns(...)` into `activeLifecycle?.wip / .review / .complete`. #2820 replaced
+  that with `columnsWithFlag`, and the replacement is a FIX, not churn: `resolveLifecycleColumns`
+  returns the FIRST column carrying each trait, so a board with two wip lanes (or a review lane plus a
+  second merge-blocking one) had only one of each recognised as active, and a card in the second read
+  as INACTIVE — its prompt file treated as reclaimable, which is the interruption this whole file
+  exists to prevent. Widening to every column carrying the trait is strictly the safe direction.
+
+  Asserted against a SLICE bounded by this site's own markers rather than the whole file.
+  `columnsWithFlag` has four call sites in executor.ts, so a file-wide `toContain` would pass no
+  matter what this particular guard does — a guard that cannot fail for its own subject. Both markers
+  are proven unique first, because a repeated marker makes the slice meaningless.
+
+  Still a source ratchet, deliberately — see the note at the top of this file on why the behavioural
+  mirrors were deleted rather than shipped.
+  */
+  function activeLaneBlock(): string {
+    /* Starts at the IR resolution, which sits one line ABOVE the seed and is part of this site. */
+    const from = "const activeIr = await resolveWorkflowIrForTask(this.store, task.id);";
+    const to = 'const activeMergeStatuses = new Set(["merging", "merging-pr", "merging-fix"]);';
+    const start = source.indexOf(from);
+    const end = source.indexOf(to, start + from.length);
+    expect(start, "the active-lane IR resolution is gone from executor.ts").toBeGreaterThan(-1);
+    expect(end, "the merge-status escape hatch is gone from executor.ts").toBeGreaterThan(start);
+    // A repeated marker would silently widen the slice past the site under test.
+    expect(source.indexOf(from, start + from.length)).toBe(-1);
+    expect(source.indexOf(to, end + to.length)).toBe(-1);
+    return source.slice(start, end);
+  }
+
+  it("resolves the task's own workflow IR before deciding the skip", () => {
+    expect(activeLaneBlock()).toContain("resolveWorkflowIrForTask(this.store, task.id)");
   });
 
-  it("adds the wip, review and complete lanes to the active set", () => {
-    expect(source).toContain(
-      "for (const lane of [activeLifecycle?.wip, activeLifecycle?.review, activeLifecycle?.complete]) {",
-    );
-    expect(source).toContain("if (lane !== undefined) activeColumns.add(lane);");
+  it("adds EVERY column carrying an active trait, not the first per role", () => {
+    const block = activeLaneBlock();
+    expect(block).toContain("columnsWithFlag(activeIr, flag)");
+    expect(block).toContain("activeColumns.add(lane)");
+    for (const flag of ["countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview", "complete"]) {
+      expect(block, `the active set no longer unions the "${flag}" lanes`).toContain(`"${flag}"`);
+    }
+    // The first-per-role resolver is what under-reported active lanes; it must not come back here.
+    expect(block).not.toContain("resolveLifecycleColumns");
   });
 
   it("UNIONS rather than replaces, so a degraded IR cannot narrow the set", () => {
