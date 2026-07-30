@@ -625,8 +625,19 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      *       central-registry project (e.g. "proj_2f4be0f31a404d2c"). This is the
      *       id the rest of the system partitions by, so workflow settings MUST
      *       key by it too.
-     *   (b) `store.db.getProjectIdentity()?.id` — legacy SQLite identity id.
-     *   (c) `store.rootDir` — absolute filesystem path, last-resort legacy key.
+     *   (b) `store.rootDir` — absolute filesystem path, last-resort key.
+     *
+     * FNXC:CentralProjectIdentity 2026-07-31-13:00 (documentation corrected):
+     * There USED to be a middle step reading `store.db.getProjectIdentity()?.id`, and this block still
+     * described it long after `FNXC:SqliteDualPathCleanup 2026-07-26-14:15` removed it. It is not
+     * merely unused — it is unreachable BY CONSTRUCTION: `dbImpl` throws unconditionally and ignores
+     * its store argument (`task-id-integrity.ts:58`), so `store.db` can never yield a usable SQLite
+     * handle in any mode.
+     *
+     * Two cases in `workflow-settings-project-identity.pg.test.ts` were red on main because they
+     * asserted that removed step, using a store double whose `getProjectIdentity()` returns a value —
+     * a shape production cannot produce. Stale documentation is what made that look like a code bug
+     * rather than a stale test, so both are fixed together.
      *
      * BUG this fixes: the old code went straight to (b). In backend mode
      * `store.db` is a SQLite stub whose `getProjectIdentity()` THROWS
@@ -645,10 +656,15 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     An unscoped backend store (asyncLayer present but projectId empty) must NOT
     reach `store.db` below — it throws the removed-SQLite stub, which the catch
     then swallows, so the throw was invisible. Return the same rootDir key the
-    swallow produced, without the spurious stub throw. Only the true legacy
-    (non-backend) path consults the SQLite identity.
+    swallow produced, without the spurious stub throw.
     */
-    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG. */
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG.
+    Unconditional on purpose — see the corrected resolution order above. The comment block immediately
+    before this once said "Only the true legacy (non-backend) path consults the SQLite identity",
+    which has been false for every caller since that cleanup; it is removed rather than left to
+    mislead the next reader the way it misled me.
+    */
     return store.rootDir;
 }
 
