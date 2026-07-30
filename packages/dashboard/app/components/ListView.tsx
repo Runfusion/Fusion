@@ -2851,7 +2851,15 @@ export function ListView({
   }
 
   return (
-    <div className={`list-view${useSinglePaneList ? " list-view--single-pane" : ""}`}>
+    /*
+    FNXC:ListView 2026-07-30-07:00:
+    `list-view-body` marks the REAL list, distinct from the workflow skeleton above which carries the
+    same `list-view` class for styling. Tests waited on `.list-view` to mean "the list rendered"; the
+    skeleton satisfied that, so the wait passed and the assertion inside failed against a DOM that
+    looked healthy. That cost five days of App.test.tsx being red and two wrong root causes. Wait on
+    this marker instead — it exists only when the list actually has lanes to draw.
+    */
+    <div className={`list-view${useSinglePaneList ? " list-view--single-pane" : ""}`} data-testid="list-view-body">
       {contextMenuState && hasContextMenuActions && createPortal(
         <div
           ref={contextMenuRef}
