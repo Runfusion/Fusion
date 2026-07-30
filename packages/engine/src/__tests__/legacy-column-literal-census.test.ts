@@ -103,9 +103,17 @@ never reach zero because those lines are correct as written.
 
 Two independent classifiers agreed on exactly this receiver set, which is the
 strongest evidence available that it is complete as of today.
+
+FNXC:LegacyColumnCensus 2026-07-31-03:05 (PR #2557 review — greptile, and a real
+defect in my own widening): the status exclusion was `\bstatus\b`, which catches
+`s.status` (the dot is a word boundary) but NOT a camelCase local. Measured:
+`tStatus`, `rStatus`, `sStatus` and `kStatus` account for SEVEN comparisons that were
+being counted as column guards. Inverting the match made the exclusion set
+load-bearing, so a gap in it now inflates rather than merely annoys — the receiver
+suffix is matched instead of the bare word.
 */
 const NON_COLUMN_RECEIVER =
-  /(?:\brole\b|\bagent\b|agentType|agentId|assignedAgentId|\bsurface\b|sessionPurpose|\bpurpose\b|\blane\b|capability|\bstatus\b)\s*(?:===|!==)/;
+  /(?:\brole\b|\bagent\b|agentType|agentId|assignedAgentId|\bsurface\b|sessionPurpose|\bpurpose\b|\blane\b|capability|[A-Za-z_$][\w$.?]*[Ss]tatus|\bstatus\b)\s*(?:===|!==)/;
 
 /** DEFAULTING to a legacy column name when a role does not resolve. */
 const LEGACY_COLUMN_FALLBACK = /\?\?\s*"(?:todo|triage|in-progress|in-review|done|archived)"/;
@@ -136,13 +144,19 @@ was converted or reverted; only the measurement changed.
               scanned, hiding 111 lines.
   549 -> 755  the receiver fix: only `.column`-suffixed receivers were matched, so
               206 more lines written against a bare identifier were invisible.
+  755 -> 745  LOWERED, and this one is a false-positive removal, not a conversion:
+              inverting the match made the exclusion set load-bearing, and its status
+              arm (`\bstatus\b`) missed camelCase locals like `tStatus`/`rStatus`.
+              Seven status comparisons were being counted as column guards. Widening
+              the arm to a suffix match drops them plus three more retired by merges
+              since the pin.
 
 Recording the direction and the split explicitly, because a ceiling that jumps is
 normally the alarm this file exists to raise. Both jumps mean the OLD number was
 wrong, not that the code got worse — and together they say the tracked figure was
 missing 42% of the surface it claimed to bound.
 */
-const CEILING = 755;
+const CEILING = 745;
 
 function productionSources(): string[] {
   /*
