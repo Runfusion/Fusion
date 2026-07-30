@@ -168,3 +168,69 @@ describe("the reports health section resolves its parked lanes by ROLE", () => {
     expect(section).not.toContain("queued/no live run");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1):
+THE ARITY TRAP, fifth occurrence in this program. My first version read the parked lanes through
+`resolveTaskLifecycleColumns`, which returns the FIRST column carrying each trait. A workflow declaring
+TWO hold lanes had only one recognised, so a card parked in the SECOND one still read as live and its
+stale link was never cleared — the very defect the fix exists to close, one degree narrower.
+
+`resolveLifecycleColumns` answers "which column is THE hold lane?"; this code needs "is this card in ANY
+parked lane?". Those are different questions and nothing in the types distinguishes them, which is why
+this keeps recurring.
+
+The default board cannot express this shape — it has one hold lane — so only a multi-lane fixture can
+catch it.
+
+REVERT CHECK, measured: reading the lanes through `resolveTaskLifecycleColumns` again fails this case,
+because `secondary-hold` is not the first hold column.
+*/
+const TWO_HOLD_IR = {
+  version: "v2",
+  id: "heartbeat-parked",
+  name: "two holds",
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+    { id: "secondary-hold", name: "Blocked", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+  ],
+  nodes: [{ id: "start", kind: "start", column: "backlog" }],
+  edges: [],
+} as unknown as WorkflowIr;
+
+describe("every parked lane counts, not just the first one the resolver returns", () => {
+  it("clears a stale link to a card parked in the SECOND hold lane", async () => {
+    const tasksById = new Map([["FN-PARKED", { ...parkedCard(DEFAULT_VOCAB), column: "secondary-hold" } as Task]]);
+    const agent = { id: "a1", name: "A", role: "executor", state: "running", taskId: "FN-PARKED" };
+    const store = {
+      listAgents: vi.fn().mockResolvedValue([agent]),
+      getAgent: vi.fn().mockResolvedValue(agent),
+      getCachedAgent: vi.fn().mockReturnValue(null),
+      getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+      updateAgent: vi.fn(),
+      updateAgentState: vi.fn(),
+      assignTask: vi.fn(),
+      recordHeartbeat: vi.fn(),
+      getAgentsByReportsTo: vi.fn().mockResolvedValue([]),
+      syncExecutionTaskLink: vi.fn(),
+      endHeartbeatRun: vi.fn(),
+    };
+    const taskStore = {
+      getSettings: vi.fn().mockResolvedValue({}),
+      getTask: vi.fn(async (id: string) => tasksById.get(id)),
+      listTasks: vi.fn().mockResolvedValue([]),
+      updateTask: vi.fn(),
+      moveTask: vi.fn(),
+      logEntry: vi.fn(),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "heartbeat-parked", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "heartbeat-parked", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "heartbeat-parked" ? { ir: TWO_HOLD_IR } : undefined)),
+    } as unknown as TaskStore;
+
+    const monitor = new HeartbeatMonitor({ store: store as never, taskStore, rootDir: "/repo" });
+    await reconcile(monitor);
+
+    expect(store.syncExecutionTaskLink).toHaveBeenCalledWith("a1", undefined);
+  });
+});

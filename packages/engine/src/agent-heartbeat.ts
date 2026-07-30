@@ -1243,8 +1243,21 @@ export class HeartbeatMonitor {
           A resolved seam nobody wired is indistinguishable from no seam at all — which is exactly what
           the caller audit found five of.
           */
-          const parkedLanes = await resolveTaskLifecycleColumns(this.taskStore!, linkedTask.id).catch(() => undefined);
-          const parkedColumns = [parkedLanes?.hold, parkedLanes?.intake].filter((c): c is string => typeof c === "string");
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1):
+          MEMBERSHIP, not first-per-role. `resolveTaskLifecycleColumns` returns the FIRST column carrying
+          each trait, so a workflow declaring TWO hold lanes (or a hold plus a second intake) had only one
+          of them recognised as parked — a card in the secondary lane still read as live, and the stale
+          link was never cleared for it. Same defect this fix exists to close, one degree narrower.
+
+          `columnsWithFlag` returns EVERY column carrying the trait, so both halves are unions. This is the
+          fifth time this program has hit first-per-role where it wanted membership; the two are not
+          interchangeable and the compiler cannot tell them apart.
+          */
+          const parkedIr = await resolveWorkflowIrForTask(this.taskStore!, linkedTask.id).catch(() => undefined);
+          const parkedColumns = parkedIr
+            ? [...new Set([...columnsWithFlag(parkedIr, "hold"), ...columnsWithFlag(parkedIr, "intake")])]
+            : [];
           if (isParkedTaskColumn(linkedTask, parkedColumns.length > 0 ? parkedColumns : undefined) && !parkedProof.shouldPreserveParkedLink) {
             reason = `parked ${linkedTask.column} task ${agent.taskId} without live execution proof`;
             clearTaskLink = true;
@@ -3727,8 +3740,12 @@ export class HeartbeatMonitor {
           const linkedTask = await this.taskStore.getTask(report.taskId);
           /* FNXC:WorkflowResolvedColumns 2026-07-30-23:50: same unwired parameter as above — the health
              report rendered a parked card as running on any board with renamed hold/intake lanes. */
-          const reportParkedLanes = await resolveTaskLifecycleColumns(this.taskStore, report.taskId).catch(() => undefined);
-          const reportParkedColumns = [reportParkedLanes?.hold, reportParkedLanes?.intake].filter((c): c is string => typeof c === "string");
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1): membership, not
+             first-per-role — see the note on the sweep above. */
+          const reportParkedIr = await resolveWorkflowIrForTask(this.taskStore, report.taskId).catch(() => undefined);
+          const reportParkedColumns = reportParkedIr
+            ? [...new Set([...columnsWithFlag(reportParkedIr, "hold"), ...columnsWithFlag(reportParkedIr, "intake")])]
+            : [];
           if (isParkedTaskColumn(linkedTask, reportParkedColumns.length > 0 ? reportParkedColumns : undefined)) {
             const activeRun = await agentStore.getActiveHeartbeatRun(report.id);
             const proof = evaluateParkedAgentTaskLink({
