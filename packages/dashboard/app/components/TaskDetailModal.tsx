@@ -5474,9 +5474,16 @@ export function TaskDetailContent({
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} modifiedFiles={task.modifiedFiles} isWorkspace={isWorkspaceTask(workingTask)} />
           ) : activeTab === "review" ? (
             <TaskReviewTab
-              // FNXC:WorkflowResolvedColumns 2026-07-31-07:20: the modal already resolved these for
-              // canEdit and the actions menu; the review tab asked the same question by id.
-              columnFlags={workflowMoveMetadata?.currentColumnFlags}
+              /*
+              FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (#2744 review — greptile P1):
+              `detailColumnFlags`, NOT the raw payload. That local applies `detailFlagsAreForThisTask`
+              (`workflowMoveMetadata?.taskId === task.id`), and on the render where the modal switches
+              tasks the state still holds the PREVIOUS card's payload. Passing the raw flags would resolve
+              the review tab's roles from another task's workflow — confidently wrong rather than merely
+              stale, which is the exact reasoning already recorded where that local is defined. I passed
+              the raw value and reviewed past the guard sitting six lines above my own conversion.
+              */
+              columnFlags={detailColumnFlags}
               task={task}
               addToast={addToast}
               projectId={projectId}

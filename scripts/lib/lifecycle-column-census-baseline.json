@@ -65,7 +65,6 @@
     "packages/dashboard/app/components/DocumentsView.tsx": 2,
     "packages/dashboard/app/components/effective-model-resolution.ts": 2,
     "packages/dashboard/app/components/WorkflowResultsTab.tsx": 2,
-    "packages/dashboard/app/utils/prFeedback.ts": 2,
     "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/dashboard/app/utils/taskTiming.ts": 2,
     "packages/dashboard/src/github-tracking-state.ts": 2,

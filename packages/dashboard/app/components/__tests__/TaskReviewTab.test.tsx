@@ -1176,6 +1176,37 @@ describe("TaskReviewTab", () => {
       .toContain("frozen on entry to review");
   });
 
+  it("offers Address PR Feedback on a RENAMED lane with no loaded review items (#2744 review)", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-11:15 (#2744 review — greptile P1):
+    The half-conversion this pins: the tab's own lane check was converted while
+    `canStartPrFeedbackAddressing` in utils/prFeedback.ts still compared ids. With NO loaded display
+    items the action depends entirely on that helper, so on a renamed lane it stayed hidden even though
+    the card had actionable PR feedback.
+
+    Empty `items` is the point of the case — with items present the `displayItems.length > 0` arm masks
+    the helper and the bug is invisible.
+
+    REVERT CHECK, measured: restoring the id pair in `canStartPrFeedbackAddressing` fails this with
+    `Unable to find an element by: [data-testid="task-review-address-pr-feedback"]`.
+    */
+    const task = makeTask({
+      column: "checking" as never,
+      // `lastReviewDecision` is the field `hasActionablePrFeedback` reads (not `reviewDecision`).
+      prInfo: { number: 7, url: "https://github.com/o/r/pull/7", state: "open", lastReviewDecision: "CHANGES_REQUESTED" } as never,
+    });
+    // `isPrMode` requires the review SOURCE to be pull-request; with items empty the action then depends
+    // entirely on canStartPrFeedbackAddressing, which is the helper under test.
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: { source: "pull-request", items: [], addressing: [] }, automationStatus: null, emptyMessage: null });
+
+    await renderWithAct(
+      <TaskReviewTab task={task} addToast={vi.fn()} columnFlags={REVIEW_FLAGS as never} onTaskUpdated={vi.fn()} />,
+    );
+
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.queryByTestId("task-review-address-pr-feedback")).toBeInTheDocument();
+  });
+
   it("still hides create PR action on a non-review lane of that same renamed board", async () => {
     // Non-vacuous: the widened test must not treat every column as review.
     const task = makeTask({ column: "building" as never, prInfo: undefined });

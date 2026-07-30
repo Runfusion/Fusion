@@ -211,7 +211,7 @@ export function TaskReviewTab({
   const canAddressPrFeedback = isPrMode
     && Boolean(getTaskPrimaryPrInfo(task))
     && (isReviewColumn || isWipColumn)
-    && (canStartPrFeedbackAddressing(task) || displayItems.length > 0);
+    && (canStartPrFeedbackAddressing(task, columnFlags) || displayItems.length > 0);
 
   useEffect(() => {
     writeBooleanPref(REVIEW_MARKDOWN_TOGGLE_STORAGE_KEY, renderMarkdown);

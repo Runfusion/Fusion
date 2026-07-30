@@ -1999,7 +1999,7 @@ function TaskCardComponent({
     && !isPaused
     && !isFailed
     && !queued;
-  const showAddressPrFeedbackAction = canStartPrFeedbackAddressing(task);
+  const showAddressPrFeedbackAction = canStartPrFeedbackAddressing(task, taskColumnFlags);
   const metaRowVisible =
     (task.dependencies?.length ?? 0) > 0
     || queued
