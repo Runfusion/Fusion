@@ -63,6 +63,20 @@ describeIfGit("workspace fixture", () => {
 
 describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () => {
   let fx: WorkspaceFixture;
+  /*
+  FNXC:TestInfrastructure 2026-07-29-22:05 (#2617 review — greptile P2):
+  `activeSessionRegistry` is PROCESS-GLOBAL and is itself a liveness signal
+  (hasLiveSessionSurface reads it), so a registration leaked by a failing assertion
+  makes the NEXT test see a phantom live session and refuse a clear it should permit.
+  Unregistering after the assertions only works on the happy path. Sweep in
+  guaranteed teardown instead — this suite is precisely the one that measures that
+  registry, so it must not be the one polluting it.
+  */
+  afterEach(() => {
+    for (const path of activeSessionRegistry.pathsForTask("FN-WS-1")) {
+      activeSessionRegistry.unregisterPath(path);
+    }
+  });
   afterEach(() => fx?.cleanup());
 
   function workspaceExecutor() {
@@ -187,9 +201,7 @@ describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () 
     // Nothing may be torn down on a refusal — that is the whole point of the guard.
     expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(true);
     expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual(expect.arrayContaining([pA, pB]));
-
-    activeSessionRegistry.unregisterPath(pA);
-    activeSessionRegistry.unregisterPath(pB);
+    // Cleanup is in afterEach, so a failure above cannot leak these registrations.
   });
 
   it("clearPhantomExecutorBinding (FN-6736) clears every held path once no session surface remains", async () => {
@@ -219,8 +231,6 @@ describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () 
     // branch was written for is the one it can never reach.
     expect((executor as any).clearPhantomExecutorBinding("FN-WS-1", { preserveWorktrees: true })).toBe(false);
     expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(true);
-
-    activeSessionRegistry.unregisterPath(pA);
   });
 });
 
