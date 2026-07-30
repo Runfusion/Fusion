@@ -5,6 +5,7 @@ import type { ActivityLogEntry, RunAuditEvent } from "@fusion/core";
 import {
   bucketByDay,
   countBouncesOut,
+  countEntriesInto,
   countMovesInto,
   dayHasSamples,
   fileScopeInvariantFailuresPerDay,
@@ -236,6 +237,56 @@ describe("reliability move counts span every lane carrying the role", () => {
     );
 
     expect(counts).toEqual({ "2026-07-01": 2, "2026-07-03": 5 });
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-18:20 (#2861 review — greptile P1):
+  A MOVE BETWEEN TWO REVIEW LANES IS NOT AN ENTRY INTO REVIEW.
+
+  A defect the single-lane version could not have. A board with `signoff` and `waiting` both carrying
+  review roles has moves between them, and counting by destination alone scores `signoff -> waiting`
+  as another entry — inflating the denominator while the bounce count is unchanged, so the headline
+  UNDERSTATES the review-failure rate. Wrong in the reassuring direction, which is the failure mode
+  this whole change is about; generalising a one-lane query to a set introduced a question one lane
+  never had to answer.
+
+  REVERT PROOF, measured: drop the subtraction and this fails with
+  `expected { '2026-07-01': 3 } to deeply equal { '2026-07-01': 2 }`.
+  */
+  it("does not count a move BETWEEN two review lanes as an entry into review", async () => {
+    const counts = await countEntriesInto(
+      store({
+        "->signoff": { "2026-07-01": 2 },
+        "->waiting": { "2026-07-01": 1 },
+        /* One of those was `signoff -> waiting`: already in review, not a new entry. */
+        "signoff->waiting": { "2026-07-01": 1 },
+      }) as never,
+      WINDOW,
+      new Set(["signoff", "waiting"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2 });
+  });
+
+  it("drops a day entirely when every move into the set was internal", async () => {
+    // Guards the subtraction's edge: 0 must not be reported as a day with zero entries, and a
+    // negative must never surface.
+    const counts = await countEntriesInto(
+      store({ "->waiting": { "2026-07-01": 1 }, "signoff->waiting": { "2026-07-01": 1 } }) as never,
+      WINDOW,
+      new Set(["signoff", "waiting"]),
+    );
+
+    expect(counts).toEqual({});
+  });
+
+  it("skips the intra-set subtraction for a single-lane board", async () => {
+    // A move requires the column to change, so a one-lane set has no internal moves to remove and
+    // must not pay for a query asking about them.
+    const single = store({ "->in-review": { "2026-07-01": 4 } });
+
+    expect(await countEntriesInto(single as never, WINDOW, new Set(["in-review"]))).toEqual({ "2026-07-01": 4 });
+    expect(single.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
   });
 
   it("issues exactly the two legacy queries on the built-in board", async () => {

@@ -86,7 +86,7 @@ import {
   mergeAttemptsPerMergedTask,
   postMergeAuditFailuresPerDay,
   recoverAlreadyMergedReviewTasksRecoveriesPerDay,
-  countMovesInto,
+  countEntriesInto,
   countBouncesOut,
 } from "./reliability-metrics.js";
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
@@ -1907,7 +1907,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     ]);
     const [runAuditEvents, enteredByDay, bouncedByDay, durationEvents, mergedTaskIds] = await Promise.all([
       runAuditEventsPromise,
-      countMovesInto(scopedStore, { since: startIso, until: endIso }, reviewLanes),
+      countEntriesInto(scopedStore, { since: startIso, until: endIso }, reviewLanes),
       countBouncesOut(scopedStore, { since: startIso, until: endIso }, reviewLanes, wipLanes),
       scopedStore.getInReviewDurationEvents({ since: startIso, until: endIso }),
       scopedStore.getTaskMergedTaskIds({ since: startIso, until: endIso }),

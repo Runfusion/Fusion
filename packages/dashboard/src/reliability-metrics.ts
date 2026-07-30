@@ -267,17 +267,57 @@ function mergeDayCounts(into: Record<string, number>, from: Record<string, numbe
   return into;
 }
 
-/** Moves INTO any of `toColumns`, summed per day. */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:20 (#2861 review — greptile P1 and P2, both right):
+ENTRIES INTO THE SET, not moves into its members; and the reads run concurrently.
+
+P1, and it is a defect the single-lane version could not have: a board with two review-role lanes
+(`signoff` and `waiting`, say) has moves BETWEEN them, and counting only by destination scores
+`signoff -> waiting` as another entry into review. That inflates the denominator while the bounce
+count is unchanged, so the headline UNDERSTATES the review-failure rate — a metric that is wrong in
+the reassuring direction, which is the same failure this whole change set is about. Generalising a
+one-lane query to a set introduced a question one lane never had to answer.
+
+The subtraction is skipped when there is only one lane, because a move requires the column to change
+so there are no intra-set moves to remove. That keeps the built-in board at exactly the queries it
+had before rather than paying for a case it cannot have.
+
+P2: the per-pair reads are independent, so they run under `Promise.all` rather than sequentially.
+Latency is now one round trip deep instead of N + NxM.
+*/
+
+/** Moves into any of `toColumns`, summed per day. */
 export async function countMovesInto(
   store: MovedCountsStore,
   window: { since: string; until: string },
   toColumns: ReadonlySet<string>,
 ): Promise<Record<string, number>> {
-  const counts: Record<string, number> = {};
-  for (const toColumn of toColumns) {
-    mergeDayCounts(counts, await store.getTaskMovedCountsByDay({ ...window, toColumn }));
+  const results = await Promise.all(
+    [...toColumns].map((toColumn) => store.getTaskMovedCountsByDay({ ...window, toColumn })),
+  );
+  return results.reduce<Record<string, number>>((acc, counts) => mergeDayCounts(acc, counts), {});
+}
+
+/**
+ * Moves into the lane SET from outside it — the "entered review" shape.
+ *
+ * Subtracts moves BETWEEN members, which are not entries. No-op for a single-lane set.
+ */
+export async function countEntriesInto(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  lanes: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const [into, within] = await Promise.all([
+    countMovesInto(store, window, lanes),
+    lanes.size > 1 ? countBouncesOut(store, window, lanes, lanes) : Promise.resolve<Record<string, number>>({}),
+  ]);
+  for (const [day, count] of Object.entries(within)) {
+    const remaining = (into[day] ?? 0) - count;
+    if (remaining > 0) into[day] = remaining;
+    else delete into[day];
   }
-  return counts;
+  return into;
 }
 
 /** Moves OUT of any `fromColumns` into any `toColumns` — the review-bounce shape — summed per day. */
@@ -287,11 +327,9 @@ export async function countBouncesOut(
   fromColumns: ReadonlySet<string>,
   toColumns: ReadonlySet<string>,
 ): Promise<Record<string, number>> {
-  const counts: Record<string, number> = {};
-  for (const fromColumn of fromColumns) {
-    for (const toColumn of toColumns) {
-      mergeDayCounts(counts, await store.getTaskMovedCountsByDay({ ...window, fromColumn, toColumn }));
-    }
-  }
-  return counts;
+  const pairs = [...fromColumns].flatMap((fromColumn) => [...toColumns].map((toColumn) => ({ fromColumn, toColumn })));
+  const results = await Promise.all(
+    pairs.map((pair) => store.getTaskMovedCountsByDay({ ...window, ...pair })),
+  );
+  return results.reduce<Record<string, number>>((acc, counts) => mergeDayCounts(acc, counts), {});
 }
