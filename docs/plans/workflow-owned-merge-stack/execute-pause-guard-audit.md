@@ -59,6 +59,39 @@ Three options, and they are not equivalent:
 explicitly told workers not to narrow. Picking either silently inside a test-repair PR is how a
 safeguard gets weakened by accident, so the decision is left to the owner with the table above.
 
+## RESOLVED: the gap is reachable, from three surfaces
+
+The audit above left one thing open — whether the `task:moved` subscription can actually fire while
+paused. It can, and nothing on the path checks:
+
+| Layer | Pause check? |
+|---|---|
+| `moves.ts` (`moveTaskImpl` / `moveTaskInternal`, which emit `task:moved`) | **no** — no `globalPause`/`enginePaused` read anywhere in the file |
+| `POST /tasks/:id/move` (`register-task-workflow-routes.ts:1927`) — the operator drag/move route | **no** |
+| `fn task move` (`cli/src/commands/task.ts`, 5 `moveTask` call sites) | **no** |
+| the executor's `task:moved` subscription (`executor.ts:3473`) | **no** — it destructures `source` but never gates on it; the only early return is `recoveringCompleted` |
+
+So the repro is ordinary operator behaviour:
+
+1. Operator pauses the engine globally.
+2. Operator drags a card into the wip column (or calls `POST /tasks/:id/move`, or `fn task move`).
+3. `store.moveTask` emits `task:moved` with `to === "in-progress"`.
+4. The executor subscription dispatches `execute()` — consulting no pause state.
+5. An agent session starts during a global pause.
+
+Step 5 is not inferred: it is exactly what `executor-prompt.test.ts`'s three failures observe —
+`createFnAgent` called once with `globalPause: true`. Those tests are reporting a real, reachable
+behaviour at the layer they exercise, not merely testing the wrong layer.
+
+**This changes the recommendation.** The gap is not theoretical, so "leave the status quo" is no
+longer one of the options: some layer has to refuse. Which one is still the owner call —
+
+- guarding the **subscription** keeps the scheduler as the single pause authority and covers every
+  trigger surface at once, but leaves `execute()` callable while paused by design;
+- guarding the **move route(s)** refuses the operator action outright, which is a UX decision (an
+  operator may legitimately want to stage a board while paused);
+- guarding **`execute()`** covers everything but must exempt `dispatchUnpauseResume()`.
+
 ## What is verified here, and what is not
 
 Verified: the enclosing method and pause-guard status of all five non-scheduler call sites, resolved
@@ -66,7 +99,10 @@ programmatically rather than by eyeballing nearby lines (an earlier 40-line-wind
 different and wrong attribution for two sites — `:5702`/`:5858` looked unguarded because their guard
 sits earlier in the same method).
 
-**Not** verified: that the `task:moved` subscription is actually *reachable* while paused. Proving
-that needs a trace of who emits `task:moved` with `to === "in-progress"` under a global pause — if
-every emitter is itself gated, the gap is theoretical. That trace is the remaining work before
-choosing option 1 over the status quo.
+**Now** verified (previous section): the subscription IS reachable while paused — via the move route,
+the CLI, and any direct `moveTask`. An earlier version of this document listed that trace as the
+remaining work; it is done, and it removed "the gap is theoretical" as a possibility.
+
+**Still not** verified: whether an agent started this way does damage before something else stops it.
+The pause is re-read elsewhere during a run, so the session may abort early. That bounds the
+SEVERITY, not the existence, and it does not change which layer needs the guard.
