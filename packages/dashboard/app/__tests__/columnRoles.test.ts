@@ -125,6 +125,25 @@ Each case asserts BOTH directions, because a helper that returns false unconditi
 a one-sided test while converting every site to a dead guard.
 */
 describe("terminal and mid-flight column roles", () => {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (PR #2688 review — greptile, and it is right):
+  RESOLVED METADATA WINS, asserted against a MATCHING legacy id.
+
+  My other false cases pass a non-matching id (`isCompleteColumnRole(undefined, "shipped")`), which a
+  broken `trait || legacyId` implementation satisfies just as well — no trait AND no id match, so
+  false either way. They prove the fallback fires; they do not prove precedence.
+
+  These do: the trait says false while the id says true. Flags-first returns false; an OR returns
+  true. That is the only shape that separates the two implementations, and it is the one that
+  matters — a resolved column whose trait is explicitly off must not be overridden by its name.
+  */
+  it("lets a resolved FALSE trait beat a matching legacy id", () => {
+    expect(isCompleteColumnRole({ complete: false }, "done")).toBe(false);
+    expect(isArchivedColumnRole({ archived: false }, "archived")).toBe(false);
+    expect(isWipColumnRole({ countsTowardWip: false }, "in-progress")).toBe(false);
+    expect(isReviewColumnRole({ mergeBlocker: false, humanReview: false }, "in-review")).toBe(false);
+  });
+
   it("isCompleteColumnRole reads the complete trait, and does NOT count archived", () => {
     expect(isCompleteColumnRole({ complete: true }, "shipped")).toBe(true);
     /*
