@@ -902,9 +902,32 @@ NOT PROVEN end to end — real callers this suite does not reach:
   - merger-ai.ts:1039        isAlreadyFinalizedColumn — LIVE, but module-private and
     reached only from runAiMerge, so it does need the real-git lane
   - executor.ts:1763,6339,6341        rebound target, merge-orchestration probe, complete column
-  - core/live-agent-count.ts    columnIsIntakeOrHold (the WAITING predicate) — the running
-    predicate never reads it, so the admission-count E2E cannot reach it
-  - dashboard register-task-workflow-routes.ts:151,166,175,1797
+
+FNXC:WorkflowLifecycleColumns 2026-07-29-16:40 — TWO ENTRIES RETIRED, both wrong the same way.
+Recorded rather than deleted, because the ERROR is the reusable part: each stated a LANE cost as
+if it were an impossibility, and neither claim was checked against the function.
+
+  - core/live-agent-count.ts  columnIsIntakeOrHold — NOW PROVEN, and never unreachable. The old
+    entry read "the running predicate never reads it, so the admission-count E2E cannot reach it",
+    which is true and irrelevant: the WAITING predicate has exactly ONE consumer,
+    `deriveStatsFromTasks`, and that is an exported PURE function. The narrow seam FN-5048 asks for
+    was already there. Covered by useExecutorStats.queued-column-roles.test.ts on renamed AND
+    merged boards (mutation-verified: forcing the legacy id pair fails exactly those two cases),
+    plus a characterization test pinning the undercount live-agent-count.ts admits in prose for a
+    column absent from the flag map.
+
+  - dashboard register-task-workflow-routes.ts — COVERED BY ITS OWNER (#2614), not by this file.
+    The old reason, that standing up the route shell is the mock-the-world pattern FN-5048 forbids,
+    was simply false: `createApiRoutes` + `test-request.js` is this repo's ESTABLISHED route-test
+    convention, with ten existing `register-task-workflow-routes.*` suites driving a real express
+    app against a stubbed store. #2614's plan-approval-intake-column.test.ts covers the merged lane,
+    a renamed merged lane, and a negative case. Not duplicated here.
+
+FOURTH and fifth wrong lane-cost inferences in this ledger (after auto-merge-finalization, both
+self-healing rebounds, and resolveFinalizeReboundColumn). The rule written after the third still
+stands and was still under-applied: READ WHAT THE FUNCTION TOUCHES before costing a lane for it.
+"Its consumers are elsewhere" is a statement about where to put the test, not about whether one
+can exist.
 
 FNXC:WorkflowLifecycleColumns 2026-07-29-17:20 — WHY, and what each would take. Two lanes,
 and neither is another table row:
