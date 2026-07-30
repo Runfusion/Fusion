@@ -135,6 +135,49 @@ Note the second entry: `task-artifacts-ops` **already resolved the completion la
 call that re-asked with the literal. The outer question was resolved and the inner one was not, inside one
 function.
 
+## The arity trap: first-per-role where membership was meant
+
+Six occurrences in this program, and the sixth was found only because a reviewer caught the fifth. It
+deserves naming separately because it survives every check the others fail:
+
+```ts
+const parked = [lifecycle.hold, lifecycle.intake].filter(isString);   // FIRST per role
+…
+if (parked.includes(task.column)) …                                    // MEMBERSHIP test
+```
+
+`resolveLifecycleColumns` / `resolveTaskLifecycleColumns` answer **"which column is THE hold lane?"**.
+A `.includes()` / `.has()` test asks **"is this column ANY hold lane?"**. On a workflow declaring two
+columns with the same trait, the first answer silently covers one of them.
+
+**Why nothing catches it:**
+
+- The census sees no literal — the lanes are resolved.
+- The types are identical: `string | undefined` either way.
+- A default-vs-renamed differential passes, because **the default board declares one column per role and
+  therefore cannot express the failing shape**. It needs a *structurally* different fixture, not a
+  differently-named one.
+
+Measured across production code — collections built from two or more first-per-role reads: **12 sites**.
+Two are fixed here (`agent-heartbeat` ×2 call sites, `task-agent-sync.resolveLinkSyncColumnRoles`). The
+rest are recorded for per-site classification, since some are legitimately ordered tuples rather than
+membership sets:
+
+```text
+  core/src/workflow-lifecycle-traits.ts:231     (a returned tuple — probably fine)
+  core/src/default-workflow-hooks.ts:274, 280
+  dashboard/src/routes/register-task-workflow-routes.ts:304
+  engine/src/executor.ts:3041, 12535
+  engine/src/scheduler.ts:1593
+  engine/src/triage.ts:833
+  engine/src/planner-lane-resolution.ts:70, 84  (ordering-sensitive — check before converting)
+```
+
+Re-measure with: for each file importing a lifecycle resolver, flag lines containing **two or more**
+`.hold`/`.intake`/`.review`/`.wip`/`.complete`/`.archived` reads **and** an array or `new Set(`.
+
+The fix is always `columnsWithFlag(ir, trait)`, which returns every column carrying it.
+
 ## Two traps when fixing these
 
 **1. The legacy id is a FALLBACK, not a member.** The tempting shape is wrong:

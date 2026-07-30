@@ -1,4 +1,4 @@
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import type { Agent, AgentHeartbeatRun, AgentStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 export const PARKED_AGENT_LINK_FRESH_RUN_MS = 5 * 60_000;
@@ -56,11 +56,22 @@ async function resolveLinkSyncColumnRoles(
   taskId: string,
   cache?: Map<string, WorkflowIr>,
 ): Promise<LinkSyncColumnRoles> {
-  const lifecycle = await resolveTaskLifecycleColumns(store, taskId, cache);
-  if (!lifecycle) return LEGACY_COLUMN_ROLES;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (the arity trap, sixth site):
+  MEMBERSHIP, not first-per-role. These two sets are consumed by `roles.parked.includes(to)` and
+  `roles.clear.includes(to)` — membership tests — but were built from `resolveTaskLifecycleColumns`,
+  which returns the FIRST column carrying each trait. A workflow declaring two hold lanes, or an
+  archive lane plus a second terminal one, had link hygiene applied to only one of them.
 
-  const parked = [lifecycle.hold, lifecycle.intake].filter((c): c is string => typeof c === "string");
-  const terminal = [lifecycle.complete, lifecycle.archived].filter((c): c is string => typeof c === "string");
+  `resolveLifecycleColumns` answers "which column is THE hold lane?"; a membership test asks "is this
+  column ANY hold lane". Nothing in the types distinguishes them, which is why this program has now hit
+  it six times. `columnsWithFlag` returns every column carrying the trait.
+  */
+  const ir = await resolveWorkflowIrForTask(store, taskId, cache).catch(() => undefined);
+  if (!ir) return LEGACY_COLUMN_ROLES;
+
+  const parked = [...new Set([...columnsWithFlag(ir, "hold"), ...columnsWithFlag(ir, "intake")])];
+  const terminal = [...new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")])];
   const clear = [...terminal, ...parked];
 
   // A v2 workflow declaring none of the four roles yields an empty clear set,
