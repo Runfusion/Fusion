@@ -1,7 +1,7 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler } from "../scheduler.js";
 import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
@@ -87,6 +87,15 @@ function createStore(task: Task, freshTask: Task | null = null, settings: Partia
   */
   const tasksDir = mkdtempSync(join(tmpdir(), "fusion-paused-dispatch-"));
   /*
+  FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
+  Every `createStore` call seeds a real spec on disk, and nothing removed it, so each local and CI
+  run left another `fusion-paused-dispatch-*` directory in the OS temp root forever. Tracked and
+  removed in `afterEach` below rather than swept later: the project forbids the recursive temp-root
+  scan that finding stale fixtures would otherwise require, so the only safe cleanup is the one that
+  remembers the exact paths it created.
+  */
+  allocatedFixtureDirs.push(tasksDir);
+  /*
   The moves MUTATE the row, because the release path is `moveTaskIf(hold -> wip, predicate)` and a
   stub that always answers `moved: false` makes the hold release unobservable — the control then
   reports "not dispatched" for a card nothing ever refused.
@@ -135,6 +144,18 @@ async function dispatchAttempted(store: TaskStore): Promise<boolean> {
     (call: unknown[]) => call[1] === "in-progress",
   );
 }
+
+/*
+FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
+Exact paths only — see the note at the allocation site for why this cannot be a temp-root sweep.
+*/
+const allocatedFixtureDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of allocatedFixtureDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("the scheduler refuses to dispatch a parked card", () => {
   beforeEach(() => {
