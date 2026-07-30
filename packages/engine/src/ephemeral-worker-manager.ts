@@ -20,7 +20,7 @@
  * sweep here close that gap.
  */
 import type { AgentStore, AgentState, Agent, TaskStore, Task, Settings } from "@fusion/core";
-import { isEphemeralAgent } from "@fusion/core";
+import { isEphemeralAgent, resolveTaskLifecycleColumns } from "@fusion/core";
 
 export interface TaskOwner {
   agentId: string;
@@ -339,8 +339,29 @@ export class EphemeralWorkerManager {
     try {
       const task = await this.taskStore.getTask(agent.taskId);
       if (!task) return true;
-      if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
-      return task.column !== "in-progress";
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+      A LIVE WORKER WAS REAPED AS A ZOMBIE ON A RENAMED BOARD.
+
+      Census-invisible: the terminal check is a `Set` literal (a definition, not a comparison), and
+      the wip check below it was the bare literal. Both missed on a renamed board, and they compound
+      in the WORST order — the terminal test failed, so control fell to
+      `return task.column !== "in-progress"`, which is TRUE for a renamed wip lane. An ephemeral
+      worker actively executing a task was therefore classified as a zombie and deleted by the sweep.
+
+      Resolved from the task's OWN workflow. The `catch` below already treats an unreadable task as a
+      broken binding, so an unresolvable workflow keeps the documented literals rather than inventing
+      a lane: failing to reap a dead worker costs a slot, while reaping a live one destroys work in
+      flight, and those are not symmetric.
+      */
+      const lanes = await resolveTaskLifecycleColumns(this.taskStore, task.id).catch(() => undefined);
+      if (lanes === undefined) {
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-06:10. */
+        if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
+        return task.column !== "in-progress";
+      }
+      if (task.column === lanes.complete || task.column === lanes.archived) return true;
+      return lanes.wip === undefined || task.column !== lanes.wip;
     } catch {
       // If we can't even read the task, assume the binding is broken.
       return true;
