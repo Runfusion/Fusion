@@ -6,8 +6,12 @@ Every other file in the column-literal backlog can be converted on its own: reso
 lifecycle columns, compare against the role. `archived` is different, and the difference is not a
 matter of degree.
 
-MEASURED on this tree — THREE encodings, 52 sites, all in packages/core:
-  - 37 TypeScript comparisons against the literal `"archived"` across 23 files.
+MEASURED on this tree — THREE encodings, 50 sites, all in packages/core:
+  - 35 TypeScript comparisons against the literal `"archived"` across 23 files.
+
+  (Was 37 when this guard landed. Two dropped as conversions merged — `agent-store.ts`'s claim guard in
+  #2746 and one in `update-task-deps.ts` — and the guard FAILED until this inventory was updated to match,
+  which is the ratchet working: it notices the TypeScript half moving in either direction, not only up.)
   - 7 Drizzle predicates pushing the same rule into SQL as `ne(tasks.column, 'archived')`, in 6 files.
   - 8 RAW `sql` template comparisons (`sql`${tasks.column} != 'archived'`` and one hand-written
     `SELECT ... "column" = 'archived'`), in 5 files.
@@ -51,7 +55,7 @@ import { describe, expect, it } from "vitest";
  * ratchet that cries wolf gets deleted.
  */
 const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
-  "packages/core/src/agent-store.ts": 2,
+  "packages/core/src/agent-store.ts": 1,
   "packages/core/src/assigned-task-ranking.ts": 1,
   "packages/core/src/async-mission-store-queries.ts": 2,
   "packages/core/src/async-mission-store.ts": 2,
@@ -73,7 +77,7 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/task-store/symbol-locks.ts": 1,
   "packages/core/src/task-store/task-id-integrity.ts": 1,
   "packages/core/src/task-store/task-store-helpers.ts": 1,
-  "packages/core/src/task-store/update-task-deps.ts": 2,
+  "packages/core/src/task-store/update-task-deps.ts": 1,
 };
 
 /**
@@ -208,9 +212,23 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
               async-comments-attachments.ts — measured, that is exactly what the first version did.
               */
               const inner = ts.isNonNullExpression(a) ? a.expression : a;
+              /*
+              FNXC:WorkflowResolvedColumns 2026-07-31-12:50 (#2724 review — greptile P2):
+              ELEMENT ACCESS too. The first version accepted `x.column` and a bare `column`, so
+              `row["column"] === "archived"` walked straight past the inventory — a guard defeated by
+              changing syntax, which is precisely the failure I fixed in the maxWorktrees audit by moving
+              from regex to AST and then re-introduced here in a narrower form.
+
+              Optional chaining needs no special case: `a?.b` is still a PropertyAccessExpression in the
+              TypeScript AST, so it was already covered.
+              */
               const named = ts.isPropertyAccessExpression(inner)
                 ? inner.name.text
-                : ts.isIdentifier(inner) ? inner.text : undefined;
+                : ts.isElementAccessExpression(inner)
+                    && inner.argumentExpression
+                    && ts.isStringLiteral(inner.argumentExpression)
+                  ? inner.argumentExpression.text
+                  : ts.isIdentifier(inner) ? inner.text : undefined;
               if (named === "column") tsSites.push({ file, line: lineOf(node) });
             }
           }
