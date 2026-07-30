@@ -30,7 +30,10 @@ import { __resetTraitRegistryForTests } from "../trait-registry.js";
 import { registerBuiltinTraits } from "../builtin-traits.js";
 import {
   __resetDefaultWorkflowHooksForTests,
+  applyCompletionTimingEffects,
   applyDefaultWorkflowMoveEffects,
+  applyInReviewEnterEffects,
+  applyTimingEffects,
   isReopenIntoPlanning,
   registerDefaultWorkflowHooks,
   type DefaultWorkflowMoveContext,
@@ -239,5 +242,84 @@ describe("the store's reopen check and the hooks' cannot disagree", () => {
       "shipped->backlog",
       "shipped->queued",
     ]);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (fleet phase — the same safety argument, applied to TIMING):
+The header of this file explains why the reopen predicates had to stop naming the default lineage: these
+hooks run on the flag-ON path for EVERY workflow, because the trait registry resolves each hook by trait
+id, not by workflow. The timing, completion and in-review hooks had the same defect and were not part of
+that conversion.
+
+What it costs on a renamed board, none of it throwing:
+  - `applyTimingEffects` accrues `cumulativeActiveMs` while a card sits in the WIP lane. With the lane
+    named, the exit test never fires, so NO active time is accrued and every duration display —
+    `productivity-analytics.ts`, `task-timing.ts` — reads zero.
+  - `applyCompletionTimingEffects` never stamps `executionCompletedAt`, so a finished card looks
+    unfinished to anything reading that field.
+  - `applyInReviewEnterEffects` returns early, so the recovery counters it clears stay set.
+
+THE HOOKS ARE CALLED DIRECTLY here, not through `applyDefaultWorkflowMoveEffects`. I wrote it through the
+dispatcher first and all three cases failed on the DEFAULT lineage too: the dispatcher resolves hooks by
+TRAIT, and neither test IR declares the `timing` trait, so those hooks never ran at all. Going through the
+dispatcher would have tested the trait registry's wiring, not this conversion — and would have looked like
+a conversion bug.
+
+REVERT CHECK, measured (all three run): restoring the `in-progress` literals leaves `cumulativeActiveMs`
+undefined on the renamed board; restoring the `done` literal leaves `executionCompletedAt` unset;
+restoring the `in-review` literal leaves `recoveryRetryCount` at 3. Every case runs on BOTH lineages, and
+the default one passes either way — which is the point of running it.
+*/
+describe("timing, completion and in-review effects are keyed on ROLES", () => {
+  const LINEAGES = [
+    { label: "default", ir: DEFAULT_IR, wip: "in-progress", review: "in-review", complete: "done" },
+    { label: "renamed", ir: RENAMED_IR, wip: "building", review: "checking", complete: "shipped" },
+  ] as const;
+
+  it("accrues active time leaving the WIP lane on both lineages", () => {
+    for (const { label, ir, wip, review } of LINEAGES) {
+      const ctx = makeCtx(ir, wip, review, {
+        task: {
+          id: "FN-2",
+          column: review,
+          columnMovedAt: "2026-07-30T00:05:00.000Z",
+          executionStartedAt: "2026-07-30T00:00:00.000Z",
+          steps: [],
+          dependencies: [],
+          workflowStepResults: [],
+        } as unknown as Task,
+      });
+      applyTimingEffects(ctx);
+      expect(ctx.task.cumulativeActiveMs, `${label} lineage accrued no active time`).toBe(5 * 60_000);
+    }
+  });
+
+  it("stamps executionCompletedAt on entry to the complete lane on both lineages", () => {
+    for (const { label, ir, review, complete } of LINEAGES) {
+      const ctx = makeCtx(ir, review, complete);
+      applyCompletionTimingEffects(ctx);
+      expect(ctx.task.executionCompletedAt, `${label} lineage did not stamp completion`).toBe(
+        ctx.task.columnMovedAt,
+      );
+    }
+  });
+
+  it("clears the recovery counters on entry to the review lane on both lineages", () => {
+    for (const { label, ir, wip, review } of LINEAGES) {
+      const ctx = makeCtx(ir, wip, review, {
+        task: {
+          id: "FN-3",
+          column: review,
+          columnMovedAt: "2026-07-30T00:00:00.000Z",
+          recoveryRetryCount: 3,
+          steps: [],
+          dependencies: [],
+          workflowStepResults: [],
+        } as unknown as Task,
+      });
+      applyInReviewEnterEffects(ctx);
+      expect(ctx.task.recoveryRetryCount, `${label} lineage kept its recovery counter`).toBeUndefined();
+    }
   });
 });

@@ -56,8 +56,19 @@ export function evaluateMergeBlockerGuard(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
   fromColumn: string,
   toColumn: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (fleet phase):
+  The moving task's resolved lifecycle columns, so the review -> complete crossing this guard fires on
+  is a ROLE crossing. OPTIONAL and last, matching `DefaultWorkflowMoveContext.lifecycleColumns`: absent,
+  the legacy ids answer, which is the same degraded contract `planningColumnsOf` and
+  `liveWorkColumnsOf` already use in this file.
+  */
+  lifecycleColumns?: LifecycleColumns | undefined,
 ): GuardVerdict {
-  if (fromColumn === "in-review" && toColumn === "done") {
+  if (
+    fromColumn === (lifecycleColumns?.review ?? "in-review")
+    && toColumn === (lifecycleColumns?.complete ?? "done")
+  ) {
     return getTaskMergeBlocker(task);
   }
   return undefined;
@@ -145,7 +156,15 @@ export interface DefaultWorkflowMoveContext {
  */
 export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, fromColumn, toColumn } = ctx;
-  if (fromColumn === "in-progress" && toColumn !== "in-progress") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (fleet phase):
+  `cumulativeActiveMs` accrues while a card sits in the WIP lane, so both halves of the segment
+  boundary must name that lane by ROLE. Keyed on one resolved value rather than two independent reads:
+  the exit test and the re-entry test have to agree about which column is WIP or a rename makes the
+  accounting count the same interval twice, or not at all.
+  */
+  const wipColumn = ctx.lifecycleColumns?.wip ?? "in-progress";
+  if (fromColumn === wipColumn && toColumn !== wipColumn) {
     const segmentStartMs = Date.parse(task.executionStartedAt ?? task.columnMovedAt ?? ctx.movedAt);
     const segmentEndMs = Date.parse(task.columnMovedAt ?? ctx.movedAt);
     const segmentDeltaMs =
@@ -154,7 +173,7 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
         : 0;
     task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
   }
-  if (toColumn === "in-progress") {
+  if (toColumn === wipColumn) {
     task.cumulativeActiveMs ??= 0;
     if (!task.firstExecutionAt) task.firstExecutionAt = task.columnMovedAt;
     if (!task.executionStartedAt) task.executionStartedAt = task.columnMovedAt;
@@ -165,7 +184,7 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
 /** Stamp `executionCompletedAt` on entry to a completion column. */
 export function applyCompletionTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, toColumn } = ctx;
-  if (toColumn === "done" && !task.executionCompletedAt) {
+  if (toColumn === (ctx.lifecycleColumns?.complete ?? "done") && !task.executionCompletedAt) {
     task.executionCompletedAt = task.columnMovedAt;
   }
 }
@@ -298,7 +317,7 @@ export function isReopenIntoPlanning(
  *  block in store.ts. */
 export function applyInReviewEnterEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, toColumn } = ctx;
-  if (toColumn !== "in-review") return;
+  if (toColumn !== (ctx.lifecycleColumns?.review ?? "in-review")) return;
   // Do not snapshot the global autoMerge setting here. Undefined means "follow
   // the live global setting"; only an explicit task value should stay sticky.
   task.recoveryRetryCount = undefined;
