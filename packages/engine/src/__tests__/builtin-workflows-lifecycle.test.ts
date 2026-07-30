@@ -294,11 +294,17 @@ interface BuiltinExpectation {
 const EXPECTATIONS: BuiltinExpectation[] = [
   {
     id: "builtin:coding",
-    entryColumn: "triage",
+        /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    U11 merged the two pre-implementation columns for this lineage: its declared columns are now
+    `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
+    former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.
+    Verified by resolving the built-in IR and reading its column ids, not inferred from the failure.
+    */
+    entryColumn: "todo",
     trail: [
       // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
       // in the planning lane, so the card crosses into implementation once, via the scheduler.
-      ["triage", "todo", "graph"],
       ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
@@ -338,11 +344,17 @@ const EXPECTATIONS: BuiltinExpectation[] = [
   },
   {
     id: "builtin:stepwise-coding",
-    entryColumn: "triage",
+        /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    U11 merged the two pre-implementation columns for this lineage: its declared columns are now
+    `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
+    former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.
+    Verified by resolving the built-in IR and reading its column ids, not inferred from the failure.
+    */
+    entryColumn: "todo",
     trail: [
       // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
       // in the planning lane, so the card crosses into implementation once, via the scheduler.
-      ["triage", "todo", "graph"],
       ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
@@ -454,11 +466,17 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     /* The brainstorm loop only exits once the user's answer carries the approval
        phrase; after that it is the stepwise-final-review pipeline. */
     id: "builtin:brainstorming",
-    entryColumn: "triage",
+        /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    U11 merged the two pre-implementation columns for this lineage: its declared columns are now
+    `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
+    former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.
+    Verified by resolving the built-in IR and reading its column ids, not inferred from the failure.
+    */
+    entryColumn: "todo",
     trail: [
       // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — specification (plan + plan review) runs
       // in the planning lane, so the card crosses into implementation once, via the scheduler.
-      ["triage", "todo", "graph"],
       ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
