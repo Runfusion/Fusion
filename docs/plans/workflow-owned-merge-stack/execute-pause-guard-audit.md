@@ -103,6 +103,34 @@ sits earlier in the same method).
 the CLI, and any direct `moveTask`. An earlier version of this document listed that trace as the
 remaining work; it is done, and it removed "the gap is theoretical" as a possibility.
 
-**Still not** verified: whether an agent started this way does damage before something else stops it.
-The pause is re-read elsewhere during a run, so the session may abort early. That bounds the
-SEVERITY, not the existence, and it does not change which layer needs the guard.
+### Severity: the session RUNS; only the completion handoff is withheld
+
+The remaining question was whether something downstream aborts a session started this way. It does
+not. `executor.ts` reads `globalPause`/`enginePaused` in 18 places; none of them is on the path
+between the `task:moved` subscription and session start:
+
+- `execute()` is a 7-line wrapper around `executeCore()` — no pause read.
+- `executeCore()` is routing only (73 lines) — no pause read.
+- the guarded lanes are all *other* entry points (`resumeTaskForAgent`, `resumeOrphaned`,
+  `recoverCompletedTask`) or *later* stages.
+
+What DOES fire is `shouldDeferCompletionForGlobalPause()`, which withholds the **completion
+handoff** while a global pause is active (called from four sites, e.g. `:12982` "before workflow
+steps after step-session completion"), plus `createTaskDoneTool`'s `hardPauseActive`.
+
+So the observable behaviour of the gap is:
+
+| | during a global pause |
+|---|---|
+| worktree acquired | **yes** |
+| agent session created | **yes** — `createFnAgent` called, per `executor-prompt.test.ts` |
+| model calls / file mutations | **yes** |
+| card advances to review | no — handoff deferred |
+
+That is not cosmetic. An operator who pauses the engine and then rearranges the board gets a live
+agent burning tokens and mutating a worktree; the only thing the pause still buys them is that the
+card does not move on. It makes choosing a layer urgent rather than optional.
+
+**Still not** verified: nothing beyond the executor. If a runtime, heartbeat, or plugin lane
+independently refuses to start work under `globalPause`, the practical blast radius is smaller than
+the table above. Every pause read *inside* `executor.ts` is accounted for.
