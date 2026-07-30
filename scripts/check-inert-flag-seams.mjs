@@ -356,6 +356,26 @@ for (const fn of ALLOWED.keys()) {
   if (!declared.has(fn)) stale.push(`  ${fn} — no such seam declared any more; remove its ALLOWED entry`);
 }
 
+/*
+FNXC:InertFlagSeams 2026-07-31-03:45 (#2830 review — greptile):
+THE SAME ROT REACHES ALLOWED_OMISSIONS, and the pass above did not cover it.
+
+Both staleness rules for the per-site list live inside the per-declaration loop, so they only run for
+a function the scan still FINDS. Delete or rename the function and that loop never visits it: the
+`<file>::<fn>` entry survives, exempting nothing, while reading as a reviewed and tolerated omission.
+
+This is the identical defect the ALLOWED pass above was added to fix — written for one of the two
+lists and not the other, which is the half-conversion shape this repo keeps producing. Same check,
+same failure mode, so it belongs immediately beside it rather than folded into the loop that cannot
+see deletions.
+*/
+for (const key of ALLOWED_OMISSIONS.keys()) {
+  const [, siteFn] = key.split("::");
+  if (!declared.has(siteFn)) {
+    stale.push(`  ${key} — no such seam declared any more; remove its ALLOWED_OMISSIONS entry`);
+  }
+}
+
 if (stale.length > 0) {
   console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
   for (const line of stale.sort()) console.error(line);
