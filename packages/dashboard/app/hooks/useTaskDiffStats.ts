@@ -130,6 +130,8 @@ export function useTaskDiffStats(
     both of which resolve per-task flags — pass the resolved role in rather than re-resolving here.
     */
     const shouldFetchDoneTask = column === "done";
+    /* FNXC:TaskDiffStats 2026-07-30-05:20 DELIBERATE-LITERAL: same sizing as the done arm above —
+       separate const, so it needs its own marker. */
     const shouldFetchActiveTask = column === "in-progress" || column === "in-review";
 
     if (!taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
