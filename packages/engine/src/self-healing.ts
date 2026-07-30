@@ -7280,20 +7280,42 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       mid-rename still surfaces rows stored under the old one.
 
       Same three-line shape as `stale-task-reporter` and `backlog-pressure-reporter`: resolve the roles,
-      iterate the set, dedupe by id. The `task.column` re-assertion below is now a membership test
-      against the same set rather than a literal.
+      iterate the set, dedupe by id.
+
+      FNXC:WorkflowResolvedColumns 2026-07-30-17:20 (#2838 review — greptile P1):
+      THE PROJECT UNION IS FOR THE QUERY, NEVER FOR THE PER-CARD TEST. My first version re-asserted
+      `completeColumns.has(task.column)`, which is the flat-set mistake `project-lane-vocabulary.ts`
+      warns about in its own header — a card is claimed as complete because SOME OTHER workflow in the
+      project calls its column complete. On a project with two boards, one naming its wip lane the same
+      as another's complete lane, this sweep would rewrite merge evidence onto a card still being worked.
+
+      Widening the read and widening the verdict are different decisions. The read must over-include
+      (a missed row is invisible); the verdict must not (a wrong row is a write). So the candidate filter
+      resolves each card against ITS OWN workflow.
       */
       const completeColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
       const byId = new Map<string, Task>();
       for (const column of completeColumns) {
         for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
       }
-      const tasks = [...byId.values()];
-      const candidates = tasks.filter((task) =>
-        completeColumns.has(task.column) &&
+      const shortlist = [...byId.values()].filter((task) =>
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
         (task.modifiedFiles?.length ?? 0) > 0,
-      ).slice(0, DONE_TASK_INTEGRITY_SWEEP_LIMIT);
+      );
+      const perTaskIrCache = new Map<string, WorkflowIr>();
+      const candidates: Task[] = [];
+      for (const task of shortlist) {
+        if (candidates.length >= DONE_TASK_INTEGRITY_SWEEP_LIMIT) break;
+        const taskIr = await resolveWorkflowIrForTask(this.store, task.id, perTaskIrCache).catch(() => undefined);
+        const ownComplete = taskIr ? columnsWithFlag(taskIr, "complete") : [];
+        /* DELIBERATE-LITERAL — the degraded per-card default, reviewed 2026-07-30-17:20. Reached only when
+           the card's own workflow declares NO complete lane (unreadable or trait-less). The project union
+           must not stand in here: that is the flat-set mistake this filter exists to avoid, so the legacy
+           id is the conservative answer. The census ratchet flagged this line when it appeared, which is
+           the guard working. */
+        const isComplete = ownComplete.length > 0 ? ownComplete.includes(task.column) : task.column === "done";
+        if (isComplete) candidates.push(task);
+      }
 
       if (candidates.length === 0) return 0;
       const settings = await this.store.getSettings();

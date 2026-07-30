@@ -174,4 +174,70 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const { store } = productionFaithfulStore([card]);
     expect(await store.listTasks({ column: "done" as never })).toHaveLength(0);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:20 (#2838 review — greptile P1):
+  THE PROJECT UNION IS FOR THE QUERY, NEVER FOR THE PER-CARD VERDICT.
+
+  Two boards in one project: board A calls its COMPLETE lane `shipped`; board B calls its WIP lane
+  `shipped`. The project union therefore contains `shipped`, which is correct for the READ — board A's
+  finished cards must be found. Using that same set as the per-card test claims board B's card as
+  complete because SOME OTHER workflow calls that column complete, and this sweep WRITES merge evidence
+  onto whatever it accepts.
+
+  Widening the read and widening the verdict are different decisions: a missed row is invisible, a wrong
+  row is a write.
+
+  REVERT CHECK, measured: re-asserting `completeColumns.has(task.column)` instead of resolving each card
+  against its own workflow fails this case — the mid-implementation card is reconciled.
+  */
+  it("does not claim a card whose OWN workflow calls its column WIP, even when another board calls it complete", async () => {
+    const boardB = {
+      version: "v2", id: "board-b", name: "board b",
+      columns: [
+        { id: "planning", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        /* Same id as board A's COMPLETE lane, but here it is WIP. */
+        { id: "shipped", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "closed", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "planning" }],
+      edges: [],
+    } as unknown as WorkflowIr;
+
+    const midImplementation = { ...shippedCard(), id: "FN-WIP" } as Task;
+    const tasksById = new Map([[midImplementation.id, midImplementation]]);
+    const store = Object.assign(new EventEmitter(), {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false }) as Settings),
+      listTasks: vi.fn(async (options?: { column?: string }) => {
+        const all = [...tasksById.values()];
+        return options?.column === undefined ? all : all.filter((t) => t.column === options.column);
+      }),
+      getTask: vi.fn(async (id: string) => tasksById.get(id)),
+      updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
+        tasksById.set(id, { ...tasksById.get(id)!, ...patch } as Task);
+        return tasksById.get(id)!;
+      }),
+      /* The PROJECT declares both boards, so `shipped` is legitimately in the union. */
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }, { ir: boardB }]),
+      /* But THIS card belongs to board B, where `shipped` is WIP. */
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "board-b", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "board-b", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "board-b" ? { ir: boardB } : { ir: RENAMED_IR })),
+    }) as unknown as TaskStore & EventEmitter;
+
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    await manager.reconcileDoneTaskIntegrity();
+
+    /*
+    ASSERTS CANDIDACY, not the write. My first version asserted `commitSha` stayed undefined, which is
+    true either way here — the write needs a real git repo, so it never happens in this fixture and the
+    assertion could not distinguish accepted from rejected. The revert passed and exposed it.
+
+    `reconcileDoneTaskIntegrity` returns BEFORE `getSettings()` when the candidate list is empty
+    (`if (candidates.length === 0) return 0;`), so that call is the observable proof that this card was
+    NOT accepted as complete.
+    */
+    expect(store.getSettings).not.toHaveBeenCalled();
+    expect((await store.getTask("FN-WIP"))?.mergeDetails?.commitSha).toBeUndefined();
+  });
 });
