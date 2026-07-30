@@ -21,8 +21,10 @@ card stranded in `triage` was declined on every sweep forever, not deferred.
 WHY DELETING THE CHECK IS SAFE RATHER THAN A LOOSENING. All three ways `resolveWorkflowIrById`
 degrades — missing definition, malformed definition, throwing lookup — return an IR branded by
 `markFellBack`, and the marker check runs first. The id comparison caught nothing the marker misses,
-which the last two cases below pin from the other direction so the deletion cannot silently widen
-trust.
+which the last three cases below pin from the other direction so the deletion cannot silently widen
+trust. One of those — an id that LOOKS builtin but is not registered — was a genuine hole: that branch
+substituted the default without branding it, so the deletion would have reported it as `"selection"`.
+Caught in review, repaired at the source by branding the substitution, and pinned below.
 
 The `markFellBack` note already stated the principle the id check violated: "there is no rule over
 the returned value that separates them, because the two shapes are genuinely identical. So the
@@ -109,6 +111,29 @@ pgDescribe("workflow IR provenance against a live store", () => {
 
     expect(resolved.source).toBe("default");
     expect(resolved.workflowId).toBeUndefined();
+  });
+
+  it("a selection naming an UNREGISTERED BUILTIN id is still reported as default", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-01:30 (PR #2815 review — greptile P1, and it caught a
+    real hole in this change):
+    THE FOURTH DEGRADATION PATH. An id that looks builtin but is not registered — a workflow removed
+    between releases, a typo'd selection — takes a different branch from the missing-definition case
+    below, and that branch substituted the default coding IR WITHOUT branding it. So deleting the id
+    cross-check would have turned an unmarked fallback into a reported `source: "selection"`: the
+    lying signal this API exists to prevent, through the one door I had not checked.
+
+    The repair brands that substitution at its source. This case is what proves it, and it is the
+    reason the deletion is now genuinely safe rather than argued to be.
+    */
+    const store = h.store();
+    const task = await store.createTask({ description: "unregistered builtin" });
+    await store.writeTaskWorkflowSelection(task.id, "builtin:no-such-workflow" as never, []);
+    store.taskCache.delete(task.id);
+
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
+
+    expect(resolved.source).toBe("default");
   });
 
   it("a selection naming a MISSING definition is still reported as default", async () => {
