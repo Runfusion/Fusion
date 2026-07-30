@@ -81,6 +81,40 @@ column carries `intake`. It must not call `materializeDefaultWorkflowSteps`, whi
 rows the caller explicitly opted out of by supplying its own `enabledWorkflowSteps`.
 Unresolvable workflow returns undefined and the caller keeps its existing legacy fallback.
 */
+/*
+FNXC:MergedPlanningColumn 2026-07-30-10:20 (Phase B — task-creation.ts to zero column literals):
+The two facts intake classification actually needs, resolved from the IR instead of compared against
+`"triage"`:
+
+  intake   — which column this workflow intakes into
+  manual   — whether that intake carries `autoTriage: false`, i.e. an operator must promote the card
+
+`manual` is what the `!== "triage"` comparison was really reaching for. It distinguished
+"manual-intake workflow" (Coding (Ideas)) from "the legacy default" by naming the default's column
+id — which stops meaning anything once the default's intake IS `todo`. The trait config states it
+directly and survives any rename or merge.
+
+Unresolvable workflow returns `{ manual: false }` with no intake, so callers keep their existing
+conservative behavior rather than acting on a guess.
+*/
+async function resolveWorkflowIntakeFacts(
+  store: TaskStore,
+  workflowIdOverride?: string,
+): Promise<{ intake?: string; manual: boolean }> {
+  try {
+    const workflowId = workflowIdOverride ?? (await store.getDefaultWorkflowId()) ?? DEFAULT_WORKFLOW_ID;
+    const ir = await resolveWorkflowIrById(store, workflowId);
+    const intake = columnsWithFlag(ir, "intake")[0];
+    if (!intake) return { manual: false };
+    const declared = (ir as { columns?: Array<{ id: string; traits?: Array<{ trait: string; config?: Record<string, unknown> }> }> })
+      .columns?.find((column) => column.id === intake);
+    const intakeTrait = declared?.traits?.find((trait) => trait.trait === "intake");
+    return { intake, manual: intakeTrait?.config?.autoTriage === false };
+  } catch {
+    return { manual: false };
+  }
+}
+
 async function resolveDefaultWorkflowIntakeColumn(store: TaskStore): Promise<string | undefined> {
   try {
     /*
@@ -378,6 +412,10 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     const fallbackIntakeColumn = (input.column || options?.resolvedEntryColumn || input.workflowId === null)
       ? undefined
       : await resolveDefaultWorkflowIntakeColumn(store);
+    /* Intake column + whether that intake is MANUAL (autoTriage:false), resolved from the IR. */
+    const intakeFacts = input.workflowId === null
+      ? { manual: false as boolean, intake: undefined as string | undefined }
+      : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
       id,
@@ -516,9 +554,22 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       plan-in-place `todo` column, so the pinned contract for a plain direct create into todo on the
       default workflow — which intentionally keeps generateSpecifiedPrompt — is untouched.
       */
-      const isUnplannedStartCreate = options?.resolvedEntryColumn !== undefined
-        && options.resolvedEntryColumn !== "triage"
-        && task.column === "todo";
+      /*
+      FNXC:MergedPlanningColumn 2026-07-30-10:25 (Phase B — task-creation.ts to zero column literals):
+      Was `resolvedEntryColumn !== "triage"` — naming the DEFAULT workflow's intake id to mean "this
+      workflow has a MANUAL intake". Post-U11 the default's intake IS `todo`, so that comparison
+      became vacuously true for the default workflow and the guard stopped distinguishing the two
+      shapes it exists to separate.
+
+      The real fact is the intake trait's `autoTriage: false`, and the real shape is "the card landed
+      PAST its workflow's manual intake" — which is what quick-add Start does by submitting the
+      workflow id and the post-intake column together. Both now come from the IR, so the pinned
+      contract for a plain direct create on a default (auto-triage) workflow is preserved by the
+      `manual` test rather than by an id coincidence.
+      */
+      const isUnplannedStartCreate = intakeFacts.manual
+        && intakeFacts.intake !== undefined
+        && task.column !== intakeFacts.intake;
       /*
       FNXC:MergedPlanningColumn 2026-07-29-14:50 (U11 post-merge audit):
       `fallbackIntakeColumn` must be honoured here too. Without it the card lands in the resolved
@@ -527,7 +578,15 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       reads as a seed, so it would sit in Planning already looking "planned". That is FN-8587's
       failure mode, reached by a different route.
       */
-      const isIntakeColumn = task.column === "triage"
+      /*
+      FNXC:MergedPlanningColumn 2026-07-30-10:25 (Phase B):
+      The leading `task.column === "triage"` was the last-resort clause for a card whose workflow
+      could not be resolved. `intakeFacts.intake` covers that properly — it falls back to
+      DEFAULT_WORKFLOW_ID rather than to a bare id — so the literal is gone and an explicit
+      `column: "triage"` create on a workflow that still declares `triage` is matched through the
+      resolved intake rather than a coincidence of naming.
+      */
+      const isIntakeColumn = (intakeFacts.intake !== undefined && task.column === intakeFacts.intake)
         || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn)
         || (fallbackIntakeColumn !== undefined && task.column === fallbackIntakeColumn)
         || isUnplannedStartCreate;
@@ -821,6 +880,10 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     const fallbackIntakeColumn = (input.column || options?.resolvedEntryColumn || input.workflowId === null)
       ? undefined
       : await resolveDefaultWorkflowIntakeColumn(store);
+    /* Intake column + whether that intake is MANUAL (autoTriage:false), resolved from the IR. */
+    const intakeFacts = input.workflowId === null
+      ? { manual: false as boolean, intake: undefined as string | undefined }
+      : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
       id,
@@ -917,9 +980,22 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     one request, so the card is unplanned despite not landing in the intake column. See the fuller
     rationale there; keeping both copies in step is the whole point (this pair has drifted before).
     */
-    const isUnplannedStartCreate = options?.resolvedEntryColumn !== undefined
-      && options.resolvedEntryColumn !== "triage"
-      && task.column === "todo";
+    /*
+      FNXC:MergedPlanningColumn 2026-07-30-10:25 (Phase B — task-creation.ts to zero column literals):
+      Was `resolvedEntryColumn !== "triage"` — naming the DEFAULT workflow's intake id to mean "this
+      workflow has a MANUAL intake". Post-U11 the default's intake IS `todo`, so that comparison
+      became vacuously true for the default workflow and the guard stopped distinguishing the two
+      shapes it exists to separate.
+
+      The real fact is the intake trait's `autoTriage: false`, and the real shape is "the card landed
+      PAST its workflow's manual intake" — which is what quick-add Start does by submitting the
+      workflow id and the post-intake column together. Both now come from the IR, so the pinned
+      contract for a plain direct create on a default (auto-triage) workflow is preserved by the
+      `manual` test rather than by an id coincidence.
+      */
+    const isUnplannedStartCreate = intakeFacts.manual
+      && intakeFacts.intake !== undefined
+      && task.column !== intakeFacts.intake;
     /*
     FNXC:MergedPlanningColumn 2026-07-29-17:15 (PR #2589 review — greptile):
     `fallbackIntakeColumn` must appear here, not only in the `column:` assignment above. Otherwise
@@ -935,7 +1011,15 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     one predicate that disagree, where the backend copy needed exactly this clause. A direct
     `_createTaskInternal` call — which the signature invites — would hit it.
     */
-    const isIntakeColumn = task.column === "triage"
+    /*
+    FNXC:MergedPlanningColumn 2026-07-30-10:25 (Phase B):
+    The leading `task.column === "triage"` was the last-resort clause for a card whose workflow
+    could not be resolved. `intakeFacts.intake` covers that properly — it falls back to
+    DEFAULT_WORKFLOW_ID rather than to a bare id — so the literal is gone and an explicit
+    `column: "triage"` create on a workflow that still declares `triage` is matched through the
+    resolved intake rather than a coincidence of naming.
+    */
+    const isIntakeColumn = (intakeFacts.intake !== undefined && task.column === intakeFacts.intake)
       || (options?.resolvedEntryColumn !== undefined && task.column === options.resolvedEntryColumn)
       || (fallbackIntakeColumn !== undefined && task.column === fallbackIntakeColumn)
       || isUnplannedStartCreate;
