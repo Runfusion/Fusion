@@ -337,6 +337,23 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
         /*
+        FNXC:PostgresCutover 2026-07-31-17:10 (DEADLOCK, same class as PR #2809):
+        THE TASK WE ALREADY HOLD THE LOCK FOR IS ALREADY IN SCOPE. This closure runs inside
+        `store.withTaskLock(id, ...)` (the wrapper at the top of `updateTaskDependenciesImpl`), and
+        `store.getTask()` acquires that same lock — `getTaskImpl` opens with `withTaskLock(id, ...)`
+        and the per-task lock is NON-REENTRANT. Re-reading `id` through it waits forever on a lock
+        this frame holds.
+
+        REACHED VIA `task.blockedBy`, whose only caller passes exactly that. `blockedBy === id` is
+        writable today: `updateTask({ blockedBy })` has no self-reference guard, unlike the
+        dependencies list, which rejects `dependencyId === id` a few lines above (that guard is why
+        the sibling `assertTaskExists` read on this same lock is safe and is left unchanged).
+
+        Returning the in-lock copy is also strictly more correct than a re-read: it is the state this
+        mutation is reasoning about, not whatever a concurrent writer left behind.
+        */
+        if (depId === id) return task;
+        /*
         FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
         Treat not-found as null; rethrow unexpected PostgreSQL failures.
         */
