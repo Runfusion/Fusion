@@ -142,14 +142,31 @@ function isDoneOrReview(column: string, flags?: TaskContextMenuColumnFlags): boo
   return column === "done" || isReviewColumn(column, flags) || (flags?.complete === true && flags?.archived !== true);
 }
 
+import { isLegacyIntakeColumn } from "../utils/legacyLifecycleColumns.js";
+
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags) return flags.complete !== true && flags.archived !== true;
   return column !== "done" && column !== "archived";
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:35 (U11):
+The INTAKE lane specifically - narrower than `isPreExecutionHoldColumn`, which also
+admits the hold lane. Kept separate because the actions-menu suppression it serves
+named only the intake id, and widening it to the hold lane would suppress the menu
+for every card waiting on capacity.
+*/
+export function isPreExecutionIntakeLane(column: string, flags?: TaskContextMenuColumnFlags): boolean {
+  if (flags?.complete === true || flags?.archived === true) return false;
+  if (flags) return flags.intake === true;
+  return isLegacyIntakeColumn(column);
+}
+
 export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags?.complete === true || flags?.archived === true) return false;
-  return column === "triage" || flags?.intake === true || flags?.hold === true;
+  /* Traits first; the legacy intake id stays as the no-metadata fallback and for a
+     card stranded on an id its workflow no longer declares. */
+  return flags?.intake === true || flags?.hold === true || isLegacyIntakeColumn(column);
 }
 
 
@@ -448,8 +465,16 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions,
     moveTransitions: getTaskMoveTransitions(task, t, columnLabel, workflowMoveColumns),
     reviewAction: getTaskReviewAction(task, options),
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:20 (U11):
+    The menu is SUPPRESSED for a card in the intake lane unless one of the escape
+    conditions applies — an intake card has almost no applicable actions. Keyed on
+    the literal, #2515 turned that suppression off for every default-workflow card:
+    a planning card now sits in `todo`, so `!== "triage"` is true and the menu
+    always renders. Resolve by ROLE, with the legacy id as the fallback.
+    */
     shouldShowActionsMenu:
-      task.column !== "triage" ||
+      !isPreExecutionIntakeLane(task.column, options.currentColumnFlags) ||
       task.status === "awaiting-approval" ||
       canRetryTask ||
       isTaskPaused ||

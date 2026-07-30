@@ -36,6 +36,8 @@ interface TransitionRejectionDetail {
  * (the structured 409 the move/promote endpoints emit under the workflowColumns
  * flag). Returns null for any other error shape (legacy errors are unchanged).
  */
+import { isLegacyIntakeColumn, isLegacyPreImplementationColumn } from "../utils/legacyLifecycleColumns.js";
+
 export function extractTransitionRejection(err: unknown): TransitionRejectionDetail | null {
   const details = (err as { details?: Record<string, unknown> } | null)?.details;
   if (!details || typeof details !== "object") return null;
@@ -444,7 +446,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       const shouldPrompt = hasStepProgress && (
         columnFlags
           ? Boolean(columnFlags.intake || columnFlags.hold)
-          : column === "todo" || column === "triage"
+          : isLegacyPreImplementationColumn(column)
       );
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
@@ -558,7 +560,15 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const canCreateInColumn = Boolean(
     onQuickCreate &&
     !isArchived &&
-    (workflowMode || column === "triage"),
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:20 (U11):
+    Quick-create belongs to the board's INTAKE lane. Keyed on the literal, the
+    non-workflow board lost the affordance entirely once #2515 removed `triage`
+    from the default lineage — there was simply no column left that matched, so
+    the "+" stopped rendering anywhere. Resolve by ROLE, with the legacy id as the
+    no-metadata fallback.
+    */
+    (workflowMode || columnFlags?.intake === true || isLegacyIntakeColumn(column)),
   );
 
   const handleQuickCreate = useCallback(

@@ -16,6 +16,8 @@ export const ACTIVE_STATUSES = new Set([
 
 export const RECENT_PLANNER_ACTIVITY_WINDOW_MS = 60_000;
 
+import { isLegacyIntakeColumn } from "./legacyLifecycleColumns.js";
+
 export interface TaskAgentActivityOptions {
   globalPaused?: boolean;
   queued?: boolean;
@@ -86,7 +88,7 @@ export function isTaskAgentActive(
   */
   const inPlannerLane = options.columnFlags
     ? options.columnFlags.intake === true || (options.columnFlags.hold === true && isReplanning)
-    : task.column === "triage" || (task.column === "todo" && isReplanning);
+    : isLegacyIntakeColumn(task.column) || (task.column === "todo" && isReplanning);
   const hasFreshPlannerActivity = inPlannerLane
     && Number.isFinite(recentPlannerActivityAtMs)
     && nowMs - recentPlannerActivityAtMs >= 0
