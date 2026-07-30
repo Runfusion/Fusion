@@ -399,6 +399,38 @@ describe("a provider rate limit pauses every card actually running on that provi
     expect(paused).not.toContain("FN-SHIPPED");
   });
 
+  it("keeps the LEGACY wip id when a resolvable workflow declares no wip column", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-23:55 (PR #2672 review — greptile P1):
+    THE FALLBACK IS PER ROLE, not per object, and nothing pinned that until now.
+
+    A workflow that RESOLVES but declares no `wip` column previously suppressed the
+    legacy id — because the fallback keyed on whether `activeLanes` existed at all —
+    so a card in `in-progress` resolved no providers and kept running on the limited
+    one. A missing ROLE is not the same fact as a missing WORKFLOW; only the second
+    means "no basis to judge".
+
+    Found by mutation: reverting to the per-object form left all 57 existing tests
+    green, so the fix greptile asked for was unproven.
+    */
+    const NO_WIP_IR = {
+      version: "v2", id: "wf-nowip", name: "no wip", nodes: [], edges: [],
+      columns: [
+        { id: "queued", name: "Queued", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "checking", name: "Checking", traits: [{ trait: "merge" }, { trait: "merge-blocker" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const store = resolvingStore(
+      [card("FN-TRIGGER", "in-progress"), card("FN-LEGACY-WIP", "in-progress")],
+      NO_WIP_IR,
+    );
+
+    const paused = await pausedIds(store);
+
+    expect(paused).toContain("FN-LEGACY-WIP");
+  });
+
   it("pauses a merger-lane peer in the renamed REVIEW column", async () => {
     const store = resolvingStore(
       [card("FN-TRIGGER", "checking"), card("FN-PEER", "checking"), card("FN-WIP", "building")],
