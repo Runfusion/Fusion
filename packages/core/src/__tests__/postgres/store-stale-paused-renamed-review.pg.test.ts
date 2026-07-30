@@ -92,6 +92,57 @@ pgDescribe("TaskStore review-signal hydration under a renamed review column (Pos
     expect(seeded.column).toBe(column);
   }
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-14:20 (PR #2586 review — greptile):
+  THE STALLED SIBLING NEEDS ITS OWN FIXTURE, and its absence is why the gap existed.
+  `getInReviewStalledSignal` requires `paused !== true` — it is the UNPAUSED
+  counterpart of `getStalePausedReviewSignal` — so `seedPaused` cannot exercise it,
+  and every assertion in this file targeted the paused half.
+
+  That matters because the production change threads `reviewColumn` into BOTH
+  signals across the hydration paths. Half the change had no coverage: a future edit
+  could drop the role from the stalled call sites and this suite would stay green.
+  */
+  async function seedStalled(id: string, column: string, workflowId?: string): Promise<void> {
+    const store = h.store();
+    const aged = new Date(Date.now() - (THRESHOLD_MS + 60_000)).toISOString();
+    await store.createTaskWithReservedId(
+      { description: id, column } as never,
+      { taskId: id, createdAt: aged, updatedAt: aged, applyDefaultWorkflowSteps: false } as never,
+    );
+    if (workflowId) await store.writeTaskWorkflowSelection(id, workflowId, []);
+    await h.adminSql()`
+      UPDATE project.tasks SET paused = 0, column_moved_at = ${aged}, updated_at = ${aged} WHERE id = ${id}
+    `;
+    store.taskCache.delete(id);
+    /* Prove the fixture, same reason as its paused sibling: a PAUSED or unaged card
+       yields no stalled signal for reasons unrelated to the column, and the suite
+       would pass while testing nothing. */
+    const seeded = await store.getTask(id);
+    expect(seeded.paused).not.toBe(true);
+    expect(seeded.column).toBe(column);
+  }
+
+  it("hydrates inReviewStalled for an UNPAUSED card in a RENAMED review column", async () => {
+    const wf = await seedRenamedWorkflow();
+    await seedStalled("FN-RR-5", "checking", wf);
+
+    const task = (await h.store().listTasks({ slim: true })).find((t) => t.id === "FN-RR-5");
+
+    expect(task?.inReviewStalled).toBeDefined();
+  });
+
+  it("does NOT badge an unpaused card resting in a non-review column of that workflow", async () => {
+    /* The negative half, mirroring the paused sibling: threading the role must not
+       turn the stalled badge into "any aged card anywhere". */
+    const wf = await seedRenamedWorkflow();
+    await seedStalled("FN-RR-6", "building", wf);
+
+    const task = (await h.store().listTasks({ slim: true })).find((t) => t.id === "FN-RR-6");
+
+    expect(task?.inReviewStalled).toBeUndefined();
+  });
+
   it("hydrates stalePausedReview via listTasks for a paused card in a RENAMED review column", async () => {
     const wf = await seedRenamedWorkflow();
     await seedPaused("FN-RR-1", "checking", wf);
