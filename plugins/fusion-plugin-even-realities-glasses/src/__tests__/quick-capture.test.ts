@@ -142,3 +142,72 @@ describe("quick capture accepts the columns the board actually declares", () => 
     expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("todo");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-03:00 (PR #2644 review, greptile P1):
+
+THE BUILT-IN DEFAULT IS NOT NECESSARILY THIS PROJECT'S BOARD. `resolveDefaultWorkflowIr()` takes no
+project and no task, so a board built from a CUSTOM workflow had its own columns rejected — an
+operator saying "put it in checking" got 400 for a column their board declares.
+
+Quick capture creates a NEW task, so there is no selection to resolve through. The honest answer is
+the union of every column any workflow in this project declares: it accepts a custom board's columns
+and still rejects a column no board has, which is the operator-visible distinction. Deliberately
+permissive ACROSS workflows rather than guessing which one a new card lands on — the server validates
+the create, so a wrong-workflow column surfaces as a real error instead of the silent substitution
+this replaces.
+
+These cases drive the REAL default IR (unmocked) plus a custom definition, which is the shape the
+sibling renamed-board suite cannot express: it mocks the default resolver, so it would pass even if
+the custom-definition union were deleted. That is exactly what happened — the union had no failing
+test until this file got one.
+*/
+describe("quick capture accepts columns declared by a project's CUSTOM workflows", () => {
+  const customIr = {
+    version: "v2", id: "wf-custom", name: "custom", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+    ],
+  };
+
+  function deps(defaultColumn = "todo") {
+    const created: Array<Record<string, unknown>> = [];
+    return {
+      created,
+      taskStore: {
+        createTask: async (input: Record<string, unknown>) => {
+          created.push(input);
+          return { id: "FN-1", column: input.column, description: input.description, updatedAt: "2026-07-31T00:00:00.000Z" };
+        },
+        listWorkflowDefinitions: async () => [{ id: "wf-custom", ir: customIr }],
+      },
+      pluginId: "glasses",
+      defaultColumn,
+    } as never;
+  }
+
+  it("accepts a column only the custom workflow declares", async () => {
+    // Pre-fix: rejected with 400, because only the builtin default IR was consulted.
+    const d = deps();
+
+    await runQuickCapture({ text: "ship the thing", column: "checking" }, d);
+
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("checking");
+  });
+
+  it("still accepts the builtin default's own columns", async () => {
+    const d = deps();
+
+    await runQuickCapture({ text: "ship it", column: "in-progress" }, d);
+
+    expect((d as unknown as { created: Array<{ column?: string }> }).created[0]?.column).toBe("in-progress");
+  });
+
+  it("still rejects a column NO workflow in the project declares", async () => {
+    // The paired negative: union-across-workflows must not become accept-anything.
+    await expect(runQuickCapture({ text: "ship it", column: "nonsense" }, deps())).rejects.toThrow(
+      /invalid column/,
+    );
+  });
+});

@@ -1,5 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
-import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { resolveLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import { GlassesInputError } from "./quick-capture.js";
 
@@ -41,98 +41,8 @@ type Lanes = {
   intake?: string; hold?: string; wip?: string; review?: string; complete?: string; archived?: string;
 };
 
-/**
- * FNXC:PluginLifecycleColumns 2026-07-30-05:10 (PR #2607 review — greptile P1 x2):
- * Resolve the task's lanes ONCE per action, so gates AND destinations come from the
- * same answer.
- *
- * The first version resolved only the GATES and left `moveTask` pointing at
- * `in-progress` / `todo` literally. On a renamed workflow that is worse than the bug
- * it replaced: the gate now admits the card and then moves it into a column the
- * workflow does not declare (R7). Half a conversion moved the failure from "refuses
- * valid work" to "puts work somewhere nothing renders it".
- */
-async function resolveLanes(
-  taskStore: AgentActionDeps["taskStore"],
-  taskId: string,
-): Promise<Lanes | undefined> {
-  try {
-    return await resolveTaskLifecycleColumns(taskStore as never, taskId) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
 
-/*
-FNXC:PluginLifecycleColumns 2026-07-31-00:30 (PR #2607 review — sixth finding, greptile P1):
 
-DEGRADED RESOLUTION LOOKS EXACTLY LIKE THE DEFAULT BOARD, and that is a third state these actions
-had no way to see. `resolveWorkflowIrForTask` is TOTAL by design: a missing workflow definition or a
-failed read silently returns the DEFAULT coding IR (`workflow-ir-resolver.ts` lines 201/206). So a
-card on a CUSTOM board whose definition could not be loaded resolved to `todo`/`in-progress`, and
-these actions then rejected a valid custom planning card, or moved it to a column its own workflow
-does not declare.
-
-`undefined` lanes cannot express this: that means "no workflow at all", where the legacy ids ARE the
-answer (the migration case). Degraded means "this board HAS a vocabulary and we could not read it",
-where acting on someone else's vocabulary is the one thing we must not do. So the actions refuse and
-say so — 409 with the column and status, which is what an operator can act on.
-
-Detected without new core API (#2618 adds provenance to the resolver but is not merged): the task
-names a workflow SELECTION whose definition does not come back. That is precisely the state the
-resolver papers over.
-*/
-async function workflowResolutionDegraded(
-  taskStore: AgentActionDeps["taskStore"],
-  taskId: string,
-): Promise<boolean> {
-  const store = taskStore as unknown as {
-    getTaskWorkflowSelectionAsync?: (id: string) => Promise<{ workflowId?: string } | undefined>;
-    getTaskWorkflowSelection?: (id: string) => { workflowId?: string } | undefined;
-    getWorkflowDefinition?: (id: string) => Promise<unknown>;
-  };
-  try {
-    const selection = (await store.getTaskWorkflowSelectionAsync?.(taskId))
-      ?? store.getTaskWorkflowSelection?.(taskId);
-    const workflowId = selection?.workflowId;
-    /*
-    No selection, or a builtin id, or a store that cannot answer: not degraded. A builtin resolves
-    through the catalog rather than a definition row, and a store without these readers is the
-    "no workflow at all" case the legacy fallback already covers.
-    */
-    if (!workflowId || workflowId.startsWith("builtin:") || !store.getWorkflowDefinition) return false;
-    return (await store.getWorkflowDefinition(workflowId)) == null;
-  } catch {
-    /* Cannot even ask -> treat as degraded: refusing is the safe direction for a MOVE. */
-    return true;
-  }
-}
-
-/**
- * Every column id the workflow DECLARES.
- *
- * FNXC:PluginLifecycleColumns 2026-07-30-07:10 (PR #2607 review, second P1):
- * Read from the IR, not from the six resolved roles. A column whose traits map to no
- * role is invisible to a role-only set — which is how a workflow declaring an inert
- * column named `todo` had it claimed as a planning lane. The previous revision noted
- * that as a limitation; the IR is reachable from here, so it is closed instead.
- */
-async function declaredColumnIds(
-  taskStore: AgentActionDeps["taskStore"],
-  taskId: string,
-  lanes: Lanes | undefined,
-): Promise<Set<string>> {
-  const ids = new Set(Object.values(lanes ?? {}).filter((v): v is string => typeof v === "string"));
-  try {
-    const ir = await resolveWorkflowIrForTask(taskStore as never, taskId);
-    for (const c of (ir as { columns?: Array<{ id?: unknown }> }).columns ?? []) {
-      if (typeof c?.id === "string") ids.add(c.id);
-    }
-  } catch {
-    /* narrowed store cannot resolve — role ids are all we have */
-  }
-  return ids;
-}
 
 /**
  * FNXC:PluginLifecycleColumns 2026-07-30-05:10 (PR #2607 review — greptile P1):
@@ -142,7 +52,7 @@ async function declaredColumnIds(
  * assign it to ANY role. Unscoped, a workflow that names its review or wip lane
  * `triage`/`todo` would have those cards authorized as planning work — greptile's
  * finding, and the same over-reach caught on #2593 and #2602. Scoping needs the whole
- * lane set, which is why `resolveLanes` returns all of it rather than intake/hold only;
+ * lane set, which is why `laneContext` returns all of it rather than intake/hold only;
  * the earlier version could not express this and said so as a known limitation.
  */
 function isInPlanningLane(lanes: Lanes | undefined, column: string, declared: Set<string>): boolean {
@@ -160,7 +70,7 @@ function isInPlanningLane(lanes: Lanes | undefined, column: string, declared: Se
  * `todo`, then a TRAITLESS parking column named `todo`, which no role check can see because it
  * carries no role.
  *
- * The qualifications were the mistake. If `resolveLanes` returned a lane set, the workflow HAS a
+ * The qualifications were the mistake. If `laneContext` returned a lane set, the workflow HAS a
  * column vocabulary, so "no column carries the hold trait" is a complete answer: there is nowhere
  * legitimate to send the card and the action must refuse. A column merely NAMED `todo` implements
  * nothing.
@@ -191,9 +101,78 @@ async function laneContext(
   taskStore: AgentActionDeps["taskStore"],
   taskId: string,
 ): Promise<{ lanes: Lanes | undefined; declared: Set<string>; degraded: boolean }> {
-  const degraded = await workflowResolutionDegraded(taskStore, taskId);
-  const lanes = await resolveLanes(taskStore, taskId);
-  return { lanes, declared: await declaredColumnIds(taskStore, taskId, lanes), degraded };
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-02:25 (PR #2644 review, greptile P1):
+  ONE SNAPSHOT PER ACTION. Three helpers used to read the workflow independently — the degraded
+  probe, the lane resolution, and the declared-column read — so a workflow edited or deleted
+  mid-action could combine a NOT-degraded verdict with fallback lanes, or lanes from one revision
+  with declarations from another. The action then either conflicted on a card that was fine or moved
+  it toward a column the current workflow no longer has.
+
+  Same fix as the executor's resume lanes (#2640 review): the two or three halves of one decision
+  must read one snapshot. Here that means resolving the IR ONCE and deriving everything from it — the
+  degraded verdict included, which is now simply "a selection names a workflow whose definition did
+  not come back in THIS read".
+  */
+  const store = taskStore as unknown as {
+    getTaskWorkflowSelectionAsync?: (id: string) => Promise<{ workflowId?: string } | undefined>;
+    getTaskWorkflowSelection?: (id: string) => { workflowId?: string } | undefined;
+    getWorkflowDefinition?: (id: string) => Promise<{ ir?: unknown } | undefined>;
+  };
+
+  let selectionWorkflowId: string | undefined;
+  try {
+    const selection = (await store.getTaskWorkflowSelectionAsync?.(taskId))
+      ?? store.getTaskWorkflowSelection?.(taskId);
+    selectionWorkflowId = selection?.workflowId;
+  } catch {
+    /* Cannot read the selection: treat as degraded below, since a MOVE must not guess. */
+    return { lanes: undefined, declared: new Set(), degraded: true };
+  }
+
+  const usesCustomDefinition = Boolean(selectionWorkflowId)
+    && !selectionWorkflowId!.startsWith("builtin:")
+    && Boolean(store.getWorkflowDefinition);
+
+  let definitionIr: unknown;
+  if (usesCustomDefinition) {
+    try {
+      definitionIr = (await store.getWorkflowDefinition!(selectionWorkflowId!))?.ir;
+    } catch {
+      return { lanes: undefined, declared: new Set(), degraded: true };
+    }
+    /*
+    The custom definition is gone. `resolveTaskLifecycleColumns` would silently hand back the DEFAULT
+    coding lanes here, which is indistinguishable from a genuinely default board — so refuse rather
+    than act on another board's vocabulary.
+    */
+    if (definitionIr == null) return { lanes: undefined, declared: new Set(), degraded: true };
+  }
+
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-02:50: lanes are derived from the IR THIS function already
+  read, not from a second `resolveTaskLifecycleColumns` call. My first pass at "one snapshot" still
+  made two reads — the explicit one plus the one inside the resolver — and my own counting test caught
+  it. Two reads is two snapshots however carefully the first one is checked.
+  */
+  const snapshotIr = usesCustomDefinition
+    ? definitionIr
+    : await resolveWorkflowIrForTask(taskStore as never, taskId).catch(() => undefined);
+  const roles = snapshotIr ? resolveLifecycleColumns(snapshotIr as never) : undefined;
+  const lanes: Lanes | undefined = roles ?? undefined;
+  const declared = new Set(
+    Object.values(lanes ?? {}).filter((value): value is string => typeof value === "string"),
+  );
+  /*
+  Declared ids come from the SAME read that proved the definition exists, not from a second lookup.
+  A column carrying no lifecycle trait is invisible to `lanes`, which is why the IR's own column list
+  is unioned in — that is what stops an inert column named `todo` being claimed as a planner lane.
+  */
+  for (const column of (snapshotIr as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? []) {
+    if (typeof column?.id === "string") declared.add(column.id);
+  }
+
+  return { lanes, declared, degraded: false };
 }
 
 type AgentActionResult = {

@@ -100,17 +100,48 @@ CORRECTION to what I wrote on PR #2607: I described this as SILENT substitution.
 mismatch, so an unusable column was visibly rejected, not quietly swapped. The bug is a wrong
 accept/reject set, which is milder than I claimed.
 */
-function declaredCaptureColumnIds(): ReadonlySet<string> {
+async function declaredCaptureColumnIds(
+  taskStore: PluginContext["taskStore"],
+): Promise<ReadonlySet<string>> {
+  const ids = new Set<string>();
   try {
     const ir = resolveDefaultWorkflowIr() as { columns?: Array<{ id?: unknown }> };
-    const ids = (ir.columns ?? [])
-      .map((column) => column?.id)
-      .filter((id): id is string => typeof id === "string");
-    if (ids.length > 0) return new Set(ids);
+    for (const column of ir.columns ?? []) {
+      if (typeof column?.id === "string") ids.add(column.id);
+    }
   } catch {
-    /* fall through to the legacy vocabulary */
+    /* fall through */
   }
-  /* A column-less IR gives no basis to decide; the legacy five keep prior behavior. */
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-31-02:10 (PR #2644 review, greptile P1):
+  THE BUILT-IN DEFAULT IS NOT NECESSARILY THIS PROJECT'S BOARD. `resolveDefaultWorkflowIr()` takes no
+  project and no task, so on a board built from a CUSTOM workflow it rejected that board's own
+  columns — `checking` came back "invalid column" for an operator whose board declares it. My earlier
+  note claimed this matched "the same default the dashboard reports", which is true only for projects
+  that use the builtin lineage.
+
+  Quick capture creates a NEW task, so there is no selection to resolve through — the honest answer is
+  the union of every column any workflow in this project declares. That accepts a custom board's own
+  columns and still rejects a column no board has, which is the operator-visible distinction. It is
+  deliberately PERMISSIVE across workflows rather than guessing which one a new card will land on: the
+  server validates the final create, so a wrong-workflow column surfaces as a real error instead of
+  the silent default-substitution this replaces.
+  */
+  try {
+    const store = taskStore as unknown as {
+      listWorkflowDefinitions?: () => Promise<Array<{ ir?: unknown }>>;
+    };
+    for (const definition of (await store.listWorkflowDefinitions?.()) ?? []) {
+      const ir = typeof definition?.ir === "string" ? undefined : definition?.ir;
+      for (const column of (ir as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? []) {
+        if (typeof column?.id === "string") ids.add(column.id);
+      }
+    }
+  } catch {
+    /* a store without the workflows surface keeps the builtin answer */
+  }
+  if (ids.size > 0) return ids;
+  /* A column-less IR and no definitions give no basis to decide; the legacy five keep prior behavior. */
   return LEGACY_CAPTURE_COLUMN_IDS;
 }
 
@@ -118,9 +149,13 @@ const LEGACY_CAPTURE_COLUMN_IDS: ReadonlySet<string> = new Set([
   "triage", "todo", "in-progress", "in-review", "done",
 ]);
 
-function normalizeCaptureColumn(value: unknown, fallback: TaskColumn): TaskColumn {
+async function normalizeCaptureColumn(
+  taskStore: PluginContext["taskStore"],
+  value: unknown,
+  fallback: TaskColumn,
+): Promise<TaskColumn> {
   const raw = normalizeDescription(value);
-  if (raw && declaredCaptureColumnIds().has(raw)) {
+  if (raw && (await declaredCaptureColumnIds(taskStore)).has(raw)) {
     return raw as TaskColumn;
   }
   return fallback;
@@ -136,7 +171,7 @@ export async function runQuickCapture(
 ): Promise<{ task: Awaited<ReturnType<PluginContext["taskStore"]["createTask"]>>; card: GlassesCard }> {
   const { title, description } = parseUtterance(input.text);
   const requested = input.column;
-  const normalizedColumn = normalizeCaptureColumn(requested, deps.defaultColumn);
+  const normalizedColumn = await normalizeCaptureColumn(deps.taskStore, requested, deps.defaultColumn);
   if (requested !== undefined && normalizeDescription(requested) !== normalizedColumn) {
     throw new GlassesInputError(400, "invalid column");
   }

@@ -671,3 +671,58 @@ describe("a card whose custom workflow cannot be read is refused, not treated as
     expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-31-02:35 (PR #2644 review, greptile P1):
+
+ONE SNAPSHOT PER ACTION. The degraded probe, the lane resolution and the declared-column read used to
+consult the workflow independently, so a workflow edited or deleted mid-action could combine a
+NOT-degraded verdict with fallback lanes, or lanes from one revision with declarations from another.
+The action then conflicted on a card that was fine, or moved it toward a column the current workflow
+no longer has.
+
+Same fix as the executor's resume lanes: the halves of one decision must read one snapshot.
+*/
+describe("an action reads the workflow once, not three times", () => {
+  function countingDeps(task: FakeTask, ir: unknown) {
+    const base = createDeps(task);
+    const selection = { workflowId: "wf-custom", stepIds: [] };
+    const reads = { definition: 0 };
+    return {
+      ...base,
+      reads,
+      taskStore: {
+        ...base.taskStore,
+        getTaskWorkflowSelection: () => selection,
+        getTaskWorkflowSelectionAsync: async () => selection,
+        getWorkflowDefinition: async () => {
+          reads.definition += 1;
+          return { ir };
+        },
+      },
+    };
+  }
+
+  it("reads the custom definition once per action", async () => {
+    const deps = countingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+
+    await startWork({ taskId: "FN-1" }, deps as never);
+
+    // One read backs the degraded verdict, the lanes AND the declared columns. Three reads was the
+    // bug: they could disagree with each other.
+    expect((deps as unknown as { reads: { definition: number } }).reads.definition).toBe(1);
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+  });
+
+  it("refuses when the definition read throws mid-action", async () => {
+    // A store that cannot answer during a MOVE is degraded: refusing is the safe direction, and it
+    // must not silently fall back to the default board's lanes.
+    const deps = countingDeps(makeTask({ column: "backlog", status: null }), renamedIr);
+    (deps.taskStore as unknown as Record<string, unknown>).getWorkflowDefinition = async () => {
+      throw new Error("workflow store unavailable");
+    };
+
+    await expect(startWork({ taskId: "FN-1" }, deps as never)).rejects.toThrow(/not allowed/);
+    expect(deps.moveTask).not.toHaveBeenCalled();
+  });
+});
