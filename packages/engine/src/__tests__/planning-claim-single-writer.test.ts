@@ -131,11 +131,25 @@ function sourceFiles(root: string, base: string = REPO_ROOT): string[] {
   return out;
 }
 
-/** Strip comments so an explanatory FNXC note naming the literal is not a hit. */
+/**
+ * Strip comments so an explanatory FNXC note naming the literal is not a hit.
+ *
+ * FNXC:PlanningClaimSingleWriter 2026-07-30-00:20 (PR #2587 review — CodeRabbit):
+ * TRAILING comments count too. This stripped only lines that were ENTIRELY a `//`
+ * comment, so `doStuff(); // ... status: "planning" ...` read as executable code and
+ * would have failed the ratchet on prose. A ratchet with a known false positive gets
+ * disabled by the first person it annoys, which is the same end state as not having
+ * one — and this program's whole thesis is that guards must be trustworthy.
+ *
+ * `//` inside a string literal (a URL) is deliberately NOT protected: the cost of
+ * over-stripping is losing the rest of one line from a scan that is only looking for
+ * `status: <planning literal>` assignments, whereas the cost of under-stripping is a
+ * false accusation. Wrong in the harmless direction, on purpose.
+ */
 function stripComments(text: string): string {
   return text
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+    .replace(/\/\/.*$/gm, "");
 }
 
 const executableSource = (file: string): string => stripComments(readFileSync(file, "utf-8"));
@@ -336,6 +350,18 @@ describe("the planning claim has a single writer (U7 / FN-8504)", () => {
       fixture("packages/brand-new/src/writer.ts", "task.status = 'planning';\n");
 
       expect(planningClaimWriters(undefined, base)).toEqual(["packages/brand-new/src/writer.ts"]);
+    });
+
+    it("is not fooled by a TRAILING comment that names the literal", () => {
+      /*
+      PR #2587 review — CodeRabbit. Whole-line `//` stripping left this as code, so
+      the ratchet would have accused a file whose only mention of the claim is prose
+      at the end of a real statement.
+      */
+      const base = newFixtureRoot();
+      fixture("pkg/src/trailing.ts", 'const x = 1; // beware: status: "planning" is triage-owned\n');
+
+      expect(planningClaimWriters(["pkg/src"], base)).toEqual([]);
     });
 
     it("is not fooled by a comment that merely names the literal", () => {
