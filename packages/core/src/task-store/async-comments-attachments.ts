@@ -143,6 +143,33 @@ export async function getLiveTaskColumn(
   return row.column;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
+The ARCHIVED-lane checks that read a task row, as opposed to the sentinel ones that do not.
+
+`packages/core/src/task-store/async-comments-attachments.ts` holds both classes spelled identically,
+which is why they were miscounted once already (#2877 review). The comparisons downstream of
+`getLiveTaskColumn` test that function's MANUFACTURED "archived" and must stay literal. These two test
+`task.column` straight off a row `select`, so they are board lanes and a renamed archived column is
+simply not recognised:
+
+  - `upsertTaskDocument` fails to reject, so an ARCHIVED card's documents stay WRITABLE;
+  - `publishArchivedTaskDocumentAddition` fails to accept, rejecting a legitimate archived-document
+    publication as `parent-not-archived` / `archived-state-inconsistent` — a false rejection of valid
+    operator work, which is the sharper of the two.
+
+Both take an `AsyncDataLayer` and cannot resolve anything themselves; their store-level impls can, so
+the lane set arrives as a parameter. Optional with the legacy id as the default, so a caller that
+resolves nothing keeps today's behaviour exactly.
+*/
+const LEGACY_ARCHIVED_LANES: ReadonlySet<string> = new Set(["archived"]);
+
+/** Board columns that mean "archived"; omit to keep the built-in id. */
+export type ArchivedLanes = ReadonlySet<string> | undefined;
+
+const isArchivedLane = (column: string | null | undefined, lanes: ArchivedLanes): boolean =>
+  column != null && (lanes ?? LEGACY_ARCHIVED_LANES).has(column);
+
 // ── Task documents ───────────────────────────────────────────────────
 
 /**
@@ -193,6 +220,7 @@ export async function upsertTaskDocument(
   layer: AsyncDataLayer,
   taskId: string,
   input: TaskDocumentCreateInput,
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
     const projectId = projectPartition(layer.projectId);
@@ -210,7 +238,7 @@ export async function upsertTaskDocument(
       .limit(1)
       .for("update");
     const task = taskRows[0];
-    if (task?.column === "archived" || task?.deletedAt != null) {
+    if (isArchivedLane(task?.column, archivedColumns) || task?.deletedAt != null) {
       throw new Error(`Task ${taskId} is archived — documents are read-only`);
     }
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -312,6 +340,7 @@ export async function publishArchivedTaskDocumentAddition(
   layer: AsyncDataLayer,
   taskId: string,
   input: ArchivedTaskDocumentAdditionInput,
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<ArchivedTaskDocumentAdditionResult> {
   validateArchivedTaskDocumentAddition(input);
   return layer.transactionImmediate(async (tx) => {
@@ -329,7 +358,7 @@ export async function publishArchivedTaskDocumentAddition(
     if (!task) {
       throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-found", projectId, taskId, input.key);
     }
-    if (task.column !== "archived" && task.deletedAt == null) {
+    if (!isArchivedLane(task.column, archivedColumns) && task.deletedAt == null) {
       throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-archived", projectId, taskId, input.key);
     }
 
@@ -342,7 +371,7 @@ export async function publishArchivedTaskDocumentAddition(
       ))
       .limit(1)
       .for("key share");
-    if (task.column !== "archived" || task.deletedAt == null || !archiveRows[0]) {
+    if (!isArchivedLane(task.column, archivedColumns) || task.deletedAt == null || !archiveRows[0]) {
       throw new ArchivedTaskDocumentPublicationRejectedError("archived-state-inconsistent", projectId, taskId, input.key);
     }
 
