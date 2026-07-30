@@ -35,7 +35,7 @@ multi-column query option plus a resolved union across live workflows — a shar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { resolveLifecycleColumns } from "@fusion/core";
+import { getTaskHardMergeBlocker, resolveLifecycleColumns } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-04:40:
@@ -911,8 +911,14 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
   per candidate after the filter, which proves the read conversion. It does NOT cover the
   `getTaskHardMergeBlocker` wiring in the same sweep: that guard sits behind
   `resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit`, both of which need a real git repo,
-  so reaching it would make this a git fixture rather than a lane test. The wiring is type-checked and
-  identical to the shape revert-proven in `recoverMergeableReviewTasks` and `finalizeNoOpReviewTasks`.
+  so reaching it would make this a git fixture rather than a lane test.
+
+  CORRECTED 2026-07-31 (#2867 review): this said "the wiring is type-checked and identical to the shape
+  revert-proven in `recoverMergeableReviewTasks` and `finalizeNoOpReviewTasks`". Both halves were
+  unfounded. Type-checking cannot see it — `reviewColumns` is an OPTIONAL options-bag property, so
+  omitting it compiles — and "identical to a shape proven elsewhere" is a claim about intent, not about
+  this call site. Measured: deleting the argument leaves this whole file green. The wiring is
+  UNVERIFIED; the seam cases at the end pin the blocker's behaviour and say so explicitly.
 
   REVERT CHECK, measured: restoring the literal read fails this — the card is never found, so
   `getAgentLogs` is never called for it.
@@ -968,5 +974,74 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await manager.recoverOrphanOnlyScopeViolations();
 
     expect(updateTask).toHaveBeenCalledWith("FN-ORPHAN-BLK", expect.objectContaining({ status: null }));
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (#2867 review — greptile, "hard-blocker wiring remains
+untested"):
+
+THE WIRING, TESTED AT THE SEAM RATHER THAN THROUGH THE SWEEP.
+
+`recoverAlreadyMergedReviewTasks` calls `getTaskHardMergeBlocker(..., { reviewColumns: await
+ownReviewLanesForAlreadyMerged(task) })`. The sweep test above stops at candidacy, and the note there
+defended the gap as "type-checked and identical to a shape proven elsewhere". Type-checking cannot see
+it: `reviewColumns` is an OPTIONAL property on an options object, so omitting it compiles. The
+inert-seam gate cannot see it either — it tracks trailing optional PARAMETERS, not options-bag
+properties. Nothing was watching the argument from either direction.
+
+Driving the sweep to that line needs `resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit`
+to succeed, i.e. a real git repo, which would make this a git fixture rather than a lane test. So the
+seam is asserted directly: with the card's resolved lanes supplied there is no blocker, and without
+them the same card blocks — reproducing the production symptom exactly, an already-merged card on a
+renamed board failed with "Merge confirmed but finalization blocked", the sweep's purpose inverted.
+
+WHAT THIS STILL DOES NOT COVER, MEASURED RATHER THAN ASSUMED. I deleted the `reviewColumns` argument
+from the sweep's call site and these three cases stayed GREEN. They pin the SEAM's behaviour, not the
+producer that fills it — the same guard-versus-resolver split that made the planner-metrics option
+inert in #2842, where only a test driving the PRODUCER caught the omission.
+
+So this is an improvement over the claim it replaces ("type-checked and identical to a shape proven
+elsewhere", which was unfounded — an optional options-bag property compiles when omitted and the
+inert-seam gate does not track those), but it is not coverage of the wiring. Covering that needs a
+test that drives `recoverAlreadyMergedReviewTasks` far enough to reach the call, which needs
+`resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit` to succeed against a real repo.
+Stated here so the next reader does not mistake three green cases for a watched argument.
+*/
+describe("the already-merged hard blocker judges the card's OWN review lanes", () => {
+  const mergedCard = (column: string) => ({
+    id: "FN-HARD",
+    column,
+    status: "failed" as const,
+    paused: false,
+    steps: [],
+    workflowStepResults: [],
+  });
+
+  it("does NOT block an already-merged card in a RENAMED review lane when its lanes are supplied", () => {
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.review), {
+      reviewColumns: new Set([RENAMED_VOCAB.review]),
+    });
+
+    expect(blocker).toBeUndefined();
+  });
+
+  it("DOES block the same card when the lanes are omitted — the symptom if the wiring is dropped", () => {
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.review));
+
+    /* The message the operator would see behind "Merge confirmed but finalization blocked". */
+    expect(blocker).toContain("must be in 'in-review'");
+  });
+
+  it("still blocks a card that is genuinely outside its board's review lanes", () => {
+    /*
+    The paired negative. Wiring the resolved lanes must not degrade into "never blocks" — that would
+    finalize a merge for a card sitting in WIP.
+    */
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.wip), {
+      reviewColumns: new Set([RENAMED_VOCAB.review]),
+    });
+
+    expect(blocker).toContain(`must be in '${RENAMED_VOCAB.review}'`);
   });
 });
