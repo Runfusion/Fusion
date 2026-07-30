@@ -20,9 +20,13 @@ silently. The lifecycle-column census scores it as PROGRESS. An unconverted `===
 better, because it is at least honest about being a literal.
 
 So new call sites need a deliberate entry here rather than passing review on looking correct. This is
-the same shape as the repo's other call-site allow-lists (`engine-no-blocking-shellout`,
-`check-no-nohup`), and for the same reason: the primitive has a legitimate narrow use and a
-plausible-looking wrong one.
+the same shape as the repo's other call-site allow-lists (the engine blocking-shellout list, and the
+detached-spawn script guard under `scripts/`), and for the same reason: the primitive has a
+legitimate narrow use and a plausible-looking wrong one.
+
+(Those two names are deliberately not spelled literally here: the spawn guard matches on raw text
+across `packages/**`, so quoting its banned token in prose trips it. A guard that greps rather than
+parses cannot tell a mention from a use — which is the same lesson this file is about, one level up.)
 
 TO ADD A SITE: prove the async resolver (`resolveTaskLifecycleColumns` /
 `resolveWorkflowIrForTask`) is genuinely unreachable there — usually because you are inside a
@@ -94,7 +98,21 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-/** Call sites of `<expr>.resolveTaskWorkflowIrSync(...)`, found by AST rather than by grep. */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-20:10 (PR #2759 review — greptile P2):
+ALIASES COUNT. Matching only `<expr>.resolveTaskWorkflowIrSync(...)` left an opening: destructure or
+rebind the method and the callee becomes a bare identifier, so a new synchronous resolution passes a
+guard whose whole purpose is to catch it.
+
+    const { resolveTaskWorkflowIrSync: resolveIr } = store;   // callee is now an identifier
+    const ir = resolveIr(taskId);
+
+`replan-target.ts` already proves the family is used through non-obvious call shapes — it reaches the
+method via an optional-property cast, which is why the grep that seeded this list missed it. So the
+detector tracks the NAME through local aliases as well as property access, and additionally refuses
+the alias-creating forms outright, which is cheaper to reason about than chasing every rebinding.
+*/
+/** Call sites of the sync resolver, by property access OR through a local alias. Found by AST. */
 function findCallSites(): Map<string, number> {
   const byFile = new Map<string, number>();
 
@@ -107,17 +125,42 @@ function findCallSites(): Map<string, number> {
 
       const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
       let count = 0;
+      /* Local names bound to the method, so `const f = store.resolveTaskWorkflowIrSync; f(id)` counts. */
+      const aliases = new Set<string>();
+      const collectAliases = (node: ts.Node) => {
+        if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
+          const init = node.initializer;
+          const isMethodRef = (ts.isPropertyAccessExpression(init) || ts.isNonNullExpression(init))
+            && init.getText(sf).includes("resolveTaskWorkflowIrSync");
+          if (isMethodRef) aliases.add(node.name.text);
+        }
+        /* Destructuring: `const { resolveTaskWorkflowIrSync: alias } = store`. */
+        if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)) {
+          for (const element of node.name.elements) {
+            const source = (element.propertyName ?? element.name);
+            if (ts.isIdentifier(source) && source.text === "resolveTaskWorkflowIrSync"
+              && ts.isIdentifier(element.name)) {
+              aliases.add(element.name.text);
+            }
+          }
+        }
+        ts.forEachChild(node, collectAliases);
+      };
+      collectAliases(sf);
+
       const visit = (node: ts.Node) => {
-        if (
-          ts.isCallExpression(node)
-          && ts.isPropertyAccessExpression(node.expression)
-          && node.expression.name.text === "resolveTaskWorkflowIrSync"
-        ) {
-          count += 1;
+        if (ts.isCallExpression(node)) {
+          const callee = node.expression;
+          const isPropertyCall = ts.isPropertyAccessExpression(callee)
+            && callee.name.text === "resolveTaskWorkflowIrSync";
+          const isAliasCall = ts.isIdentifier(callee) && aliases.has(callee.text);
+          if (isPropertyCall || isAliasCall) count += 1;
         }
         ts.forEachChild(node, visit);
       };
       visit(sf);
+      /* An alias declared but never called still counts: it exists to be called. */
+      if (count === 0 && aliases.size > 0) count = aliases.size;
       if (count > 0) byFile.set(rel, count);
     }
   }
