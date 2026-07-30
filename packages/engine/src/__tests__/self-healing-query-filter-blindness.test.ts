@@ -77,6 +77,15 @@ function productionFaithfulStore(tasks: Task[]) {
     getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "self-healing-lifecycle", stepIds: [] })),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "self-healing-lifecycle", stepIds: [] })),
     getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: RENAMED_IR } : undefined)),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:50 (the fix landed; this fake had to grow to see it):
+    `resolveProjectColumnsForRoles` — the seam the sweeps now use — reads `listWorkflowDefinitions()`,
+    the PROJECT's workflows, because a query runs before any task is in hand. Without this method the
+    helper degrades to the legacy ids and the sweep still queries only `done`, so this file kept passing
+    against the FIXED code and reported nothing. A ratchet whose fake cannot reach the new seam stops
+    being a ratchet silently.
+    */
+    listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks };
 }
@@ -112,7 +121,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(lifecycle?.complete).not.toBe("done");
   });
 
-  it("KNOWN DEFECT: the done-integrity sweep asks for the literal `done`, so a RENAMED board yields nothing", async () => {
+  it("the done-integrity sweep now asks for the board's OWN complete lane (was: KNOWN DEFECT)", async () => {
     /*
     `reconcileDoneTaskIntegrity` opens with `listTasks({ column: "done", slim: true })` and then
     re-asserts `task.column === "done"` on the rows it gets back. The census counts that re-assertion;
@@ -124,14 +133,19 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const { store, listTasks } = productionFaithfulStore([shippedCard()]);
     const manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-    expect(await manager.reconcileDoneTaskIntegrity()).toBe(0);
+    await manager.reconcileDoneTaskIntegrity();
 
-    // The query asked for the legacy literal, NOT this workflow's resolved complete lane.
+    /*
+    THE ASSERTION THIS FILE WAS BUILT TO FLIP. It used to read `not.toHaveBeenCalledWith(… complete)`
+    and passed because the sweep only ever asked for the literal. The sweep now resolves the project's
+    complete lanes and queries each, so the renamed lane IS asked for.
+
+    `done` is STILL expected: `resolveProjectColumnsForRoles` unions the legacy ids deliberately, so a
+    board mid-rename whose rows are still stored under the old id is not skipped. Over-inclusion costs
+    one extra query the caller then filters; under-inclusion is invisible.
+    */
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.complete }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "done" }));
-    expect(listTasks).not.toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.complete }));
-
-    // And the card is untouched: still no commit sha, still unreconciled.
-    expect((await store.getTask("FN-BLIND"))?.mergeDetails?.commitSha).toBeUndefined();
   });
 
   it("proves the fake is what hides it: an ignoring `listTasks` hands the sweep rows production would not", async () => {

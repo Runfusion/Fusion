@@ -30,7 +30,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr } from "@fusion/core";
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  resolveProjectColumnsForRoles,
+} from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -7265,9 +7267,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reconcileDoneTaskIntegrity(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "done", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:50 (the query-filter class, now unblocked):
+      THE QUERY WAS THE BUG, not the comparison below it. `listTasks({ column: "done" })` returns an
+      EMPTY array on a board whose complete lane is renamed, so this sweep never ran — proven in
+      `self-healing-query-filter-blindness.test.ts` (#2800), which asserts the query ARGUMENT because
+      the outcome is 0 either way.
+
+      `resolveProjectColumnsForRoles` is the seam that fix needed: a read happens before any task is in
+      hand, so there is nothing to resolve a per-task lane from. It answers the PROJECT-level question —
+      every column any workflow here declares for the role — and unions the legacy ids, so a board
+      mid-rename still surfaces rows stored under the old one.
+
+      Same three-line shape as `stale-task-reporter` and `backlog-pressure-reporter`: resolve the roles,
+      iterate the set, dedupe by id. The `task.column` re-assertion below is now a membership test
+      against the same set rather than a literal.
+      */
+      const completeColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+      const byId = new Map<string, Task>();
+      for (const column of completeColumns) {
+        for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+      }
+      const tasks = [...byId.values()];
       const candidates = tasks.filter((task) =>
-        task.column === "done" &&
+        completeColumns.has(task.column) &&
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
         (task.modifiedFiles?.length ?? 0) > 0,
       ).slice(0, DONE_TASK_INTEGRITY_SWEEP_LIMIT);
