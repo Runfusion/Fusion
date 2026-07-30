@@ -166,8 +166,28 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
     accepting everything.
     */
     const prIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
-    const reviewColumns = new Set(prIr === undefined ? ["in-review"] : resolveReviewColumns(prIr));
-    if (reviewColumns.size === 0) reviewColumns.add("in-review");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:55 (#2775 review — greptile P2):
+    A RESOLVED WORKFLOW WITH NO REVIEW LANE IS AN ANSWER, not a missing one.
+
+    My first pass fell back to `'in-review'` for both the unresolvable-workflow case AND the
+    resolved-but-no-review-lane case, which reproduced the exact defect this change fixes: the
+    refusal named a lane the board does not have. The two cases are different questions and get
+    different answers —
+
+      prIr === undefined            → the workflow could not be read at all. Keep the legacy literal;
+                                      this is today's behaviour and the only safe default.
+      prIr resolved, lanes empty    → the board genuinely declares no review lane. Say so. Inventing
+                                      `'in-review'` here sends the operator to a phantom column.
+    */
+    const resolvedReviewColumns = prIr === undefined ? null : resolveReviewColumns(prIr);
+    if (resolvedReviewColumns !== null && resolvedReviewColumns.length === 0) {
+      console.error(`Error: This task's workflow declares no review lane, so a PR cannot be created from it (current column: ${task.column})`);
+      await closeProjectStore(context);
+      process.exit(1);
+    }
+    /* DELIBERATE-LITERAL — the unresolvable-workflow fallback, reviewed 2026-07-30-22:30. */
+    const reviewColumns = new Set(resolvedReviewColumns ?? ["in-review"]);
     if (!reviewColumns.has(task.column)) {
       const expected = [...reviewColumns].map((c) => `'${c}'`).join(" or ");
       console.error(`Error: Task must be in ${expected} to create a PR (current: ${task.column})`);

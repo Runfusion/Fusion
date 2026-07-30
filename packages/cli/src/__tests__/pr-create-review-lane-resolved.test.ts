@@ -160,6 +160,27 @@ describe("fn pr create resolves the board's own review lane", () => {
     expect(refusal).not.toContain("in-review");
   });
 
+  it("refuses WITHOUT naming a phantom lane when the workflow declares no review lane", async () => {
+    /*
+    #2775 review (greptile P2). My first pass fell back to `'in-review'` for BOTH the unresolvable
+    workflow and the resolved-but-empty case, so the refusal named a column this board does not have
+    — the very defect this change exists to fix, reintroduced one branch over. A resolved workflow
+    with no review-trait column is an ANSWER; only an unreadable workflow is a missing one.
+    */
+    const noReviewIr = {
+      ...RENAMED_IR,
+      columns: RENAMED_IR.columns.filter((c) => c.id !== "signoff" && c.id !== "waiting-on-a-human"),
+    };
+    const store = mockBoard("building", noReviewIr);
+
+    await expect(runPrCreate("FN-001", { ai: false })).rejects.toThrow("process.exit:1");
+
+    expect(store.updatePrInfo).not.toHaveBeenCalled();
+    const refusal = errors.find((e) => e.includes("no review lane"));
+    expect(refusal).toBeDefined();
+    expect(refusal).not.toContain("in-review");
+  });
+
   it("keeps the legacy literal when the workflow cannot be resolved", async () => {
     // The unresolvable-board fallback: today's behaviour, not "refuse everything".
     const store = mockBoard("in-review", undefined);
