@@ -68,47 +68,11 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+const findings = censusFiles(files);
+const summary = summarize(findings);
 const json = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
 const compare = process.argv.includes("--compare");
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:30 (work order for the batch-conversion phase):
-`--file <path>` prints the SITES in one file, not a count. A batch worker converting a 111-guard file
-needs the list — with each site's receiver and column id — and the "flag, never guess" rule needs
-something concrete to point at. A number tells you a file is big; it does not tell you which of its
-guards mean "pre-implementation" and which mean "this exact column".
-*/
-const fileArgIndex = process.argv.indexOf("--file");
-const fileArg = fileArgIndex >= 0 ? process.argv[fileArgIndex + 1] : undefined;
-
-if (fileArg) {
-  const target = files.find((f) => f === fileArg || f.endsWith(`/${fileArg}`) || f.endsWith(fileArg));
-  if (!target) {
-    console.error(`lifecycle-column-census --file: no scanned source matches ${fileArg}`);
-    process.exit(1);
-  }
-  const sites = censusFiles([target]);
-  const source = readFileSync(target, "utf8").split("\n");
-  const byKind = { column: [], role: [], status: [], deliberate: [] };
-  for (const site of sites) byKind[site.kind].push(site);
-  console.log(`${target}\n`);
-  const fallbacks = byKind.column.filter((site) => site.besideTraitCheck).length;
-  console.log(`  COLUMN guards: ${byKind.column.length}  |  role: ${byKind.role.length}  |  status: ${byKind.status.length}  |  deliberate: ${byKind.deliberate.length}`);
-  console.log(`  of the column guards, ${fallbacks} sit beside a trait check (already-converted sites keeping a legacy fallback)\n`);
-  for (const kind of ["column", "role", "status", "deliberate"]) {
-    if (byKind[kind].length === 0) continue;
-    console.log(`  ${kind.toUpperCase()}:`);
-    for (const site of byKind[kind]) {
-      const hint = site.besideTraitCheck ? " [legacy fallback beside a trait check — likely a DELETION]" : "";
-      console.log(`    ${String(site.line).padStart(5)}  ${site.columnId.padEnd(12)} ${`(${site.receiver})`.padEnd(22)} ${(source[site.line - 1] ?? "").trim().slice(0, 78)}${hint}`);
-    }
-    console.log("");
-  }
-  process.exit(0);
-}
-
-const findings = censusFiles(files);
-const summary = summarize(findings);
 const updateBaseline = process.argv.includes("--update-baseline");
 
 if (json) {
