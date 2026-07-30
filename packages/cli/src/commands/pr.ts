@@ -1,5 +1,7 @@
 import {
   TaskStore,
+  resolveReviewColumns,
+  resolveWorkflowIrForTask,
   isPrEntityActive,
   isPrEntityActionable,
   autoMergeGateReason,
@@ -146,9 +148,29 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
       process.exit(1);
     }
 
-    // Validate task is in 'in-review' column
-    if (task.column !== "in-review") {
-      console.error(`Error: Task must be in 'in-review' column to create a PR (current: ${task.column})`);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:30 (batch-cli-plugins):
+    `fn pr create` gates on the task's OWN review lane, resolved from its workflow.
+
+    Keyed on the literal, this refused EVERY card on a renamed board — `fn pr create` was unusable
+    there, and the error told the operator to move the task to a column their board does not have.
+    That message is the whole bug report: it names a column that cannot exist.
+
+    Uses core's `resolveReviewColumns` (the set, not `lifecycle.review`) because a board may declare
+    more than one review lane, and a `humanReview`-only lane is still a lane you can open a PR from.
+    A single-id answer refused those cards — the same narrowing that PR #2728's review caught in the
+    CLI retry gate.
+
+    DELIBERATE-LITERAL — the unresolvable-workflow fallback, reviewed 2026-07-30-22:30. An
+    unresolvable workflow keeps today's behaviour rather than refusing everything (an empty set) or
+    accepting everything.
+    */
+    const prIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
+    const reviewColumns = new Set(prIr === undefined ? ["in-review"] : resolveReviewColumns(prIr));
+    if (reviewColumns.size === 0) reviewColumns.add("in-review");
+    if (!reviewColumns.has(task.column)) {
+      const expected = [...reviewColumns].map((c) => `'${c}'`).join(" or ");
+      console.error(`Error: Task must be in ${expected} to create a PR (current: ${task.column})`);
       await closeProjectStore(context);
       process.exit(1);
     }

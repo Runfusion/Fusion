@@ -71,8 +71,6 @@
     "packages/engine/src/merger-scope-auto-widen.ts": 2,
     "packages/engine/src/mission-execution-loop.ts": 2,
     "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts": 2,
-    "plugins/fusion-plugin-reports/src/store/report-store.ts": 2,
-    "packages/cli/src/commands/pr.ts": 1,
     "packages/core/src/eval-automation.ts": 1,
     "packages/core/src/eval-signal-collector.ts": 1,
     "packages/core/src/in-review-stall.ts": 1,
@@ -120,9 +118,7 @@
     "packages/engine/src/merger.ts": 1,
     "packages/engine/src/plugin-runner.ts": 1,
     "packages/engine/src/pr-comment-handler.ts": 1,
-    "packages/engine/src/runtimes/in-process-runtime.ts": 1,
-    "plugins/fusion-plugin-even-realities-glasses/src/notifications/diff.ts": 1,
-    "plugins/fusion-plugin-reports/src/store/report-types.ts": 1
+    "packages/engine/src/runtimes/in-process-runtime.ts": 1
   },
   "deliberateByFile": {
     "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 4,
@@ -130,8 +126,12 @@
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000triage": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
     "packages/engine/src/scheduler.ts\u0000in-review": 2,
+<<<<<<< HEAD
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000done": 2,
+=======
+    "plugins/fusion-plugin-reports/src/store/report-store.ts\u0000archived": 2,
+>>>>>>> 9ee1ce6def (batch(cli+plugins): 5 of 7 guards — fn pr create refused every card on a renamed board)
     "packages/cli/src/commands/task.ts\u0000archived": 1,
     "packages/cli/src/commands/task.ts\u0000done": 1,
     "packages/cli/src/extension.ts\u0000archived": 1,
@@ -160,7 +160,9 @@
     "packages/engine/src/project-engine.ts\u0000in-review": 1,
     "packages/engine/src/scheduler.ts\u0000archived": 1,
     "packages/engine/src/scheduler.ts\u0000done": 1,
-    "packages/engine/src/triage.ts\u0000triage": 1
+    "packages/engine/src/triage.ts\u0000triage": 1,
+    "plugins/fusion-plugin-even-realities-glasses/src/notifications/diff.ts\u0000done": 1,
+    "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
     "packages/engine/src/self-healing.ts": 48,
