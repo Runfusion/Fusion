@@ -258,6 +258,32 @@ function testsTraitData(text) {
     && !new RegExp(`(===|!==)\\s*["'](${LEGACY_COLUMN_IDS.join("|")})["']`).test(text);
 }
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-10:05 (PR #2677 review — greptile):
+A RETURN TOKEN IS NOT TERMINATION. The early-return detector used to ask whether the `then`
+branch CONTAINED the word `return` anywhere. A branch that only returns conditionally —
+`if (flags) { if (x) return a; }` — satisfies that while still falling through, so the
+literal after it is REACHABLE with traits present and is a live guard.
+
+The misclassification runs in the dangerous direction: it removes a real guard from the
+backlog the census is trusted to report, and it does so silently. This asks whether the
+branch DEFINITELY terminates instead, which is a property of structure rather than of the
+presence of a token.
+*/
+function alwaysTerminates(stmt) {
+  if (!stmt) return false;
+  if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) return true;
+  if (ts.isBlock(stmt)) {
+    const statements = stmt.statements ?? [];
+    return statements.length > 0 && alwaysTerminates(statements[statements.length - 1]);
+  }
+  /* Only terminates when BOTH arms do — a missing else is exactly the fall-through case. */
+  if (ts.isIfStatement(stmt)) {
+    return alwaysTerminates(stmt.thenStatement) && alwaysTerminates(stmt.elseStatement);
+  }
+  return false;
+}
+
 /**
  * True when this comparison sits in the FALLBACK branch of a conditional whose test reads resolved
  * trait data — i.e. it is the documented answer for callers without traits, not an unconverted guard.
@@ -285,7 +311,7 @@ function isTraitFallback(node, sourceFile) {
         if (ts.isIfStatement(prior)
           && prior.elseStatement === undefined
           && testsTraitData(prior.expression.getText(sourceFile))
-          && /\breturn\b/.test(prior.thenStatement.getText(sourceFile))) {
+          && alwaysTerminates(prior.thenStatement)) {
           return true;
         }
       }

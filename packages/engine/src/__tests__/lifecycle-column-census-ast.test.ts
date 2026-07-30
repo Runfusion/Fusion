@@ -401,6 +401,57 @@ describe("a literal in a trait-fallback branch is flagged as such", () => {
     expect(fallbacksIn(source)).toBe(0);
   });
 
+  it("does NOT flag when the trait branch only returns CONDITIONALLY — a return token is not termination", () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-10:05 (PR #2677 review — greptile):
+    The detector used to search the branch for the word `return`. Here the branch contains one, but it is
+    nested under its own `if`, so with `flags` present control still falls through and the literal below
+    IS evaluated. That makes it a live guard, and flagging it as a fallback would quietly remove a real
+    guard from the backlog this census is trusted to report.
+    */
+    const source = [
+      "function mayEdit(column: string, flags?: F) {",
+      "  if (flags) {",
+      "    if (flags.hold === true) return true;",
+      "  }",
+      `  return column === "todo";`,
+      "}",
+    ].join("\n");
+
+    expect(fallbacksIn(source)).toBe(0);
+  });
+
+  it("still flags a trait branch that terminates on EVERY path", () => {
+    /* The paired positive: if/else where both arms return is genuine termination, so the literal below
+       really is the no-traits answer. "Not a bare return token" must not become "no early returns". */
+    const source = [
+      "function mayEdit(column: string, flags?: F) {",
+      "  if (flags) {",
+      "    if (flags.hold === true) return true;",
+      "    else return false;",
+      "  }",
+      `  return column === "todo";`,
+      "}",
+    ].join("\n");
+
+    expect(fallbacksIn(source)).toBe(1);
+  });
+
+  it("does NOT flag when the trait branch ends in a non-terminating statement after a nested return", () => {
+    /* Last-statement-wins: the block's final statement is a call, so the branch falls through. */
+    const source = [
+      "function mayEdit(column: string, flags?: F) {",
+      "  if (flags) {",
+      "    if (flags.hold === true) return true;",
+      "    log(flags);",
+      "  }",
+      `  return column === "todo";`,
+      "}",
+    ].join("\n");
+
+    expect(fallbacksIn(source)).toBe(0);
+  });
+
   it("leaves `kind` alone, so a wrong hint cannot move the bar", () => {
     const source = `const x = flags ? flags.hold === true : columnId === "todo";`;
     const finding = census(source)[0] as { kind: string; traitFallback?: boolean };
