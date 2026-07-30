@@ -2454,6 +2454,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
         const workspaceResult = await revertWorkspaceTask({
           task,
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+          The SAME set this route already gated on a few lines up, handed to the service so its
+          defence-in-depth check answers the same question. Before this the route resolved terminal lanes
+          while the service compared to hardcoded `done`/`archived`, so on a renamed board the route
+          admitted the revert and the service refused it — a dead end from an affordance both the UI and
+          the route offered.
+          */
+          revertableColumns: terminalColumns,
           workspaceRootDir: rootDir,
           settings,
           commitAssociationSource: {
@@ -2689,6 +2698,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const result = await performTaskRevert({
         task,
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+        The SAME set this route already gated on a few lines up, handed to the service so its
+        defence-in-depth check answers the same question. Before this the route resolved terminal lanes
+        while the service compared to hardcoded `done`/`archived`, so on a renamed board the route
+        admitted the revert and the service refused it — a dead end from an affordance both the UI and
+        the route offered.
+        */
+        revertableColumns: terminalColumns,
         worktreePath: rootDir,
         baseBranch,
         commitAssociationSource: {
