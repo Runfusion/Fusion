@@ -294,3 +294,35 @@ describe("outcome is a result enum, not a column", () => {
     expect(result.totals.role).toBe(1);
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-29-21:50 (state/phase/result enums are not columns):
+
+Four measured sites compared a state, phase, or result enum against a word that happens to be a
+column id. The fleet would have been sent to convert them and found nothing to convert.
+
+Classified by the SIBLING vocabulary, never by the receiver's name — and that distinction is load-
+bearing rather than stylistic. `state` looks like exactly this class and is NOT: in
+`comments-ops.ts` it holds `await getLiveTaskColumn(...)`, a real column. A name-based rule would
+have silently deleted a genuine guard from the backlog while appearing to clean it up.
+*/
+describe("state, phase and result enums are not column guards", () => {
+  it.each([
+    ["step state", `stepState === "done" ? a : stepState === "active" ? b : c`],
+    ["agent state", `agentState === "done" || agentState === "busy" || agentState === "ready"`],
+    ["tui phase", `phase === "done" || phase === "pushing" || phase === "confirm"`],
+    ["result kind", `kind === "done" || kind === "stopped" || kind === "exhausted"`],
+  ])("does not count %s as a guard", (_label, source) => {
+    expect(totals(source).column).toBe(0);
+  });
+
+  it("STILL counts a column held in a variable called `state`", () => {
+    /* The case that makes a receiver-name rule wrong. This is the real shape from
+       comments-ops.ts, and it must stay in the backlog. */
+    const result = summarize(census(`
+      const state = await getLiveTaskColumn(db, id, projectId);
+      if (state === "archived") throw new Error("read-only");
+    `));
+    expect(result.totals.column).toBe(1);
+  });
+});

@@ -64,7 +64,28 @@ merger` and `StepStatus` is `pending | in-progress | done | skipped`; the member
 column ids. This is the signal that caught `sessionPurpose` and `surface`, which a name list missed.
 */
 const ROLE_ONLY_VALUES = new Set(["executor", "reviewer", "merger"]);
-const STATUS_ONLY_VALUES = new Set(["pending", "skipped"]);
+const STATUS_ONLY_VALUES = new Set([
+  "pending", "skipped",
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-29-21:40 (widen the sibling vocabulary, not the name list):
+  Members of state/phase/result enums that are NEVER column ids. Each earns its place by a measured
+  site whose siblings prove the vocabulary:
+
+    stepState   { active, done }                                        DashboardLoader.tsx:123
+    agentState  { busy, ready, starting, done }                         TaskDetailModal.tsx:339
+    phase       { confirm, pushing, done }                              dashboard-tui/app.tsx:3139
+    kind        { exhausted, existing, invalid-deleted, missing,        async-mission-store.ts:1175
+                  nonterminal, stopped, done }
+
+  Deliberately extending the VALUE vocabulary rather than the receiver-name list, because names are
+  unreliable here and provably so: `state` looked like the same class but holds
+  `await getLiveTaskColumn(...)` — a real column, correctly counted. A name rule would have deleted
+  that guard from the backlog. The sibling signal is the mechanism that already caught
+  `sessionPurpose` and `surface`.
+  */
+  "active", "busy", "ready", "starting", "confirm", "pushing",
+  "exhausted", "existing", "invalid-deleted", "missing", "nonterminal", "stopped",
+]);
 
 export const DELIBERATE_MARKER = "DELIBERATE-LITERAL";
 
