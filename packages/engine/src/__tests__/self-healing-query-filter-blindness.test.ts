@@ -477,4 +477,49 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:20 (the query-filter class, fifth sweep):
+  `recoverMergeableReviewTasks` re-enqueues a card that is genuinely ready to merge. Its read was the
+  literal review lane, so on a renamed board that card sat in review forever.
+
+  THE INTERESTING PART IS DOWNSTREAM. This sweep's filter calls `getTaskMergeBlocker(t)` — previously
+  UNWIRED, taking the legacy `in-review` default, and harmless only because the literal query meant a
+  renamed board never reached it. Widening the read makes that guard REACHABLE for the first time, so
+  left as-is it would refuse every card on exactly the boards this fix is for: found, then declined.
+
+  Converting a query activates every guard downstream of it. This case asserts the end-to-end outcome —
+  the card is enqueued — precisely because a query-only assertion would have passed while the blocker
+  silently rejected it.
+
+  REVERT CHECK, measured: dropping `{ reviewColumns }` from the blocker call fails this — the card is
+  found by the widened read and then refused.
+  */
+  it("enqueues a mergeable card on a RENAMED board, past the now-reachable merge blocker", async () => {
+    const ready = {
+      ...shippedCard(),
+      id: "FN-READY",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      worktree: "/tmp/wt",
+      steps: [],
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([ready]);
+    const enqueueMerge = vi.fn(async () => undefined);
+    /* Complete the fake: the recovery loop logs before enqueuing, and an incomplete fake turns a real
+       enqueue into a caught error the assertion cannot see. */
+    Object.assign(store, {
+      enqueueMerge,
+      isMergeLaneOwned: vi.fn(async () => false),
+      logEntry: vi.fn(async () => undefined),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/repo", enqueueMerge } as never)
+      .recoverMergeableReviewTasks();
+
+    /* Not just "the query asked" — the card survived the blocker and was acted on. */
+    expect(enqueueMerge).toHaveBeenCalled();
+  });
 });
