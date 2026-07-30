@@ -287,15 +287,29 @@ if (process.argv.includes("--update-baseline")) {
     }
   }
   /*
-  A count that DROPPED is also a failure, deliberately. A migrated site that leaves its baseline entry
-  behind is a slot the surface can silently regrow into later — the same rot as an allow-list entry for
-  a deleted function, which this repo hit once already.
+  FNXC:SqlColumnLiteralRatchet 2026-08-02-06:40 (a DROP now tightens instead of failing the merge gate):
+  A stale allowance is still rot — a migrated site that leaves its entry behind is a slot the surface
+  can regrow into. But hard-failing on it put THIS CHECK, which runs inside `pnpm test:gate`, into a
+  state where one converting PR blocked every other worker's PR until someone re-recorded by hand.
+  Observed twice: `team-analytics.ts` 6 -> 3 took the gate down, and the lifecycle census hit the same
+  shape earlier from a merge wave that dropped eleven files at once.
+
+  The census already resolved this exact trade-off and its reasoning applies here with MORE force,
+  because that ratchet is not in the blocking lane and this one is (docs/testing.md):
+
+    "the drop is almost never the failing author's to fix ... A permanently-red gate is a bigger hole
+     than a stale allowance, because it gets ignored and then nothing is guarded at all."
+
+  So a drop now rewrites the baseline downward, says what it lowered, and exits 0. The RISE check —
+  the actual purpose, "no new SQL column literals" — is untouched and still fails hard.
+
+  The rewritten file must be COMMITTED; in CI the write is discarded with the runner, which is why the
+  gate goes green rather than silently passing a stale allowance.
   */
+  const tightened = [];
   for (const [file, allowed] of Object.entries(baseline)) {
     const count = found[file] ?? 0;
-    if (count < allowed) {
-      problems.push(`  ${file}: ${count} site(s) now, baseline still allows ${allowed} — re-record it (--update-baseline)`);
-    }
+    if (count < allowed) tightened.push({ file, allowed, count });
   }
 
   if (problems.length > 0) {
@@ -308,6 +322,19 @@ if (process.argv.includes("--update-baseline")) {
       + "If a count went DOWN, re-record the baseline in the same commit.\n",
     );
     process.exit(1);
+  }
+
+  if (tightened.length > 0) {
+    writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
+    console.log("\n[check-sql-column-literals] baseline TIGHTENED — fewer literals than it allowed\n");
+    for (const { file, allowed, count } of tightened.sort((a, b) => a.file.localeCompare(b.file))) {
+      console.log(`  ${file}: allowed ${allowed}, now ${count}`);
+    }
+    console.log(
+      "\nThe baseline has been rewritten downward. COMMIT IT so the allowance cannot be regrown into;\n"
+      + "in CI this write is discarded with the runner, which is why the gate is green and not silent.\n",
+    );
+    process.exit(0);
   }
 
   const total = Object.values(found).reduce((a, b) => a + b, 0);
