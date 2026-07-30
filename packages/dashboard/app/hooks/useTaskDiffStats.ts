@@ -114,6 +114,21 @@ export function useTaskDiffStats(
       return;
     }
 
+    /*
+    FNXC:TaskDiffStats 2026-07-30-05:20 DELIBERATE-LITERAL: sized, not convertible in place.
+    These pick the FETCH MODE, and the distinction is a real role question — a complete column
+    reads the merge diff, a wip/review column reads the worktree diff. But this hook receives a
+    bare `column: string` and holds no flags map, so converting means adding a `columnFlags`
+    parameter and threading it from every caller.
+
+    Adding an OPTIONAL one instead would compile, read as converted, and drop the census by three
+    while changing nothing, because no caller would pass it — the inert half-conversion this
+    program keeps re-finding. On a renamed board the visible cost is precise and worth stating:
+    diff stats silently stop loading, because neither branch matches and the early return fires.
+
+    Cheapest real route: the callers rendering this already sit under TaskCard/TaskDetailModal,
+    both of which resolve per-task flags — pass the resolved role in rather than re-resolving here.
+    */
     const shouldFetchDoneTask = column === "done";
     const shouldFetchActiveTask = column === "in-progress" || column === "in-review";
 
