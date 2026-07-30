@@ -4412,7 +4412,7 @@ export class TaskExecutor {
         return "bounced";
       }
 
-      if (latestTask.column === "todo") {
+      if (latestTask.column === await resolveReboundColumnFor(this.store, taskId)) {
         await this.store.updateTask(taskId, { worktree: worktreePath });
         const pauseLabelBeforeResume = await this.getExecutionPauseLabel();
         if (pauseLabelBeforeResume) {
@@ -11089,7 +11089,7 @@ export class TaskExecutor {
           // dispatch starts clean, log, and return WITHOUT parking failed. The
           // operator-action failure is preserved only for genuinely stranded
           // non-todo columns (e.g. in-review), per FN-6478.
-          if (live.column === "todo") {
+          if (live.column === await resolveReboundColumnFor(this.store, task.id)) {
             this.clearPausedAborted(task.id);
             // FNXC:WorkflowLifecycle 2026-06-20-00:00: FN-6782 leak fix — a task
             // parked back to `todo` must not keep pinning its in-memory worktree
@@ -11156,7 +11156,7 @@ export class TaskExecutor {
                         resumeTask.deletedAt
                         || resumeTask.paused
                         || resumeTask.userPaused
-                        || resumeTask.column !== "todo"
+                        || resumeTask.column !== await resolveReboundColumnFor(this.store, task.id)
                       ) {
                         executorLog.log(
                           `${task.id}: skipping pause-abort auto-continue — task is now ${resumeTask.deletedAt ? "deleted" : resumeTask.paused || resumeTask.userPaused ? "paused" : `in '${resumeTask.column}'`} at retry fire time`,
@@ -16772,7 +16772,7 @@ export class TaskExecutor {
 
         const latestTask = await store.getTask(taskId);
         let latestColumn = latestTask.column;
-        if (latestColumn === "todo") {
+        if (latestColumn === await resolveReboundColumnFor(store, taskId)) {
           await store.logEntry(
             taskId,
             hardPauseActive
