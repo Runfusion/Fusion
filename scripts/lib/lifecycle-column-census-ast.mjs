@@ -242,6 +242,43 @@ builtin IR files hold ~32 of these. Converting one would be nonsense. They are t
 structurally rather than by filename: a definition's object literal also carries `id:` or `kind:`,
 a query's does not.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+A QUERY property is not always a READ, and the difference decides whether it is convertible.
+
+`column:` sits in an options-shaped object for both a source query and a write, so the existing
+definition-vs-query rule (below) cannot separate them — and the resulting single number reads as
+"dead reads to convert" when it is not. Measured while converting this class: of the sites outside
+`self-healing.ts`, the read-shaped ones are convertible and the rest are soft-delete TOMBSTONE writes
+(`.set({ column: "archived", deletedAt, … })`) and synthetic in-memory literals.
+
+Converting a tombstone write would be actively harmful: `getLiveTaskColumn` returns `"archived"` as a
+SENTINEL for any soft-deleted row, so the write and the sentinel must agree. This is the same shape
+as #2808's `recoveryRehome` moves — a class where some members must NOT be fixed, and the count alone
+cannot tell you which.
+
+REPORTED, NOT RATCHETED. `queryByFile` and the `QUERY filters` total stay byte-identical so the pinned
+baseline does not move; this adds a breakdown beside them. A number that misleads is worth splitting
+even when the pinned total must not change.
+*/
+function queryPropertyRole(node) {
+  for (let cursor = node.parent; cursor; cursor = cursor.parent) {
+    if (ts.isCallExpression(cursor)) {
+      const callee = cursor.expression;
+      const name = ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)
+        ? callee.name.text
+        : ts.isIdentifier(callee) ? callee.text : undefined;
+      if (name === undefined) return "other";
+      /* Drizzle's `.set(...)` and `.values(...)` are writes; `listTasks`/`searchTasks` are reads. */
+      if (name === "set" || name === "values" || name === "insert" || name === "update") return "write";
+      if (/^(list|search|find|get|count)/i.test(name)) return "read";
+      return "other";
+    }
+    if (ts.isVariableDeclaration(cursor) || ts.isReturnStatement(cursor)) return "other";
+  }
+  return "other";
+}
+
 function classifyColumnProperty(node) {
   const object = node.parent;
   if (!object || !ts.isObjectLiteralExpression(object)) return "query";
@@ -410,6 +447,7 @@ export function findComparisons(filePath, source) {
         columnId: columnProperty,
         receiver: "column",
         kind: hasDeliberateMarker(sourceFile, node) ? "deliberate" : classifyColumnProperty(node),
+        queryRole: queryPropertyRole(node),
       });
     }
     ts.forEachChild(node, visit);
@@ -452,6 +490,8 @@ export function summarize(findings) {
   const properties = { query: 0, definition: 0 };
   const queryByFile = new Map();
   const queryByColumnId = {};
+  /* Read / write / other split of the query class — reported, never ratcheted. */
+  const queryRoles = { read: 0, write: 0, other: 0 };
 
   for (const finding of findings) {
     if (finding.kind === "query" || finding.kind === "definition") {
@@ -459,6 +499,7 @@ export function summarize(findings) {
       if (finding.kind === "query") {
         queryByColumnId[finding.columnId] = (queryByColumnId[finding.columnId] ?? 0) + 1;
         queryByFile.set(finding.file, (queryByFile.get(finding.file) ?? 0) + 1);
+        queryRoles[finding.queryRole ?? "other"] = (queryRoles[finding.queryRole ?? "other"] ?? 0) + 1;
       }
       continue;
     }
@@ -494,6 +535,7 @@ export function summarize(findings) {
     properties,
     queryByColumnId,
     queryByFile: [...queryByFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    queryRoles,
   };
 }
 
