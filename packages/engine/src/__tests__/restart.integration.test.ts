@@ -1101,8 +1101,47 @@ describe("In-progress task resume after restart", () => {
     }));
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:30:
+  THIS FIXTURE NOW DECLARES THE BOARD IT DEPENDS ON, instead of inheriting a lane by accident.
+
+  It went red on main after #2764 with the FIRST move landing as `in-review` and no re-home at all.
+  Nothing regressed in the product — the test had been passing for the wrong reason. The card sits
+  in `triage`, and recovery only re-homes when the origin is the board's INTAKE lane. It used to
+  resolve lanes through the SYNC `resolvePlannerLanes`, whose selection reader is a no-op under the
+  shipped backend, so it fell through to LEGACY_PLANNER_LANES — where `intake` is literally
+  "triage". The fixture was therefore matching a hardcoded fallback constant, not a declared lane.
+
+  #2764 correctly made the site await the real resolver. The mock selects `builtin:coding`, and
+  U11 MERGED intake and hold onto one Planning column (`todo`), so post-U11 `triage` is not a lane
+  on that board at all and the two-hop correctly collapses.
+
+  The invariant this test is NAMED for is still real and still worth pinning: on a board with a
+  DISTINCT intake lane, completed work stranded there is re-homed along a legal path rather than
+  moved intake -> review, which role adjacency rejects. So the workflow is declared explicitly here
+  with intake separate from hold. That is the only shape under which the two-hop is reachable, and
+  saying so in the fixture means the next vocabulary change fails loudly instead of silently
+  selecting a different code path.
+  */
   it("recoverCompletedTask() legally re-homes a completed triage zombie before review handoff", async () => {
+    /* Distinct intake ("triage") and hold ("todo") — pre-U11 / custom-lineage shape. */
+    const distinctIntakeIr = {
+      version: "v2",
+      id: "custom:distinct-intake",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "triage", label: "Triage", traits: [{ trait: "intake" }] },
+        { id: "todo", label: "Planning", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "in-review", label: "Review", traits: [{ trait: "humanReview" }, { trait: "mergeBlocker" }] },
+        { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+      ],
+    };
     const store = createMockStore();
+    store.getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({ workflowId: "custom:distinct-intake", stepIds: [] });
+    store.getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId: "custom:distinct-intake", stepIds: [] });
+    store.getWorkflowDefinition = vi.fn().mockResolvedValue({ ir: distinctIntakeIr });
     const task = makeTask("FN-TRIAGE-ZOMBIE", "triage", {
       worktree: "/tmp/wt/FN-TRIAGE-ZOMBIE",
       steps: makeSteps("done"),
