@@ -4239,8 +4239,12 @@ export class ProjectEngine {
 
           if (taskOnErr && isVerificationError) {
             const refreshedTaskOnVerificationError = await store.getTask(taskId).catch(() => null);
+            /* FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (batch-engine): the COMPLETE role, resolved for this task.
+   These decide whether a merge already landed — a false negative re-runs or re-reports a merge that
+   succeeded, so on a renamed board the "did it land?" answer was always no. */
+            const verificationCompleteColumn = (await resolveTaskLifecycleColumns(store, taskId))?.complete ?? "done";
             if (
-              refreshedTaskOnVerificationError?.column === "done"
+              refreshedTaskOnVerificationError?.column === verificationCompleteColumn
               && refreshedTaskOnVerificationError.mergeDetails?.mergeConfirmed === true
             ) {
               const commitSha = refreshedTaskOnVerificationError.mergeDetails.commitSha;
@@ -4306,7 +4310,8 @@ export class ProjectEngine {
               */
               try {
                 const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
-                if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
+                const preWriteCompleteColumn = (await resolveTaskLifecycleColumns(store, taskId))?.complete ?? "done";
+                if (checkBeforeWrite?.column === preWriteCompleteColumn && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
                   const commitSha = checkBeforeWrite.mergeDetails.commitSha;
                   const shortSha = typeof commitSha === "string" && commitSha.length > 0
                     ? commitSha.slice(0, 8)
