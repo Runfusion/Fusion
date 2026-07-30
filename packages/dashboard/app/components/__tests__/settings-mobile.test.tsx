@@ -285,9 +285,9 @@ describe("SettingsModal mobile adaptations", () => {
     const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    expect(container.querySelector(".settings-layout")).toBeTruthy();
-    expect(container.querySelector(".settings-sidebar")).toBeTruthy();
-    expect(container.querySelector(".settings-content")).toBeTruthy();
+    expect(document.querySelector(".settings-layout")).toBeTruthy();
+    expect(document.querySelector(".settings-sidebar")).toBeTruthy();
+    expect(document.querySelector(".settings-content")).toBeTruthy();
   });
 
   /*
@@ -307,7 +307,7 @@ describe("SettingsModal mobile adaptations", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const resetBtn = await findByTestId("settings-reset");
-    expect(container.querySelector(".modal-actions")?.contains(resetBtn)).toBe(true);
+    expect(document.querySelector(".modal-actions")?.contains(resetBtn)).toBe(true);
     expect(resetBtn).toHaveTextContent(/^Reset$/);
     expect(resetBtn).not.toHaveTextContent("Reset Settings");
 
@@ -356,8 +356,8 @@ describe("SettingsModal mobile adaptations", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const version = await findByText("v1.2.3");
-    const modalActions = container.querySelector(".modal-actions");
-    const modalHeader = container.querySelector(".modal-header");
+    const modalActions = document.querySelector(".modal-actions");
+    const modalHeader = document.querySelector(".modal-header");
 
     expect(version).toBeTruthy();
     expect(queryByText("Version 1.2.3")).toBeNull();
@@ -373,7 +373,7 @@ describe("SettingsModal mobile adaptations", () => {
     const version = await findByText("Version 1.2.3");
     expect(version).toBeTruthy();
     expect(queryByText("v1.2.3")).toBeNull();
-    expect(container.querySelector(".modal-actions")?.contains(version)).toBe(true);
+    expect(document.querySelector(".modal-actions")?.contains(version)).toBe(true);
   });
 
   it("keeps update-check button clickable from the standalone and embedded mobile footers", async () => {
@@ -382,7 +382,7 @@ describe("SettingsModal mobile adaptations", () => {
     const standalone = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const standaloneActions = standalone.container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
+    const standaloneActions = document.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
     expect(standaloneActions).toBeTruthy();
 
     const standaloneUpdateButton = within(standaloneActions as HTMLElement).getByRole("button", { name: "Check for updates" });
@@ -395,7 +395,7 @@ describe("SettingsModal mobile adaptations", () => {
     const embedded = render(<SettingsView onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const embeddedActions = embedded.container.querySelector(".settings-modal--embedded .modal-actions");
+    const embeddedActions = document.querySelector(".settings-modal--embedded .modal-actions");
     expect(embeddedActions).toBeTruthy();
     const embeddedUpdateButton = within(embeddedActions as HTMLElement).getByRole("button", { name: "Check for updates" });
     await user.click(embeddedUpdateButton);
@@ -409,12 +409,12 @@ describe("SettingsModal mobile adaptations", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
     await waitFor(() => expect(fetchDashboardHealth).toHaveBeenCalled());
 
-    const modalActions = container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
+    const modalActions = document.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
     expect(modalActions).toBeTruthy();
     expect(within(modalActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeTruthy();
     expect(queryByRole("button", { name: "Check for updates" })).toBeNull();
-    expect(container.querySelector(".settings-modal-footer-version")).toBeTruthy();
-    expect(container.querySelector(".settings-update-check")).toBeTruthy();
+    expect(document.querySelector(".settings-modal-footer-version")).toBeTruthy();
+    expect(document.querySelector(".settings-update-check")).toBeTruthy();
   });
 
   it("keeps update-now button reachable from the mobile footer", async () => {
@@ -423,7 +423,7 @@ describe("SettingsModal mobile adaptations", () => {
     const { container, findByRole, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const modalActions = container.querySelector(".modal-actions");
+    const modalActions = document.querySelector(".modal-actions");
     expect(modalActions).toBeTruthy();
 
     await user.click(within(modalActions as HTMLElement).getByRole("button", { name: "Check for updates" }));
@@ -434,7 +434,7 @@ describe("SettingsModal mobile adaptations", () => {
     full-width row directly above it — inside the rail it clipped itself and pushed Import/Export/Reset/Close
     off-screen. Assert both halves of that invariant: banner outside the rail, banner present in the footer row.
     */
-    const updateRow = container.querySelector(".settings-modal-footer-update-row");
+    const updateRow = document.querySelector(".settings-modal-footer-update-row");
     expect(updateRow).toBeTruthy();
     expect((updateRow as HTMLElement).contains(updateNow)).toBe(true);
     expect((modalActions as HTMLElement).contains(updateNow)).toBe(false);
@@ -451,15 +451,15 @@ describe("SettingsModal mobile adaptations", () => {
     const { container, findByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const modalActions = container.querySelector(".modal-actions");
+    const modalActions = document.querySelector(".modal-actions");
     expect(modalActions).toBeTruthy();
 
     await user.click(within(modalActions as HTMLElement).getByRole("button", { name: "Check for updates" }));
     const updateNow = await findByRole("button", { name: "Update now" });
 
-    expect(container.querySelector(".settings-modal-footer-update-row")).toBeNull();
+    expect(document.querySelector(".settings-modal-footer-update-row")).toBeNull();
     expect((modalActions as HTMLElement).contains(updateNow)).toBe(true);
-    expect(container.querySelector(".settings-update-check .settings-update-result")).toBeTruthy();
+    expect(document.querySelector(".settings-update-check .settings-update-result")).toBeTruthy();
   });
 
   it("preserves the mobile section picker accessible name without rendering a visible label", async () => {
@@ -470,7 +470,7 @@ describe("SettingsModal mobile adaptations", () => {
     const picker = getByLabelText("Settings Section") as HTMLSelectElement;
     expect(picker.id).toBe("settings-mobile-section");
     expect(picker.getAttribute("aria-label")).toBe("Settings Section");
-    expect(container.querySelector('label[for="settings-mobile-section"]')).toBeNull();
+    expect(document.querySelector('label[for="settings-mobile-section"]')).toBeNull();
     expect(queryByText("Settings Section", { selector: "label" })).toBeNull();
     expect(picker.closest(".settings-mobile-section-picker")?.querySelector(".settings-scope-icon")).toBeNull();
   });
@@ -500,7 +500,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     await user.selectOptions(picker, "cli-binary");
     expect(await findByText(/Installing the global CLI lets you run fn and fusion/)).toBeTruthy();
-    expect(container.querySelector(".cli-binary-panel")).toBeTruthy();
+    expect(document.querySelector(".cli-binary-panel")).toBeTruthy();
   });
 
   it("excludes research sections from mobile picker when researchView is disabled", async () => {
@@ -663,9 +663,9 @@ describe("SettingsModal mobile adaptations", () => {
     const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const navItems = container.querySelectorAll(".settings-nav-item");
+    const navItems = document.querySelectorAll(".settings-nav-item");
     expect(navItems.length).toBeGreaterThan(0);
-    expect(container.querySelector(".settings-nav-item.active")).toBeTruthy();
+    expect(document.querySelector(".settings-nav-item.active")).toBeTruthy();
   });
 
   it("renders form controls inside settings-content for 16px mobile targeting", async () => {
@@ -683,7 +683,7 @@ describe("SettingsModal mobile adaptations", () => {
     const generalTabs = await findAllByText("General · Project");
     await user.click(generalTabs[0]);
 
-    const controls = container.querySelectorAll(".settings-content input, .settings-content select, .settings-content textarea");
+    const controls = document.querySelectorAll(".settings-content input, .settings-content select, .settings-content textarea");
     expect(controls.length).toBeGreaterThan(0);
   });
 
@@ -697,19 +697,19 @@ describe("SettingsModal mobile adaptations", () => {
     const { container, getByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
 
     await user.click(getByRole("button", { name: /Appearance$/ }));
 
     // The banner is gone for good — it asserted a single scope for a section
     // that genuinely mixes them.
-    expect(container.querySelector(".settings-scope-banner")).toBeNull();
-    expect(container.querySelector(".settings-scope-project")).toBeNull();
-    expect(container.querySelector(".settings-scope-global")).toBeNull();
+    expect(document.querySelector(".settings-scope-banner")).toBeNull();
+    expect(document.querySelector(".settings-scope-project")).toBeNull();
+    expect(document.querySelector(".settings-scope-global")).toBeNull();
 
     // Appearance is exactly the mixed case: global theme controls above,
     // project-scoped task-presentation toggles below, each badged for itself.
-    const badges = container.querySelectorAll('[data-testid="settings-field-row-scope"]');
+    const badges = document.querySelectorAll('[data-testid="settings-field-row-scope"]');
     expect(badges.length).toBeGreaterThan(0);
     expect(Array.from(badges).map((b) => b.textContent)).toContain("project");
   });
@@ -741,7 +741,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     expect(await findByText("ntfy")).toBeTruthy();
     expect(await findByText("Webhook")).toBeTruthy();
-    expect(container.querySelectorAll(".notification-provider-card").length).toBeGreaterThan(1);
+    expect(document.querySelectorAll(".notification-provider-card").length).toBeGreaterThan(1);
   });
 
   it("keeps the GitHub star count visible in the mobile Settings header", async () => {
@@ -755,7 +755,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     const modalRender = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-    const modalCount = modalRender.container.querySelector(".settings-github-star-btn__count");
+    const modalCount = document.querySelector(".settings-github-star-btn__count");
     expect(modalCount).toBeTruthy();
     expect(modalCount?.textContent).toBe("1.2k");
     modalRender.unmount();
@@ -763,7 +763,7 @@ describe("SettingsModal mobile adaptations", () => {
     vi.mocked(fetchSettings).mockClear();
     const embeddedRender = render(<SettingsView onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-    const embeddedCount = embeddedRender.container.querySelector(".settings-github-star-btn__count");
+    const embeddedCount = document.querySelector(".settings-github-star-btn__count");
     expect(embeddedCount).toBeTruthy();
     expect(embeddedCount?.textContent).toBe("1.2k");
     embeddedRender.unmount();
@@ -786,10 +786,10 @@ describe("SettingsModal mobile adaptations", () => {
     const renderResult = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
     await waitFor(() => expect(githubFetch).toHaveBeenCalledTimes(1));
-    expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("999");
+    expect(document.querySelector(".settings-github-star-btn__count")?.textContent).toBe("999");
 
     resolveGitHubFetch?.({ ok: true, json: async () => ({ stargazers_count: 123 }) } as Response);
-    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("123"));
+    await waitFor(() => expect(document.querySelector(".settings-github-star-btn__count")?.textContent).toBe("123"));
     renderResult.unmount();
   });
 
@@ -812,7 +812,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     setDocumentHidden(false);
     document.dispatchEvent(new Event("visibilitychange"));
-    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("456"));
+    await waitFor(() => expect(document.querySelector(".settings-github-star-btn__count")?.textContent).toBe("456"));
     expect(githubFetch).toHaveBeenCalledTimes(1);
     renderResult.unmount();
   });
@@ -1070,7 +1070,7 @@ describe("SettingsModal mobile adaptations", () => {
       expect(getByTestId("settings-search-input")).toBeTruthy();
       expect(queryByLabelText("Show search")).toBeNull();
       expect(queryByLabelText("Hide search")).toBeNull();
-      expect(container.querySelector(".settings-mobile-section-picker .settings-search-toggle")).toBeNull();
+      expect(document.querySelector(".settings-mobile-section-picker .settings-search-toggle")).toBeNull();
     });
 
     it("keeps the inline toggle reachable when mobile search has no section results", async () => {
@@ -1164,8 +1164,8 @@ describe("SettingsModal mobile adaptations", () => {
       await user.clear(getByTestId("settings-search-input"));
       await user.type(getByTestId("settings-search-input"), "zzzzzz-no-match");
       await findByText("No sections match this search.");
-      expect(container.querySelector("#settings-mobile-section")).toBeNull();
-      expect(container.querySelector(".settings-mobile-section-picker optgroup")).toBeNull();
+      expect(document.querySelector("#settings-mobile-section")).toBeNull();
+      expect(document.querySelector(".settings-mobile-section-picker optgroup")).toBeNull();
     });
 
     it("leaves desktop navigation as the sidebar without a mobile picker", async () => {
@@ -1173,8 +1173,8 @@ describe("SettingsModal mobile adaptations", () => {
       const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      expect(container.querySelector(".settings-sidebar")).toBeTruthy();
-      expect(container.querySelector(".settings-mobile-section-picker")).toBeNull();
+      expect(document.querySelector(".settings-sidebar")).toBeTruthy();
+      expect(document.querySelector(".settings-mobile-section-picker")).toBeNull();
     });
   });
 });
