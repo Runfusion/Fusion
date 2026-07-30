@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, columnsWithFlag, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -1839,6 +1839,42 @@ async function resolveCompleteColumnFor(store: TaskStore, taskId: string): Promi
   }
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (batch-engine — the executor's task:moved handler is SYNC):
+Mirrors `scheduler.ts`'s `resolveTaskParkedColumnsSync`: the move handler is a synchronous listener, so a
+promise-returning resolver cannot be used inside it without turning the whole handler fire-and-forget and
+reordering it against every other `task:moved` subscriber. `store.resolveTaskWorkflowIrSync` is the sync
+reader that makes conversion possible at all here.
+
+Membership for wip/archived, single id for hold — matching the call sites. Legacy ids unioned in because
+`resolveTaskWorkflowIrSync` yields the BUILT-IN IR for a missing or corrupt workflow rather than throwing,
+so without the union a degraded renamed board would resolve sets excluding its own lanes.
+*/
+function resolveMoveLanesSync(store: TaskStore, taskId: string): {
+  hold: string;
+  wip: ReadonlySet<string>;
+  archived: ReadonlySet<string>;
+} {
+  const legacy = { hold: "todo", wip: new Set(["in-progress"]), archived: new Set(["archived"]) };
+  try {
+    const ir = store.resolveTaskWorkflowIrSync(taskId);
+    if (!ir) return legacy;
+    const lifecycle = resolveLifecycleColumns(ir);
+    const withLegacy = (flag: Parameters<typeof columnsWithFlag>[1], fallback: string) => {
+      const out = new Set<string>([fallback]);
+      for (const id of columnsWithFlag(ir, flag)) out.add(id);
+      return out;
+    };
+    return {
+      hold: lifecycle?.hold ?? "todo",
+      wip: withLegacy("countsTowardWip", "in-progress"),
+      archived: withLegacy("archived", "archived"),
+    };
+  } catch {
+    return legacy;
+  }
+}
+
 async function resolveReboundColumnFor(store: TaskStore, taskId: string): Promise<string> {
   try {
     return resolveReboundTarget(await resolveWorkflowIrForTask(store, taskId)) ?? "todo";
@@ -3487,7 +3523,8 @@ export class TaskExecutor {
 
     store.on("task:moved", ({ task, from, to, source }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
-      if (to === "in-progress") {
+      const moveLanes = resolveMoveLanesSync(store, task.id);
+      if (moveLanes.wip.has(to)) {
         this.userCanceledTaskIds.delete(task.id);
         if (this.recoveringCompleted.has(task.id)) {
           executorLog.debug(`[event:task:moved] Skipping execute() for ${task.id} — completed-task recovery in progress`);
@@ -3511,7 +3548,7 @@ export class TaskExecutor {
         })().catch((err) =>
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
-      } else if (to === "archived") {
+      } else if (moveLanes.archived.has(to)) {
         /*
         FNXC:WorkflowLifecycle 2026-07-09-00:05:
         Archived is terminal, so it must release every active-session registry entry the
@@ -3562,7 +3599,7 @@ export class TaskExecutor {
             userCanceled: source === "user",
           }).then(async () => { await this.releasePreExecutionWorktree(task.id, `moved to ${to}`); }),
         );
-      } else if (from === "in-progress") {
+      } else if (moveLanes.wip.has(from)) {
         if (this.workflowLifecycleMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
           executorLog.log(
             `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
@@ -3572,7 +3609,8 @@ export class TaskExecutor {
         this.trackTaskDisposal(
           task.id,
           this.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
-            userCanceled: source === "user" && to === "todo",
+            /* AGENTS' Move-Task contract: a USER move wip -> hold is a hard cancel. Both lanes resolved. */
+            userCanceled: source === "user" && to === moveLanes.hold,
           }),
         );
       }
@@ -16017,6 +16055,11 @@ export class TaskExecutor {
       return {
         ...record,
         status: to,
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:20 DELIBERATE-LITERAL:
+        `to` here is a RECORD STATUS, not a column — the very next line tests it against "addressed" and
+        "failed". The census counts it because the string matches a column id; there is no lane to resolve.
+        */
         startedAt: to === "in-progress" ? now : record.startedAt,
         completedAt: to === "addressed" || to === "failed" ? now : record.completedAt,
         error: to === "addressed" ? undefined : record.error,
