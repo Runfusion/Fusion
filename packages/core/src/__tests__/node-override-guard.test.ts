@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-22:35 (batch-core):
@@ -16,6 +16,61 @@ The guard is synchronous by design, so the lanes are injected — and both produ
 (`branch-and-pr-entities.ts` and `task-update.ts`) now resolve and pass them, which is what keeps
 this from being an option only tests supply.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (#2821 review — greptile):
+
+THE RESOLVER'S OWN CONTRACT, which the guard-level cases above cannot reach.
+
+Those pass the sets in by hand, so they pin what `validateNodeOverrideChange` does with a set and say
+nothing about how the set is BUILT. The floor bug lived in the builder: seeding the legacy ids and
+adding resolved lanes on top meant a v2 board that declares `in-progress` as an ordinary untraited
+column still had it counted as WIP. Mutating the resolver back to a floor left every guard-level case
+green — which is exactly why this suite needs a resolver-level one.
+*/
+describe("resolveNodeOverrideLanes builds the set from traits, with legacy as an ELSE", () => {
+  const storeFor = (ir: unknown) => {
+    const selection = { workflowId: "wf", stepIds: [] as string[] };
+    return {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => (ir === undefined ? undefined : { id: "wf", ir }),
+    } as never;
+  };
+
+  it("EXCLUDES a legacy-named column the board declares without the trait", async () => {
+    const ir = {
+      version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+      columns: [
+        { id: "in-progress", name: "Not actually wip", traits: [] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const lanes = await resolveNodeOverrideLanes(storeFor(ir), "FN-1");
+
+    expect([...lanes.wipColumns]).toEqual(["building"]);
+    expect(lanes.wipColumns.has("in-progress")).toBe(false);
+    expect([...lanes.completeColumns]).toEqual(["shipped"]);
+  });
+
+  it("falls back to the legacy ids for a V1-UPGRADED board that traits nothing", async () => {
+    const v1 = {
+      version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+      columns: ["todo", "in-progress", "done"].map((id) => ({ id, name: id, traits: [] })),
+    };
+    const lanes = await resolveNodeOverrideLanes(storeFor(v1), "FN-1");
+
+    expect([...lanes.wipColumns]).toEqual(["in-progress"]);
+    expect([...lanes.completeColumns]).toEqual(["done"]);
+  });
+
+  it("falls back to the legacy ids when the workflow cannot be resolved", async () => {
+    const lanes = await resolveNodeOverrideLanes(storeFor(undefined), "FN-1");
+    expect([...lanes.wipColumns]).toEqual(["in-progress"]);
+    expect([...lanes.completeColumns]).toEqual(["done"]);
+  });
+});
+
 describe("node override lanes are resolved, not named", () => {
   const RENAMED = { wipColumns: new Set(["building"]), completeColumns: new Set(["shipped"]) };
 
@@ -31,6 +86,27 @@ describe("node override lanes are resolved, not named", () => {
     /* The paired negative: resolving lanes must not turn the guard into a blanket refusal. */
     const result = validateNodeOverrideChange(
       { id: "FN-2", column: "backlog" } as never, "some-node", RENAMED,
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (#2821 review — greptile):
+  A LEGACY NAME THE BOARD DOES NOT TRAIT IS NOT THAT ROLE.
+
+  The first version SEEDED the legacy ids and added the resolved lanes on top, so a v2 board that
+  declares `in-progress` as an ordinary untraited column still had it treated as WIP — blocking a
+  mid-flight override that the board's own traits say is fine. The fallback has to be an ELSE, not a
+  floor.
+
+  This drives the resolved sets directly (the guard is synchronous and takes them), so it pins the
+  contract the resolver must honour.
+  */
+  it("ALLOWS an override for a legacy-named column the board does not trait as wip", () => {
+    const result = validateNodeOverrideChange(
+      { id: "FN-4", column: "in-progress" } as never,
+      "some-node",
+      { wipColumns: new Set(["building"]), completeColumns: new Set(["shipped"]) },
     );
     expect(result.allowed).toBe(true);
   });

@@ -14,16 +14,31 @@ export async function resolveNodeOverrideLanes(
   store: Parameters<typeof resolveWorkflowIrForTask>[0],
   taskId: string,
 ): Promise<{ wipColumns: Set<string>; completeColumns: Set<string> }> {
-  const wipColumns = new Set<string>(["in-progress"]);
-  const completeColumns = new Set<string>(["done"]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:05 (#2821 review — greptile):
+  THE LEGACY IDS ARE A FALLBACK, NOT A FLOOR. My first version SEEDED them and then added the
+  resolved lanes, so a v2 board that declares `in-progress` or `done` as an ORDINARY untraited column
+  still had them treated as wip/complete — blocking a valid mid-flight override in the first and
+  refusing a terminal override in the second. A conversion that widens a guard onto columns the board
+  says are not those roles is a regression, not a fallback.
+
+  Three states, the same split this program settled on elsewhere:
+    resolved + traits expressed -> trust the resolved lanes ALONE.
+    resolved + no trait anywhere -> a v1 upgrade (`synthesizeDefaultColumns` emits `traits: []`), so
+                                    the legacy ids are the only vocabulary that exists.
+    unresolvable                 -> legacy ids; today's behaviour.
+  */
+  const legacy = { wipColumns: new Set<string>(["in-progress"]), completeColumns: new Set<string>(["done"]) };
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
-    if (ir && declaresAnyLifecycleTrait(ir)) {
-      for (const id of columnsWithFlag(ir, "countsTowardWip")) wipColumns.add(id);
-      for (const id of columnsWithFlag(ir, "complete")) completeColumns.add(id);
-    }
-  } catch { /* degraded: the legacy ids */ }
-  return { wipColumns, completeColumns };
+    if (!ir || !declaresAnyLifecycleTrait(ir)) return legacy;
+    return {
+      wipColumns: new Set(columnsWithFlag(ir, "countsTowardWip")),
+      completeColumns: new Set(columnsWithFlag(ir, "complete")),
+    };
+  } catch {
+    return legacy;
+  }
 }
 export type NodeOverrideBlockReason = "task-in-progress" | "terminal-without-merge-proof";
 
