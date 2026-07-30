@@ -56,6 +56,8 @@ jobs:
       # return through while this gate stayed green. ~2s over ~1950 files.
       - name: Lifecycle-column ratchet
         run: pnpm check:lifecycle-columns
+      - name: SQL-column ratchet
+        run: pnpm check:sql-column-literals
 
   typecheck:
     name: Typecheck
