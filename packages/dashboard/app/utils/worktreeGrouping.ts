@@ -1,6 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getPathBasename } from "./pathDisplay";
-import { isHoldColumnRole } from "@fusion/core";
+import { isHoldColumnRole } from "./columnRoles";
 
 export interface WorktreeGroupData {
   label: string;

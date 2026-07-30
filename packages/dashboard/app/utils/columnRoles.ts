@@ -63,3 +63,19 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
     ? Boolean(flags.intake || flags.hold)
     : LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS.has(columnId);
 }
+
+/**
+ * Does this column play the HOLD role — a lane a card WAITS in rather than works in?
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (U12 — worktree upcoming-work list):
+ * Distinct from {@link isPreImplementationColumnRole}, whose degraded id set is `{todo, triage}`.
+ * This one degrades to `todo` ALONE, because `triage` was the intake lane and never the
+ * wait-for-capacity lane — listing an intake card as "upcoming work" in the worktree view would
+ * report a card that has no plan yet as ready to run.
+ *
+ * Same shape, different degraded answer — the asymmetry U11 verified for
+ * `isPreExecutionHoldColumn` and this file already documents elsewhere.
+ */
+export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return flags ? flags.hold === true : columnId === "todo";
+}
