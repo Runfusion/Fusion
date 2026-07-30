@@ -44,6 +44,18 @@ function restoreClipboardMocks() {
   Object.defineProperty(document, "execCommand", { configurable: true, value: originalExecCommand });
 }
 
+/*
+FNXC:Secrets 2026-07-30-10:10:
+Read the DECLARED stroke for `.secrets-action-icon` out of the real stylesheet. jsdom cannot resolve
+`currentColor`, so the declaration is the only place the paint source is observable in this
+environment.
+*/
+function secretsActionIconStrokeDeclaration(): string | undefined {
+  const css = loadAllAppCss();
+  const rule = /\.secrets-action-icon\s*\{([^}]*)\}/.exec(css);
+  return /stroke:\s*([^;]+);/.exec(rule?.[1] ?? "")?.[1]?.trim();
+}
+
 function expectVisibleActionIcon(button: HTMLElement) {
   const svg = button.querySelector("svg");
   expect(svg).not.toBeNull();
@@ -55,16 +67,24 @@ function expectVisibleActionIcon(button: HTMLElement) {
   expect(svgStyle.display).toBe("block");
   expect(svgStyle.stroke.toLowerCase()).not.toBe("none");
   /*
-  FNXC:Secrets 2026-07-30-09:10:
-  Compare the RESOLVED colour, not `stroke`. SecretsView.css:227 sets `stroke: currentColor`, and
-  jsdom does not resolve `currentColor` — `getComputedStyle().stroke` came back
-  `rgba(0, 0, 0, 0)` for every icon, which also equals the icon button's transparent background, so
-  the old comparison was two unresolved values matching each other rather than a visibility check.
+  FNXC:Secrets 2026-07-30-10:10 (greptile P2 — the colour check alone was not enough):
+  Two halves, because neither is sufficient on its own and jsdom cannot resolve the paint directly.
 
-  `currentColor` IS the element's `color`, which jsdom does compute, so this asserts the same
-  invariant (the icon is not painted in the button's own background colour) through a property that
-  actually resolves. True pixel visibility is covered by the e2e screenshot suite.
+  `SecretsView.css:227` declares `stroke: currentColor`, and jsdom does NOT resolve `currentColor` —
+  `getComputedStyle().stroke` returns `rgba(0, 0, 0, 0)` for every icon. That is also the icon
+  button's transparent background, so the ORIGINAL assertion (`stroke !== backgroundColor`) was two
+  unresolved values matching each other rather than a visibility check.
+
+  Comparing the resolved `color` fixes that, but on its own it would still pass if the rule regressed
+  to `stroke: transparent`: the paint would be invisible while `color` stayed fine and
+  `stroke !== "none"` also held (transparent is not none). So the paint SOURCE is asserted from the
+  stylesheet — the rule must still take its stroke from `currentColor` — and the resolved `color`
+  must differ from the button background. Together: the icon is painted in `color`, and `color` is
+  not the button's own background.
+
+  True pixel visibility remains the e2e screenshot suite's job.
   */
+  expect(secretsActionIconStrokeDeclaration()).toBe("currentColor");
   expect(svgStyle.color).not.toBe(buttonStyle.backgroundColor);
 }
 
