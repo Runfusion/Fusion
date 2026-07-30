@@ -340,7 +340,19 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
     : (await Promise.all(staleRows.map(async (row) => {
         if (row.column === null) return row;
         const reviewLanes = await resolveReviewColumnsFor(row.taskId).catch(() => undefined);
-        if (reviewLanes === undefined) return row;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2819 review — greptile,
+        "resolution failures delete valid rows"):
+        A FAILED RESOLUTION SPARES THE ROW. The first pass returned the row here, i.e. deleted it —
+        which reintroduced the exact bug this sweep fix exists to remove, just behind a narrower
+        trigger: any transient workflow-read failure silently dropped a valid card out of the merge
+        queue, and the audit event claimed `reason: "not-in-review"` for a task sitting in review.
+
+        Sparing is safe in a way deleting is not. The lease predicates resolve the same lanes, so a
+        row spared here but genuinely stale is still refused a lease, and the next acquire re-runs
+        this sweep and removes it once resolution succeeds. Deleting is unrecoverable.
+        */
+        if (reviewLanes === undefined) return undefined;
         return reviewLanes.has(row.column) ? undefined : row;
       }))).filter((row): row is typeof staleRows[number] => row !== undefined);
 

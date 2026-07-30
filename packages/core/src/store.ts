@@ -1437,8 +1437,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       The message names the lanes the check actually used, keeping #2709's fix: telling an operator to
       move to a column their board does not have is worse than refusing.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (#2819 review — the same empty-set hole, found by
+      sweeping every `resolveReviewColumns` call site rather than only the one the reviewer named):
+      A v1-upgraded board resolves to an EMPTY review set while its `in-review` column plainly exists,
+      so this guard would refuse the operator's bypass on every pre-v2 project with the unhelpful
+      message "must be in a review lane".
+      */
       const reviewIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
-      const reviewColumns = reviewIr === undefined ? ["in-review"] : resolveReviewColumns(reviewIr);
+      const reviewColumns = reviewIr === undefined || !declaresAnyLifecycleTrait(reviewIr)
+        ? ["in-review"]
+        : resolveReviewColumns(reviewIr);
       if (!reviewColumns.includes(task.column)) {
         const named = reviewColumns.length > 0 ? reviewColumns.map((c: string) => `'${c}'`).join(" or ") : "a review lane";
         throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in ${named}`);
