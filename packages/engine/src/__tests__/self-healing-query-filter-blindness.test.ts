@@ -118,6 +118,7 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    getAgentLogs: vi.fn(async () => []),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -931,5 +932,41 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanOnlyScopeViolations();
 
     expect(getAgentLogs).toHaveBeenCalledWith("FN-ORPHAN", expect.anything());
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (closing the gap the case above declared):
+  The candidacy assertion left the getTaskHardMergeBlocker wiring in the same sweep unproven, which review
+  correctly called out. The blocker sits behind two git-backed calls — but both are PRIVATE INSTANCE
+  METHODS, so stubbing them reaches the guard without a git fixture, the same technique
+  `executor-worktree-owner-renamed-lanes.test.ts` uses for `findActiveWorktreeOwner`.
+
+  The differential is the WRITE the sweep makes: blocker clear -> `status: null` (recovered); blocker
+  fires -> `status: "failed"` with a "finalization blocked" error. Dropping `{ reviewColumns }` flips one
+  into the other, so the assertion cannot pass with the wiring removed.
+
+  REVERT CHECK, measured: with `{ reviewColumns: ... }` dropped, this fails — the card is parked failed
+  because the blocker reads its renamed lane as not-a-review-lane.
+  */
+  it("the orphan-only blocker judges the card against ITS OWN review lanes", async () => {
+    const failed = {
+      ...shippedCard(),
+      id: "FN-ORPHAN-BLK",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      error: "File-scope invariant violation for FN-ORPHAN-BLK: staged files [packages/b/x.ts] have zero overlap with declared File Scope [packages/a/**].",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([failed]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /* Stubbed so the guard is reachable; see header. */
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main", source: "settings" })),
+      findAlreadyMergedTaskCommit: vi.fn(async () => ({ sha: "abcdef1234567890" })),
+    });
+
+    await manager.recoverOrphanOnlyScopeViolations();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-ORPHAN-BLK", expect.objectContaining({ status: null }));
   });
 });
