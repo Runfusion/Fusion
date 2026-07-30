@@ -421,7 +421,7 @@ and visited purple clash with dark themes and violate the dashboard token system
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
   /*
-  FNXC:MailboxLinks 2026-07-31-02:10:
+  FNXC:MailboxLinks 2026-07-30-22:10:
   `--space-xs` (4px), not `--space-2xs`. That token does not exist — the scale is xs/sm/md/lg/xl/2xl —
   so the declaration was INVALID and the browser dropped it, leaving the underline at its default
   offset. An undefined custom property fails silently at the property level, which is why a

@@ -975,7 +975,7 @@ describe("fetchGlobalConcurrency", () => {
   });
 
   /*
-  FNXC:CapacityModel 2026-07-31-02:40:
+  FNXC:CapacityModel 2026-07-30-22:40:
   The "updates global concurrency state" case is DELETED with the client function it exercised.
   `updateGlobalConcurrency` PUT to `/api/global-concurrency`, a route removed when the machine-wide cap
   went (capacity is two numbers PER PROJECT), so the client could only call an endpoint that no longer

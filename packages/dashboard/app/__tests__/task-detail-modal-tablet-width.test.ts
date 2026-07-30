@@ -9,7 +9,7 @@ describe("task detail modal tablet width (FN-5599, FN-6500)", () => {
   );
 
   /*
-  FNXC:TaskDetailGeometry 2026-07-31-03:10 (re-pointed after FN-8621, not appeased):
+  FNXC:TaskDetailGeometry 2026-07-30-23:10 (re-pointed after FN-8621, not appeased):
   This pinned `width: min(95vw, 800px)` on the desktop base rule. `43160a7aae` (FN-8621, migrate
   complex modals to FloatingWindow) deliberately removed it: the modal now FILLS its FloatingWindow
   host, which owns outer geometry, so the base rule is `width: 100%; height: 100%`.
@@ -50,7 +50,7 @@ describe("task detail modal tablet width (FN-5599, FN-6500)", () => {
   });
 
   /*
-  FNXC:TaskDetailGeometry 2026-07-31-03:10 (DELETED with the feature they pinned):
+  FNXC:TaskDetailGeometry 2026-07-30-23:10 (DELETED with the feature they pinned):
   Two cases were removed here, not rewritten:
 
     "keeps the tablet touch resize grip out of task-detail layout padding"

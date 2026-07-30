@@ -123,7 +123,7 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
   ];
 
   /*
-  FNXC:CapacityModel 2026-07-31-04:20 (coderabbit #2652 — AST, because the regex could be walked around):
+  FNXC:CapacityModel 2026-07-30-23:20 (coderabbit #2652 — AST, because the regex could be walked around):
   This scan was line-based, and two shapes bypassed it while leaving the suite green:
 
       const limit = settings.maxWorktrees;   // read and bound on DIFFERENT lines
