@@ -284,23 +284,29 @@ describe("executor tool step numbering is 0-based", () => {
       expect.objectContaining({ agentId: "executor" }),
     );
     /*
-    FNXC:ReviewHandoff 2026-07-30-10:15:
-    The handoff now passes a THIRD argument (workflow move provenance), and a two-argument
-    `toHaveBeenCalledWith` demands an exact match — so this failed on the extra options
-    object even though the card moved to the review column correctly.
+    FNXC:ReviewHandoff 2026-07-30-11:00 (#2646 review — greptile P2):
+    ISOLATE the handoff call instead of matching any of them. This flow records TWO
+    moveTask calls, so `toHaveBeenCalledWith(id, "in-review", expect.anything())` is
+    satisfied by the workflow-boundary move even if the review handoff itself regresses —
+    the review was right, and it is the same objection I had already raised against my own
+    first attempt without then fixing it properly.
 
-    Accepting the options with `expect.anything()` rather than pinning their contents. I
-    tried the stronger form first — asserting `workflowMoveSource: "workflow-graph"` and
-    `workflowMoveMetadata.nodeId` — and could NOT attribute it: five separate mutations
-    (the boundary hook's provenance, the review-handoff reason, the node id, and both
-    moveTask call sites) each left it green. `toHaveBeenCalledWith` matches ANY recorded
-    call and this flow makes two, so the specific-looking assertion was being satisfied by
-    whichever call happened to fit rather than by the provenance it named.
+    The handoff call is identifiable by its own provenance marker
+    (`workflowMoveMetadata.reason === "workflow-review-handoff"`, set at
+    workflow-node-handlers.ts's `review-handoff` seam), so select THAT call and assert its
+    target column. Now a regression has nowhere to hide: drop the handoff and no such call
+    exists; retarget it and the column assertion fails.
 
-    An assertion I cannot make fail is not evidence, so this pins only what it can prove:
-    the card reaches the review column. Provenance is worth asserting somewhere it can be
-    attributed to one call — that needs a single-call seam, not this suite.
+    Attribution verified by mutation, which the previous version could not manage —
+    changing the seam's `reason` and changing its target column each fail this test.
     */
-    expect(store.moveTask).toHaveBeenCalledWith("FN-6607-P", "in-review", expect.anything());
+    const handoffCalls = (store.moveTask as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) =>
+        (call[2] as { workflowMoveMetadata?: { reason?: string } } | undefined)
+          ?.workflowMoveMetadata?.reason === "workflow-review-handoff",
+    );
+    expect(handoffCalls).toHaveLength(1);
+    expect(handoffCalls[0]?.[0]).toBe("FN-6607-P");
+    expect(handoffCalls[0]?.[1]).toBe("in-review");
   });
 });
