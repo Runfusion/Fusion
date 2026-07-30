@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, resolveWorkflowIrForTask, resolveTaskLifecycleColumns, resolveColumnFlags, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, isArchivedColumnRole, type WorkflowIr, type WorkflowIrColumn, type TraitFlags, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -51,6 +51,29 @@ function getResearchSourceContext(sourceMetadata: unknown): string | undefined {
   return typeof runId === "string" && runId.length > 0 ? runId : undefined;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:15 (fleet — CLI task command lanes):
+Resolve ONE task's column trait flags, for the role questions this file asks.
+
+Every caller below previously asked its question with a column-id literal, so each was wrong in the
+same way on a renamed board. Fail-soft is deliberate and uniform: on an unresolvable workflow this
+returns undefined and the role helpers fall back to their documented legacy-id behaviour, so the CLI
+degrades to today's answer rather than to a confidently wrong one.
+*/
+async function resolveTaskColumnFlags(
+  store: Parameters<typeof resolveWorkflowIrForTask>[0],
+  task: { id: string; column: string },
+  cache?: Map<string, WorkflowIr>,
+): Promise<TraitFlags | undefined> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, task.id, cache);
+    const column = (ir as { columns?: WorkflowIrColumn[] }).columns?.find((c) => c.id === task.column);
+    return column ? resolveColumnFlags(column) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["getTask"]>>, store: TaskStore): Promise<string | null> {
   const lineage = getTaskDuplicateLineage(task);
   if (lineage.length === 0) return null;
@@ -58,7 +81,11 @@ async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["ge
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      return linked.column === "archived" ? `${id} (archived)` : id;
+      /* The label must read the ARCHIVED role, or a renamed archive silently loses its "(archived)"
+         suffix and the operator cannot tell a filed-away duplicate from a live one. */
+      return isArchivedColumnRole(await resolveTaskColumnFlags(store, linked), linked.column)
+        ? `${id} (archived)`
+        : id;
     } catch {
       return id;
     }
@@ -335,12 +362,35 @@ async function runCliNearDuplicateCheck(args: {
     }
     if (!args.bypass) {
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const taskCandidates = (await args.store.listTasks({ slim: false, includeArchived: false }))
-        .filter((task) => task.column !== "done")
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:15:
+      Completed work is excluded from near-duplicate candidates by its COMPLETE role.
+
+      Keyed on `!== "done"`, a renamed board never excluded anything, so every finished task stayed
+      a duplicate candidate — the guard then flagged new work as a duplicate of something already
+      shipped, which is the false positive most likely to make an operator stop trusting it.
+
+      The recency filter runs FIRST so the per-task workflow resolution is bounded by the 7-day
+      window rather than by the whole board, and the slice still caps it at 200.
+      */
+      const recentTasks = (await args.store.listTasks({ slim: false, includeArchived: false }))
         .filter((task) => {
           const createdAtMs = Date.parse(task.createdAt);
           return Number.isFinite(createdAtMs) && createdAtMs >= cutoff;
-        })
+        });
+      const duplicateScanIrCache = new Map<string, WorkflowIr>();
+      const completeByTaskId = new Map<string, boolean>();
+      for (const task of recentTasks) {
+        completeByTaskId.set(
+          task.id,
+          isCompleteColumnRole(
+            await resolveTaskColumnFlags(args.store, task, duplicateScanIrCache),
+            task.column,
+          ),
+        );
+      }
+      const taskCandidates = recentTasks
+        .filter((task) => completeByTaskId.get(task.id) !== true)
         .slice(0, 200)
         .map((task) => ({
           id: task.id,
@@ -607,7 +657,7 @@ export async function runTaskList(projectName?: string) {
     workflow-resolved columns, that difference becomes live and the right answer is a
     trait lookup, not this.
 
-    NOT claimed as trait-resolved, and the deeper bug is left alone: because the loop
+    DELIBERATE-LITERAL. NOT claimed as trait-resolved, and the deeper bug is left alone: because the loop
     iterates the legacy enum, a card in a workflow-renamed column is not rendered AT
     ALL. That is the R8/U10 surface change (no surface derives its column set from the
     legacy enum) and a far bigger fix than this glyph.
@@ -918,7 +968,9 @@ export async function runTaskSetNode(id: string, nodeNameOrId: string, projectNa
   await withBoardWrite(projectName, { id, action: "set node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* WIP role, not the literal: on a renamed board this guard vanished and the CLI happily
+       rewrote the node override of a task an agent was actively executing. */
+    if (isWipColumnRole(await resolveTaskColumnFlags(context.store, task), task.column)) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -944,7 +996,9 @@ export async function runTaskClearNode(id: string, projectName?: string) {
   await withBoardWrite(projectName, { id, action: "clear node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* WIP role, not the literal: on a renamed board this guard vanished and the CLI happily
+       rewrote the node override of a task an agent was actively executing. */
+    if (isWipColumnRole(await resolveTaskColumnFlags(context.store, task), task.column)) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -1305,8 +1359,15 @@ export async function runTaskRetry(id: string, projectName?: string) {
       throw new Error(`Task ${id} not found`);
     }
 
+    /* The retry classifier keys off the REVIEW role. Keyed on the literal, a renamed review lane
+       made every branch below false, so `fn task retry` silently did nothing for the exact stall
+       states these flags exist to name. */
+    const taskIsInReviewLane = isReviewColumnRole(
+      await resolveTaskColumnFlags(context.store, task),
+      task.column,
+    );
     const isInReviewStatusNone =
-      task.column === "in-review" && (task.status === null || task.status === undefined);
+      taskIsInReviewLane && (task.status === null || task.status === undefined);
     const hasIncompleteSteps = task.steps.some(
       (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
     );
@@ -1317,7 +1378,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
     const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
     const isInReviewRetry =
-      task.column === "in-review" &&
+      taskIsInReviewLane &&
       (task.status === "failed" ||
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
@@ -1333,12 +1394,28 @@ export async function runTaskRetry(id: string, projectName?: string) {
       throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:05 (fleet — the retry TARGET, found by the renamed
+    review test in this change):
+    Retry re-queues the card to its board's HOLD column, resolved from the task's own workflow.
+
+    All three retry paths below moved to the literal `"todo"`. Converting the retry CLASSIFIER (so a
+    renamed review lane is recognised at all) made this the very next failure: the command correctly
+    decided to retry, then threw `Invalid transition: 'checking' -> 'todo'. Unknown column for this
+    workflow.` — turning a silent no-op into a hard error. That is the half-conversion trap, caught
+    here only because the test drove the whole command instead of the predicate.
+
+    Fail-soft to `"todo"` when the workflow cannot be resolved, matching every other fallback in this
+    file.
+    */
+    const retryHoldColumn = (await resolveTaskLifecycleColumns(context.store, id))?.hold ?? "todo";
+
     const autoPauseClearPatch = buildAutoPauseClearPatch(task);
     const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
     const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
 
     if (isMissingWorktreeSessionRetry) {
-      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
       await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,
@@ -1360,7 +1437,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     // and merge failures (all steps done).
     if (isInReviewRetry) {
       if (isExecutionFailureInReview) {
-        await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+        await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
         await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
           status: null,
           error: null,
@@ -1380,7 +1457,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
         return;
       }
 
-      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo"));
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
       await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,

@@ -20,6 +20,10 @@ import {
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
   isWorkspaceTask,
   resolveColumnFlags,
+  resolveWorkflowIrForTask,
+  isWipColumnRole,
+  isReviewColumnRole,
+  type WorkflowIr,
   BUILTIN_CODING_WORKFLOW_IR,
   mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
@@ -126,6 +130,43 @@ let diagnosticDbHealthCheck: (() => boolean) | null = null;
 let diagnosticStoreListenerCheck: (() => Record<string, number>) | null = null;
 
 const STREAM_LOG_FLUSH_IDLE_MS = 100;
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:15 (fleet — CLI active-task count):
+"How many tasks are ACTIVE?" resolved from each task's own workflow traits.
+
+The same predicate — `column === "in-progress" || column === "in-review"` — was copied into FOUR
+places in this file: the TUI refresh-stats callback, the periodic TUI refresh, the shutdown log
+summary, and the initial stats population. On a board whose wip/review columns are renamed, all four
+reported `active=0` while the per-column counts beside them (which key off `task.column` directly)
+showed the work plainly. The operator sees a dashboard insisting nothing is running while the board
+shows otherwise, and the shutdown log records the same false zero.
+
+Extracted rather than converted four times: this is de-duplication of an existing four-fold copy,
+not a new concept — one rule, one implementation, so the four cannot drift apart again.
+
+Fail-soft per task: an unresolvable workflow falls back to `isWipColumnRole`/`isReviewColumnRole`'s
+documented legacy-id behaviour, so the count degrades to today's answer rather than to zero.
+*/
+async function countActiveTasks(
+  store: Pick<TaskStore, "getTask"> & Parameters<typeof resolveWorkflowIrForTask>[0],
+  tasks: readonly { id: string; column: string }[],
+): Promise<number> {
+  const irCache = new Map<string, WorkflowIr>();
+  let active = 0;
+  for (const task of tasks) {
+    let flags: TraitFlags | undefined;
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+      const column = (ir as { columns?: WorkflowIrColumn[] }).columns?.find((c) => c.id === task.column);
+      if (column) flags = resolveColumnFlags(column);
+    } catch {
+      // Unresolvable workflow: the role helpers fall back to the legacy ids below.
+    }
+    if (isWipColumnRole(flags, task.column) || isReviewColumnRole(flags, task.column)) active += 1;
+  }
+  return active;
+}
 
 function formatRuntimeContext(context: Record<string, unknown> | undefined): string {
   if (context === undefined) {
@@ -805,9 +846,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           for (const task of tasks) {
             counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
           }
-          const active = tasks.filter((task) =>
-            task.column === "in-progress" || task.column === "in-review"
-          ).length;
+          const active = await countActiveTasks(store, tasks);
           const agents = await agentStore.listAgents();
           const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
           for (const agent of agents) {
@@ -1136,9 +1175,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      /* Resolve against the SAME store the tasks were listed from — the board-scoped
+         project store, not the outer one, or a scoped board resolves foreign workflows. */
+      const active = await countActiveTasks(taskStore, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {
@@ -1326,9 +1365,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       taskSummary = `tasks=${tasks.length} active=${active} columns=${Array.from(counts.entries())
         .map(([column, count]) => `${column}:${count}`)
         .join(",")}`;
@@ -2917,9 +2954,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {
