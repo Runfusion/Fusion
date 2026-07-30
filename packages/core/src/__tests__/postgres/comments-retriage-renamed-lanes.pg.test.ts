@@ -103,6 +103,22 @@ pgDescribe("addComment re-triage under a renamed planner vocabulary (PostgreSQL)
     return (await store.getTask(id)).status;
   }
 
+  /*
+  FNXC:PostCommentRetriage 2026-07-31-10:20 (PR #2612 review — coderabbit):
+  `needs-replan` is written by BOTH branches — approval invalidation and ordinary
+  planned-task re-triage — so asserting the status alone cannot tell them apart. A
+  card taking the WRONG branch persists the same status and the test still passes.
+
+  The audited phrase is the only durable thing that distinguishes them, so the
+  awaiting-approval case asserts that instead of merely alongside.
+  */
+  async function persistedLogPhrases(id: string): Promise<string[]> {
+    const store = h.store();
+    store.taskCache.delete(id);
+    const task = await store.getTask(id);
+    return (task.log ?? []).map((entry) => `${entry.action ?? ""} ${entry.details ?? ""}`.trim());
+  }
+
   it("re-triages a planned card resting in the RENAMED hold column", async () => {
     const wf = await seedRenamedWorkflow();
     await seedPlannedTask("FN-CR-1", "queued", { workflowId: wf });
@@ -130,6 +146,12 @@ pgDescribe("addComment re-triage under a renamed planner vocabulary (PostgreSQL)
     await h.store().addComment("FN-CR-3", "actually, do it differently", "user");
 
     expect(await persistedStatus("FN-CR-3")).toBe("needs-replan");
+    /* The discriminator. Without it this test passes when the card falls through to
+       the ordinary re-triage arm, which writes the same status under a different
+       audit phrase — the exact confusion this branch exists to prevent. */
+    expect(await persistedLogPhrases("FN-CR-3")).toContainEqual(
+      expect.stringContaining("invalidated spec approval"),
+    );
   });
 
   it("does NOT re-triage a card in the renamed WIP column", async () => {
