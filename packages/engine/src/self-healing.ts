@@ -5609,6 +5609,31 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       const staleBlockedBoard = await this.store.listTasks();
       const blockedLaneCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-20:20 (fleet): lanes resolved PER ENTITY, sharing the
+      board read's cache.
+
+      I first resolved one vocabulary for the whole sweep, reasoning that the reason codes below
+      ("blocker-done", "blocker-moved-todo") are a fixed set that callers match on. That was wrong:
+      those codes name a ROLE, not a column id — "blocker-done" means "the blocker reached ITS
+      complete lane". A blocker on a different workflow than the blocked card is exactly the case
+      that must still classify correctly, so each entity is resolved against its own workflow.
+      */
+      const lanesFor = async (taskId: string) => {
+        try {
+          return resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId, blockedLaneCache));
+        } catch {
+          return undefined;
+        }
+      };
+      /* Sync variant for the `.filter` below, which cannot await. Same resolution, same fallbacks. */
+      const lanesForSync = (taskId: string) => {
+        try {
+          return resolveLifecycleColumns(this.store.resolveTaskWorkflowIrSync(taskId));
+        } catch {
+          return undefined;
+        }
+      };
       const todoTasks = await this.filterByPreWipRole(staleBlockedBoard, ["hold"], blockedLaneCache);
       const inProgressTasks = await this.filterByWipRole(staleBlockedBoard, blockedLaneCache);
       const inReviewTasks = await this.filterByReviewRole(staleBlockedBoard, blockedLaneCache);
@@ -5674,7 +5699,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           : false;
         if (
           !candidates.has(taskId)
-          || memoTask?.column !== "todo"
+          || memoTask?.column !== (memoTask ? (await lanesFor(memoTask.id))?.hold ?? "todo" : "todo")
           || memoTask.status !== "queued"
           || memoTask.overlapBlockedBy !== lastLoggedBlockerId
           || !memoHasActiveOverlapBlocker
@@ -5690,7 +5715,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const dep = taskById.get(depId);
           // listTasks excludes soft-deleted rows, so missing dependency IDs are
           // treated as resolved here by design.
-          return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+          if (!dep || dep.deletedAt) return false;
+          const depLanes = lanesForSync(dep.id);
+          return dep.column !== (depLanes?.complete ?? "done")
+            && dep.column !== (depLanes?.review ?? "in-review")
+            && dep.column !== (depLanes?.archived ?? "archived");
         });
         const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(task, task.overlapBlockedBy);
 
@@ -5720,16 +5749,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           } else if (blocker.deletedAt) {
             reasonCode = "soft-deleted-blocker";
             reason = `blocker ${blockerId} soft-deleted at ${blocker.deletedAt}`;
-          } else if (blocker.column === "done") {
+          } else if (blocker.column === ((await lanesFor(blocker.id))?.complete ?? "done")) {
             reasonCode = "blocker-done";
             reason = `blocker ${blockerId} is done`;
-          } else if (blocker.column === "archived") {
+          } else if (blocker.column === ((await lanesFor(blocker.id))?.archived ?? "archived")) {
             reasonCode = "blocker-archived";
             reason = `blocker ${blockerId} is archived`;
-          } else if (blocker.column === "todo") {
+          } else if (blocker.column === ((await lanesFor(blocker.id))?.hold ?? "todo")) {
             reasonCode = "blocker-moved-todo";
             reason = `blocker ${blockerId} moved to todo`;
-          } else if (blocker.column === "in-review" && blocker.paused) {
+          } else if (blocker.column === ((await lanesFor(blocker.id))?.review ?? "in-review") && blocker.paused) {
             reasonCode = "in-review-paused";
             reason = `blocker ${blockerId} in-review + paused`;
           } else if (
