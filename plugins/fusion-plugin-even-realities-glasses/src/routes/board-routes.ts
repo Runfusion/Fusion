@@ -9,14 +9,35 @@ import {
 } from "../cards.js";
 import { requireApiKey } from "./quick-capture-routes.js";
 
-const ALLOWED_COLUMNS: Array<Task["column"]> = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:45:
+`?columns=` filters on the ids the CALLER asked for. There is no allow-list to clear first.
 
+This validated the parameter against a hardcoded six-id list, and the failure mode was the worst
+available one — silent and inverted. On a board whose lanes are named anything else, every requested
+id was discarded, `parsed.length` was 0, the function returned `null`, and `null` is the SAME value
+it returns for "no filter requested". So the route answered 200 with the ENTIRE board: a caller
+asking for one column received all of them, with nothing in the response saying the filter had been
+dropped.
+
+The list also still named `triage`, a column U11 deleted, so it described a board that no longer
+exists in either direction.
+
+No allow-list can be correct here and none is needed. The valid ids are whatever the project's
+workflows declare; `Task["column"]` is already `ColumnId = Column | (string & {})`, i.e. open by
+construction. Filtering directly on the requested ids needs no resolution source at all — which is
+why this literal, unlike the display ordering in `cards.ts`, is a defect and not a documented
+deferral.
+
+Behaviour change, deliberate: `?columns=nonsense` now returns an EMPTY deck rather than the whole
+board. "Show me column X" answered with every column is not a lenient default, it is the bug.
+*/
 function parseColumns(raw: unknown): Set<Task["column"]> | null {
   if (typeof raw !== "string" || !raw.trim()) return null;
   const parsed = raw
     .split(",")
     .map((value) => value.trim())
-    .filter((value): value is Task["column"] => ALLOWED_COLUMNS.includes(value as Task["column"]));
+    .filter((value) => value.length > 0);
   return parsed.length ? new Set(parsed) : null;
 }
 
