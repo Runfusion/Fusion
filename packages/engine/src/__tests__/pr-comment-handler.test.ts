@@ -259,7 +259,7 @@ describe("PrCommentHandler", () => {
         instead of the renamed wip lane.
     */
     it("handles a changes-requested review on a RENAMED board and requeues to its OWN wip lane", async () => {
-      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle");
+      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle", { mergeOrchestration: true });
       (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(
         { id: "FN-001", column: RENAMED_VOCAB.review, review: undefined } as Task,
       );
@@ -287,12 +287,49 @@ describe("PrCommentHandler", () => {
       expect(mockStore.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:55 (#2807 review — greptile P1):
+    PINS THE NARROWING. The first version admitted any column carrying mergeOrchestration OR
+    mergeBlocker OR humanReview. On a workflow that puts those on SEPARATE columns that is a widening,
+    not a conversion: a card parked in a human-approval lane gets bounced into wip by a PR review that
+    has nothing to do with it.
+
+    This board declares a human-review/merge-blocker column that is NOT the merge-orchestration lane —
+    the exact shape the union got wrong, and one the default board cannot express.
+
+    REVERT CHECK, measured: restoring the three-flag union makes this fail — the handler admits the
+    review and moves the card out of a lane it was never responsible for.
+    */
+    it("does not admit a PR review from a human-approval lane that is not the merge stage", async () => {
+      const base = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle", { mergeOrchestration: true });
+      const ir = {
+        ...base,
+        columns: [
+          ...base.columns,
+          { id: "approval", name: "Approval", traits: [{ trait: "human-review" as const }, { trait: "merge-blocker" as const }] },
+        ],
+      };
+      (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(
+        { id: "FN-001", column: "approval", review: undefined } as Task,
+      );
+      Object.assign(mockStore, {
+        getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "pr-comment-lifecycle", stepIds: [] })),
+        getWorkflowDefinition: vi.fn(async (id: string) => (id === "pr-comment-lifecycle" ? { ir } : undefined)),
+      });
+
+      await handler.handleChangesRequested("FN-001", mockPrInfo, "reviewer", "Please add tests");
+
+      expect(mockStore.moveTask).not.toHaveBeenCalled();
+      expect(mockStore.updateTask).not.toHaveBeenCalled();
+    });
+
     it("still ignores a review on a RENAMED board when the card is not in a review lane", async () => {
       /*
       Non-vacuous companion: without it, a gate admitting every column would satisfy the case above.
       Same renamed board, same review — only the card's lane changes.
       */
-      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle");
+      const ir = lifecycleIr(RENAMED_VOCAB, "pr-comment-lifecycle", { mergeOrchestration: true });
       (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(
         { id: "FN-001", column: RENAMED_VOCAB.hold, review: undefined } as Task,
       );

@@ -197,14 +197,30 @@ export class PrCommentHandler {
       Both fall back to the legacy ids: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather
       than throwing, so a board whose workflow cannot be read behaves exactly as before.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:55 (#2807 review — greptile P1 "broad review-lane
+      admission"):
+      MERGE-ORCHESTRATION ONLY, not the three-flag review union. The first version admitted any column
+      carrying `mergeOrchestration` OR `mergeBlocker` OR `humanReview`; on a workflow that puts those on
+      SEPARATE columns that is a widening, not a conversion — a card parked in a plan-review or
+      human-approval lane would be bounced into wip by a PR review that has nothing to do with it.
+
+      The literal this replaced admitted exactly ONE lane, and the faithful resolution is the one role
+      that means "this is the PR/merge stage": `mergeOrchestration`. That is also what
+      `resolveLifecycleColumns` keys its `review` role on, so this handler and the core resolver agree.
+
+      Known consequence, and it is the pre-existing behaviour rather than a regression: a custom workflow
+      whose review lane carries ONLY `human-review` resolves nothing here and falls back to the legacy
+      `in-review`. Widening to cover it is the gap recorded in
+      `notification-renamed-lifecycle-columns.test.ts`, and it belongs in the shared resolver rather than
+      being invented per-handler.
+      */
       const reviewLanes = new Set<string>(["in-review"]);
       let wipTarget = "in-progress";
       try {
         const ir = await resolveWorkflowIrForTask(this.store, taskId);
         if (ir) {
-          for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
-            for (const id of columnsWithFlag(ir, flag)) reviewLanes.add(id);
-          }
+          for (const id of columnsWithFlag(ir, "mergeOrchestration")) reviewLanes.add(id);
           const wipLanes = columnsWithFlag(ir, "countsTowardWip");
           if (wipLanes.length > 0) wipTarget = wipLanes[0];
         }
