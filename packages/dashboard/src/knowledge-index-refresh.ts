@@ -1,4 +1,5 @@
 import type { TaskStore } from "@fusion/core";
+import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { refreshKnowledgeForTask } from "./knowledge-index.js";
 
 /**
@@ -61,7 +62,16 @@ export class KnowledgeIndexRefreshService {
   }
 
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
-    if (event.to !== "done") return;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:05 (batch-core):
+    Knowledge is re-indexed when a task COMPLETES. Keyed on the literal, a board that renamed its
+    complete lane never refreshed the index for any task, so the knowledge index silently drifted
+    further from reality with every finished card and nothing reported it.
+
+    Complete only, not the landed set: archival is a separate event and the original literal never
+    fired on it. Widening a role set during a rename is a behaviour change, which this is not.
+    */
+    if (!(await completeColumnsForTask(store, event.task.id)).has(event.to)) return;
     await refreshKnowledgeForTask(store, event.task.id);
   }
 }

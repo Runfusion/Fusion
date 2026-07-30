@@ -37,6 +37,19 @@ export function formatGitLabTrackingComment(
   from. `github-tracking-comments.ts:165` is the same site with the same decision, so both halves of the
   pair now leave exactly one literal, in the same place, for the same reason.
   */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
+
+  `transition` is the closed union `"in-progress" | "done"` declared in this function's own signature.
+  It names WHICH COMMENT TEMPLATE to render; the caller decides that from the task's resolved lanes and
+  passes the kind down. Resolving it against a workflow would be a category error — there is no task
+  column in scope here at all.
+
+  The census matches on the spelling, so this reads as an unconverted lifecycle guard. It is the same
+  bare-variable false-positive class as the reports plugin's `ReportStatus`: the AST cannot tell a
+  foreign enum from a column id because the receiver name carries no type. Marked rather than left
+  counted, so it is not re-dispatched for conversion indefinitely.
+  */
   if (transition === "in-progress") {
     const prefix = `Fusion task: ${task.id}\n\n`;
     const stem = "🚧 In progress — work has started on “";

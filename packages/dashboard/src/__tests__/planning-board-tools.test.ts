@@ -73,6 +73,49 @@ describe("createPlanningBoardTools", () => {
     expect(emptyResult.content[0]?.text).toBe("No active tasks.");
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:25 (batch-core):
+  THE DUPLICATE CHECK MUST NOT LIST FINISHED WORK AS ACTIVE.
+
+  `fn_task_list` exists so the planner can check for duplicates against work still in flight. Keyed on
+  `column !== "done"`, a renamed board listed every FINISHED task as active — the planner was told to
+  avoid duplicating work that was already complete, which is the opposite of the tool's purpose.
+
+  It degrades quietly, which is why it needs a test rather than a bug report: the list is merely wrong,
+  not empty, so nothing looks broken. The case above pins the default board; this one pins a board
+  whose complete lane is `shipped` and which declares no `done` at all.
+  */
+  it("excludes a task finished in a RENAMED complete lane", async () => {
+    const renamedIr = {
+      version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const selection = { workflowId: "wf-renamed", stepIds: [] };
+    const store = {
+      listTasks: vi.fn(async () => [
+        { id: "FN-1", column: "building", title: "Live", description: "Live description", dependencies: [] },
+        { id: "FN-2", column: "shipped", title: "Finished", description: "Finished description", dependencies: [] },
+      ]),
+      getTask: vi.fn(async () => { throw new Error("not found"); }),
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-renamed", ir: renamedIr }),
+    } as unknown as TaskStore;
+
+    const result = await createPlanningBoardTools(store)
+      .find((tool) => tool.name === "fn_task_list")!
+      .execute("c1", {});
+
+    /*
+    Asserting the exact line rather than just "does not contain FN-2": a filter that dropped
+    everything would also satisfy the negative on its own.
+    */
+    expect(result.content[0]?.text).toBe("FN-1 (building): Live");
+  });
+
   it("fn_task_show returns full details and not-found fallback", async () => {
     const store = createStoreMock({
       getTask: vi.fn(async (id: string) => ({
