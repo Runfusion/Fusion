@@ -44,13 +44,27 @@ const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lanne
 
 /** Known-unsupplied seams, each with why it is tolerated. Shrink this list; never grow it casually. */
 const ALLOWED = new Map([
-  ["evaluateMergeBlockerGuard", "Exported for tests only; scanner excludes __tests__ so it reports 0 callers."],
-  ["isRecoverableMissingWorktreeReviewFailure", "Exported for tests only; same scanner limitation."],
   /*
   TEMPORARY — real offenders in packages owned by other batches, reported to them rather than edited
   from outside. Remove each entry when that batch wires or deletes the parameter; the check will then
   start guarding those files too. All three are the same shape this check exists to catch.
   */
+  [
+    "isRecoverableMissingWorktreeReviewFailure",
+    "No production caller; 5 test call sites. The previous entry blamed the scanner for excluding "
+      + "__tests__ — that reason was wrong, the scan now reads tests and the count is real. The two "
+      + "SIBLINGS it delegates to (`...WithProgress` / `...NoProgress`) are the live pair, called from "
+      + "self-healing.ts and both supplying `reviewColumns`. This is the convenience wrapper over them, "
+      + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
+  ],
+  [
+    "evaluateMergeBlockerGuard",
+    "TEMPORARY: core-owned; reported on #2783. NOT 'test-only' — that was this entry's previous "
+      + "stated reason and it was false. Including __tests__ in the scan finds zero callers there too: "
+      + "the function has exactly one reference in the repo, its own declaration. It is never "
+      + "registered as a trait hook either, and the `evaluateDefaultWorkflowGuards` reader its file "
+      + "header credits does not exist. So its `lifecycleColumns` conversion was applied to dead code.",
+  ],
   ["getTotalAgentActiveMs", "TEMPORARY: core-owned; reported on #2783. Twin of a dashboard function reverted for exactly this."],
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
@@ -88,6 +102,30 @@ const ALLOWED_OMISSIONS = new Map([
   ],
 ]);
 
+/*
+TEST CALL SITES ARE COLLECTED, AND COUNTED SEPARATELY FROM PRODUCTION ONES.
+
+Excluding `__tests__` outright made a test-only export read as having NO callers, which is why two
+permanent allow-list entries existed. But naively including tests is worse than excluding them: a
+test that supplies the argument would clear a seam no production caller supplies — and that is not
+hypothetical, it is exactly core's `sortTasksForDisplayColumn`, whose only suppliers ARE its tests.
+
+So the two are tracked apart. "Supplied" means supplied by PRODUCTION. Test callers answer a
+different and also useful question: is this function reachable at all, or is the export dead?
+*/
+const TEST_DIRS = new Set(["__tests__", "__mocks__", "e2e"]);
+const isTestFile = (file) => file.split("/").some((segment) => TEST_DIRS.has(segment))
+  || /\.(test|spec)\.tsx?$/.test(file);
+
+function* walkAll(dir) {
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === "dist" || entry === ".gate-bundle" || entry === "coverage") continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) yield* walkAll(full);
+    else if (/\.tsx?$/.test(full) && !/\.d\.ts$/.test(full)) yield full;
+  }
+}
+
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
@@ -112,8 +150,9 @@ missing suppliers in ListView and Column — review did.
 Declarations still use the prefilter: a file DECLARING a flags parameter necessarily contains the
 name, so that half is safe and keeps the scan quick.
 */
-for (const file of walk(PACKAGES)) {
+for (const file of walkAll(PACKAGES)) {
   const source = readFileSync(file, "utf8");
+  const fileIsTest = isTestFile(relative(REPO, file).split("\\").join("/"));
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declares = PREFILTER.test(source);
 
@@ -179,7 +218,7 @@ for (const file of walk(PACKAGES)) {
          other packages can under-supply. */
       const exported = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true;
       const last = node.parameters[node.parameters.length - 1];
-      if (exported && last.questionToken && ts.isIdentifier(last.name) && TRAILING_FLAG_PARAM.test(last.name.text)) {
+      if (!fileIsTest && exported && last.questionToken && ts.isIdentifier(last.name) && TRAILING_FLAG_PARAM.test(last.name.text)) {
         declared.set(node.name.text, { file: relative(REPO, file), arity: node.parameters.length });
       }
     }
@@ -199,6 +238,7 @@ for (const file of walk(PACKAGES)) {
           args: node.arguments.length,
           shadowed: locallyDeclared.has(callee),
           from: importedFrom.get(callee),
+          isTest: fileIsTest,
         });
       }
     }
@@ -231,9 +271,26 @@ const offenders = [];
 const partial = [];
 const stale = [];
 for (const [fn, { file, arity }] of declared) {
-  const sites = callSitesFor(fn, file);
+  const allSites = callSitesFor(fn, file);
+  /*
+  PRODUCTION suppliers are the only ones that make a seam live. A test passing the argument proves
+  the parameter is exercised, not that anything in the shipped product ever reaches that branch.
+  */
+  const sites = allSites.filter((site) => !site.isTest);
+  const testSites = allSites.filter((site) => site.isTest);
   const best = sites.reduce((max, site) => Math.max(max, site.args), 0);
   const unsupplied = best < arity;
+  /*
+  A seam with NO production caller is inert whether or not tests exercise it, so it is reported the
+  same way. I briefly split those cases by "is it re-exported from the package index", reasoning that
+  a public export could be called from outside — that was unsound, and it silently DOWNGRADED a real
+  offender (`sortTasksForDisplayColumn`, suppliers are its own tests) from failing to a footnote.
+  Neither function has production behaviour to be wrong; publication status does not change that.
+
+  Test call sites are still tracked, and that half matters: they must never CLEAR a seam. Counting
+  them as suppliers is what would have re-hidden `sortTasksForDisplayColumn` entirely.
+  */
+  const testNote = sites.length === 0 && testSites.length > 0 ? ` (${testSites.length} test call site(s))` : "";
   /*
   THE ONE-SUPPLIER FLOOR. `best < arity` asks only whether SOME caller supplies the argument, so one
   correct call site clears the seam while every other caller silently takes the legacy fallback. That
@@ -318,5 +375,5 @@ if (partial.length > 0) {
 }
 
 console.log(
-  `[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied at every call site.`,
+  `[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied at every production call site.`,
 );
