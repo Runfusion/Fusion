@@ -4494,23 +4494,6 @@ export class TaskExecutor {
     this.workflowRerunWatchdogs.set(taskId, watchdog);
   }
 
-  /**
-   * The columns that mean "this card is finished": the workflow's complete and archived lanes.
-   *
-   * FNXC:WorkflowLifecycleColumns 2026-07-31-20:15:
-   * Fail-soft to `["done", "archived"]` so an unresolvable workflow behaves exactly as the literal pair did.
-   * A card in a column this workflow does not classify is NOT treated as terminal — being unable to prove a
-   * card is finished must not be the same as proving it is.
-   */
-  private async resolveTerminalColumnsFor(taskId: string): Promise<readonly string[]> {
-    try {
-      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
-      if (!lifecycle) return ["done", "archived"];
-      return [lifecycle.complete, lifecycle.archived].filter((c): c is string => typeof c === "string");
-    } catch {
-      return ["done", "archived"];
-    }
-  }
 
   private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = this.isTaskWorkComplete(task)): Promise<boolean> {
     if (task.paused === true || task.userPaused === true) return false;
