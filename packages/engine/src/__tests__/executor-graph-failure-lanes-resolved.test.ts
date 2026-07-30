@@ -362,3 +362,52 @@ describe("the execution-resume router's gate reads the same board as its destina
     expect(await routeResume(executor, live, "other")).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-20:50 (PR #2703 review — greptile P1, the sync-resolver no-op):
+
+THE INVARIANT: no lifecycle guard in this file resolves its lane through the SYNCHRONOUS resolver.
+
+`resolvePlannerLanes` reads `store.resolveTaskWorkflowIrSync`, whose selection reader returns `undefined`
+unconditionally in PostgreSQL mode — the shipped backend. So a sync-resolved guard silently answers with
+the DEFAULT workflow's ids on every real board: the census counts the site as converted, `--strict` drops
+by one, and the behaviour is identical to the literal. That is worse than an unconverted literal, because
+the number claims the site is done.
+
+This is a STRUCTURAL assertion rather than a behavioural one, and deliberately so. A behavioural test
+would need a PostgreSQL-backed store to demonstrate the no-op, and the thing worth preventing is not one
+guard misbehaving — it is the pattern being reintroduced anywhere in this file by someone who reads
+"synchronous classifier" and reaches for the synchronous resolver, exactly as I did.
+
+The two legitimate `resolvePlannerLanes` call sites are MOVE destinations (`PlannerLanes` exists so a
+caller refuses rather than inventing a column), which is a different question from "which lane is this
+card in" and is why they are allowlisted here by name.
+*/
+describe("no lifecycle GUARD resolves its lane synchronously", () => {
+  it("keeps resolvePlannerLanes out of column-comparison guards in executor.ts", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
+
+    /* Strip block comments: the notes explaining WHY the sync resolver is unsafe mention it by name. */
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const callSites = [...code.matchAll(/resolvePlannerLanes\s*\(/g)].length;
+
+    /*
+    Three call sites are the move/promotion destinations documented above (two in the planner-column
+    helpers, one in the promotion path), plus the import. Any FOURTH is a new sync resolution and must be
+    justified — if it is a guard, it is a no-op on PostgreSQL and the census will claim it is converted.
+    */
+    expect(callSites).toBe(3);
+  });
+
+  it("does not compare a column against a synchronously-resolved lane on the same line", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    // The shape this guards against: `x.column === resolvePlannerLanes(...).review`.
+    const inlineGuards = [...code.matchAll(/\.column\s*[!=]==\s*resolvePlannerLanes/g)];
+
+    expect(inlineGuards).toEqual([]);
+  });
+});

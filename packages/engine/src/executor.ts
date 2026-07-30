@@ -4645,16 +4645,18 @@ export class TaskExecutor {
     return await this.getCompletedTaskFinalizationDecision(taskId, taskDone) === "finalize";
   }
 
-  private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean): boolean {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-20:35 (PR #2703 review — greptile P1):
+  The review lane arrives from the caller for the reason documented on `isBenignInReviewPauseAbort`: the
+  synchronous resolver returns the default workflow in PostgreSQL mode, so resolving it here would have
+  been a conversion that changes the census and not the behaviour.
+  */
+  private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean, reviewLane: string): boolean {
     // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the step-status "already complete" branch
     // must not treat skip-bypass-tainted skips as completion; an accepted done / in-review
     // column are honest completion signals and stay unaffected.
-    /* FNXC:WorkflowLifecycleColumns 2026-08-01-18:00 (fleet): SYNCHRONOUS predicate, so the sync planner
-       lanes; a board with no review lane cannot hold a card in review, so an undefined lane contributes no
-       completion signal while the other two still apply. */
-    const reviewCompletionLane = resolvePlannerLanes(this.store, task.id).review;
     return taskDone
-      || (reviewCompletionLane !== undefined && task.column === reviewCompletionLane)
+      || task.column === reviewLane
       || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
   }
 
@@ -4664,7 +4666,8 @@ export class TaskExecutor {
     }
 
     const liveTask = await this.store.getTask(task.id);
-    if (!liveTask || !this.isTaskAlreadyCompleteForNonContinuableSession(liveTask, taskDone)) {
+    const nonContinuableLanes = await this.resolveResumeLanes(task.id);
+    if (!liveTask || !this.isTaskAlreadyCompleteForNonContinuableSession(liveTask, taskDone, nonContinuableLanes.review)) {
       return false;
     }
 
@@ -10265,12 +10268,33 @@ export class TaskExecutor {
     return true;
   }
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-20:30 (PR #2703 review — greptile P1, and it is the most
+  important finding in this sweep):
+
+  THE SYNCHRONOUS RESOLVER IS A NO-OP IN PRODUCTION. `resolvePlannerLanes` reads
+  `store.resolveTaskWorkflowIrSync`, whose selection reader is `getTaskWorkflowSelectionImpl` — and in
+  PostgreSQL mode that function returns `undefined` unconditionally ("Backend mode cannot synchronously
+  read PostgreSQL"). PostgreSQL is the shipped backend, so every sync-resolved conversion resolves the
+  DEFAULT workflow and answers with the legacy ids no matter what board the task is on.
+
+  That makes a sync conversion cosmetic: the census counts it as converted, `--strict` goes down by one,
+  and the guard behaves exactly as the literal did. Worse than leaving the literal, because the number
+  says the site is done.
+
+  THE FIX IS TO STOP BEING SYNCHRONOUS, not to keep the literal. Both of this file's sync classifiers
+  are called from async methods that have already awaited a store read, so the lane can be threaded in
+  from the caller's existing snapshot — no new I/O, no second resolution, and the two halves of the
+  decision provably read the same board.
+  */
   private isBenignInReviewPauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
+    /** The caller's already-resolved review lane — see the note above on the sync resolver. */
+    reviewLane: string,
   ): boolean {
     /*
     FNXC:WorkflowLifecycle 2026-06-20-00:00:
@@ -10283,14 +10307,14 @@ export class TaskExecutor {
     if (!isGenericAbortProvenance(abortProvenance)) return false;
     if (userCanceled) return false;
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-17:12 (fleet): SYNCHRONOUS classifier, so the sync
-    `resolvePlannerLanes` rather than its neighbours' async resolver. The two disagree on ONE case and the
-    difference is deliberate: `resolveResumeLanes` substitutes the legacy `in-review` when a board declares
-    no review lane, while `PlannerLanes` leaves a forward lane undefined so the caller refuses instead of
-    inventing a column. A board with no review lane holds no card in review, so refusing is honest.
+    FNXC:WorkflowLifecycleColumns 2026-08-01-20:40 (PR #2703 review — replaces my own earlier reasoning):
+    This comparison used the SYNC `resolvePlannerLanes`, which I justified as the right resolver for a
+    synchronous classifier. That justification was wrong in production: in PostgreSQL mode the sync
+    selection reader always returns undefined, so the sync resolver hands back the DEFAULT workflow's lanes
+    and the guard behaves exactly as the literal did. The lane now arrives from the caller's snapshot — see
+    the note on this method.
     */
-    const reviewLane = resolvePlannerLanes(this.store, live.id).review;
-    if (reviewLane === undefined || live.column !== reviewLane) return false;
+    if (live.column !== reviewLane) return false;
     if (live.userPaused === true) return false;
     if (live.status != null || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
@@ -11122,7 +11146,7 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (genuinePauseAbort && this.isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id))) {
+      if (genuinePauseAbort && this.isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), failureLanes.review)) {
         this.clearPausedAborted(task.id);
         this.activeWorktrees.delete(task.id);
         const inReviewBenign = "Workflow graph run ended during engine pause/resume while already in-review — benign, in-review state preserved";
