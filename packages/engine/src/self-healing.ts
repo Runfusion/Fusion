@@ -3178,6 +3178,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     return kept;
   }
 
+  /** Sibling of `filterByReviewRole` for the COMPLETE lane. */
+  private async filterByCompleteRole(
+    tasks: Task[],
+    cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<Task[]> {
+    const kept: Task[] = [];
+    for (const task of tasks) {
+      if (task.column === this.completeLaneOf(task.id)) kept.push(task);
+    }
+    return kept;
+  }
+
   private async filterByReviewRole(
     tasks: Task[],
     cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
@@ -7472,7 +7484,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reconcileDoneTaskIntegrity(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "done", slim: true });
+      const tasks = await this.filterByCompleteRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((task) =>
         task.column === this.completeLaneOf(task.id) &&
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
@@ -8068,7 +8083,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
       const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: false, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       let surfaced = 0;
 
       for (const task of tasks) {
@@ -9239,7 +9257,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       // Done workspace tasks are the canonical "safe to clean" set (their lands are finalized).
-      const doneTasks = await this.store.listTasks({ column: "done", slim: true });
+      const doneTasks = await this.filterByCompleteRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = doneTasks.filter((task) => isWorkspaceTask(task));
       if (candidates.length === 0) return 0;
 
@@ -9316,7 +9337,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "done", slim: true });
+      const tasks = await this.filterByCompleteRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const candidates = tasks.filter((task) => {
         if (task.column !== this.completeLaneOf(task.id) || task.paused) return false;
         if (task.mergeDetails?.commitSha) return true;
@@ -10284,7 +10308,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      const tasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: false, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       let recovered = 0;
 
       for (const task of tasks) {
@@ -10562,7 +10589,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverCompletionHandoffLimbo(): Promise<void> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return;
-    const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+    const tasks = await this.filterByReviewRole(
+      await this.store.listTasks({ slim: false, includeArchived: false }),
+      new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+    );
     const now = Date.now();
 
     for (const task of tasks) {
@@ -11154,7 +11184,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async auditNoCommitsExpectedCandidates(): Promise<number> {
     try {
-      const inReviewTasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const inReviewTasks = await this.filterByReviewRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const allTasks = await this.store.listTasks({ slim: true });
       const failedTasks = allTasks.filter((task) => task.status === "failed");
       const candidateMap = new Map<string, Task>();
@@ -11294,6 +11327,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
 
     try {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-23:30 (fleet: FLAGGED AND SKIPPED):
+      Converted with ten sibling sweeps and reverted here alone. `reliability-interactions/
+      todo-inprogress-flapping.test.ts` stubs `listTasks` as
+        ({ column } = {}) => (column === task.column ? [task] : [])
+      so an unfiltered board read matches nothing and this sweep loses its only candidate.
+      
+      Found by differential run against the full engine-reliability project: main is 5 failed,
+      the batch made it 6, and this sweep is the delta. The per-task guard above is already
+      converted; the query half waits on that suite's harness.
+      */
       const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const activeHeartbeatTaskIds = await this.listActiveHeartbeatTaskIds();
@@ -11460,7 +11504,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverOrphanedExecutions(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      const tasks = await this.filterByWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
@@ -11540,7 +11587,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      const tasks = await this.filterByWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
       const candidates: Task[] = [];
@@ -12400,7 +12450,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverNoProgressNoTaskDoneFailures(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      const tasks = await this.filterByWipRole(
+        await this.store.listTasks({ slim: true, includeArchived: false }),
+        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      );
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const candidates = tasks.filter((task) =>
