@@ -211,24 +211,70 @@ export async function resolveWorkflowIrById(
  * Resolve a task's workflow IR via its selection. A null/absent selection or any
  * lookup failure degrades to the built-in default workflow.
  */
-export async function resolveWorkflowIrForTask(
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-12:10 (lifecycle-column census enabler):
+WHY PROVENANCE IS A SEPARATE ANSWER FROM THE IR.
+
+`resolveWorkflowIrForTask` answers "which workflow governs this task" by returning the default
+coding IR in two cases that are NOT the same as knowing: the selection read threw, and the store
+reported no selection at all (the synchronous PostgreSQL path does exactly that). Callers cannot
+tell those apart from a genuine selection, and for lifecycle-column work the difference decides
+correctness rather than tidiness.
+
+Concretely, and this is what motivated it: post-merge the default coding lineage declares `todo`
+as its single Planning column and NO `triage`. So a call site converting a `column === "triage"`
+guard to trait resolution silently stops firing for `builtin:legacy-coding` cards whenever the
+store cannot name the workflow — the resolver hands back the default's vocabulary and the caller
+has no way to know it was a guess. Every such site has so far had to keep the legacy ids unioned
+in "just in case", which is exactly why the census stalls instead of converging.
+
+With provenance a caller can say what it actually means: trust the resolved columns when the
+workflow was SELECTED, and fall back to legacy compat only when it was GUESSED.
+
+Additive by construction — `resolveWorkflowIrForTask` delegates here and drops the provenance, so
+no existing caller changes behavior.
+*/
+export type WorkflowIrResolutionSource = "selection" | "default";
+
+export interface ResolvedWorkflowIr {
+  ir: WorkflowIr;
+  /** `"selection"` only when the store named a workflow; `"default"` when we guessed. */
+  source: WorkflowIrResolutionSource;
+  /** The selected id, absent when guessed. */
+  workflowId?: string;
+}
+
+export async function resolveWorkflowIrForTaskWithProvenance(
   store: WorkflowIrResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
-): Promise<WorkflowIr> {
+): Promise<ResolvedWorkflowIr> {
   let workflowId: string | undefined;
   try {
-    /*
-     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
-     * Backend-mode task workflow selection is asynchronous. Execution must resolve the migrated task selection before loading its workflow graph; the synchronous PostgreSQL fallback intentionally reports no selection and previously forced every task onto builtin:coding.
-     */
     const selection = store.getTaskWorkflowSelectionAsync
       ? await store.getTaskWorkflowSelectionAsync(taskId)
       : store.getTaskWorkflowSelection(taskId);
     workflowId = selection?.workflowId;
   } catch {
-    return defaultCodingWorkflowIr();
+    return { ir: defaultCodingWorkflowIr(), source: "default" };
   }
-  if (!workflowId) return resolveWorkflowIrById(store, "builtin:coding", irCache);
-  return resolveWorkflowIrById(store, workflowId, irCache);
+  if (!workflowId) {
+    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default" };
+  }
+  return { ir: await resolveWorkflowIrById(store, workflowId, irCache), source: "selection", workflowId };
+}
+
+export async function resolveWorkflowIrForTask(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<WorkflowIr> {
+  /*
+   * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+   * Backend-mode task workflow selection is asynchronous. Execution must resolve the migrated task selection before loading its workflow graph; the synchronous PostgreSQL fallback intentionally reports no selection and previously forced every task onto builtin:coding.
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: delegates to the provenance form and drops
+   * the provenance, so the two answers cannot drift apart.
+   */
+  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache)).ir;
 }
