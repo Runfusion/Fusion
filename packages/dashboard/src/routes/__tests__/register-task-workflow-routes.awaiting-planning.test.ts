@@ -57,13 +57,31 @@ async function seedTaskDir(taskId: string, content?: string): Promise<void> {
   if (content !== undefined) await writeFile(join(dir, "PROMPT.md"), content);
 }
 
-function createHarness(tasks: Task[]) {
+/**
+ * A board whose waiting lane is `queued`, carrying the SAME hold trait the builtins put on `todo`.
+ * `listWorkflowDefinitions` is what `resolveProjectColumnsForRoles` reads — omit it and the helper
+ * degrades to the legacy ids, so a fixture without it cannot distinguish the fix from the literal.
+ */
+const RENAMED_HOLD_IR = {
+  version: "v2",
+  name: "renamed-hold",
+  columns: [
+    { id: "planning", name: "Planning", traits: [{ trait: "intake" }] },
+    { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+  ],
+  nodes: [{ id: "start", kind: "start", column: "planning" }],
+  edges: [],
+};
+
+function createHarness(tasks: Task[], workflowIrs?: unknown[]) {
   const store: TaskStore = {
     getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
     getTaskDir: vi.fn((id: string) => join(tasksRoot, id)),
     getSettingsFast: vi.fn(async () => ({})),
     listTasks: vi.fn(async () => tasks),
+    ...(workflowIrs ? { listWorkflowDefinitions: vi.fn(async () => workflowIrs.map((ir) => ({ ir }))) } : {}),
   } as unknown as TaskStore;
 
   const app = express();
@@ -72,8 +90,8 @@ function createHarness(tasks: Task[]) {
   return { app };
 }
 
-async function fetchTasks(tasks: Task[]): Promise<Array<Record<string, unknown>>> {
-  const { app } = createHarness(tasks);
+async function fetchTasks(tasks: Task[], workflowIrs?: unknown[]): Promise<Array<Record<string, unknown>>> {
+  const { app } = createHarness(tasks, workflowIrs);
   const res = await REQUEST(app, "GET", "/api/tasks");
   expect(res.status).toBe(200);
   return res.body as Array<Record<string, unknown>>;
@@ -230,5 +248,53 @@ describe("GET /tasks awaitingPlanning enrichment", () => {
     const rows = res.body as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
     expect(rows[0]).not.toHaveProperty("awaitingPlanning");
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:55 (batch-dashboard-src):
+
+  THE WAITING LANE IS THE `hold` ROLE, NOT THE ID `todo`.
+
+  The enrichment filter named `todo`, so on a board whose waiting lane is called anything else NO card
+  was enriched and every one of them silently fell back to TaskCard's step-count heuristic — the exact
+  disagreement between badge and engine this enrichment was added to remove. It failed quietly, which
+  is why it survived: the board still rendered, with badges that were merely wrong.
+
+  A per-task workflow read was tried once and reverted for cost, on a board-load path whose own note
+  warns about turning a load into thousands of reads. `resolveProjectColumnsForRoles` is one read for
+  the whole board, so the objection was to the arity, not the idea.
+
+  THE NEGATIVE MATTERS AS MUCH: widening to "enrich everything" would pass the case above and put a
+  planning badge on in-progress and review cards, whose payloads are contractually byte-identical
+  without the field.
+  */
+  it("enriches a card in a RENAMED hold lane", async () => {
+    const task = makeTask({ id: "FN-RENAMED", column: "queued" });
+    await seedTaskDir("FN-RENAMED", buildBootstrapPrompt("FN-RENAMED", task.title, task.description));
+
+    const [row] = await fetchTasks([task], [RENAMED_HOLD_IR]);
+
+    /* Keyed on the literal this row had no `awaitingPlanning` at all. */
+    expect(row.awaitingPlanning).toBe(true);
+  });
+
+  it("does NOT enrich a card outside the board's hold lanes, even on a renamed board", async () => {
+    const task = makeTask({ id: "FN-WIP", column: "building" });
+    await seedTaskDir("FN-WIP", buildBootstrapPrompt("FN-WIP", task.title, task.description));
+
+    const [row] = await fetchTasks([task], [RENAMED_HOLD_IR]);
+
+    expect(row).not.toHaveProperty("awaitingPlanning");
+  });
+
+  it("still enriches the legacy `todo` lane on a renamed board — the union keeps a mid-rename board working", async () => {
+    /* `resolveProjectColumnsForRoles` unions the legacy ids deliberately: rows still stored under the
+       old id during a rename must not lose their badge. */
+    const task = makeTask({ id: "FN-LEGACY", column: "todo" });
+    await seedTaskDir("FN-LEGACY", buildBootstrapPrompt("FN-LEGACY", task.title, task.description));
+
+    const [row] = await fetchTasks([task], [RENAMED_HOLD_IR]);
+
+    expect(row.awaitingPlanning).toBe(true);
   });
 });

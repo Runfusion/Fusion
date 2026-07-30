@@ -58,7 +58,6 @@ const ALLOWED = new Map([
       + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
   ],
 
-  ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
     "sortTasksForDisplayColumn",
     "PERMANENT, with evidence. core/task-priority.ts's copy has ZERO callers anywhere: the three "
@@ -94,19 +93,6 @@ const ALLOWED_OMISSIONS = new Map([
     { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
       + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site." },
-  ],
-  [
-    "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
-    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
-      + "wrapper; the two moves.ts callers supply. So the automatic handoff-to-review path resolves "
-      + "the review column and the manual re-enqueue path does not." },
-  ],
-  [
-    "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",
-    { count: 1, reason: "TEMPORARY: core-owned; reported on #2783. Unlike the TaskDetailModal site this one is genuinely "
-      + "wireable — `clearNearDuplicateReferencesToImpl` is async and already holds `store` and "
-      + "`canonicalId`, so the canonical's own flags are one await away. Its five sibling call sites "
-      + "already supply, so on a renamed board this is the single path that answers from legacy ids." },
   ],
 ]);
 
@@ -196,18 +182,7 @@ for (const file of walkAll(PACKAGES)) {
   row everyone had learned to read as noise, which is the worse half of this failure mode: a guard
   that cries wolf trains its readers to skip exactly the line that matters.
   */
-  const importedFrom = new Map();
-  const collectImports = (node) => {
-    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings
-      && ts.isNamedImports(node.importClause.namedBindings)
-      && ts.isStringLiteral(node.moduleSpecifier)) {
-      for (const element of node.importClause.namedBindings.elements) {
-        importedFrom.set(element.name.text, node.moduleSpecifier.text);
-      }
-    }
-    ts.forEachChild(node, collectImports);
-  };
-  collectImports(sf);
+  const { importedFrom, localAlias } = collectImportBindings(sf);
 
   const locallyDeclared = new Set();
   const collectLocal = (node) => {
@@ -240,12 +215,15 @@ for (const file of walkAll(PACKAGES)) {
       shadow in a file that merely discussed flags still counted, and the probe test caught that.
       */
       if (callee) {
-        if (!callSites.has(callee)) callSites.set(callee, []);
-        callSites.get(callee).push({
+        /* Attribute the call to the EXPORTED name when it came in under an alias. */
+        const target = localAlias.get(callee) ?? callee;
+        if (!callSites.has(target)) callSites.set(target, []);
+        callSites.get(target).push({
           file: relative(REPO, file),
           args: node.arguments.length,
           shadowed: locallyDeclared.has(callee),
           from: importedFrom.get(callee),
+          viaProperty: ts.isPropertyAccessExpression(node.expression),
           isTest: fileIsTest,
         });
       }
@@ -260,12 +238,78 @@ A call in a file that declares its OWN function of the same name belongs to that
 file is where the seam itself is declared. Resolved here, once the declaring file for each seam is
 known.
 */
-const callSitesFor = (fn, declaringFile) => {
-  const sites = callSites.get(fn) ?? [];
+const callSitesFor = (fn, declaringFile) =>
+  (callSites.get(fn) ?? []).filter((site) => isRelevantCallSite(site, declaringFile));
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:20 (#2851 review — greptile, "call classification lacks
+regression coverage"):
+
+EXTRACTED SO THE CLASSIFICATION CAN BE TESTED WITHOUT WALKING THE REPO.
+
+The alias remapping and the property-access exclusion were both added to fix REAL failures: one had
+the gate reporting `enqueueMergeQueue() — best call passes 2 of 5` while its only production caller
+supplied all five through an alias; the other had it red on main over two call sites that are
+correct. Neither had a test, so the next edit could restore either false positive silently — and both
+are the kind of rule whose breakage reads as the gate merely having an opinion, which is how a guard
+trains its readers to skip it.
+
+Pure by construction: it takes one recorded site plus the declaring file and returns a boolean. The
+walk still produces the sites; this decides what they mean, which is the half with the rules in it.
+*/
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:55 (#2851 review — the OTHER half the finding named):
+
+EXPORTED SO THE ALIAS DIRECTION IS TESTABLE, because the direction is the whole risk.
+
+In the TypeScript AST an `ImportSpecifier` for `import { a as b }` holds the EXPORTED name in
+`propertyName` and the LOCAL name in `name`. Reading them the other way round still produces a
+populated map and still type-checks — it just maps the wrong way, and the gate then attributes calls
+to a name nothing declares. That is not hypothetical: removing a stale exemption surfaced
+`enqueueMergeQueue() — best call passes 2 of 5` while its ONLY production caller passed all five
+through an alias.
+
+Returns both maps because they are populated from the same walk over the same specifiers; splitting
+them would mean two walks that could disagree about which imports exist.
+
+Returns: `importedFrom` maps local name -> module specifier; `localAlias` maps local name -> the name
+the module exported it under.
+*/
+export function collectImportBindings(sf) {
+  const importedFrom = new Map();
+  const localAlias = new Map();
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings
+      && ts.isNamedImports(node.importClause.namedBindings)
+      && ts.isStringLiteral(node.moduleSpecifier)) {
+      for (const element of node.importClause.namedBindings.elements) {
+        importedFrom.set(element.name.text, node.moduleSpecifier.text);
+        if (element.propertyName) localAlias.set(element.name.text, element.propertyName.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { importedFrom, localAlias };
+}
+
+export function isRelevantCallSite(site, declaringFile) {
   /* Basename of the seam's module, e.g. `near-duplicate-canonical` — enough to tell core's
      `task-priority` from the dashboard's `taskSorting` without resolving the module graph. */
   const declaringModule = declaringFile.replace(/\.tsx?$/, "").split("/").pop();
-  const relevant = sites.filter((site) => {
+  {
+    /*
+    A METHOD CALL IS NOT THIS FUNCTION. Seams are module-level `function` declarations, but matching
+    by name also swept up `obj.sameName(...)`. `store.enqueueMergeQueue(taskId, opts)` is a 2-arg
+    TaskStore METHOD that internally resolves the review columns; the module function it shadows
+    takes 5. Counting the method's calls reported the module seam as under-supplied and turned the
+    gate red on main over two call sites that are correct.
+
+    Tradeoff, stated: a genuine `namespace.fn(...)` call would now be skipped. This codebase calls
+    module functions as bare identifiers (aliased ones are resolved above), so that trade buys a
+    real false-positive fix at the cost of a shape that does not currently occur.
+    */
+    if (site.viaProperty) return false;
     if (site.file === declaringFile) return true;                       // the seam's own file
     if (site.shadowed) return false;                                    // a local same-named function
     if (site.from === undefined) return true;                           // not imported: ambiguous, count it
@@ -289,177 +333,190 @@ const callSitesFor = (fn, declaringFile) => {
     */
     if (!site.from.startsWith(".")) return true;
     return site.from.replace(/\.js$/, "").split("/").pop() === declaringModule;
-  });
-  return relevant;
-};
-
-const offenders = [];
-const partial = [];
-const stale = [];
-for (const [fn, { file, arity }] of declared) {
-  const allSites = callSitesFor(fn, file);
-  /*
-  PRODUCTION suppliers are the only ones that make a seam live. A test passing the argument proves
-  the parameter is exercised, not that anything in the shipped product ever reaches that branch.
-  */
-  const sites = allSites.filter((site) => !site.isTest);
-  const testSites = allSites.filter((site) => site.isTest);
-  const best = sites.reduce((max, site) => Math.max(max, site.args), 0);
-  const unsupplied = best < arity;
-  /*
-  A seam with NO production caller is inert whether or not tests exercise it, so it is reported the
-  same way. I briefly split those cases by "is it re-exported from the package index", reasoning that
-  a public export could be called from outside — that was unsound, and it silently DOWNGRADED a real
-  offender (`sortTasksForDisplayColumn`, suppliers are its own tests) from failing to a footnote.
-  Neither function has production behaviour to be wrong; publication status does not change that.
-
-  Test call sites are still tracked, and that half matters: they must never CLEAR a seam. Counting
-  them as suppliers is what would have re-hidden `sortTasksForDisplayColumn` entirely.
-  */
-  const testNote = sites.length === 0 && testSites.length > 0 ? ` (${testSites.length} test call site(s))` : "";
-  /*
-  THE ONE-SUPPLIER FLOOR. `best < arity` asks only whether SOME caller supplies the argument, so one
-  correct call site clears the seam while every other caller silently takes the legacy fallback. That
-  is not hypothetical: `isTaskStuck` shipped with two of its three call sites omitting the flags, and
-  review caught it, not this gate — the gate was green because the third call site was right.
-
-  A partially-supplied seam is the harder defect of the two. A wholly-unsupplied one is at least
-  uniformly wrong; this one works on the board you tested and degrades on the column you did not.
-  */
-  /*
-  FNXC:InertFlagSeams 2026-07-31-03:10 (#2822 review — greptile):
-  AN EXEMPTION IS BOUNDED BY COUNT, NOT OPEN-ENDED.
-
-  `<file>::<function>` previously exempted EVERY call to that function in that file, so a later call
-  added without the flags was silently covered and the gate stayed green — an exemption that grows to
-  fit whatever arrives is not an exemption, it is a hole. That is the same defect this gate exists to
-  catch (`isTaskStuck` shipped two of three sites unsupplied and the gate was green), one level up in
-  the gate itself.
-
-  Each entry now records HOW MANY omissions were reviewed. Extras beyond that count are reported like
-  any other unsupplied site, so adding a call site cannot inherit someone else's review.
-  */
-  const omittingAll = sites.filter((site) => site.args < arity);
-  const usedPerKey = new Map();
-  const omitting = [];
-  for (const site of omittingAll) {
-    const key = `${site.file}::${fn}`;
-    const entry = ALLOWED_OMISSIONS.get(key);
-    if (entry === undefined) { omitting.push(site); continue; }
-    const used = usedPerKey.get(key) ?? 0;
-    if (used < entry.count) { usedPerKey.set(key, used + 1); continue; }
-    omitting.push(site);
   }
+}
 
-  /* Same staleness rule as the name-level list: an exemption whose site now supplies is dead. */
-  for (const [key, entry] of ALLOWED_OMISSIONS) {
-    const [siteFile, siteFn] = key.split("::");
-    if (siteFn !== fn) continue;
-    const omittingHere = sites.filter((candidate) => candidate.file === siteFile && candidate.args < arity).length;
-    if (omittingHere === 0) {
-      stale.push(`  ${key} — no unsupplied call site remains; remove its ALLOWED_OMISSIONS entry`);
-    } else if (omittingHere < entry.count) {
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:35 (#2851 review):
+GUARDED REPORTING, so importing this module does not run the gate to completion.
+
+`check-inert-flag-seams.test.mjs` imports `isRelevantCallSite`. Without this guard the import printed
+the gate's report and could `process.exit(1)`, so the test file would pass or fail on unrelated repo
+state rather than on what it asserts. Same fix, same reason, as check-sql-column-literals.
+
+The AST WALK above stays unguarded on purpose: `declared` and `callSites` are the module's data, a
+future test may want them, and the walk has no output and no exit. Only the reporting is entry-point
+work.
+*/
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const offenders = [];
+  const partial = [];
+  const stale = [];
+  for (const [fn, { file, arity }] of declared) {
+    const allSites = callSitesFor(fn, file);
+    /*
+    PRODUCTION suppliers are the only ones that make a seam live. A test passing the argument proves
+    the parameter is exercised, not that anything in the shipped product ever reaches that branch.
+    */
+    const sites = allSites.filter((site) => !site.isTest);
+    const testSites = allSites.filter((site) => site.isTest);
+    const best = sites.reduce((max, site) => Math.max(max, site.args), 0);
+    const unsupplied = best < arity;
+    /*
+    A seam with NO production caller is inert whether or not tests exercise it, so it is reported the
+    same way. I briefly split those cases by "is it re-exported from the package index", reasoning that
+    a public export could be called from outside — that was unsound, and it silently DOWNGRADED a real
+    offender (`sortTasksForDisplayColumn`, suppliers are its own tests) from failing to a footnote.
+    Neither function has production behaviour to be wrong; publication status does not change that.
+
+    Test call sites are still tracked, and that half matters: they must never CLEAR a seam. Counting
+    them as suppliers is what would have re-hidden `sortTasksForDisplayColumn` entirely.
+    */
+    const testNote = sites.length === 0 && testSites.length > 0 ? ` (${testSites.length} test call site(s))` : "";
+    /*
+    THE ONE-SUPPLIER FLOOR. `best < arity` asks only whether SOME caller supplies the argument, so one
+    correct call site clears the seam while every other caller silently takes the legacy fallback. That
+    is not hypothetical: `isTaskStuck` shipped with two of its three call sites omitting the flags, and
+    review caught it, not this gate — the gate was green because the third call site was right.
+
+    A partially-supplied seam is the harder defect of the two. A wholly-unsupplied one is at least
+    uniformly wrong; this one works on the board you tested and degrades on the column you did not.
+    */
+    /*
+    FNXC:InertFlagSeams 2026-07-31-03:10 (#2822 review — greptile):
+    AN EXEMPTION IS BOUNDED BY COUNT, NOT OPEN-ENDED.
+
+    `<file>::<function>` previously exempted EVERY call to that function in that file, so a later call
+    added without the flags was silently covered and the gate stayed green — an exemption that grows to
+    fit whatever arrives is not an exemption, it is a hole. That is the same defect this gate exists to
+    catch (`isTaskStuck` shipped two of three sites unsupplied and the gate was green), one level up in
+    the gate itself.
+
+    Each entry now records HOW MANY omissions were reviewed. Extras beyond that count are reported like
+    any other unsupplied site, so adding a call site cannot inherit someone else's review.
+    */
+    const omittingAll = sites.filter((site) => site.args < arity);
+    const usedPerKey = new Map();
+    const omitting = [];
+    for (const site of omittingAll) {
+      const key = `${site.file}::${fn}`;
+      const entry = ALLOWED_OMISSIONS.get(key);
+      if (entry === undefined) { omitting.push(site); continue; }
+      const used = usedPerKey.get(key) ?? 0;
+      if (used < entry.count) { usedPerKey.set(key, used + 1); continue; }
+      omitting.push(site);
+    }
+
+    /* Same staleness rule as the name-level list: an exemption whose site now supplies is dead. */
+    for (const [key, entry] of ALLOWED_OMISSIONS) {
+      const [siteFile, siteFn] = key.split("::");
+      if (siteFn !== fn) continue;
+      const omittingHere = sites.filter((candidate) => candidate.file === siteFile && candidate.args < arity).length;
+      if (omittingHere === 0) {
+        stale.push(`  ${key} — no unsupplied call site remains; remove its ALLOWED_OMISSIONS entry`);
+      } else if (omittingHere < entry.count) {
+        /*
+        A count that overshoots is the same hazard in miniature: it silently pre-authorises an omission
+        that has not been reviewed. Narrow it in the change that fixed the site.
+        */
+        stale.push(`  ${key} — count is ${entry.count} but only ${omittingHere} site(s) omit; lower it`);
+      }
+    }
+    if (ALLOWED.has(fn)) {
       /*
-      A count that overshoots is the same hazard in miniature: it silently pre-authorises an omission
-      that has not been reviewed. Narrow it in the change that fixed the site.
+      An allow-list entry whose site is now SUPPLIED is stale, and a stale exemption is how a guard
+      quietly stops guarding a file nobody is looking at any more. Fail so the entry is removed in the
+      same change that fixed the site — the same staleness rule the sync-resolver allow-list uses.
       */
-      stale.push(`  ${key} — count is ${entry.count} but only ${omittingHere} site(s) omit; lower it`);
+      if (!unsupplied) stale.push(`  ${fn} — now supplied; remove its ALLOWED entry`);
+      continue;
+    }
+    if (unsupplied) {
+      offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
+    } else if (omitting.length > 0) {
+      const where = omitting.map((site) => `${site.file}:${site.args}`).join(", ");
+      partial.push(`  ${file}: ${fn}() — supplied by ${sites.length - omitting.length}/${sites.length}`
+        + ` call sites; omitted at ${where} (of ${arity})`);
     }
   }
-  if (ALLOWED.has(fn)) {
-    /*
-    An allow-list entry whose site is now SUPPLIED is stale, and a stale exemption is how a guard
-    quietly stops guarding a file nobody is looking at any more. Fail so the entry is removed in the
-    same change that fixed the site — the same staleness rule the sync-resolver allow-list uses.
-    */
-    if (!unsupplied) stale.push(`  ${fn} — now supplied; remove its ALLOWED entry`);
-    continue;
+
+  /*
+  TEMPORARY entries are exemptions for OTHER teams' code, granted so their CI does not break mid-batch.
+  They are the ones that rot: nobody who could remove them is looking at this file. Announce them on
+  every run so they stay visible rather than becoming permanent by silence.
+  */
+  const temporary = [...ALLOWED].filter(([, reason]) => reason.startsWith("TEMPORARY"));
+  if (temporary.length > 0) {
+    console.log(`[check-inert-flag-seams] ${temporary.length} TEMPORARY exemption(s) still active:`);
+    for (const [fn, reason] of temporary) console.log(`    ${fn} — ${reason}`);
   }
-  if (unsupplied) {
-    offenders.push(`  ${file}: ${fn}() — best call passes ${best} of ${arity}`);
-  } else if (omitting.length > 0) {
-    const where = omitting.map((site) => `${site.file}:${site.args}`).join(", ");
-    partial.push(`  ${file}: ${fn}() — supplied by ${sites.length - omitting.length}/${sites.length}`
-      + ` call sites; omitted at ${where} (of ${arity})`);
+
+  if (declared.size === 0) {
+    console.error("[check-inert-flag-seams] found NO trailing lane/flag params — the scan is broken, not the code.");
+    process.exit(1);
   }
-}
 
-/*
-TEMPORARY entries are exemptions for OTHER teams' code, granted so their CI does not break mid-batch.
-They are the ones that rot: nobody who could remove them is looking at this file. Announce them on
-every run so they stay visible rather than becoming permanent by silence.
-*/
-const temporary = [...ALLOWED].filter(([, reason]) => reason.startsWith("TEMPORARY"));
-if (temporary.length > 0) {
-  console.log(`[check-inert-flag-seams] ${temporary.length} TEMPORARY exemption(s) still active:`);
-  for (const [fn, reason] of temporary) console.log(`    ${fn} — ${reason}`);
-}
+  /*
+  AN EXEMPTION FOR A FUNCTION THAT NO LONGER EXISTS ALSO ROTS.
 
-if (declared.size === 0) {
-  console.error("[check-inert-flag-seams] found NO trailing lane/flag params — the scan is broken, not the code.");
-  process.exit(1);
-}
-
-/*
-AN EXEMPTION FOR A FUNCTION THAT NO LONGER EXISTS ALSO ROTS.
-
-The staleness check above only fires for a seam the scan still FINDS — it asks "is this site supplied
-now?". Delete the declaration and the name is never iterated, so its entry sits in the list forever,
-silently exempting nothing and misleading the next reader about what is tolerated. Found by deleting
-`evaluateMergeBlockerGuard` and watching the gate stay quiet about its leftover entry.
-*/
-for (const fn of ALLOWED.keys()) {
-  if (!declared.has(fn)) stale.push(`  ${fn} — no such seam declared any more; remove its ALLOWED entry`);
-}
-
-/*
-FNXC:InertFlagSeams 2026-07-31-03:45 (#2830 review — greptile):
-THE SAME ROT REACHES ALLOWED_OMISSIONS, and the pass above did not cover it.
-
-Both staleness rules for the per-site list live inside the per-declaration loop, so they only run for
-a function the scan still FINDS. Delete or rename the function and that loop never visits it: the
-`<file>::<fn>` entry survives, exempting nothing, while reading as a reviewed and tolerated omission.
-
-This is the identical defect the ALLOWED pass above was added to fix — written for one of the two
-lists and not the other, which is the half-conversion shape this repo keeps producing. Same check,
-same failure mode, so it belongs immediately beside it rather than folded into the loop that cannot
-see deletions.
-*/
-for (const key of ALLOWED_OMISSIONS.keys()) {
-  const [, siteFn] = key.split("::");
-  if (!declared.has(siteFn)) {
-    stale.push(`  ${key} — no such seam declared any more; remove its ALLOWED_OMISSIONS entry`);
+  The staleness check above only fires for a seam the scan still FINDS — it asks "is this site supplied
+  now?". Delete the declaration and the name is never iterated, so its entry sits in the list forever,
+  silently exempting nothing and misleading the next reader about what is tolerated. Found by deleting
+  `evaluateMergeBlockerGuard` and watching the gate stay quiet about its leftover entry.
+  */
+  for (const fn of ALLOWED.keys()) {
+    if (!declared.has(fn)) stale.push(`  ${fn} — no such seam declared any more; remove its ALLOWED entry`);
   }
-}
 
-if (stale.length > 0) {
-  console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
-  for (const line of stale.sort()) console.error(line);
-  console.error("\nRemove them, or the check silently stops guarding those functions.\n");
-  process.exit(1);
-}
+  /*
+  FNXC:InertFlagSeams 2026-07-31-03:45 (#2830 review — greptile):
+  THE SAME ROT REACHES ALLOWED_OMISSIONS, and the pass above did not cover it.
 
-if (offenders.length > 0) {
-  console.error("\n[check-inert-flag-seams] optional trailing lane/flag parameter with no supplier:\n");
-  for (const line of offenders.sort()) console.error(line);
-  console.error(
-    "\nThe literal it replaced is gone, the census counted the conversion, and the behaviour is the\n"
-    + "legacy fallback forever. Wire a supplier, or delete the parameter and leave the literal counted.\n",
+  Both staleness rules for the per-site list live inside the per-declaration loop, so they only run for
+  a function the scan still FINDS. Delete or rename the function and that loop never visits it: the
+  `<file>::<fn>` entry survives, exempting nothing, while reading as a reviewed and tolerated omission.
+
+  This is the identical defect the ALLOWED pass above was added to fix — written for one of the two
+  lists and not the other, which is the half-conversion shape this repo keeps producing. Same check,
+  same failure mode, so it belongs immediately beside it rather than folded into the loop that cannot
+  see deletions.
+  */
+  for (const key of ALLOWED_OMISSIONS.keys()) {
+    const [, siteFn] = key.split("::");
+    if (!declared.has(siteFn)) {
+      stale.push(`  ${key} — no such seam declared any more; remove its ALLOWED_OMISSIONS entry`);
+    }
+  }
+
+  if (stale.length > 0) {
+    console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
+    for (const line of stale.sort()) console.error(line);
+    console.error("\nRemove them, or the check silently stops guarding those functions.\n");
+    process.exit(1);
+  }
+
+  if (offenders.length > 0) {
+    console.error("\n[check-inert-flag-seams] optional trailing lane/flag parameter with no supplier:\n");
+    for (const line of offenders.sort()) console.error(line);
+    console.error(
+      "\nThe literal it replaced is gone, the census counted the conversion, and the behaviour is the\n"
+      + "legacy fallback forever. Wire a supplier, or delete the parameter and leave the literal counted.\n",
+    );
+    process.exit(1);
+  }
+
+  if (partial.length > 0) {
+    console.error("\n[check-inert-flag-seams] lane/flag parameter supplied at SOME call sites only:\n");
+    for (const line of partial.sort()) console.error(line);
+    console.error(
+      "\nThe listed call sites take the legacy fallback while their siblings resolve the real column,\n"
+      + "so the guard is correct on the board you tested and degrades on the one you did not. Supply the\n"
+      + "argument at every site, or delete the parameter and leave the literal counted.\n",
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    `[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied at every production call site.`,
   );
-  process.exit(1);
 }
-
-if (partial.length > 0) {
-  console.error("\n[check-inert-flag-seams] lane/flag parameter supplied at SOME call sites only:\n");
-  for (const line of partial.sort()) console.error(line);
-  console.error(
-    "\nThe listed call sites take the legacy fallback while their siblings resolve the real column,\n"
-    + "so the guard is correct on the board you tested and degrades on the one you did not. Supply the\n"
-    + "argument at every site, or delete the parameter and leave the literal counted.\n",
-  );
-  process.exit(1);
-}
-
-console.log(
-  `[check-inert-flag-seams] ${declared.size} lane/flag seams, all supplied at every production call site.`,
-);

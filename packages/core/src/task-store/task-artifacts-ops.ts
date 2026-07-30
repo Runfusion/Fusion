@@ -496,7 +496,38 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     }
 
     const fromColumn = task.column;
-    const mergeBlocker = getTaskMergeBlocker(task);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:10 (unwired-parameter class, cf. #2803):
+    THE OUTER QUESTION WAS RESOLVED AND THE INNER ONE WAS NOT — in the same function, four lines apart.
+    `completeColumn` above comes from the task's workflow, then this call re-asked with the literal and
+    refused: on a renamed board the completion move threw
+
+        Cannot move FN-1 to done: task is in 'checking', must be in 'in-review'
+
+    for a card sitting correctly in its own review lane. `getTaskMergeBlocker`'s own note calls out this
+    exact half-conversion shape in `moves.ts`; this is the same shape in a second site it did not cover.
+
+    MEMBERSHIP via `resolveReviewColumns` (mergeOrchestration ∪ mergeBlocker ∪ humanReview), so a board
+    splitting those across columns has all of them accepted, unioned with the legacy id because
+    `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
+    THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
+    unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
+    a card mid-implementation would pass the merge-identity check and merge prematurely.
+
+    The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
+    resolution that threw. A non-empty resolved answer replaces it outright; that is the same
+    "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
+    */
+    let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id);
+      const resolved = ir ? resolveReviewColumns(ir) : [];
+      if (resolved.length > 0) reviewColumns = new Set(resolved);
+    } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
+    const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
     if (mergeBlocker) {
       throw new Error(`Cannot move ${task.id} to done: ${mergeBlocker}`);
     }
