@@ -615,9 +615,22 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       Workflow-mode Done sorting follows the workflow trait, not only the built-in `done` id, so custom complete lanes get the same descending completion-date/task-id selector while archived lanes keep their own behavior.
       */
       const isWorkflowDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
-      grouped[column.id] = isWorkflowDoneLikeColumn
-        ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true, column.flags.hold === true);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase):
+      No more synthetic "done" column id. This branch forced done-sorting by passing the LITERAL "done"
+      as the column argument, so a custom complete lane sorted correctly only because its caller lied
+      about its name. `sortTasksForDisplayColumn` now takes the trait directly, so the real column id goes
+      through and the sort intent is stated rather than smuggled through a fake id.
+      */
+      grouped[column.id] = sortTasksForDisplayColumn(
+        grouped[column.id] ?? [],
+        column.id as ColumnType,
+        doneSortMode,
+        column.flags.archived === true,
+        column.flags.hold === true,
+        isWorkflowDoneLikeColumn,
+        column.flags.mergeBlocker === true || column.flags.humanReview === true,
+      );
     }
     return grouped;
   }, [doneSortMode, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
@@ -799,9 +812,22 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     }
     for (const column of aggregateBoardColumns) {
       const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
-      grouped[column.id] = isDoneLikeColumn
-        ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true, column.flags.hold === true);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase):
+      No more synthetic "done" column id. This branch forced done-sorting by passing the LITERAL "done"
+      as the column argument, so a custom complete lane sorted correctly only because its caller lied
+      about its name. `sortTasksForDisplayColumn` now takes the trait directly, so the real column id goes
+      through and the sort intent is stated rather than smuggled through a fake id.
+      */
+      grouped[column.id] = sortTasksForDisplayColumn(
+        grouped[column.id] ?? [],
+        column.id as ColumnType,
+        doneSortMode,
+        column.flags.archived === true,
+        column.flags.hold === true,
+        isDoneLikeColumn,
+        column.flags.mergeBlocker === true || column.flags.humanReview === true,
+      );
     }
     return grouped;
   }, [aggregateBoardColumns, aggregateQuickCreateTarget, boardWorkflows, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);

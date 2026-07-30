@@ -14,6 +14,8 @@ import { ArtifactsGallery } from "./ArtifactsGallery";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { useArtifacts } from "../hooks/useArtifacts";
+import type { ColumnRoleFlags } from "../utils/columnRoles";
+import { isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 
 interface Props {
   task: Task | TaskDetail;
@@ -22,6 +24,18 @@ interface Props {
   onRequestCreatePr?: () => void;
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:20 (fleet phase):
+  Resolved trait flags for the task's CURRENT column. OPTIONAL: TaskDetailModal already has them
+  (`workflowMoveMetadata?.currentColumnFlags`) and passes them; the test harness and any other host omit
+  them and the role helpers fall back to the legacy id, so nothing else changes.
+
+  Three of this tab's four questions were "is this card in review", driving the Create-PR button, the
+  "frozen on entry to review" auto-merge hint, and PR-feedback addressing. On a renamed review lane all
+  three silently took their non-review branch — the button vanished and the hint claimed the effective
+  value was not frozen when it was.
+  */
+  columnFlags?: ColumnRoleFlags;
   addToast: (message: string, type?: ToastType) => void;
 }
 
@@ -148,8 +162,11 @@ export function TaskReviewTab({
   onRequestCreatePr,
   prAuthAvailable,
   autoMergeEnabled = false,
+  columnFlags,
   addToast,
 }: Props) {
+  const isReviewColumn = isReviewColumnRole(columnFlags, task.column);
+  const isWipColumn = isWipColumnRole(columnFlags, task.column);
   const { t } = useTranslation("app");
   const [selected, setSelected] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -193,7 +210,7 @@ export function TaskReviewTab({
   const canRevise = selected.length > 0 && !revising;
   const canAddressPrFeedback = isPrMode
     && Boolean(getTaskPrimaryPrInfo(task))
-    && (task.column === "in-review" || task.column === "in-progress")
+    && (isReviewColumn || isWipColumn)
     && (canStartPrFeedbackAddressing(task) || displayItems.length > 0);
 
   useEffect(() => {
@@ -422,12 +439,12 @@ export function TaskReviewTab({
               <option value="off">{t("taskReview.autoMergeOff", "Auto-merge off")}</option>
             </select>
             <div className="task-review-tab__meta" data-testid="task-review-auto-merge-effective-hint">
-              {task.column === "in-review"
+              {isReviewColumn
                 ? t("taskReview.effectiveFrozen", "Effective: {{label}} — frozen on entry to review", { label: effectiveAutoMergeLabel })
                 : t("taskReview.effective", "Effective: {{label}}", { label: effectiveAutoMergeLabel })}
             </div>
           </div>
-          {task.column === "in-review" && !task.prInfo && prAuthAvailable === true && !effectiveAutoMerge && typeof onRequestCreatePr === "function" ? (
+          {isReviewColumn && !task.prInfo && prAuthAvailable === true && !effectiveAutoMerge && typeof onRequestCreatePr === "function" ? (
             <button className="btn btn-sm" onClick={() => onRequestCreatePr?.()} data-testid="task-review-create-pr">
               <GitPullRequest />
               {t("taskReview.createPr", "Create PR")}

@@ -5474,6 +5474,9 @@ export function TaskDetailContent({
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} modifiedFiles={task.modifiedFiles} isWorkspace={isWorkspaceTask(workingTask)} />
           ) : activeTab === "review" ? (
             <TaskReviewTab
+              // FNXC:WorkflowResolvedColumns 2026-07-31-07:20: the modal already resolved these for
+              // canEdit and the actions menu; the review tab asked the same question by id.
+              columnFlags={workflowMoveMetadata?.currentColumnFlags}
               task={task}
               addToast={addToast}
               projectId={projectId}

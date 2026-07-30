@@ -1127,6 +1127,74 @@ describe("TaskReviewTab", () => {
     expect(onRequestCreatePr).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:35 (fleet phase — evidence for the review-lane conversion):
+  Three of this tab's questions were `task.column === "in-review"`: the Create-PR button, the
+  "frozen on entry to review" auto-merge hint, and PR-feedback addressing. On a board whose review lane is
+  renamed, all three silently took their non-review branch — the button was absent and the hint claimed
+  the effective auto-merge value was NOT frozen when it was.
+
+  `columnFlags` is optional and every case above omits it, so they all keep asserting the legacy-id
+  behaviour — which is why none of them could catch this. These two supply it.
+
+  REVERT CHECK, measured (both run): restoring `task.column === "in-review"` on the Create-PR guard makes
+  the renamed case fail (`Unable to find an element by: [data-testid="task-review-create-pr"]`), and
+  restoring it on the hint makes the frozen-hint case fail — it renders the unfrozen wording.
+  */
+  const REVIEW_FLAGS = { mergeBlocker: true } as const;
+
+  it("shows create PR action on a RENAMED review lane", async () => {
+    const onRequestCreatePr = vi.fn();
+    const task = makeTask({ column: "checking" as never, prInfo: undefined });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+
+    await renderWithAct(
+      <TaskReviewTab
+        task={task}
+        addToast={vi.fn()}
+        prAuthAvailable
+        onRequestCreatePr={onRequestCreatePr}
+        columnFlags={REVIEW_FLAGS as never}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Refresh" });
+    fireEvent.click(screen.getByTestId("task-review-create-pr"));
+    expect(onRequestCreatePr).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the effective auto-merge value is frozen on a RENAMED review lane", async () => {
+    const task = makeTask({ column: "checking" as never, prInfo: undefined });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+
+    await renderWithAct(
+      <TaskReviewTab task={task} addToast={vi.fn()} columnFlags={REVIEW_FLAGS as never} />,
+    );
+
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.getByTestId("task-review-auto-merge-effective-hint").textContent)
+      .toContain("frozen on entry to review");
+  });
+
+  it("still hides create PR action on a non-review lane of that same renamed board", async () => {
+    // Non-vacuous: the widened test must not treat every column as review.
+    const task = makeTask({ column: "building" as never, prInfo: undefined });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+
+    await renderWithAct(
+      <TaskReviewTab
+        task={task}
+        addToast={vi.fn()}
+        prAuthAvailable
+        onRequestCreatePr={vi.fn()}
+        columnFlags={{ countsTowardWip: true } as never}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.queryByTestId("task-review-create-pr")).toBeNull();
+  });
+
   it("hides create PR action outside in-review column", async () => {
     const task = makeTask({ column: "todo", prInfo: undefined });
     apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });

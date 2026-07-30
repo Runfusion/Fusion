@@ -1,5 +1,6 @@
 import type { Task, Column } from "@fusion/core";
 import { isActiveMergeStatus as isMergeActiveStatus } from "../../../core/src/active-merge-status";
+import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 
 export type DoneColumnSortMode = "completion-date-desc" | "task-id-desc";
 
@@ -53,7 +54,7 @@ export function sortTasksForDisplayColumn(
   tasks: readonly Task[],
   column: Column,
   doneSortMode: DoneColumnSortMode = "completion-date-desc",
-  isArchivedColumn: boolean = column === "archived",
+  isArchivedColumn: boolean = isArchivedColumnRole(undefined, column),
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   Does this column HOLD planned work waiting for capacity? Follows the same
@@ -67,7 +68,24 @@ export function sortTasksForDisplayColumn(
   priority ordering with nothing failing. Not a rename: `todo` gained the hold trait in
   U11, so the id and the role stopped being the same question.
   */
-  isHoldColumn: boolean = column === "todo",
+  isHoldColumn: boolean = isHoldColumnRole(undefined, column),
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase — completing the caller-supplies-the-trait shape):
+  The last two questions this function asked by id. Same contract as the two params above: the caller
+  passes the resolved trait, and the default is the legacy id so callers that do not resolve flags keep
+  today's behaviour exactly.
+
+  `isCompleteColumn` also retires a caller-side hack. Board.tsx forced done-sorting by passing the
+  LITERAL "done" as the column argument for any complete-flagged lane — a synthetic id standing in for a
+  trait, so a custom complete lane sorted correctly only because its caller lied about its name. It can
+  now pass the real column id and say `isCompleteColumn: true`.
+
+  `isReviewColumn` decides whether merging cards float to the top of the lane. Keyed on the id it
+  silently stopped doing that on any renamed review lane — the operator loses the "what is merging right
+  now" ordering with nothing failing.
+  */
+  isCompleteColumn: boolean = isCompleteColumnRole(undefined, column),
+  isReviewColumn: boolean = isReviewColumnRole(undefined, column),
 ): Task[] {
   /*
   FNXC:ArchivePagination 2026-07-08-00:00:
@@ -94,7 +112,7 @@ export function sortTasksForDisplayColumn(
   }
 
   return [...tasks].sort((a, b) => {
-    if (column === "done") {
+    if (isCompleteColumn) {
       /*
       FNXC:DoneColumnSorting 2026-06-29-14:48:
       Done keeps completion-date descending as the default for existing board, lane, and list callers while supporting an explicit task-id descending mode for users who need newest FN ids first.
@@ -107,7 +125,7 @@ export function sortTasksForDisplayColumn(
       return compareTaskIdNumeric(a.id, b.id);
     }
 
-    if (column === "in-review") {
+    if (isReviewColumn) {
       const aIsMerging = isMergeActiveStatus(a.status);
       const bIsMerging = isMergeActiveStatus(b.status);
       if (aIsMerging !== bIsMerging) return aIsMerging ? -1 : 1;
