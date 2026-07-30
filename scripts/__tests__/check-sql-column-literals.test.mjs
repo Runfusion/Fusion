@@ -153,3 +153,22 @@ test("a nested IN list of only NON-legacy ids is still not matched", () => {
   /* The paired negative: tolerating nesting must not turn every IN predicate into a hit. */
   assert.equal(hits("const q = `WHERE \"column\" IN (COALESCE(x, y), 'shipped')`;"), 0);
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-17:30 (#2841 review, FOURTH round — greptile P1):
+The same blindness as the static-span join, reachable by changing punctuation: a column reference
+written with brackets rather than a dot fell through to the NUL sentinel and its predicate vanished.
+*/
+
+test("a bracket-access column reference in a Drizzle template is caught", () => {
+  assert.equal(hits('const q = sql`${schema.project.tasks["column"]} != \'archived\'`;'), 1);
+});
+
+test("a backtick bracket-access reference is caught", () => {
+  assert.equal(hits("const q = sql`${t[`column`]} = 'done'`;"), 1);
+});
+
+test("a bracket access to a DIFFERENT property is not treated as a column", () => {
+  /* The paired negative: widening to any bracket access would make every interpolation a column. */
+  assert.equal(hits('const q = sql`${schema.project.tasks["title"]} = \'done\'`;'), 0);
+});

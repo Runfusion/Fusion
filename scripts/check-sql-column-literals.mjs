@@ -161,7 +161,22 @@ invitation to re-add a filter that uses it.
  * with no type-checker, and an AST gate earns its place by staying cheap. A false positive costs one
  * baseline entry; the false NEGATIVE it replaces cost the gate its meaning on its own target files.
  */
-const COLUMN_PROPERTY = /(?:^|\.)column$/;
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-17:25 (#2841 review, fourth round — greptile P1
+"bracket-access columns evade scanning"):
+
+`schema.project.tasks["column"]` IS THE SAME REFERENCE WRITTEN DIFFERENTLY.
+
+The dot form was the only one matched, so an element-access reference fell through to the NUL
+sentinel and its predicate vanished — the identical blindness the static-span join had, reachable by
+changing punctuation. Drizzle accepts both spellings and a formatter or a reserved-word column can
+produce the bracket one.
+
+Both quote styles and an optional trailing `!`/`?` are tolerated for the same reason the rest of this
+scanner is permissive: the cost of a false positive is one baseline entry, and the cost of a false
+negative is a gate that reads as coverage.
+*/
+const COLUMN_PROPERTY = /(?:^|\.)column$|\[\s*["'`]column["'`]\s*\]$/;
 
 export function literalText(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
