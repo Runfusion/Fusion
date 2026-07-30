@@ -1,5 +1,4 @@
 import "./TaskContextMenu.css";
-import { isLegacyIntakeColumn } from "../utils/legacyLifecycleColumns.js";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
