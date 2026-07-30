@@ -124,9 +124,12 @@ function keyOf(entry: { file: string; primitive: string; signature: string }): s
   return `${entry.file}:${entry.primitive}:${entry.signature}`;
 }
 
-function classifySites(sites: ShelloutSite[]): { unmatched: ShelloutSite[]; stale: AllowlistEntry[] } {
+function classifySites(
+  sites: ShelloutSite[],
+  entries: AllowlistEntry[] = allowlist,
+): { unmatched: ShelloutSite[]; stale: AllowlistEntry[] } {
   const budget = new Map<string, number>();
-  for (const entry of allowlist) budget.set(keyOf(entry), (budget.get(keyOf(entry)) ?? 0) + 1);
+  for (const entry of entries) budget.set(keyOf(entry), (budget.get(keyOf(entry)) ?? 0) + 1);
 
   const unmatched = sites.filter((site) => {
     const remainingForKey = budget.get(keyOf(site)) ?? 0;
@@ -136,7 +139,7 @@ function classifySites(sites: ShelloutSite[]): { unmatched: ShelloutSite[]; stal
   });
 
   // Anything still holding budget is an allowlist entry with no matching call site left in source.
-  const stale = allowlist.filter((entry) => {
+  const stale = entries.filter((entry) => {
     const left = budget.get(keyOf(entry)) ?? 0;
     if (left === 0) return false;
     budget.set(keyOf(entry), left - 1);
@@ -144,6 +147,59 @@ function classifySites(sites: ShelloutSite[]): { unmatched: ShelloutSite[]; stal
   });
   return { unmatched, stale };
 }
+
+/*
+FNXC:EngineProcessRules 2026-07-30-13:20 (greptile P2 — the count semantics had no direct coverage):
+The two invariants that replaced line coupling were verified by MUTATION while writing the change,
+which proves nothing once the mutation is reverted. Pinned here directly, so a later edit cannot
+restore line coupling or weaken duplicate detection without a red test.
+*/
+describe("shellout allowlist matching semantics", () => {
+  const AUDITED: AllowlistEntry = {
+    file: "src/example.ts",
+    line: 10,
+    primitive: "execSync",
+    signature: 'execSync("git worktree prune", {',
+    reason: "test fixture",
+  };
+  const siteAt = (line: number): ShelloutSite => ({
+    file: AUDITED.file,
+    line,
+    primitive: AUDITED.primitive,
+    signature: AUDITED.signature,
+  });
+
+  it("accepts an audited call that has MOVED — line drift alone is not a violation", () => {
+    // The false failure this replaced: an edit ABOVE the call site broke the guard three times.
+    const { unmatched, stale } = classifySites([siteAt(9_999)], [AUDITED]);
+
+    expect(unmatched).toEqual([]);
+    expect(stale).toEqual([]);
+  });
+
+  it("rejects a SECOND identical shellout — the count is what line numbers were buying", () => {
+    // One audited entry, two identical calls: the extra one is unmatched even though its
+    // file+primitive+signature match, because the allowlist audits exactly one of them.
+    const { unmatched } = classifySites([siteAt(10), siteAt(40)], [AUDITED]);
+
+    expect(unmatched).toHaveLength(1);
+    expect(unmatched[0]).toMatchObject({ file: AUDITED.file, signature: AUDITED.signature });
+  });
+
+  it("reports an audited entry with no call site left as STALE", () => {
+    const { unmatched, stale } = classifySites([], [AUDITED]);
+
+    expect(unmatched).toEqual([]);
+    expect(stale).toEqual([AUDITED]);
+  });
+
+  it("still distinguishes a DIFFERENT shellout in the same file", () => {
+    const other: ShelloutSite = { ...siteAt(12), signature: 'execSync("git gc --prune=now", {' };
+    const { unmatched } = classifySites([siteAt(10), other], [AUDITED]);
+
+    expect(unmatched).toEqual([other]);
+  });
+});
 
 describe("engine blocking-shellout static guard", () => {
   it("confines every production synchronous shellout to an audited call-site allowlist", () => {
