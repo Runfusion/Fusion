@@ -54,7 +54,18 @@ function expectVisibleActionIcon(button: HTMLElement) {
   expect(Number.parseFloat(svgStyle.height)).toBeGreaterThan(0);
   expect(svgStyle.display).toBe("block");
   expect(svgStyle.stroke.toLowerCase()).not.toBe("none");
-  expect(svgStyle.stroke).not.toBe(buttonStyle.backgroundColor);
+  /*
+  FNXC:Secrets 2026-07-30-09:10:
+  Compare the RESOLVED colour, not `stroke`. SecretsView.css:227 sets `stroke: currentColor`, and
+  jsdom does not resolve `currentColor` — `getComputedStyle().stroke` came back
+  `rgba(0, 0, 0, 0)` for every icon, which also equals the icon button's transparent background, so
+  the old comparison was two unresolved values matching each other rather than a visibility check.
+
+  `currentColor` IS the element's `color`, which jsdom does compute, so this asserts the same
+  invariant (the icon is not painted in the button's own background colour) through a property that
+  actually resolves. True pixel visibility is covered by the e2e screenshot suite.
+  */
+  expect(svgStyle.color).not.toBe(buttonStyle.backgroundColor);
 }
 
 // FNXC:Secrets 2026-06-23-01:30: The cross-node sync passphrase status/actions now live behind a collapsed-by-default
