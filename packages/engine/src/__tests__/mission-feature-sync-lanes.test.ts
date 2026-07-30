@@ -212,3 +212,50 @@ describe("legacy per-role fallbacks never alias a declared role", () => {
     expect(d.kind === "update" && d.status).toBe("in-progress");
   });
 });
+
+/*
+FNXC:MissionFeatureSyncLanes 2026-07-30-06:40 (PR #2602 review, second P1 — greptile):
+"DECLARED" means the workflow declares a column with that id — NOT that some role
+resolved to it. A non-lifecycle column named `todo` (traits mapping to no role) was
+invisible to the previous role-only check, so the fallback claimed it as `lane.hold`
+and a task resting there had its feature regressed to `triaged`.
+
+I had recorded that as a residual limitation. It was not a limitation, it was an unread
+input: the IR is in reach here.
+*/
+describe("a non-lifecycle column named with a legacy id is not claimed", () => {
+  /** No hold role, plus a column literally named `todo` that carries NO lifecycle trait. */
+  function holdlessWithInertTodoIr(): WorkflowIr {
+    return {
+      version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Intake", traits: [{ trait: "intake" }] },
+        { id: "building", name: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        // Declared, but maps to no role — the case the role-only check could not see.
+        { id: "todo", name: "Parking", traits: [] },
+        { id: "shipped", name: "Complete", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+  }
+
+  it("does NOT regress an in-progress feature for a task in that inert column", async () => {
+    const d = await reconcileMissionFeatureState(
+      storeWith(holdlessWithInertTodoIr()),
+      task("todo"),
+      feature("in-progress"),
+    );
+
+    expect(d.kind).toBe("noop");
+  });
+
+  it("still treats the workflow's REAL intake column as a planner lane", async () => {
+    // The counter-case, so "never a planner lane" cannot pass for "reads the IR".
+    const d = await reconcileMissionFeatureState(
+      storeWith(holdlessWithInertTodoIr()),
+      task("backlog"),
+      feature("in-progress"),
+    );
+
+    expect(d.kind === "update" && d.status).toBe("triaged");
+  });
+});

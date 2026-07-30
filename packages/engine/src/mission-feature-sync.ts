@@ -1,5 +1,5 @@
 import type { MissionFeature, Task, TaskStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 
 export type MissionFeatureSyncTargetStatus = "done" | "in-progress" | "triaged";
@@ -90,7 +90,27 @@ export async function reconcileMissionFeatureState(
   (#2607) and in the recovery acceptance (#2593) — three variations of "a legacy id is
   not a role".
   */
-  const declared = new Set(Object.values(roles ?? {}).filter((v): v is string => typeof v === "string"));
+  /*
+  FNXC:MissionFeatureSyncLanes 2026-07-30-06:40 (PR #2602 review, second P1 — greptile):
+  DECLARED means "the workflow declares a column with this id", not "some ROLE resolved
+  to this id". My previous revision built `declared` from the six resolved roles, so a
+  custom workflow with a non-lifecycle column named `todo` — one carrying traits that
+  map to no role — left the id invisible, the fallback claimed it as `lane.hold`, and a
+  task resting there had its feature regressed to `triaged`.
+
+  I had written that gap down as a residual limitation. Documenting it was not handling
+  it: the IR is in reach here, so read the columns and the limitation disappears.
+  */
+  const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
+  const declaredColumnIds = new Set(
+    ((ir as { columns?: Array<{ id?: unknown }> } | undefined)?.columns ?? [])
+      .map((c) => c?.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const declared = new Set([
+    ...Object.values(roles ?? {}).filter((v): v is string => typeof v === "string"),
+    ...declaredColumnIds,
+  ]);
   const laneOr = (resolved: string | undefined, legacy: string): string | undefined =>
     resolved ?? (declared.has(legacy) ? undefined : legacy);
   const lane = {
