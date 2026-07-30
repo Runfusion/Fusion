@@ -3004,10 +3004,19 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
             dependencies: [todoFirst.id],
           });
         }
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-20:40:
+        Seeded explicitly in a THIRD distinct column. These used to be created with no `column` and
+        relied on landing in `triage`, which post-U11 no longer exists — they landed in `todo`
+        instead, so the board became Todo (20) / Done (6) and the "Planning (8)" group the
+        assertions looked for never existed. Naming a real column keeps this case covering a
+        three-way column filter rather than collapsing it to two groups.
+        */
         for (let i = 1; i <= 8; i += 1) {
           await store.createTask({
-            title: `${realisticTaskTitle("triage", i)} ${"x".repeat(1_000)}`,
-            description: `Realistic triage task ${String(i).padStart(3, "0")}`,
+            title: `${realisticTaskTitle("in-progress", i)} ${"x".repeat(1_000)}`,
+            description: `Realistic in-progress task ${String(i).padStart(3, "0")}`,
+            column: "in-progress",
           });
         }
         for (let i = 1; i <= 6; i += 1) {
@@ -3030,7 +3039,18 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       );
       expectSingleBoundedTextBlock(broadResult);
       expect(broadResult.content.some((block: { type: string }) => block.type === "image")).toBe(false);
-      expect(broadResult.content[0].text).toContain("Planning (8):");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:55:
+      Assert the group that actually LEADS the broad listing, not one truncation may cut. This
+      previously asserted "Planning (8):" and passed only incidentally: `triage` sorts before `todo`
+      in COLUMNS order, so its group fitted before the text budget truncated the rest. Post-U11
+      `todo` leads, fills the budget, and the later groups collapse into the "... and N more tasks"
+      notice — so a second group header here is a fixture-ordering assertion, not a bounding one.
+      Per-column coverage of every group is asserted by the three filtered cases below, which do not
+      truncate.
+      */
+      expect(broadResult.content[0].text).toContain("Todo (12):");
+      expect(broadResult.content[0].text).toContain("truncated to fit; narrow with column/limit");
       expect(broadResult.details.count).toBe(26);
 
       for (const { callId, params, header, ids } of [
@@ -3041,9 +3061,9 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
           ids: ["FN-001", "FN-002"],
         },
         {
-          callId: "list-realistic-triage",
-          params: { column: "triage", limit: 8 },
-          header: "Planning (8):",
+          callId: "list-realistic-in-progress",
+          params: { column: "in-progress", limit: 8 },
+          header: "In Progress (8):",
           ids: ["FN-013", "FN-014"],
         },
         {
@@ -3094,7 +3114,13 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.content.some((block: { type: string }) => block.type === "image")).toBe(false);
       expect(text).toBeTruthy();
       expect(text.length).toBeLessThanOrEqual(MAX_TASK_LIST_TEXT_CHARS);
-      expect(text).toContain("Planning (15):");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:45:
+      These 15 are created with no `column`, so they land in the DEFAULT lineage's intake column,
+      which post-U11 is `todo` — labelled "Todo". The old expectation "Planning (15):" came from
+      `triage`'s label back when a column-less create landed there; `triage` is no longer declared.
+      */
+      expect(text).toContain("Todo (15):");
       expect(text).toContain("FN-001");
       expect(text).toContain("truncated to fit; narrow with column/limit");
       expect(result.details.count).toBe(15);

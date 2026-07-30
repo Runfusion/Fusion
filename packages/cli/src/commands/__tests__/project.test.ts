@@ -94,14 +94,33 @@ vi.mock("@fusion/core", () => ({
   readProjectIdentity: vi.fn().mockReturnValue(undefined),
   writeProjectIdentity: vi.fn(),
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
+  /*
+  FNXC:CliTests 2026-07-30-20:10:
+  Copied from the REAL `COLUMN_LABELS` (packages/core/src/types/board-config.ts), which post-U11
+  reads `triage: "Planning"` / `todo: "Todo"`. The stale mock said "Triage" / "To Do", so a label
+  assertion could pass against strings the product never prints.
+  */
   COLUMN_LABELS: {
-    triage: "Triage",
-    todo: "To Do",
+    triage: "Planning",
+    todo: "Todo",
     "in-progress": "In Progress",
     "in-review": "In Review",
     done: "Done",
     archived: "Archived",
   },
+  /*
+  FNXC:CliTests 2026-07-30-20:10 (the actual cause of 8 red cases):
+  `getTaskCounts` now ENRICHES each row before counting so a renamed wip column is still counted
+  as running work. Both helpers were absent from this mock, so `resolveWorkflowIrForTask` was
+  `undefined`, calling it threw, and `getTaskCounts`'s deliberately fail-soft catch turned that
+  into `{ byColumn: {}, runningAgentCount: 0 }` — every count assertion saw zero.
+
+  The mocked store has no workflow readers, so the resolver returns undefined here and
+  `enrichRunningAgentTaskShape` passes the row through unchanged; the legacy-literal fallback in
+  `countRunningAgentTasks` is what these cases then exercise, which is what they asserted before.
+  */
+  resolveWorkflowIrForTask: vi.fn(async () => undefined),
+  enrichRunningAgentTaskShape: vi.fn((task: unknown) => task),
 }));
 
 vi.mock("node:readline/promises", () => ({
@@ -350,7 +369,9 @@ describe("project commands", () => {
     expect(mockTaskStoreListTasks).toHaveBeenCalled();
     const output = consoleSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("Total: 3");
-    expect(output).toContain("To Do: 2");
+    // FNXC:CliTests 2026-07-30-20:10: the real COLUMN_LABELS entry for `todo` is "Todo"; this
+    // asserted "To Do", a string the product never prints (the old mock invented it).
+    expect(output).toContain("Todo: 2");
     expect(output).toContain("In Progress: 1");
   });
 
