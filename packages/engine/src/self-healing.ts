@@ -3645,7 +3645,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
-      if (task.column === "in-review") {
+      if (task.column === this.reviewLaneOf(task.id)) {
         const proof = await this.evaluateBackwardMoveTripleProof(task, {
           stage: "reclaim-pr-conflict",
           graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
@@ -8766,7 +8766,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // done is finished; todo/in-progress are owned by execution-stage reconcilers.
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         isWorkspaceTask(task) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         // Active transient merge statuses are owned by the live merger; recover-interrupted /
@@ -9273,7 +9273,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const tasks = await this.store.listTasks({ column: "done", slim: true });
       const candidates = tasks.filter((task) => {
-        if (task.column !== "done" || task.paused) return false;
+        if (task.column !== this.completeLaneOf(task.id) || task.paused) return false;
         if (task.mergeDetails?.commitSha) return true;
         return Boolean(task.baseCommitSha);
       });
@@ -9659,7 +9659,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const hasBlockedDependents = (dependentsByBlocker.get(task.id) ?? []).some(
           (dep) => preWipDependentIds.has(dep.id),
         );
-        return task.column === "in-review" &&
+        return task.column === this.reviewLaneOf(task.id) &&
           allowsAutoMergeProcessing(task, settings) &&
           !task.paused &&
           task.status === "failed" &&
@@ -9857,7 +9857,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         task.scopeOverride !== true &&
@@ -10032,7 +10032,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
         !task.deletedAt &&
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
@@ -10343,7 +10343,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== "in-review") return false;
+    if (task.column !== this.reviewLaneOf(task.id)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -10506,7 +10506,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
 
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.paused) continue;
+      if (task.column !== this.reviewLaneOf(task.id) || task.paused) continue;
       if (!allowsAutoMergeProcessing(task, settings)) continue;
       if (await this.isFalseCompletionHandoffExhaustionWhileMergeOwned(task)) {
         await this.store.updateTask(task.id, {
@@ -10610,7 +10610,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        task.column === this.reviewLaneOf(task.id) &&
         Boolean(task.branch) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         !executingIds.has(task.id),
@@ -10752,7 +10752,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
       const candidates = [
         ...inReview.filter((task) =>
-          task.column === "in-review" &&
+          task.column === this.reviewLaneOf(task.id) &&
           allowsAutoMergeProcessing(task, settings) &&
           Boolean(task.branch) &&
           Boolean(task.worktree) &&
@@ -10849,7 +10849,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const misclassified = tasks.filter((t) =>
-        t.column === "in-review" &&
+        t.column === this.reviewLaneOf(t.id) &&
         !t.paused &&
         t.status === "failed" &&
         isNoTaskDoneFailure(t) &&
