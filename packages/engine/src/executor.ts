@@ -5406,10 +5406,30 @@ export class TaskExecutor {
     nearby — a card left in place with an operator-readable reason.
     */
     if (!replanColumn) {
-      executorLog.warn(
-        `${task.id}: replan NOT scheduled — the task's workflow declares no intake or hold column to replan in. Card left in place.`,
-      );
-          return;
+      /*
+      FNXC:ReplanTargetR7 2026-07-30-01:20 (PR #2598 review — greptile P1):
+      PARK IT, do not return silently. My first version left the row UNCHANGED, and
+      the caller (`requestPreMergeOptionalStepFix`) returns `true` unconditionally —
+      so the graph recorded that remediation had been scheduled, the retry budget was
+      never consumed, and graph-entry recovery could hit the identical failure again
+      with nothing to stop it. A silent no-op reported as success is the worst of the
+      three options.
+
+      "No intake or hold column to replan into" is not transient — it is a workflow
+      configuration a human must change — so this takes the same shape as the
+      retries-exhausted branch above: visibly failed, with an operator-readable
+      error, and the recovery counters cleared so nothing retries into the same wall.
+      */
+      const error = `REQUIRED_ARTIFACT_RECOVERY_UNROUTABLE: ${artifactKeys.join(", ")} missing, and this task's workflow declares no intake or hold column to replan in.`;
+      executorLog.warn(`${task.id}: ${error}`);
+      await this.store.logEntry(task.id, error, undefined, context);
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }, context);
+      return;
     }
     await this.store.logEntry(
       task.id,

@@ -403,3 +403,57 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
     );
   });
 });
+
+/*
+FNXC:ReplanTargetR7 2026-07-30-01:20 (PR #2598 review — greptile P1):
+`resolveReplanTargetColumn` returning `undefined` is only half a contract — what the
+CALLERS do with it is the other half, and a silent return there is worse than the R7
+move it replaced: `requestPreMergeOptionalStepFix` returns `true` unconditionally, so
+an unchanged row is reported to the graph as "remediation scheduled", the retry budget
+is never consumed, and the same failure recurs with nothing to stop it.
+
+These pin the contract at the seam rather than at each caller, because it is the seam
+every caller shares.
+*/
+describe("the no-declared-lane contract", () => {
+  function storeFor(columns: Array<Record<string, unknown>>): TaskStore {
+    return {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:x", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({
+        ir: { version: "v2", id: "custom:x", name: "x", nodes: [], edges: [], columns },
+      })),
+      moveTask: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+  }
+
+  const WIP_ONLY = [
+    { id: "building", name: "Wip", traits: [{ trait: "wip" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ];
+
+  it("resolves to undefined rather than inventing a column", async () => {
+    await expect(resolveReplanTargetColumn(storeFor(WIP_ONLY), "FN-1")).resolves.toBeUndefined();
+  });
+
+  it("does not move the card, and reports that it did not", async () => {
+    // The return value is what callers use as "where the card now is", so a silent
+    // no-op would be a lie they cannot detect.
+    const store = storeFor(WIP_ONLY);
+    const moved = await moveTaskToReplanColumn(store, { id: "FN-1", column: "building" });
+
+    expect(moved).toBeUndefined();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still moves and reports the column when a lane IS declared", async () => {
+    // The other side, so "never moves" cannot pass for "correctly refuses".
+    const store = storeFor([
+      { id: "drafting", name: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      ...WIP_ONLY,
+    ]);
+    const moved = await moveTaskToReplanColumn(store, { id: "FN-1", column: "building" });
+
+    expect(moved).toBe("drafting");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveWorktree: true });
+  });
+});
