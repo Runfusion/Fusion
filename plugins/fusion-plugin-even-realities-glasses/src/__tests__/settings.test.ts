@@ -16,7 +16,15 @@ describe("settings accessors", () => {
     expect(getCompanionWebhookUrl({})).toBeUndefined();
     expect(getPollingIntervalMs({})).toBe(30000);
     expect(getNotifyColumns({})).toEqual(["in-review"]);
-    expect(getQuickCaptureColumn({})).toBe("triage");
+    /*
+    FNXC:PluginLifecycleColumns 2026-07-30-11:35: was `triage` — the column U11 (#2515)
+    deleted from the default lineage, so quick capture defaulted every voice-captured card
+    to a column the default board no longer declares. `todo` exists on both sides of that
+    migration. These two cases are the reason the default is worth pinning at all: nothing
+    else in the plugin fails when the default names a non-existent column — the server just
+    rejects the create, at the far end of a voice interaction.
+    */
+    expect(getQuickCaptureColumn({})).toBe("todo");
     expect(agentActionsEnabled({})).toBe(true);
   });
 
@@ -41,7 +49,7 @@ describe("settings accessors", () => {
 
   it("validates quick capture column", () => {
     expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "done" })).toBe("done");
-    expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "bad-column" })).toBe("triage");
+    expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "bad-column" })).toBe("todo");
   });
 
   it("respects explicit boolean for agent actions", () => {
