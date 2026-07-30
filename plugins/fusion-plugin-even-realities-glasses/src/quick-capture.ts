@@ -1,4 +1,5 @@
 import type { PluginContext } from "@fusion/plugin-sdk";
+import { resolveDefaultWorkflowIr } from "@fusion/core";
 import { taskToCard, type GlassesCard } from "./cards.js";
 import type { TaskColumn } from "./settings.js";
 
@@ -78,10 +79,49 @@ export function parseUtterance(raw: unknown, opts: { maxTitleChars?: number } = 
   return splitTitleAndDescription(stripped, opts);
 }
 
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-13:10 (Phase C convergence — quick capture):
+
+THE ACCEPTED COLUMNS ARE THE BOARD'S, not a hand-listed five. The old list was wrong in BOTH
+directions after U11 (#2515):
+
+  - it ACCEPTED `triage`, a column the default board no longer declares, so quick capture
+    happily forwarded it and the create failed at the server — at the far end of a voice
+    interaction, where the operator hears a generic failure;
+  - it REJECTED every column of a renamed or custom board, so an operator saying "put it in
+    checking" got a 400 for a column their own board declares.
+
+Resolved from `resolveDefaultWorkflowIr()`, which is the same default the dashboard's own
+board-workflows payload reports (`DEFAULT_WORKFLOW_LANE_ID`). Deliberately NOT a per-task
+resolution: the task does not exist yet, so there is no selection to resolve through.
+
+CORRECTION to what I wrote on PR #2607: I described this as SILENT substitution. It is not —
+`runQuickCapture` already compares the normalized value against the request and throws 400 on a
+mismatch, so an unusable column was visibly rejected, not quietly swapped. The bug is a wrong
+accept/reject set, which is milder than I claimed.
+*/
+function declaredCaptureColumnIds(): ReadonlySet<string> {
+  try {
+    const ir = resolveDefaultWorkflowIr() as { columns?: Array<{ id?: unknown }> };
+    const ids = (ir.columns ?? [])
+      .map((column) => column?.id)
+      .filter((id): id is string => typeof id === "string");
+    if (ids.length > 0) return new Set(ids);
+  } catch {
+    /* fall through to the legacy vocabulary */
+  }
+  /* A column-less IR gives no basis to decide; the legacy five keep prior behavior. */
+  return LEGACY_CAPTURE_COLUMN_IDS;
+}
+
+const LEGACY_CAPTURE_COLUMN_IDS: ReadonlySet<string> = new Set([
+  "triage", "todo", "in-progress", "in-review", "done",
+]);
+
 function normalizeCaptureColumn(value: unknown, fallback: TaskColumn): TaskColumn {
   const raw = normalizeDescription(value);
-  if (raw === "triage" || raw === "todo" || raw === "in-progress" || raw === "in-review" || raw === "done") {
-    return raw;
+  if (raw && declaredCaptureColumnIds().has(raw)) {
+    return raw as TaskColumn;
   }
   return fallback;
 }
