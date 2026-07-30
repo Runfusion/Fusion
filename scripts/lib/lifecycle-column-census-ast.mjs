@@ -42,6 +42,19 @@ export const LEGACY_COLUMN_IDS = ["triage", "todo", "in-progress", "in-review", 
 /** Receiver names that denote an agent role / lane rather than a task column. */
 export const ROLE_RECEIVER_TOKENS = [
   "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole",
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-29-20:50 (restores the pinned baseline):
+  `outcome` names a RESULT enum, not a column. The one live instance is
+  `deterministicReconcile.outcome === "archived"` — the verdict of a duplicate reconciliation, which
+  happens to share a word with a column id.
+
+  This is not a preference: the shipped classifier counted it, the pinned baseline did not, and that
+  single site is the entire 22-vs-23 gap that has kept `--strict` RED on main since #2633 merged.
+  So the baseline was recorded by a classifier that excluded it, and the exclusion was lost before
+  the code shipped. Restoring it makes the instrument agree with its own pin rather than raising the
+  pin to match a miscount — which would have quietly conceded a guard that does not exist.
+  */
+  "outcome",
 ];
 
 /*

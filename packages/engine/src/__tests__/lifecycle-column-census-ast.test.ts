@@ -263,3 +263,34 @@ describe("query-filter category", () => {
     expect(result.properties.query).toBe(0);
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-29-21:05 (the `outcome` receiver):
+
+`outcome` names a RESULT enum, not a column. The live instance is
+`deterministicReconcile.outcome === "archived"` — the verdict of a duplicate reconciliation, which
+merely shares a word with a column id.
+
+This is pinned because losing it is not hypothetical: the shipped classifier counted these five
+sites, the baseline recorded by the SAME PR did not, and that gap kept `--strict` RED on main from
+#2633 until it was restored. A silent one-word regression in a token list took the ratchet offline
+without failing anything, which is the same class of defect the ratchet exists to catch.
+*/
+describe("outcome is a result enum, not a column", () => {
+  it("does not count `outcome === \"<column id>\"` as a guard", () => {
+    const result = summarize(census(`if (reconcile.outcome === "archived") { return; }`));
+    expect(result.totals.column).toBe(0);
+    expect(result.totals.role).toBe(1);
+  });
+
+  it("still counts a real column comparison in the same file", () => {
+    /* Guards the exclusion from being written too broadly — a rule that swallowed the neighbouring
+       column guard would look identical on the count above. */
+    const result = summarize(census(`
+      if (reconcile.outcome === "archived") { return; }
+      if (task.column === "archived") { hide(); }
+    `));
+    expect(result.totals.column).toBe(1);
+    expect(result.totals.role).toBe(1);
+  });
+});
