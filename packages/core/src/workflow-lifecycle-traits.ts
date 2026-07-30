@@ -35,6 +35,25 @@ function columnsOf(ir: WorkflowIr): WorkflowIrColumn[] {
  * column-less IR or when no column carries the flag.
  */
 /*
+FNXC:WorkflowLifecycleColumns 2026-07-30-21:15 (a DECLARATION is not a GUARD — I conflated them and
+published the mistake, so it is written down here):
+
+The census counts COMPARISONS against a legacy column id. It does not count a workflow DECLARING a
+column with that id, and the two answer different questions:
+
+    triage column guards in the tree            0     (no code compares against the literal)
+    `triage` declared by the default lineage    yes   (builtin-coding-workflow-ir.ts:49, the intake lane)
+
+Both are true at once. "The backlog reached zero for `triage`" means nothing in the code branches on
+that NAME any more; it does not mean the column stopped existing, and a reader who takes it that way
+will conclude a resolver's `?? "triage"` fallback is dead when it is the default board's actual intake
+answer.
+
+I asserted the stronger version in a review audit and it was wrong. One grep of
+`builtin-coding-workflow-ir.ts` would have caught it, which is the cheap check worth doing before any
+claim about what a lineage contains.
+*/
+/*
 FNXC:WorkflowLifecycleColumns 2026-07-30-19:20 (an EMPTY result has TWO meanings — measured, not assumed):
 
 Everything below returns nothing for a column set that carries no traits, and there are two very
