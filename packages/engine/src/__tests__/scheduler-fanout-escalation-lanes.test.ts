@@ -102,3 +102,33 @@ describe("the overlap-bottleneck warning ages blockers by resolved lane", () => 
     expect(logged.join("\n")).toContain("(long-lived)");
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-18:40:
+The REVIEW half of the same call, wired after the escalation half — and found only by auditing the
+flat-set class by hand, not by any guard.
+
+`computeBlockerFanoutMap` feeds `reviewColumns` to `isStaleBlockedByBlocker`, which decides whether a
+paused or retry-exhausted review blocker still counts as blocking its dependents. This call site
+already passed `classify`, `escalationClassify` and `escalationColumns`; it did not pass this one, so
+that half ran on the legacy `{in-review}` beside three resolved neighbours — the half-converted-pair
+shape inside a call site I had converted twice already.
+
+My own unwired-parameter guard is blind to it: `reviewColumns` is mentioned in `task-priority.ts`, so
+the name reads as used. Recorded here and in the guard's header rather than quietly patched.
+
+STRUCTURAL, and labelled: the consequence lives inside `isStaleBlockedByBlocker`'s classification of
+a paused blocker, which this suite's harness does not construct. What is pinned is the WIRING — the
+gap was that the argument was absent, not that the predicate was wrong.
+*/
+describe("the fan-out call forwards the resolved review lanes too", () => {
+  it("passes reviewColumns alongside the escalation and classify answers", () => {
+    const source = readFileSync(new URL("../scheduler.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("...(blockerReviewColumns.size > 0 ? { reviewColumns: blockerReviewColumns } : {}),");
+    // Built from the same IR loop, so the two halves cannot resolve from different reads.
+    expect(source).toContain('for (const id of columnsWithFlag(ir, "humanReview")) blockerReviewColumns.add(id);');
+  });
+});
+
+import { readFileSync } from "node:fs";

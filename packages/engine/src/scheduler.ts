@@ -1472,6 +1472,21 @@ export class Scheduler {
     const escalationColumns = new Set<string>();
     const holdByTaskId = new Map<string, boolean>();
     const terminalByTaskId = new Map<string, boolean>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-18:40:
+    The REVIEW half was still unwired after the escalation fix, and I only found it by auditing the
+    rest of the flat-set class rather than by any guard.
+
+    `computeBlockerFanoutMap` feeds `reviewColumns` to `isStaleBlockedByBlocker`, which decides
+    whether a paused or retry-exhausted review blocker still counts as blocking its dependents. This
+    call passed `classify`, `escalationClassify` and `escalationColumns` and NOT this one, so that
+    half ran on the legacy `{in-review}` while everything beside it was resolved — the
+    half-converted-pair shape, inside a call site I had already converted twice.
+
+    Notably my own unwired-parameter guard cannot see it: `reviewColumns` is mentioned in
+    `task-priority.ts`, so the name reads as used. That blind spot is documented in the guard's header.
+    */
+    const blockerReviewColumns = new Set<string>();
     for (const task of tasks) {
       const ir = await resolveWorkflowIrForTask(this.store, task.id, escalationIrCache).catch(() => undefined);
       if (!ir) continue;
@@ -1485,6 +1500,9 @@ export class Scheduler {
         ...columnsWithFlag(ir, "mergeBlocker"),
         ...columnsWithFlag(ir, "humanReview"),
       ].includes(task.column));
+      for (const id of columnsWithFlag(ir, "mergeOrchestration")) blockerReviewColumns.add(id);
+      for (const id of columnsWithFlag(ir, "mergeBlocker")) blockerReviewColumns.add(id);
+      for (const id of columnsWithFlag(ir, "humanReview")) blockerReviewColumns.add(id);
       holdByTaskId.set(task.id, columnsWithFlag(ir, "hold").includes(task.column));
       terminalByTaskId.set(
         task.id,
@@ -1493,6 +1511,7 @@ export class Scheduler {
     }
     const fanoutMap = computeBlockerFanoutMap(tasks, 3, {
       ...(escalationColumns.size > 0 ? { escalationColumns } : {}),
+      ...(blockerReviewColumns.size > 0 ? { reviewColumns: blockerReviewColumns } : {}),
       /* Per-task answer where the workflow resolved; the flat set above covers the rest. */
       escalationClassify: (task: Task) => escalationByTaskId.get(task.id) ?? escalationColumns.has(task.column),
       /*
