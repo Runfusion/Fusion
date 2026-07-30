@@ -35,6 +35,7 @@ import {
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
   resolveLifecycleColumns,
+  resolveWorkflowIrForTaskWithProvenance,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -1188,12 +1189,28 @@ export class TriageProcessor {
     to re-home. If the workflow DOES declare `triage`, its declared role governs and
     only the resolved intake lane is accepted.
     */
-    const workflowIr = (this.store as unknown as {
-      resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr | undefined;
-    }).resolveTaskWorkflowIrSync?.(task.id);
-    const declaresLegacyTriage = workflowIr
-      ? workflowHasColumn(workflowIr, "triage")
-      : true; // Unresolvable: assume it declares `triage`, i.e. do not widen.
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:20 (PR #2593 review — greptile, PG defaults):
+    THE SYNC READER CANNOT BE USED HERE, and it is production that breaks. `resolveTaskWorkflowIrSync`
+    returns `WorkflowIr`, never undefined: in backend/PostgreSQL mode it "cannot synchronously read
+    PostgreSQL, so return undefined and let the sync readers fall back to their defaults"
+    (`workflow-definitions.ts`). So the value arriving here was the DEFAULT coding IR, which post-U11
+    declares no `triage` column — making `declaresLegacyTriage` false for every task under PG and the
+    scoping this guard exists for unable to fire at all. A custom workflow that legitimately names a
+    non-intake lane `triage` would have had its planning-status card accepted and finalized, which is
+    the precise regression the earlier review asked me to prevent.
+
+    The provenance API is the fix, not a bigger try/catch: `source: "selection"` is verified by IR
+    identity, so it is only reported when the store really resolved the task's own workflow. Anything
+    else — PG's sync gap, no selection, a missing or malformed definition, a throwing lookup — is
+    `"default"`, and we then FAIL CLOSED by assuming the workflow declares `triage` and declining to
+    widen. Declining costs a deferred recovery that the next sweep retries; widening wrongly
+    finalizes a plan in someone's custom lane.
+    */
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+    const declaresLegacyTriage = resolved.source === "selection"
+      ? workflowHasColumn(resolved.ir, "triage")
+      : true;
     /*
     FNXC:RecoverApprovedIntakePostU11 2026-07-29-23:55 DELIBERATE-LITERAL: the migration arm only.
     The census flagged this as a NEW guard, correctly — it is a literal, and it is new. It is also
