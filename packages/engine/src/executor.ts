@@ -1789,7 +1789,17 @@ EXPORTED rather than copied. `eval-followups.ts` and `pr-comment-handler.ts` eac
 and fourth copy of the union-with-legacy reasoning is exactly the drift this program exists to remove.
 Nothing else about the function changes.
 */
-export async function resolveTerminalColumnsFor(store: TaskStore, taskId: string): Promise<readonly string[]> {
+export async function resolveTerminalColumnsFor(
+  store: TaskStore,
+  taskId: string,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
+  Optional CALLER-OWNED IR cache, matching the contract on `resolveTaskLifecycleColumns`. Sweeps that
+  call this once per card on a whole board must read one IR per WORKFLOW, not one per task; callers
+  resolving a single task pass nothing and are unaffected.
+  */
+  irCache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+): Promise<readonly string[]> {
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-12:20 (PR #2568 review — greptile):
   THE UNION IS DELIBERATE, and the `catch` alone was not enough.
@@ -1812,7 +1822,7 @@ export async function resolveTerminalColumnsFor(store: TaskStore, taskId: string
   column, which is the failure the conversion exists to prevent.
   */
   try {
-    const resolved = resolveTerminalColumns(await resolveWorkflowIrForTask(store, taskId));
+    const resolved = resolveTerminalColumns(await resolveWorkflowIrForTask(store, taskId, irCache));
     return [...new Set([...resolved, ...LEGACY_TERMINAL_COLUMNS])];
   } catch {
     return LEGACY_TERMINAL_COLUMNS;

@@ -8,6 +8,7 @@ import {
   type TaskStore,
 } from "@fusion/core";
 import { resolveTerminalColumnsFor } from "./executor.js";
+import type { resolveWorkflowIrForTask } from "@fusion/core";
 
 /*
 FNXC:Evals 2026-07-26-00:00:
@@ -126,9 +127,17 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   correct helper sitting three lines above the import. Replaced before commit.
   */
   const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
+  ONE IR read per WORKFLOW, not per card. This loop runs over every live task on the board, so
+  without the shared cache a large board paid a store read per card before a single follow-up draft
+  was processed — measurable added latency on every scheduled evaluation. The cache is the
+  caller-owned shape the rest of this program already uses.
+  */
+  const openIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
   const openTasks: typeof allLiveTasks = [];
   for (const task of allLiveTasks) {
-    const terminal = await resolveTerminalColumnsFor(store, task.id);
+    const terminal = await resolveTerminalColumnsFor(store, task.id, openIrCache);
     if (!terminal.includes(task.column)) openTasks.push(task);
   }
   // FNXC:Evals 2026-06-27-12:40:

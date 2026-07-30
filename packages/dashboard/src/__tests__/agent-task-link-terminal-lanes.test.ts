@@ -27,8 +27,18 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../routes.ts", import.meta.url), "utf8");
 
 describe("agent task-link sanitizer resolves each task's own terminal lanes", () => {
-  it("resolves lifecycle columns per linked task id", () => {
-    expect(source).toContain("resolveTaskLifecycleColumns(scopedStore, taskId, terminalIrCache");
+  it("resolves the workflow IR per linked task id", () => {
+    expect(source).toContain("resolveWorkflowIrForTask(scopedStore, taskId, terminalIrCache");
+  });
+
+  it("unions EVERY complete and archived column, not the first of each role", () => {
+    /*
+    #2787 review (greptile P1). The first version resolved `lifecycle.complete`/`lifecycle.archived`,
+    which are FIRST-per-role: a workflow declaring two complete lanes had only one recognised, so a
+    task in the second kept its taskId and the agent stayed shown as working on finished work — the
+    exact symptom this sanitizer removes, one degree narrower.
+    */
+    expect(source).toContain('const terminal = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];');
   });
 
   it("passes the resolved answer into the terminal check", () => {

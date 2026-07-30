@@ -23,7 +23,8 @@ import {
   listAgentMemoryFiles,
   readAgentMemoryFile,
   writeAgentMemoryFile,
-  resolveTaskLifecycleColumns,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
 } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionType } from "./ai-session-store.js";
@@ -1369,9 +1370,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const terminalIrCache = new Map<string, never>();
     const terminalByTaskId = new Map<string, ReadonlySet<string>>();
     for (const taskId of taskIds) {
-      const lanes = await resolveTaskLifecycleColumns(scopedStore, taskId, terminalIrCache as never).catch(() => undefined);
-      if (!lanes) continue;
-      const terminal = [lanes.complete, lanes.archived].filter((c): c is string => c !== undefined);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+      MEMBERSHIP, not first-per-role — a workflow may declare more than one complete or archived
+      column, and `resolveLifecycleColumns` returns only the FIRST of each. A linked task in the
+      second terminal lane kept its `taskId` and the agent stayed displayed as working on finished
+      work, which is the exact symptom this sanitizer exists to remove.
+      */
+      const ir = await resolveWorkflowIrForTask(scopedStore, taskId, terminalIrCache as never).catch(() => undefined);
+      if (!ir) continue;
+      const terminal = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
       if (terminal.length > 0) terminalByTaskId.set(taskId, new Set(terminal));
     }
 

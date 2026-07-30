@@ -20,7 +20,7 @@
  * sweep here close that gap.
  */
 import type { AgentStore, AgentState, Agent, TaskStore, Task, Settings } from "@fusion/core";
-import { isEphemeralAgent, resolveTaskLifecycleColumns } from "@fusion/core";
+import { isEphemeralAgent, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 export interface TaskOwner {
   agentId: string;
@@ -354,14 +354,29 @@ export class EphemeralWorkerManager {
       a lane: failing to reap a dead worker costs a slot, while reaping a live one destroys work in
       flight, and those are not symmetric.
       */
-      const lanes = await resolveTaskLifecycleColumns(this.taskStore, task.id).catch(() => undefined);
-      if (lanes === undefined) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+      MEMBERSHIP, not first-per-role. `resolveLifecycleColumns` returns the FIRST column carrying each
+      trait, so a workflow declaring TWO implementation lanes had only one of them recognised — a live
+      worker in the second lane was still classified as a zombie and deleted. Same defect this commit
+      exists to fix, one degree narrower, and it would have reappeared the first time someone declared
+      a second wip lane.
+
+      `columnsWithFlag` returns every column carrying the trait, so both halves are unions.
+      */
+      const ir = await resolveWorkflowIrForTask(this.taskStore, task.id).catch(() => undefined);
+      if (ir === undefined) {
         /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-06:10. */
         if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
         return task.column !== "in-progress";
       }
-      if (task.column === lanes.complete || task.column === lanes.archived) return true;
-      return lanes.wip === undefined || task.column !== lanes.wip;
+      const terminalLanes = new Set<string>([
+        ...columnsWithFlag(ir, "complete"),
+        ...columnsWithFlag(ir, "archived"),
+      ]);
+      if (terminalLanes.has(task.column)) return true;
+      const wipLanes = new Set<string>(columnsWithFlag(ir, "countsTowardWip"));
+      return !wipLanes.has(task.column);
     } catch {
       // If we can't even read the task, assume the binding is broken.
       return true;

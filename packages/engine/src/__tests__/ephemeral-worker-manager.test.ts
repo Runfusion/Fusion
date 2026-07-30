@@ -514,3 +514,62 @@ describe("ephemeral zombie sweep resolves the board's own lanes", () => {
     expect(harness.agentStore.agents.has(parked.id)).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+A SECOND wip lane must keep its worker too.
+
+`resolveLifecycleColumns` returns the FIRST column carrying each trait, so the first version of this
+fix recognised only one implementation lane. A board declaring two — a common shape once a workflow
+splits implementation from, say, an integration lane — still reaped a live worker in the second. The
+same defect this suite exists to prevent, one degree narrower, and it would have surfaced the first
+time someone added that column rather than at conversion time.
+
+The guard now unions `columnsWithFlag(ir, "countsTowardWip")`, which is every wip-bearing column.
+
+REVERT PROOF, measured: narrow the check back to `lanes.wip` and the second-lane case below fails.
+*/
+describe("the zombie sweep honours EVERY wip lane, not the first", () => {
+  const TWO_WIP_IR = {
+    version: "v2", id: "wf-two-wip", name: "two wip", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "integrating", name: "Integrating", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function twoWipHarness() {
+    const harness = createHarness();
+    const selection = { workflowId: "wf-two-wip", stepIds: [] as string[] };
+    Object.assign(harness.taskStore as unknown as Record<string, unknown>, {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: TWO_WIP_IR }),
+    });
+    return harness;
+  }
+
+  it("KEEPS a worker whose task sits in the SECOND wip lane", async () => {
+    const harness = twoWipHarness();
+    const live = makeAgent("second-lane-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "integrating" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+
+  it("still keeps a worker in the FIRST wip lane", async () => {
+    const harness = twoWipHarness();
+    const live = makeAgent("first-lane-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "building" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+});

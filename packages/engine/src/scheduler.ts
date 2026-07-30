@@ -2296,10 +2296,33 @@ export class Scheduler {
               return null;
             }
 
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+            PASS THE RESOLVED LANES. Without this the optional parameter added to
+            `selectPermanentAgentForTask` is never supplied by the only production caller, so the
+            predicate keeps its legacy default and the load tally stays empty on a renamed board —
+            a converted function reachable only through an argument nobody passes is the
+            guard-that-cannot-fire pattern, and shipping one would have been worse than leaving the
+            literal in place, because the site then reads as done.
+
+            The set is a MEMBERSHIP union of every wip/review lane the board declares, not the
+            first-per-role ids: a workflow may declare more than one implementation lane, and load
+            held in the second must still count.
+            */
+            const loadLaneIr = await resolveWorkflowIrForTask(this.store, freshTask.id).catch(() => undefined);
+            const activeLoadColumns = loadLaneIr === undefined
+              ? undefined
+              : new Set<string>([
+                ...columnsWithFlag(loadLaneIr, "countsTowardWip"),
+                ...columnsWithFlag(loadLaneIr, "mergeOrchestration"),
+                ...columnsWithFlag(loadLaneIr, "mergeBlocker"),
+                ...columnsWithFlag(loadLaneIr, "humanReview"),
+              ]);
             const selectedAgent = await selectPermanentAgentForTask({
               task: freshTask,
               agentStore: this.options.agentStore,
               taskStore: this.store,
+              ...(activeLoadColumns && activeLoadColumns.size > 0 ? { activeColumns: activeLoadColumns } : {}),
             });
             if (!selectedAgent) {
               await this.store.updateTask(task.id, { status: "queued" });
