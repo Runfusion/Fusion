@@ -1869,6 +1869,27 @@ docs/plans/2026-07-19-002-u5e-remaining-deletions-handoff.md.
 */
 export type GraphCompletionCallback = (info: { modifiedFiles: string[] }) => void;
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:10 (tightening my own rule against #2765):
+Does this IR express ANY lifecycle intent? #2765 published the general form of the distinction I hit
+in the no-wip fix: an empty role result means either DECLARED AND EMPTY (a v2 board the operator
+wrote that genuinely lacks the lane — a guard should act on it) or SYNTHESIZED (a v1 graph upgraded
+in place; `synthesizeDefaultColumns` emits `{ id, name: id, traits: [] }` for the five default ids,
+so every role resolves undefined even though those columns ARE the legacy lanes).
+
+My first discriminator proxied this with "hold and review are both undefined". That is right for the
+boards under test and wrong in general: a v2 workflow declaring, say, intake and complete but no
+hold/wip/review would read as SYNTHESIZED and the resume router would proceed into a wip lane the
+board does not have — the same failure the guard exists to stop, one case narrower.
+
+`resolveLifecycleColumns` returns all six roles, so the honest question is whether ANY of them
+resolved. Checking two of six was a proxy for that; this checks the thing.
+*/
+function declaresAnyLifecycleRole(lifecycle: ReturnType<typeof resolveLifecycleColumns>): boolean {
+  if (!lifecycle) return false;
+  return Object.values(lifecycle).some((columnId) => columnId !== undefined);
+}
+
 export class TaskExecutor {
   /*
   FNXC:Workspace 2026-06-21-12:00:
@@ -10719,8 +10740,7 @@ export class TaskExecutor {
         The discriminator is whether the IR expresses lifecycle intent AT ALL. An untraited legacy board
         expresses none, so the legacy trio is the honest answer and today's behaviour is preserved.
         */
-        wipDeclared: lifecycle?.wip !== undefined
-          || (lifecycle?.hold === undefined && lifecycle?.review === undefined),
+        wipDeclared: lifecycle?.wip !== undefined || !declaresAnyLifecycleRole(lifecycle),
       };
       if (memo) memo.lanes = lanes;
       return lanes;

@@ -378,6 +378,13 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
         still be stored in a column its workflow no longer declares, and reading such a row as UNSATISFIED
         blocks its dependents permanently with no operator recourse short of editing the graph.
         */
+        /*
+        DELIBERATE-LITERAL — reviewed 2026-07-31-02:40 (batch-core feed). The legacy half of this
+        union is load-bearing, not leftover: it is what lets a dependency row stored in a column its
+        workflow no longer declares still read as SATISFIED. Deleting it strands every dependent
+        permanently with no operator recourse short of editing the graph. The comment above already
+        argued this; the marker is what keeps the census from re-listing it as unconverted work.
+        */
         return dep.column === (lifecycle?.complete ?? "done")
           || dep.column === (lifecycle?.archived ?? "archived")
           || dep.column === "done"

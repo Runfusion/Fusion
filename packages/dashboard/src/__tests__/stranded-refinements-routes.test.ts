@@ -126,4 +126,59 @@ describe("stranded refinement routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.promptExists).toBe(true);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (batch-core):
+  A DEPENDENCY THAT FINISHED IN A RENAMED COMPLETE LANE IS DONE.
+
+  The detail payload marked a dependency `done` via `column === "done" || column === "archived"`. On a
+  renamed board that is false for a dependency sitting in its own workflow's complete lane, so the
+  panel showed a satisfied dependency as still blocking — an operator looking at a card that appears
+  stuck behind work that is demonstrably finished.
+
+  The set is resolved per DEPENDENCY, because a dependency may run a different workflow from the task
+  that depends on it. That is the part a single parent-level resolution would get wrong, so the
+  fixture gives the dependency its own workflow and leaves the parent on the default.
+  */
+  it("marks a dependency done when it finished in its OWN workflow's renamed complete lane", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "kb-stranded-dep-"));
+    mkdirSync(join(rootDir, ".fusion", "tasks", "FN-100"), { recursive: true });
+    writeFileSync(join(rootDir, ".fusion", "tasks", "FN-100", "PROMPT.md"), "# prompt\n");
+
+    const parent = { ...BASE_TASK, dependencies: ["FN-DEP"] };
+    const dependency = { ...BASE_TASK, id: "FN-DEP", column: "shipped", dependencies: [] };
+    const depIr = {
+      version: "v2", id: "wf-dep", name: "dep", nodes: [], edges: [],
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const depSelection = { workflowId: "wf-dep", stepIds: [] };
+
+    const store = createMockStore({
+      getRootDir: vi.fn().mockReturnValue(rootDir),
+      getTask: vi.fn(async (id: string) => (id === "FN-DEP" ? dependency : parent)),
+      listStrandedRefinements: vi.fn().mockResolvedValue([{ task: parent, reasons: ["untriaged-stale"], ageMs: 1000 }]),
+      // Only the dependency carries a workflow; the parent resolves to the default board.
+      getTaskWorkflowSelection: ((id: string) => (id === "FN-DEP" ? depSelection : undefined)) as never,
+      getTaskWorkflowSelectionAsync: (async (id: string) => (id === "FN-DEP" ? depSelection : undefined)) as never,
+      getWorkflowDefinition: (async (id: string) => (id === "wf-dep" ? { id, ir: depIr } : undefined)) as never,
+    } as never);
+
+    const res = await REQUEST(createApp(store), "GET", "/api/tasks/FN-100/stranded-refinement");
+
+    expect(res.status).toBe(200);
+    const dep = (res.body.dependencies?.items ?? []).find((d: { id: string }) => d.id === "FN-DEP");
+    /*
+    Asserting the resolved column too: `done: true` alone would also pass an implementation that
+    marked every dependency done regardless of where it sits.
+    */
+    expect(dep).toMatchObject({ id: "FN-DEP", exists: true, column: "shipped", done: true });
+    /*
+    `allResolved` is what the UI actually gates the "still blocked" presentation on, so it is the
+    operator-visible half of this fix and worth pinning alongside the per-item flag.
+    */
+    expect(res.body.dependencies.allResolved).toBe(true);
+  });
 });

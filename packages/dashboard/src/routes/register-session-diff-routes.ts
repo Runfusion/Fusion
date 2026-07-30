@@ -1,10 +1,10 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-session-diff-routes");
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Request, Router } from "express";
-import type { RunAuditEvent, RunAuditEventFilter } from "@fusion/core";
+import type { RunAuditEvent, RunAuditEventFilter, TaskStore } from "@fusion/core";
 import { isWorkspaceTask } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
@@ -26,6 +26,31 @@ export interface SessionDiffRouteDeps {
  * task's "files changed" list. Returns true when no validation is possible
  * (e.g. task.branch was never set) so we don't break tests/legacy tasks.
  */
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-00:20 (batch-core):
+"Has this task LANDED?" for the two diff routes below — the question that decides whether a diff is
+taken against the merge commit (finished work, on the integration branch) or against the live branch.
+
+Keyed on `column === "done"`, a task finished in a renamed complete lane took the LIVE-branch path, so
+its diff was computed against a branch that had already been merged and usually deleted — an empty or
+misleading diff for exactly the tasks an operator reviews after the fact.
+
+MEMBERSHIP over `complete` and `archived`: both mean landed for this purpose, and a board may declare
+more than one of either. The legacy pair is the fallback when the IR cannot be read AND when it
+resolves empty — a v1-upgraded workflow carries `traits: []` on every synthesized column
+(workflow-ir.ts:158-159), so empty means UNEXPRESSED here, not "this board has no complete lane".
+*/
+export async function landedColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const landed = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
+    return new Set(landed.length > 0 ? landed : ["done", "archived"]);
+  } catch {
+    return new Set(["done", "archived"]);
+  }
+}
+
 async function worktreeStillBelongsToTask(
   worktree: string,
   expectedBranch: string | undefined | null,
@@ -991,7 +1016,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         return;
       }
 
-      if (task.column === "done") {
+      if ((await landedColumnsForTask(scopedStore, task.id)).has(task.column)) {
         const mergeShaForBaseBoundary = await resolveDoneTaskMergeSha(task, scopedStore, { includeBaseCommitSha: true });
         const resolvedMergeSha = await resolveDoneTaskMergeSha(task, scopedStore);
         if (mergeShaForBaseBoundary && task.baseCommitSha) {
@@ -1218,7 +1243,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         return;
       }
 
-      if (task.column === "done") {
+      if ((await landedColumnsForTask(scopedStore, task.id)).has(task.column)) {
         const mergeShaForBaseBoundary = await resolveDoneTaskMergeSha(task, scopedStore, { includeBaseCommitSha: true });
         const resolvedMergeSha = await resolveDoneTaskMergeSha(task, scopedStore);
         if (mergeShaForBaseBoundary && task.baseCommitSha) {

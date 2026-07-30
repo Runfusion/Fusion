@@ -131,3 +131,58 @@ describe("computeBlockerFanoutMap — column roles are resolved, not enumerated 
     expect(map.get("FN-1")?.activeTodoCount).toBe(0);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:00 (batch-core feed):
+
+THE INVARIANT: escalation recognises the board's own active lanes.
+
+This gate was INVISIBLE TO THE CENSUS. It is a membership test against the exported
+`BLOCKER_ESCALATION_COLUMNS` Set, and a Set literal is a DEFINITION rather than a comparison, so no
+entry in the backlog ever pointed here — a hard-coded lane set sat directly beside three already
+converted options in the same interface.
+
+The consequence is the quiet kind: on a renamed board `shouldEscalate` was false for EVERY blocker,
+so a stale blocker holding up many cards never escalated. No escalation is indistinguishable from
+nothing needing escalation. Worse, the fan-out numbers themselves stayed correct — the metric says
+there is a problem while the mechanism that acts on it is switched off.
+
+REVERT PROOF, measured: restore `BLOCKER_ESCALATION_COLUMNS.has(blockerColumn)` and the renamed case
+below fails (escalation undefined). The legacy case passes either way — it is the documented default.
+*/
+describe("escalation resolves the board's own active lanes", () => {
+  const RENAMED_ACTIVE = new Set(["building", "signoff"]);
+
+  it("escalates a blocker sitting in a RENAMED wip lane", () => {
+    const nowMs = Date.parse("2026-01-01T06:00:00.000Z");
+    const blocker = createTask("B", "building" as Task["column"], { columnMovedAt: "2026-01-01T00:00:00.000Z" });
+    const dependents = [1, 2, 3, 4, 5].map((n) =>
+      createTask(`D${n}`, "backlog" as Task["column"], { blockedBy: "B" }));
+
+    const entry = computeBlockerFanoutMap([blocker, ...dependents], MAX_AUTO_MERGE_RETRIES, {
+      nowMs,
+      staleHighFanoutAgeThresholdMs: 60 * 60 * 1000,
+      holdColumn: "backlog",
+      escalationColumns: RENAMED_ACTIVE,
+    }).get("B");
+
+    expect(entry?.escalation?.blockerId).toBe("B");
+  });
+
+  it("does not escalate a blocker outside the supplied lanes", () => {
+    // The gate must still gate — naming the lanes is not the same as disabling the check.
+    const nowMs = Date.parse("2026-01-01T06:00:00.000Z");
+    const blocker = createTask("B", "backlog" as Task["column"], { columnMovedAt: "2026-01-01T00:00:00.000Z" });
+    const dependents = [1, 2, 3, 4, 5].map((n) =>
+      createTask(`D${n}`, "backlog" as Task["column"], { blockedBy: "B" }));
+
+    const entry = computeBlockerFanoutMap([blocker, ...dependents], MAX_AUTO_MERGE_RETRIES, {
+      nowMs,
+      staleHighFanoutAgeThresholdMs: 60 * 60 * 1000,
+      holdColumn: "backlog",
+      escalationColumns: RENAMED_ACTIVE,
+    }).get("B");
+
+    expect(entry?.escalation).toBeUndefined();
+  });
+});

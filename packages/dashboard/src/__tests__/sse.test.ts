@@ -432,6 +432,16 @@ describe("createSSE connection log severity", () => {
   afterEach(() => {
     if (originalDebug === undefined) delete process.env.FUSION_DEBUG;
     else process.env.FUSION_DEBUG = originalDebug;
+    /*
+    FNXC:EngineDiagnostics 2026-07-30-17:40 (PR review — greptile P2):
+    Restore console spies HERE, not at the end of each test. A failing assertion skips the trailing
+    `mockRestore()`, leaving the console mocked for every later test in the file — and since these
+    spy `console.error`, which is where the shared logger writes ALL diagnostics, the leak silences
+    the output you would need to debug the very failure that caused it.
+
+    Both cases in this describe had that shape; the hook covers them and any case added later.
+    */
+    vi.restoreAllMocks();
   });
 
   it("does not console.log +/- connection when FUSION_DEBUG is unset", () => {
@@ -453,19 +463,24 @@ describe("createSSE connection log severity", () => {
       .map((call) => String(call[0] ?? ""))
       .filter((line) => line.includes("[sse] + connection") || line.includes("[sse] - connection"));
     expect(spam).toEqual([]);
-    errorSpy.mockRestore();
     connection.req.emit("close");
   });
 
   it("emits +/- connection when FUSION_DEBUG=sse", () => {
     process.env.FUSION_DEBUG = "sse";
+    /*
+    FNXC:EngineDiagnostics 2026-07-30-17:10:
+    `sseDebug` routes through `createLogger("sse").debug` (sse.ts:50-53), and the shared logger writes
+    debug lines to console.ERROR carrying a `\0fnlvl=info\0` severity marker — that is the whole point
+    of FN-8603's adapter. Spying `console.log` saw nothing once the bare console call was replaced, and
+    failed with "expected false to be true" rather than anything naming the channel.
+    */
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     openSseConnection("client-severity-debug");
     disconnectSSEClient("client-severity-debug");
     const lines = errorSpy.mock.calls.map((call) => String(call[0] ?? ""));
     expect(lines.some((line) => line.includes("[sse] + connection"))).toBe(true);
     expect(lines.some((line) => line.includes("[sse] - connection"))).toBe(true);
-    errorSpy.mockRestore();
   });
 });
 

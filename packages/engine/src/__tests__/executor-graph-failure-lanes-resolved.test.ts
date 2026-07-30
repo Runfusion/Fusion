@@ -393,11 +393,20 @@ describe("no lifecycle GUARD resolves its lane synchronously", () => {
     const callSites = [...code.matchAll(/resolvePlannerLanes\s*\(/g)].length;
 
     /*
-    Three call sites are the move/promotion destinations documented above (two in the planner-column
-    helpers, one in the promotion path), plus the import. Any FOURTH is a new sync resolution and must be
-    justified — if it is a guard, it is a no-op on PostgreSQL and the census will claim it is converted.
+    A CEILING, not an equality.
+
+    The invariant this guard exists for is one-directional: no NEW synchronous resolution may appear.
+    Removing one is always safe — it is the fix this test is trying to encourage — so an exact count
+    fails on exactly the change it wants. That is what happened: #2764 converted the promotion-path
+    site to `resolvePlannerLanesForTaskAsync`, the count went 3 -> 2, and a correct improvement
+    landed as a red test on main with nothing wrong in the product.
+
+    What remains are the two planner-column move destinations documented above (`PlannerLanes` exists
+    so a caller refuses rather than inventing a column), which is a different question from "which
+    lane is this card in". A THIRD is a new sync resolution and must be justified — if it is a guard,
+    it is a no-op on PostgreSQL and the census will claim it is converted.
     */
-    expect(callSites).toBe(3);
+    expect(callSites).toBeLessThanOrEqual(2);
   });
 
   it("does not compare a column against a synchronously-resolved lane on the same line", async () => {

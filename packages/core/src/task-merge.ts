@@ -238,7 +238,7 @@ export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
  */
 export function getTaskMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { manual?: boolean; skipColumnIdentityCheck?: boolean } = {},
+  options: { manual?: boolean; skipColumnIdentityCheck?: boolean; reviewColumns?: ReadonlySet<string> } = {},
 ): string | undefined {
   /*
   FNXC:WorkflowTransitionPolicy 2026-07-19-13:30 (PR #2341 review):
@@ -251,8 +251,34 @@ export function getTaskMergeBlocker(
   checks (paused / blocking status / incomplete steps / pre-merge step results) as
   the sole deciders without lying about the task's actual column.
   */
-  if (!options.skipColumnIdentityCheck && task.column !== "in-review") {
-    return `task is in '${task.column}', must be in 'in-review'`;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+  `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
+
+  Distinct from `skipColumnIdentityCheck`, which says "I have already proven lane identity, do not
+  check at all". This says "check, against THESE columns" — the caller that knows the board but still
+  wants the identity check enforced. Collapsing the two would let a caller silently skip the check
+  when all it wanted was to name the lane.
+
+  The live defect this fixes is in `moves.ts`: the review → complete transition guard resolves BOTH
+  columns from the workflow, then called this helper, which re-asked with the literal and refused —
+  so on a renamed board that move threw `Cannot move FN-1 to done: task is in 'signoff', must be in
+  'in-review'` even though the transition had just been validated as legal. A half-conversion, where
+  the outer question is resolved and the inner one is not.
+
+  DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-00:20. The message names
+  the resolved lanes when they are known, so it can never point at a column the board does not have.
+  */
+  if (!options.skipColumnIdentityCheck) {
+    const inReviewLane = options.reviewColumns
+      ? options.reviewColumns.has(task.column)
+      : task.column === "in-review";
+    if (!inReviewLane) {
+      const expected = options.reviewColumns && options.reviewColumns.size > 0
+        ? [...options.reviewColumns].map((c) => `'${c}'`).join(" or ")
+        : "'in-review'";
+      return `task is in '${task.column}', must be in ${expected}`;
+    }
   }
 
   if (task.paused) {
@@ -358,6 +384,56 @@ export interface TaskCompletionBlockerOptions {
    * `done`/`archived` are treated as non-blocking.
    */
   resolveTask?: (taskId: string) => Promise<Pick<Task, "id" | "column"> | null | undefined>;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+  Per-blocker resolved lane vocabulary, keyed by the BLOCKER's task id — not the blocked task's.
+  A dependency lives on its own board and its own workflow decides when it is finished.
+
+  Shaped and named to match `DependencySatisfactionColumns` in the scheduler so the two answers to
+  "is this dependency satisfied?" read identically at both call sites. It is not the same TYPE only
+  because that one lives in `@fusion/engine`, which core cannot import.
+
+  A blocker missing from the map keeps the legacy literals, which is why the map is per-id rather
+  than a flat pair of sets: a board spanning workflows must not have one dependency's `done` column
+  answer for another's.
+  */
+  satisfactionColumnsByTaskId?: ReadonlyMap<string, { terminal: ReadonlySet<string>; review: ReadonlySet<string> }>;
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+The two dependency questions, resolved against the DEPENDENCY's own workflow.
+
+Keyed on the literals, a blocker that had genuinely finished on a renamed board never counted as
+terminal, so `blockedBy` never cleared and the blocked task waited forever. Nothing errors and
+nothing retries — the card simply never becomes eligible, which is the failure mode this whole
+program keeps finding.
+
+They are SEPARATE because the two gates genuinely differ: a hard `blockedBy` marker clears only on
+terminal (complete/archived), while a declared dependency also clears once it reaches REVIEW — the
+work is done even though the merge has not landed. Collapsing them would either strand every
+dependent behind an unmerged dependency or release blocked cards too early.
+*/
+function isDependencyTerminal(
+  dependency: Pick<Task, "id" | "column">,
+  options: TaskCompletionBlockerOptions,
+): boolean {
+  const columns = options.satisfactionColumnsByTaskId?.get(dependency.id);
+  /* DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-00:20. */
+  if (!columns) return dependency.column === "done" || dependency.column === "archived";
+  return columns.terminal.has(dependency.column);
+}
+
+function isDependencySatisfied(
+  dependency: Pick<Task, "id" | "column">,
+  options: TaskCompletionBlockerOptions,
+): boolean {
+  const columns = options.satisfactionColumnsByTaskId?.get(dependency.id);
+  /* DELIBERATE-LITERAL — the same documented default, reviewed 2026-07-31-00:20. */
+  if (!columns) {
+    return dependency.column === "done" || dependency.column === "in-review" || dependency.column === "archived";
+  }
+  return columns.terminal.has(dependency.column) || columns.review.has(dependency.column);
 }
 
 /**
@@ -379,7 +455,7 @@ export async function getTaskCompletionBlocker(
     }
 
     const blocker = await options.resolveTask(blockedBy);
-    if (blocker && blocker.column !== "done" && blocker.column !== "archived") {
+    if (blocker && !isDependencyTerminal(blocker, options)) {
       return `task is blocked by ${blockedBy}`;
     }
   }
@@ -393,7 +469,7 @@ export async function getTaskCompletionBlocker(
 
   for (const dependencyId of dependencies) {
     const dependency = await options.resolveTask(dependencyId);
-    if (!dependency || (dependency.column !== "done" && dependency.column !== "in-review" && dependency.column !== "archived")) {
+    if (!dependency || !isDependencySatisfied(dependency, options)) {
       unresolvedDependencies.push(dependencyId);
     }
   }

@@ -1,3 +1,4 @@
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "./types.js";
 import type { TaskStore } from "./store.js";
@@ -192,8 +193,17 @@ export function computeCrossParentDiagnosticClaimId(input: Pick<SameAgentDuplica
 export function findSameAgentDuplicates(
   input: SameAgentDuplicateInput,
   candidates: SameAgentDuplicateCandidate[],
-  opts?: { threshold?: number; nowMs?: number; windowMs?: number; sourceAgentId?: string | null },
+  opts?: {
+    threshold?: number;
+    nowMs?: number;
+    windowMs?: number;
+    sourceAgentId?: string | null;
+    /* Resolved trait flags per column id. Omitted → core's role helper falls back to the legacy ids,
+       so an unconverted caller is byte-identical. */
+    columnFlagsByColumnId?: ReadonlyMap<string, ColumnRoleTraitFlags>;
+  },
 ): SameAgentDuplicateMatch[] {
+  const candidateFlagsByColumn = opts?.columnFlagsByColumnId;
   const threshold = opts?.threshold ?? 0.75;
   const nowMs = opts?.nowMs ?? Date.now();
   const windowMs = opts?.windowMs ?? 24 * 60 * 60 * 1000;
@@ -209,6 +219,27 @@ export function findSameAgentDuplicates(
     return candidate.createdAt >= cutoff;
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (batch-core feed):
+  THE EXACT-FINGERPRINT PATH NEEDED THIS TOO, and it is the path that actually fires.
+
+  `findDuplicateMatches` excludes terminal candidates via its own `DEFAULT_EXCLUDE_COLUMNS`
+  (`["done", "archived"]` in `duplicate-detection.ts`) — a literal LIST, which the census does not
+  count because it is a definition rather than a comparison. `findSameAgentDuplicates` never passed
+  `excludeColumns`, so it inherited that default: on a renamed board the exact-match path returned a
+  COMPLETED task as the canonical for new work.
+
+  I found this only because my first test asserted the exclusion and failed — the bigram fallback
+  below (the site the census pointed at) is unreachable whenever the exact path already matched, so
+  converting that line alone would have left the real path untouched while the census read 2 → 0.
+  Worth flagging for the rest of the batch: a census-invisible literal LIST can sit in front of the
+  guard the census does point at.
+  */
+  const resolvedExcludeColumns = candidateFlagsByColumn === undefined
+    ? undefined
+    : [...new Set(recent
+      .map((candidate) => candidate.column)
+      .filter((column) => isTerminalColumnRole(candidateFlagsByColumn.get(column), column)))];
   const matches = findDuplicateMatches(
     { title: input.title ?? undefined, description: input.description },
     recent.map((candidate) => ({
@@ -217,7 +248,7 @@ export function findSameAgentDuplicates(
       description: candidate.description,
       column: candidate.column,
     })),
-    { threshold },
+    { threshold, ...(resolvedExcludeColumns ? { excludeColumns: resolvedExcludeColumns } : {}) },
   );
 
   const metadataById = new Map(recent.map((candidate) => [candidate.id, candidate]));
@@ -246,7 +277,19 @@ export function findSameAgentDuplicates(
   const sourceAnchor = stableIntentAnchor(input.title, input.description);
   if (sourceBigrams.size === 0) return [];
   return recent.flatMap((candidate) => {
-    if (candidate.tombstoned || candidate.column === "done" || candidate.column === "archived") return [];
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-04:00 (batch-core feed):
+    A FINISHED sibling must never be reused as the canonical for new work.
+
+    Opposite direction from `near-duplicate-canonical.ts`, and worse: keyed on the literals, a
+    completed task on a renamed board stayed eligible here, so a newly filed task could be
+    deduplicated ONTO work that was already done. The new request is not rejected with an error — it
+    is silently answered with a finished card, and the intent behind it is simply lost.
+
+    `isTerminalColumnRole` with no flags reproduces the previous pair exactly, so an unconverted
+    caller is byte-identical.
+    */
+    if (candidate.tombstoned || isTerminalColumnRole(candidateFlagsByColumn?.get(candidate.column), candidate.column)) return [];
     const candidateTokens = intentTokens(candidate.title, candidate.description);
     if (sourceAnchor !== stableIntentAnchor(candidate.title, candidate.description)
       || hasSingleTokenReplacement(sourceTokens, candidateTokens)) return [];

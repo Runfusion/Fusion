@@ -10,8 +10,10 @@ import {
   ProjectIdentityConflictError,
   readProjectIdentity,
   writeProjectIdentity,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
 } from "@fusion/core";
-import type { CentralCore as CentralCoreApi } from "@fusion/core";
+import type { CentralCore as CentralCoreApi, WorkflowIr } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
 import { getOrCreateProjectStore, evictProjectStore } from "../project-store-resolver.js";
@@ -926,7 +928,33 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
          * Include all shared top-level slot holders, including active in-review reviewer/merger/fix agents, so project-level health matches global concurrency without mutating stored health.
          */
         const inFlightAgentCount = countRunningAgentTasks(tasks);
-        const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (batch-core):
+        Project-health "tasks completed" — landed work, resolved from each task's own workflow. Keyed
+        on the literal pair, a board that renamed its complete lane reported 0 completed forever, so
+        project health read as a project that had never finished anything.
+
+        SHARED cache across the whole board, so this is one IR resolution per distinct WORKFLOW rather
+        than per task: this iterates every task in the project and a per-task resolve would make a
+        health read scale with board size.
+
+        `complete` and `archived` both count as landed. The legacy pair remains the fallback when the
+        IR cannot be read or resolves empty (v1-upgraded workflows carry `traits: []`, so empty means
+        UNEXPRESSED rather than absent).
+        */
+        const healthIrCache = new Map<string, WorkflowIr>();
+        let totalTasksCompleted = 0;
+        for (const t of tasks) {
+          let landed: Set<string>;
+          try {
+            const ir = await resolveWorkflowIrForTask(projectStore, t.id, healthIrCache);
+            const lanes = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
+            landed = new Set(lanes.length > 0 ? lanes : ["done", "archived"]);
+          } catch {
+            landed = new Set(["done", "archived"]);
+          }
+          if (landed.has(t.column)) totalTasksCompleted += 1;
+        }
 
         // Get central health metadata (if available) to preserve non-count fields
         const centralHealth = await central.getProjectHealth(req.params.id);

@@ -4097,10 +4097,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
       const promptExists = existsSync(promptPath);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:45 (batch-core):
+      "Is this DEPENDENCY finished?" — a membership question about the DEPENDENCY's own workflow, not
+      the depending task's. Dependencies can run a different workflow, so the set is resolved per
+      `dependencyId` rather than once for the parent; `resolveWorkflowIrForTask` is cached per store,
+      so this is a map lookup after the first task on a given workflow.
+
+      Keyed on the literal pair, a dependency finishing in a renamed complete lane read as NOT done,
+      and the detail panel showed a satisfied dependency as still blocking — an operator staring at a
+      card that looks stuck behind work that is demonstrably finished.
+
+      `resolveTerminalColumnsForTask` already owns the arity and the degraded fallback (legacy pair
+      when the IR cannot be read, which also covers a v1-upgraded workflow whose synthesized columns
+      carry no traits), so this is a call, not a second copy of the reasoning.
+      */
       const dependencyDetails = await Promise.all((task.dependencies ?? []).map(async (dependencyId) => {
         try {
           const depTask = await scopedStore.getTask(dependencyId);
-          return { id: dependencyId, exists: true, column: depTask.column, done: depTask.column === "done" || depTask.column === "archived" };
+          const depTerminal = await resolveTerminalColumnsForTask(scopedStore, dependencyId);
+          return { id: dependencyId, exists: true, column: depTask.column, done: depTerminal.has(depTask.column) };
         } catch {
           return { id: dependencyId, exists: false, done: false };
         }

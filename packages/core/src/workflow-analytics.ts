@@ -1,3 +1,4 @@
+import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -16,6 +17,18 @@ export interface WorkflowAnalyticsQuery {
   pricingOverrides?: ModelPricingOverrides;
   /** Workflow id used for tasks without an explicit task_workflow_selection row. */
   defaultWorkflowId?: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
+  Resolved trait flags per column NAME, so the wip/review tallies below come from the board's own
+  lanes. Omitted, core's role helpers fall back to the legacy ids — that degraded mode lives in
+  `column-roles.ts` and is tested there, so this file carries no hand-written fallback.
+
+  The failure this fixes is a SILENT ZERO. On a renamed board neither literal matched any row, so the
+  analytics surface reported `tasksInProgress: 0` and `tasksInReview: 0` beside token and cost totals
+  that were entirely correct. Plausible-looking numbers are worse than missing ones: a zero next to a
+  populated cost column reads as "nobody is working", not as "this metric is broken".
+  */
+  columnFlagsByName?: ReadonlyMap<string, ColumnRoleTraitFlags>;
 }
 
 export interface WorkflowMetricTotals {
@@ -278,8 +291,9 @@ function buildWorkflowAnalytics(
 
   for (const row of rows.currentRows) {
     const summary = ensureSummary(row.workflowId);
-    if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
-    if (row.columnName === "in-review") summary.tasksInReview = row.count;
+    const columnFlags = query.columnFlagsByName?.get(row.columnName);
+    if (isWipColumnRole(columnFlags, row.columnName)) summary.tasksInProgress = row.count;
+    if (isReviewColumnRole(columnFlags, row.columnName)) summary.tasksInReview = row.count;
   }
 
   for (const row of rows.fileRows) {
