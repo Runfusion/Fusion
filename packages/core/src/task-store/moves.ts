@@ -768,7 +768,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       }
 
       if (fromColumn === (moveLifecycle?.review ?? "in-review") && toColumn === (moveLifecycle?.complete ?? "done") && !options?.skipMergeBlocker) {
-        const mergeBlocker = getTaskMergeBlocker(task);
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+        Hand the merge blocker the lane this guard JUST resolved.
+
+        The condition above resolves both columns from the workflow; the call below re-asked with the
+        literal and refused, so on a renamed board a legal review → complete move threw
+        `Cannot move FN-1 to done: task is in 'signoff', must be in 'in-review'` — the transition was
+        validated as legal and then rejected by its own guard. Passing the resolved lane is what makes
+        the outer and inner questions the same question.
+        */
+        const mergeBlocker = getTaskMergeBlocker(task, moveLifecycle?.review
+          ? { reviewColumns: new Set([moveLifecycle.review]) }
+          : {});
         if (mergeBlocker) {
           throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
         }
