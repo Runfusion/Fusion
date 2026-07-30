@@ -3042,9 +3042,16 @@ export function ListView({
                           const hasStatus = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                             || isTransientPlannerActive;
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                          /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:50: pass the already-resolved flags so the badge's
-   review-lane gate is not the literal — this list already owns `columnFlagsById`. */
-                          const optionalGateBadge = getRunningOptionalGateBadge(task, columnFlagsById.get(task.column));
+                          /*
+                          FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (corrected): pass the resolved flags so the
+                          badge's review-lane gate is not the literal — but through `getTaskColumnFlags(task)`, NOT
+                          `columnFlagsById`. "This list already owns columnFlagsById" was the original reasoning and
+                          it is the trap: that map is a UNION across workflows keyed by column id, so for a task whose
+                          own workflow does not declare this column it hands back a NEIGHBOUR workflow's traits and
+                          the badge claims a role the card's board never gave it. The accessor degrades to absent
+                          flags instead. Enforced by column-role-degraded-flags.test.ts, which caught this.
+                          */
+                          const optionalGateBadge = getRunningOptionalGateBadge(task, getTaskColumnFlags(task));
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                           /*
                           FNXC:TaskStatusBadge 2026-07-26-14:05:
@@ -3306,9 +3313,16 @@ export function ListView({
                               && isAgentActive;
                             const showStatusBadge = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                               || isTransientPlannerActive;
-                            /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:50: pass the already-resolved flags so the badge's
-   review-lane gate is not the literal — this list already owns `columnFlagsById`. */
-                          const optionalGateBadge = getRunningOptionalGateBadge(task, columnFlagsById.get(task.column));
+                            /*
+                          FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (corrected): pass the resolved flags so the
+                          badge's review-lane gate is not the literal — but through `getTaskColumnFlags(task)`, NOT
+                          `columnFlagsById`. "This list already owns columnFlagsById" was the original reasoning and
+                          it is the trap: that map is a UNION across workflows keyed by column id, so for a task whose
+                          own workflow does not declare this column it hands back a NEIGHBOUR workflow's traits and
+                          the badge claims a role the card's board never gave it. The accessor degrades to absent
+                          flags instead. Enforced by column-role-degraded-flags.test.ts, which caught this.
+                          */
+                          const optionalGateBadge = getRunningOptionalGateBadge(task, getTaskColumnFlags(task));
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                             // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
                             // gate badge — see the grouped-card render path above.

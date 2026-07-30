@@ -65,7 +65,6 @@ const ALLOWED = new Map([
       + "registered as a trait hook either, and the `evaluateDefaultWorkflowGuards` reader its file "
       + "header credits does not exist. So its `lifecycleColumns` conversion was applied to dead code.",
   ],
-  ["getTotalAgentActiveMs", "TEMPORARY: core-owned; reported on #2783. Twin of a dashboard function reverted for exactly this."],
   ["isPlanningContinuationTaskDispatchable", "TEMPORARY: engine-owned; reported on #2785."],
   [
     "sortTasksForDisplayColumn",
@@ -92,6 +91,12 @@ const ALLOWED_OMISSIONS = new Map([
     "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
       + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site.",
+  ],
+  [
+    "packages/core/src/task-store/async-merge-coordination.ts::enqueueMergeQueueInTransaction",
+    "TEMPORARY: core-owned; reported on #2783. The omitting site is the PUBLIC `enqueueMergeQueue` "
+      + "wrapper; the two moves.ts callers supply. So the automatic handoff-to-review path resolves "
+      + "the review column and the manual re-enqueue path does not.",
   ],
   [
     "packages/core/src/task-store/branch-group-ops.ts::isNearDuplicateCanonicalInactive",

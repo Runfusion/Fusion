@@ -5734,6 +5734,7 @@ export function TaskDetailContent({
                 tokenUsage={workingTask.tokenUsage}
                 loading={detailLoading}
                 task={workingTask}
+                columnFlags={detailColumnFlags}
               />
             </div>
           ) : activeTab === "routing" ? (

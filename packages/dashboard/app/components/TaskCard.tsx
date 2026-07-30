@@ -1457,9 +1457,21 @@ function TaskCardComponent({
     () => isPlanReviewRunning(task),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (partial-supply seam, caught by the gate):
+  `getRunningOptionalGateBadge` takes resolved flags and BOTH ListView call sites supply them; this
+  one did not, so on a renamed board the badge answered from legacy ids here and from the real column
+  two components over. The seam check only began reporting this once it looked per-call-site instead
+  of accepting one supplier for the whole seam.
+
+  `taskColumnFlags` belongs in the deps: this repo has no `react-hooks/exhaustive-deps` rule, so a
+  memo that reads flags but does not list them is invisible to lint and would keep the first-paint
+  (undefined) answer after the flags resolve — re-creating the same legacy-fallback bug through
+  staleness instead of omission.
+  */
   const optionalGateBadge = useMemo(
-    () => getRunningOptionalGateBadge(task),
-    [task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+    () => getRunningOptionalGateBadge(task, taskColumnFlags),
+    [task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults, taskColumnFlags],
   );
   // CLI agent session badges (U11) — distinct from staleness/stall badges.
   const cliWaitingOnInput = cliSessionState?.agentState === "waitingOnInput";
