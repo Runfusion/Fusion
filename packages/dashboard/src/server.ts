@@ -20,7 +20,7 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, setRunningAgentCountSource } from "@fusion/core";
+import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveProjectColumnsForRoles, REVIEW_ROLES, setRunningAgentCountSource } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -86,6 +86,8 @@ import {
   mergeAttemptsPerMergedTask,
   postMergeAuditFailuresPerDay,
   recoverAlreadyMergedReviewTasksRecoveriesPerDay,
+  countEntriesInto,
+  countBouncesOut,
 } from "./reliability-metrics.js";
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
 import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
@@ -1884,10 +1886,29 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           metadata: event.metadata ?? undefined,
         })))
       : scopedStore.getRunAuditEventsAsync(auditFilter);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:05:
+    The Reliability headline was computed from two queries that name `in-review` and `in-progress`.
+
+    On a board that renamed either lane both return {}, so `tasksEnteredInReview` and
+    `tasksBouncedToInProgress` are zero for every day — and `inReviewFailureRate7d` then divides one
+    zero by another and reports a healthy rate. That is the worst shape a lifecycle defect takes: it
+    produces a NUMBER, not an error, and the number says everything is fine. An operator reading a 0%
+    review-failure rate beside a populated audit list has no reason to suspect the metric is blind.
+
+    `getTaskMovedCountsByDay` takes ONE column per side, so the lanes are resolved to sets and the
+    query is issued per pair, then summed. Move events are keyed on a single (from, to) pair, so
+    summing across disjoint pairs cannot double-count. On the built-in board this is 1x1 — exactly
+    the two queries that were here before — and on a renamed board it is a handful.
+    */
+    const [reviewLanes, wipLanes] = await Promise.all([
+      resolveProjectColumnsForRoles(scopedStore, REVIEW_ROLES),
+      resolveProjectColumnsForRoles(scopedStore, ["countsTowardWip"]),
+    ]);
     const [runAuditEvents, enteredByDay, bouncedByDay, durationEvents, mergedTaskIds] = await Promise.all([
       runAuditEventsPromise,
-      scopedStore.getTaskMovedCountsByDay({ since: startIso, until: endIso, toColumn: "in-review" }),
-      scopedStore.getTaskMovedCountsByDay({ since: startIso, until: endIso, fromColumn: "in-review", toColumn: "in-progress" }),
+      countEntriesInto(scopedStore, { since: startIso, until: endIso }, reviewLanes),
+      countBouncesOut(scopedStore, { since: startIso, until: endIso }, reviewLanes, wipLanes),
       scopedStore.getInReviewDurationEvents({ since: startIso, until: endIso }),
       scopedStore.getTaskMergedTaskIds({ since: startIso, until: endIso }),
     ]);
