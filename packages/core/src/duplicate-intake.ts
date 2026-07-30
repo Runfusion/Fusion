@@ -2,6 +2,7 @@ import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "./types.js";
 import type { TaskStore } from "./store.js";
+import { resolveArchiveTargetForTask } from "./workflow-lifecycle-traits.js";
 
 export interface SameAgentDuplicateInput {
   title?: string | null;
@@ -324,7 +325,7 @@ export async function archiveAsSameAgentDuplicate(
     details: "Auto-archived as same-agent duplicate during intake",
     metadata: { siblingTaskIds: siblingIds, scores },
   });
-  await store.moveTask(taskId, "archived");
+  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId));
 }
 
 /**
@@ -421,3 +422,4 @@ export async function flagTriageDuplicate(
   await store.updateTask(taskId, { sourceMetadataPatch });
   return sourceMetadataPatch;
 }
+
