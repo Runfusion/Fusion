@@ -403,6 +403,19 @@ prevent. Proven end to end in `workflow-terminal-node-sync-resolution-live-e2e.p
 FAIL-SOFT TO THE LITERAL, deliberately: an unresolvable workflow keeps exactly the pre-conversion
 answer rather than losing the guard. `end` is also every builtin's terminal node id, so the fallback
 is correct wherever it can still be reached.
+
+RESIDUAL, stated because a review raised it and the obvious remedy does not work yet (PR #2812):
+`resolveWorkflowIrForTask` DEGRADES to the default workflow instead of throwing, so the `catch` above
+does not cover a failed lookup — a task on a custom board whose definition cannot be loaded is judged
+against the default graph. The natural fix is to gate on
+`resolveWorkflowIrForTaskWithProvenance(...).source === "selection"`, and that signal is currently
+unusable: `createWorkflowDefinition` stores an authored IR VERBATIM, so its `ir.id` keeps whatever the
+author wrote while the store allocates its own `WF-NNN`. The provenance identity check then compares
+those two and reports `source: "default"` for a workflow it resolved CORRECTLY. Measured, not
+assumed — gating on it here turned the "non-terminal override is written" case red.
+
+So the residual is knowingly left: it is the pre-existing fail-soft, not a regression this change
+introduces, and narrowing it depends on fixing the provenance signal first.
 */
 export async function isTaskTerminalNodeIdAsync(
   store: WorkflowIrResolverStore,
