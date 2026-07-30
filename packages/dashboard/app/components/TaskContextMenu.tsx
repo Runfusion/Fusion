@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
+import { isIntakeColumnRole } from "../utils/columnRoles";
 // `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
 // the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
 // the note at `moveTransitions`); every workflow-resolved path now reads the payload's
@@ -147,8 +148,34 @@ function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags)
   return column !== "done" && column !== "archived";
 }
 
+/**
+ * A PURE intake lane — intake without hold. A merged Planning column carries both, so it is not
+ * "pure intake": cards rest there waiting for capacity and have real actions.
+ */
+function isPureIntakeColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
+  // With traits, "pure" means intake WITHOUT hold — a merged Planning column carries both and is
+  // therefore not pure. Without traits, defer to the shared intake role so the degraded-mode id
+  // list lives in exactly one place.
+  if (flags) return flags.intake === true && flags.hold !== true;
+  return isIntakeColumnRole(undefined, column);
+}
+
 export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags?.complete === true || flags?.archived === true) return false;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:35 (Phase B — AUDITED, deliberately NOT consolidated):
+  `isPreImplementationColumnRole` in `utils/columnRoles.ts` answers a near-identical question and I
+  routed this through it — then reverted, because its DEGRADED-MODE answer is wider than this one's.
+
+  Its legacy set is {todo, triage}; this predicate's was {triage} alone. They differ for a reason:
+  that helper drives the preserve-progress prompt, where a flagless `todo` should prompt (losing
+  steps is unrecoverable), while THIS drives the Plan affordance, where a flagless `todo` must not
+  offer to re-plan a card that may already be planned. Consolidating added `plan` to flagless `todo`
+  cards — caught by "exposes Plan only for pre-execution hold columns".
+
+  Same shape, different degraded answer: the trait path is identical and the fallbacks are not
+  interchangeable. Kept separate with the difference recorded, rather than made to look shared.
+  */
   return column === "triage" || flags?.intake === true || flags?.hold === true;
 }
 
@@ -448,8 +475,25 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions,
     moveTransitions: getTaskMoveTransitions(task, t, columnLabel, workflowMoveColumns),
     reviewAction: getTaskReviewAction(task, options),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-15:25 (Phase B — TaskContextMenu.tsx):
+    Was `task.column !== "triage"`. The intent is "a bare card sitting in a pure INTAKE lane has no
+    actions worth showing yet" — `triage` happened to be that lane, and `todo` (hold) always showed
+    the menu because cards waiting for capacity have real actions.
+
+    Post-U11 the literal inverts: a default Planning card is `todo`, so `!== "triage"` is true and
+    the menu shows unconditionally — which is right for the hold half, but the guard has stopped
+    distinguishing anything and would also show a full menu on a bare Coding (Ideas) capture.
+
+    Resolved to `intake AND NOT hold` — a PURE intake lane — which reproduces every shape:
+      legacy `triage`   intake only        -> suppressed (as before)
+      legacy `todo`     hold only          -> shown (as before)
+      merged Planning   intake + hold      -> shown (matches the Todo half, where cards wait)
+      Ideas `ideas`     intake only        -> suppressed (a bare captured idea)
+    Falls back to the legacy id when no flags are supplied, so unwired menu hosts are unchanged.
+    */
     shouldShowActionsMenu:
-      task.column !== "triage" ||
+      !isPureIntakeColumn(task.column, currentColumnFlags) ||
       task.status === "awaiting-approval" ||
       canRetryTask ||
       isTaskPaused ||
