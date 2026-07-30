@@ -313,6 +313,13 @@ interface ListViewProps {
 }
 
 
+/*
+FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: module scope, no flags reachable.
+`status === "executing"` is the primary signal; the column arm is the fallback for rows whose status
+has not been written yet. This function takes only a Task — there is no flags map in scope and no
+caller threading one — so converting it means changing the signature and every call site, which is a
+behaviour change and out of scope for the batch. Flagged here rather than guessed.
+*/
 function shouldShowTaskProgress(task: Task): boolean {
   return task.status === "executing" || task.column === "in-progress";
 }
@@ -870,10 +877,12 @@ export function ListView({
   }, [columnFlagsById]);
 
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
+    /* FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: the non-workflow arm — no flags map to read. */
     return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
   }, [columnFlagsById, workflowMode]);
 
   const isCompleteColumn = useCallback((column: ColumnId): boolean => {
+    /* FNXC:ListView 2026-07-30-04:45 DELIBERATE-LITERAL: the non-workflow arm — no flags map to read. */
     return workflowMode ? Boolean(columnFlagsById.get(column)?.complete) : column === "done";
   }, [columnFlagsById, workflowMode]);
 
@@ -2096,7 +2105,13 @@ export function ListView({
     });
 
     const actions = [...model.actions];
-    if (task.column === "done" && onArchiveTask) {
+    /*
+    FNXC:ListView 2026-07-30-04:45: Archive is offered for a COMPLETE column, asked by role.
+    `isCompleteColumn` is the same helper the rest of this view already uses, and it keeps the
+    legacy id as its own non-workflow fallback — so this is behaviour-identical on a legacy board
+    and correct on a renamed one, where a column named anything but `done` previously lost Archive.
+    */
+    if (isCompleteColumn(task.column) && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
     }
     /*
@@ -2105,7 +2120,7 @@ export function ListView({
     entry above. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if ((task.column === "done" || task.column === "archived") && onRevertTask) {
+    if ((isCompleteColumn(task.column) || isArchivedColumn(task.column)) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
