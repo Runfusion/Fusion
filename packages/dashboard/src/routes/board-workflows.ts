@@ -141,9 +141,9 @@ for an operator to promote them (Coding (Ideas)'s "Ideas" lane).
 
 It exists because the distinction is trait CONFIG (`intake` with `autoTriage: false`),
 not a trait flag, so it was invisible to every client. The dashboard approximated it as
-`intake && column !== "triage"` — a hardcoded id doing the work of a missing fact. That
+`intake` minus a hardcoded legacy id — an id doing the work of a missing fact. That
 approximation inverts under U11: the merged Planning column keeps id `todo` and `triage`
-is deleted, so `column !== "triage"` becomes vacuously TRUE and a "Start" action would
+is deleted, so that exclusion becomes vacuously TRUE and a "Start" action would
 appear on every planning card. Surfacing the real fact is the fix; renaming the
 comparison would not have been.
 */

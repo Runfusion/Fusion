@@ -125,7 +125,7 @@ export function hasAdvancedPastPlanning(
   while a replan is a legitimate BACKWARD move. `firstExecutionAt`/`executionStartedAt` are never
   cleared once implementation starts, so a card that executed, failed Plan Review, and was rebounded
   to a planner lane (`needs-replan`) read as "advanced past planning" forever: triage's discovery
-  filter (`column === "triage" && isTaskStillInPlanningStage`) never re-admitted it and the card sat
+  filter (intake column plus `isTaskStillInPlanningStage`) never re-admitted it and the card sat
   in triage/needs-replan permanently — "stuck in planning" on the board (FN-8594). It hit every
   triage-column workflow (builtin:coding, the default); plan-in-place Ideas cards escaped only
   because todo discovery admits `needs-replan` without consulting this guard.
