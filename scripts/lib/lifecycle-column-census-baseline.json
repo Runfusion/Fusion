@@ -68,6 +68,7 @@
     "packages/dashboard/app/utils/prFeedback.ts": 2,
     "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/dashboard/app/utils/taskTiming.ts": 2,
+    "packages/dashboard/src/github-tracking-state.ts": 2,
     "packages/dashboard/src/routes/register-project-routes.ts": 2,
     "packages/dashboard/src/routes/register-session-diff-routes.ts": 2,
     "packages/dashboard/src/routes/register-system-maintenance-routes.ts": 2,
@@ -161,9 +162,7 @@
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
     "packages/engine/src/scheduler.ts\u0000archived": 1,
     "packages/engine/src/scheduler.ts\u0000done": 1,
-    "packages/engine/src/triage.ts\u0000triage": 1,
-    "packages/dashboard/src/github-tracking-state.ts\u0000done": 1,
-    "packages/dashboard/src/github-tracking-state.ts\u0000archived": 1
+    "packages/engine/src/triage.ts\u0000triage": 1
   },
   "queryByFile": {
     "packages/engine/src/self-healing.ts": 48,
