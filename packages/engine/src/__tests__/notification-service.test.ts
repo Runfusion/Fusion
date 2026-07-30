@@ -119,6 +119,49 @@ describe("NotificationService", () => {
     );
   });
 
+  it("notifies for a review lane that carries ONLY the merge trait", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (PR #2722 review — greptile, the MIRROR of the case
+    below):
+    My union was `mergeBlocker` + `humanReview`, which excluded a lane carrying only `mergeOrchestration`
+    — the same silent miss this method was added to fix, pointed the other way. A card moved to that
+    lane arrived with no operator notification, no error and nothing in the log.
+
+    Both directions now go through core's `resolveReviewColumns`, so the pair below and this case cannot
+    drift apart again.
+    */
+    const MERGE_ONLY_IR = {
+      version: "v2", id: "wf-merge-only", name: "Merge only",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "gate", name: "Gate", traits: [{ trait: "merge" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "backlog" }], edges: [],
+    };
+
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-merge-only" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-merge-only" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-merge-only", ir: MERGE_ONLY_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification } as never);
+    await service.start();
+
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:moved", {
+      task: task(), from: "building", to: "gate",
+    });
+    await flushAsyncHandlers();
+
+    expect(sendNotification).toHaveBeenCalledWith(
+      "in-review",
+      expect.objectContaining({ taskId: "FN-1", event: "in-review" }),
+    );
+  });
+
   it("notifies for a review lane that carries human-review WITHOUT the merge trait", async () => {
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
