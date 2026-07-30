@@ -172,11 +172,16 @@ sentinel and its predicate vanished — the identical blindness the static-span 
 changing punctuation. Drizzle accepts both spellings and a formatter or a reserved-word column can
 produce the bracket one.
 
-Both quote styles and an optional trailing `!`/`?` are tolerated for the same reason the rest of this
-scanner is permissive: the cost of a false positive is one baseline entry, and the cost of a false
-negative is a gate that reads as coverage.
+Both quote styles and a trailing `!`/`?` are tolerated for the same reason the rest of this scanner
+is permissive: the cost of a false positive is one baseline entry, and the cost of a false negative
+is a gate that reads as coverage.
+
+The `!` arrived as its own finding (#2841 review, fifth round) because the previous version DOCUMENTED
+tolerating it and did not implement it — the comment described the intent and the regex described the
+behaviour, and only one of them was executable. A comment that overstates a guard is worse than none:
+it is the thing a reader checks instead of the code.
 */
-const COLUMN_PROPERTY = /(?:^|\.)column$|\[\s*["'`]column["'`]\s*\]$/;
+const COLUMN_PROPERTY = /(?:(?:^|\.)column|\[\s*["'`]column["'`]\s*\])[!?]*$/;
 
 export function literalText(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;

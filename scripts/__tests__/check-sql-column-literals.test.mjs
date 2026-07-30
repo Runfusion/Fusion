@@ -172,3 +172,26 @@ test("a bracket access to a DIFFERENT property is not treated as a column", () =
   /* The paired negative: widening to any bracket access would make every interpolation a column. */
   assert.equal(hits('const q = sql`${schema.project.tasks["title"]} = \'done\'`;'), 0);
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-18:10 (#2841 review, FIFTH round — greptile P1):
+The previous round's comment claimed a trailing `!`/`?` was tolerated; the regex did not implement it.
+A comment that overstates a guard is worse than none — it is the thing a reader checks instead of the
+code — so the behaviour is pinned rather than described.
+*/
+
+test("a non-null-asserted bracket reference is caught", () => {
+  assert.equal(hits('const q = sql`${schema.project.tasks["column"]!} != \'archived\'`;'), 1);
+});
+
+test("a non-null-asserted dot reference is caught", () => {
+  assert.equal(hits("const q = sql`${schema.project.tasks.column!} = 'done'`;"), 1);
+});
+
+test("an optional-chained reference is caught", () => {
+  assert.equal(hits("const q = sql`${t?.column} = 'done'`;"), 1);
+});
+
+test("a non-null assertion on a DIFFERENT property is still not a column", () => {
+  assert.equal(hits('const q = sql`${schema.project.tasks["title"]!} = \'done\'`;'), 0);
+});
