@@ -5338,13 +5338,39 @@ export default function kbExtension(pi: ExtensionAPI) {
 
         This also makes the first arm REACHABLE, so it is now covered rather than defended.
         */
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:10 (#2843 review — greptile P1, fourth round):
+        ONE READ. Provenance and lanes come from the same snapshot, and a substitution is judged by
+        whether it would MOVE the card rather than by a second lookup.
+
+        My previous fix paired the provenance read with an independent `getTaskWorkflowSelectionAsync`
+        to tell "no workflow selected" (legitimate — the built-in board IS the answer) apart from
+        "selected but unresolvable". Two reads answering one question is the same defect the FIRST
+        review round on this PR caught, reintroduced three rounds later in a different place: a
+        selection written or cleared between them makes `resolved.ir` describe one workflow and
+        `selectedWorkflowId` another, and the tool then moves the card with the wrong board's hold
+        lane or reports a resolution error that never happened.
+
+        The second read is not needed. `source === "selection"` means the resolver genuinely resolved
+        what the task selected, so the lanes are authoritative. `"default"` means it SUBSTITUTED —
+        and the honest question is not why, it is whether the substitution is about to be acted on:
+
+          - the substituted hold lane equals the card's current column: no move, nothing is being
+            decided on unverified information, and this is exactly the no-selection/untraited case
+            where the built-in vocabulary is correct. Success.
+          - it DIFFERS: acting would move a real card into a lane inferred from a workflow that is
+            not the card's. That is the misroute round three found, and it is refused.
+
+        Judging by the action rather than by the reason needs no second lookup, so there is no window
+        for the two to disagree.
+        */
         const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
-        const selectedWorkflowId = (await store.getTaskWorkflowSelectionAsync?.(task.id))?.workflowId;
-        const substitutedWorkflow = Boolean(selectedWorkflowId) && resolved.source !== "selection";
-        const lanes = substitutedWorkflow ? undefined : resolveLifecycleColumns(resolved.ir);
-        const holdColumn = lanes?.hold;
-        if (!lanes) {
-          landingError = `the task's workflow (${selectedWorkflowId}) could not be resolved, so its ready lane is unknown`;
+        /* `resolveLifecycleColumns` returns undefined for an IR that declares no columns at all;
+           `holdColumn` is then undefined and the untraited branch below is the honest answer. */
+        const holdColumn = resolveLifecycleColumns(resolved.ir)?.hold;
+        const substituted = resolved.source !== "selection";
+        if (substituted && holdColumn && holdColumn !== task.column) {
+          landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
         } else if (!holdColumn && await taskBoardDeclaresLifecycleTraits(store, task.id)) {
           landingError = "this workflow declares no hold (ready-to-pick-up) lane";
         } else if (holdColumn && holdColumn !== task.column) {
