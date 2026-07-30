@@ -92,6 +92,32 @@ export function columnsWithFlag(ir: WorkflowIr, flag: keyof TraitFlags): string[
     .map((c) => c.id);
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-10:40 (batch-core):
+DOES THIS WORKFLOW EXPRESS ANY LIFECYCLE TRAITS AT ALL?
+
+The distinction this program keeps paying for is "could not read" vs "read, and the answer is none".
+There is a THIRD state that looks identical to the second and means the opposite:
+`synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph by emitting every default
+column with `traits: []`. Such a board resolves cleanly and answers EMPTY for every role, while its
+`done` and `in-review` columns plainly exist and hold cards.
+
+A caller that treats an empty role set as a real answer is correct for a v2 board that deliberately
+declares no such lane, and wrong for a v1 upgrade — where it silently disables whatever the guard
+protected. This predicate separates the two: a workflow that expresses NO trait on ANY column has not
+made a statement about its lifecycle, so its callers should keep the legacy vocabulary rather than
+conclude the role is absent.
+
+Cheap by construction: it stops at the first column carrying anything.
+*/
+export function declaresAnyLifecycleTrait(ir: WorkflowIr): boolean {
+  const registry = getTraitRegistry();
+  return columnsOf(ir).some((c) => {
+    const flags = registry.resolveColumnFlags(c);
+    return Object.values(flags).some((v) => v === true);
+  });
+}
+
 /** Convenience predicate: does `columnId` carry `flag` in this IR? */
 export function columnHasFlag(ir: WorkflowIr, columnId: string, flag: keyof TraitFlags): boolean {
   const column = columnsOf(ir).find((c) => c.id === columnId);
