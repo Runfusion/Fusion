@@ -11,6 +11,7 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
 import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../builtin-coding-ideas-workflow-ir.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
+import { getTraitRegistry } from "../trait-registry.js";
 
 describe("columnsWithFlag — builtin:coding trait→columnIds (R8)", () => {
   const ir = BUILTIN_CODING_WORKFLOW_IR;
@@ -290,43 +291,62 @@ unsafe for "is this card already there". A reader who only sees the first assert
 lesson.
 */
 describe("LifecycleColumns arity — one id per role, even when several qualify", () => {
-  const multiRoleIr = {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-07:40 (PR #2721 review — greptile, and the premise was
+  wrong):
+  Uses `complete`, NOT `intake`. My first version demonstrated the arity gap with two intake lanes
+  and bypassed typing with `as never` to build it — but `validateColumnTraits` raises
+  `multiple-intake-columns`, so that workflow shape is REJECTED by the product. The test would have
+  stayed green while documenting something that cannot exist, which is worse than not testing it.
+
+  `complete` genuinely repeats: there is no uniqueness rule for it, nor for `archived`, `hold`,
+  `countsTowardWip`, `mergeBlocker` or `humanReview`. Only `intake` is validated unique. That is the
+  real boundary, and it means `intake` comparisons are safe by equality while every other role's are
+  not — which narrows the call sites at risk rather than widening them.
+  */
+  const twoTerminalsIr: WorkflowIr = {
     version: "v2",
-    name: "two-intakes-two-terminals",
+    name: "two-terminals",
     columns: [
-      { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
       { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
       { id: "building", name: "Building", traits: [{ trait: "wip" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
       { id: "released", name: "Released", traits: [{ trait: "complete" }] },
     ],
-    nodes: [{ id: "start", kind: "start", column: "inbox" }, { id: "end", kind: "end", column: "shipped" }],
+    nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
     edges: [{ from: "start", to: "end" }],
-  } as never;
+  } as WorkflowIr;
 
-  it("reports only ONE column per role — the others are invisible to the struct", () => {
-    const lifecycle = resolveLifecycleColumns(multiRoleIr);
+  it("is a workflow the product actually ACCEPTS — the premise this rests on", () => {
+    /*
+    Asserted, not assumed. My first version of these cases used two INTAKE columns, which
+    `validateColumnTraits` rejects with `multiple-intake-columns` — so it documented a shape that
+    cannot exist while staying green. Proving the fixture is valid is what makes the arity gap below
+    a real hazard rather than a hypothetical one.
+    */
+    const violations = getTraitRegistry().validateColumnTraits(twoTerminalsIr.columns as never);
+    expect(violations.filter((v) => v.severity === "error")).toEqual([]);
+  });
+
+  it("reports only ONE complete column — the second is invisible to the struct", () => {
+    const lifecycle = resolveLifecycleColumns(twoTerminalsIr);
     expect(lifecycle).toBeDefined();
-    // Whichever is chosen, it is a single id and the second qualifying column is not represented.
-    expect(typeof lifecycle!.intake).toBe("string");
-    expect(["inbox", "backlog"]).toContain(lifecycle!.intake);
-    expect(typeof lifecycle!.complete).toBe("string");
     expect(["shipped", "released"]).toContain(lifecycle!.complete);
   });
 
   it("so a MEMBERSHIP test against it misses the second column — use columnsWithFlag instead", () => {
-    const lifecycle = resolveLifecycleColumns(multiRoleIr)!;
-    const bothIntakes = columnsWithFlag(multiRoleIr, "intake");
+    const lifecycle = resolveLifecycleColumns(twoTerminalsIr)!;
+    const bothTerminals = columnsWithFlag(twoTerminalsIr, "complete");
 
-    // Both are genuinely intake lanes.
-    expect(bothIntakes).toHaveLength(2);
-    expect(bothIntakes).toEqual(expect.arrayContaining(["inbox", "backlog"]));
+    // Both are genuinely terminal columns.
+    expect(bothTerminals).toHaveLength(2);
+    expect(bothTerminals).toEqual(expect.arrayContaining(["shipped", "released"]));
 
-    // But exactly one of them fails an equality check against the struct — the shipped-bug shape.
-    const missed = bothIntakes.find((id) => id !== lifecycle.intake)!;
+    // Exactly one fails an equality check against the struct — the shipped-bug shape from PR #2713.
+    const missed = bothTerminals.find((id) => id !== lifecycle.complete)!;
     expect(missed).toBeDefined();
-    expect(missed === lifecycle.intake).toBe(false);
+    expect(missed === lifecycle.complete).toBe(false);
     // The membership form gets it right.
-    expect(bothIntakes.includes(missed)).toBe(true);
+    expect(bothTerminals.includes(missed)).toBe(true);
   });
 });

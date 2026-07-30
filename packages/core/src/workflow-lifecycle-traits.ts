@@ -144,10 +144,14 @@ decide and must skip-and-log rather than guess a legacy literal.
 FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (arity contract, after two production bugs):
 EACH FIELD IS **ONE** COLUMN, EVEN WHEN THE WORKFLOW DECLARES SEVERAL.
 
-Nothing validates that a trait appears on at most one column — `columnsWithFlag` returns an array
-and `first()` below picks its head. So a workflow may legitimately declare two intake lanes, or split
-`mergeBlocker` and `humanReview` across a merge lane and a separate sign-off lane, and this struct
-will name only one of each.
+Uniqueness is validated for exactly ONE trait. `TraitRegistry.validateColumnTraits` raises
+`multiple-intake-columns` when more than one column carries `intake` — and raises nothing for
+`hold`, `countsTowardWip`, `mergeBlocker`, `humanReview`, `complete` or `archived`. Those may
+legitimately repeat: a workflow can split `mergeBlocker` and `humanReview` across a merge lane and a
+separate sign-off lane, or declare two terminal columns. `columnsWithFlag` returns an array and
+`first()` below picks its head, so this struct names only one of each.
+
+So `intake` is safe to compare by equality; every other field is not.
 
 That makes these fields safe for ONE question and unsafe for another:
 
@@ -159,10 +163,10 @@ Two shipped bugs came from the unsafe use, both in PR #2713: a task in a second 
 rejected with a 409, and a task in a human-review lane split from the merge lane was classified as
 outside review entirely, suppressing comment re-engagement. Both read like ordinary conversions.
 
-Known call sites still comparing `task.column` against these fields — correct only while their
-workflow declares one column per trait:
-  packages/engine/src/self-healing.ts        (`columns.intake` / `columns.hold`)
-  packages/core/src/builtin-workflows.ts     (`lifecycle.intake`)
+Known call sites comparing `task.column` against these fields:
+  packages/engine/src/self-healing.ts     `columns.intake` SAFE (validated unique);
+                                          `columns.hold`   AT RISK — hold has no uniqueness rule
+  packages/core/src/builtin-workflows.ts  `lifecycle.intake` SAFE (validated unique)
 */
 export interface LifecycleColumns {
   /** Where new cards land. */
