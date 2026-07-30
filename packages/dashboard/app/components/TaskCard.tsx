@@ -1065,10 +1065,18 @@ function TaskCardComponent({
     (isIntakeColumn && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
   const stepsTouchedRef = useRef(false);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (PR #2688 review — greptile):
+  BOTH ARMS OF THE INITIALIZER RECONCILE, not just the WIP one. The initializer opens the section for
+  a WIP card OR for an intake card that already has finished steps; the first version of this effect
+  only re-checked `isWipColumn`, so a RENAMED intake lane whose flags arrive late kept the pre-load
+  answer and stayed collapsed. Same defect as the one this effect was added to fix, one arm over.
+  */
+  const hasSettledSteps = task.steps.some(s => s.status === "done" || s.status === "skipped");
   useEffect(() => {
     if (stepsTouchedRef.current) return;
-    if (isWipColumn) setShowSteps(true);
-  }, [isWipColumn]);
+    if (isWipColumn || (isIntakeColumn && hasSettledSteps)) setShowSteps(true);
+  }, [isWipColumn, isIntakeColumn, hasSettledSteps]);
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);

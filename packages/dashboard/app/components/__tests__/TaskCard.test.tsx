@@ -8289,6 +8289,31 @@ describe("TaskCard reconciles late-arriving workflow flags", () => {
     expect(expanded()).toBe("true");
   });
 
+  it("opens the steps section when flags reveal the card is a RENAMED INTAKE lane with settled steps", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (PR #2688 review — greptile):
+    The initializer has TWO arms — WIP, and intake-with-finished-steps — and the first version of the
+    reconciliation effect re-checked only the WIP one. So a renamed intake lane hit exactly the bug the
+    effect was added to fix. This is the second arm.
+
+    REVERT CHECK: drop `isIntakeColumn && hasSettledSteps` from the effect and this fails while the WIP
+    case above still passes, which is precisely how the gap survived the first fix.
+    */
+    const intakeTask = () => makeTask({
+      column: "inbox" as never,
+      status: "executing" as never,
+      steps: [{ id: "s1", title: "step one", status: "done" } as never],
+    });
+
+    const { rerender } = render(<TaskCard task={intakeTask()} onOpenDetail={noop} addToast={noop} />);
+
+    rerender(
+      <TaskCard task={intakeTask()} taskColumnFlags={{ intake: true } as never} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(expanded()).toBe("true");
+  });
+
   it("does NOT reopen a section the operator collapsed", () => {
     /*
     The half that makes the reconciliation safe. Without the touched-ref, resolving workflow metadata
