@@ -2970,7 +2970,9 @@ export function ListView({
                           const hasStatus = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                             || isTransientPlannerActive;
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                          const optionalGateBadge = getRunningOptionalGateBadge(task);
+                          /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:50: pass the already-resolved flags so the badge's
+   review-lane gate is not the literal — this list already owns `columnFlagsById`. */
+                          const optionalGateBadge = getRunningOptionalGateBadge(task, columnFlagsById.get(task.column));
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                           /*
                           FNXC:TaskStatusBadge 2026-07-26-14:05:
@@ -3232,7 +3234,9 @@ export function ListView({
                               && isAgentActive;
                             const showStatusBadge = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                               || isTransientPlannerActive;
-                            const optionalGateBadge = getRunningOptionalGateBadge(task);
+                            /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:50: pass the already-resolved flags so the badge's
+   review-lane gate is not the literal — this list already owns `columnFlagsById`. */
+                          const optionalGateBadge = getRunningOptionalGateBadge(task, columnFlagsById.get(task.column));
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
                             // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
                             // gate badge — see the grouped-card render path above.
