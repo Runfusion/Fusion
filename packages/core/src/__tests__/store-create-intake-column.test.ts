@@ -259,6 +259,40 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(prompt).toBe(buildBootstrapPrompt(task.id, task.title, task.description));
   });
 
+  /*
+  FNXC:MergedPlanningColumn 2026-07-30-13:10 (PR #2613 review — greptile):
+  `isUnplannedStartCreate` must stay narrow. My conversion replaced `&& task.column === "todo"`
+  with "any column other than intake", which on a MANUAL-intake workflow classified a direct create
+  into `in-review` (or `done`) as an unplanned quick-add Start — handing it a bootstrap stub instead
+  of a specified prompt. Quick-add Start lands the card in the workflow's PLANNING column, so the
+  narrowing belongs on the hold column, resolved from the IR rather than named.
+  */
+  it("does not treat an Ideas create into a REVIEW column as an unplanned Start create", async () => {
+    const store = h.store();
+    const task = await store.createTask({
+      description: "direct ideas create past planning",
+      workflowId: "builtin:coding-ideas",
+      column: "in-review",
+    });
+    expect(task.column).toBe("in-review");
+    const prompt = await readFile(join(store.getTasksDir(), task.id, "PROMPT.md"), "utf-8");
+    expect(prompt).not.toBe(buildBootstrapPrompt(task.id, task.title, task.description));
+  });
+
+  it("still treats an Ideas quick-add Start create into the planning column as unplanned", async () => {
+    // The case `isUnplannedStartCreate` exists for (FN-8587): create+promote in one request, so the
+    // card never sat in the manual intake but has no spec.
+    const store = h.store();
+    const task = await store.createTask({
+      description: "ideas quick-add start",
+      workflowId: "builtin:coding-ideas",
+      column: "todo",
+    });
+    expect(task.column).toBe("todo");
+    const prompt = await readFile(join(store.getTasksDir(), task.id, "PROMPT.md"), "utf-8");
+    expect(prompt).toBe(buildBootstrapPrompt(task.id, task.title, task.description));
+  });
+
   it("keeps generateSpecifiedPrompt for a direct create into a NON-intake column", async () => {
     // The contract the old test was really protecting — an explicit column past intake is a
     // specified create, not an unplanned one.

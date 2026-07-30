@@ -100,16 +100,19 @@ conservative behavior rather than acting on a guess.
 async function resolveWorkflowIntakeFacts(
   store: TaskStore,
   workflowIdOverride?: string,
-): Promise<{ intake?: string; manual: boolean }> {
+): Promise<{ intake?: string; hold?: string; manual: boolean }> {
   try {
     const workflowId = workflowIdOverride ?? (await store.getDefaultWorkflowId()) ?? DEFAULT_WORKFLOW_ID;
     const ir = await resolveWorkflowIrById(store, workflowId);
     const intake = columnsWithFlag(ir, "intake")[0];
-    if (!intake) return { manual: false };
+    // The PLANNING column a quick-add Start create lands in — the workflow's hold column, which for
+    // a merged Planning lane is the same column as intake and is then excluded by the `!==` below.
+    const hold = columnsWithFlag(ir, "hold")[0];
+    if (!intake) return { hold, manual: false };
     const declared = (ir as { columns?: Array<{ id: string; traits?: Array<{ trait: string; config?: Record<string, unknown> }> }> })
       .columns?.find((column) => column.id === intake);
     const intakeTrait = declared?.traits?.find((trait) => trait.trait === "intake");
-    return { intake, manual: intakeTrait?.config?.autoTriage === false };
+    return { intake, hold, manual: intakeTrait?.config?.autoTriage === false };
   } catch {
     return { manual: false };
   }
@@ -414,7 +417,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       : await resolveDefaultWorkflowIntakeColumn(store);
     /* Intake column + whether that intake is MANUAL (autoTriage:false), resolved from the IR. */
     const intakeFacts = input.workflowId === null
-      ? { manual: false as boolean, intake: undefined as string | undefined }
+      ? { manual: false as boolean, intake: undefined as string | undefined, hold: undefined as string | undefined }
       : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
@@ -569,7 +572,9 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       */
       const isUnplannedStartCreate = intakeFacts.manual
         && intakeFacts.intake !== undefined
-        && task.column !== intakeFacts.intake;
+        && intakeFacts.hold !== undefined
+        && task.column !== intakeFacts.intake
+        && task.column === intakeFacts.hold;
       /*
       FNXC:MergedPlanningColumn 2026-07-29-14:50 (U11 post-merge audit):
       `fallbackIntakeColumn` must be honoured here too. Without it the card lands in the resolved
@@ -882,7 +887,7 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       : await resolveDefaultWorkflowIntakeColumn(store);
     /* Intake column + whether that intake is MANUAL (autoTriage:false), resolved from the IR. */
     const intakeFacts = input.workflowId === null
-      ? { manual: false as boolean, intake: undefined as string | undefined }
+      ? { manual: false as boolean, intake: undefined as string | undefined, hold: undefined as string | undefined }
       : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
     const task: Task = {
@@ -995,7 +1000,9 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       */
     const isUnplannedStartCreate = intakeFacts.manual
       && intakeFacts.intake !== undefined
-      && task.column !== intakeFacts.intake;
+      && intakeFacts.hold !== undefined
+      && task.column !== intakeFacts.intake
+      && task.column === intakeFacts.hold;
     /*
     FNXC:MergedPlanningColumn 2026-07-29-17:15 (PR #2589 review — greptile):
     `fallbackIntakeColumn` must appear here, not only in the `column:` assignment above. Otherwise
