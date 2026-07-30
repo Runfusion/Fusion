@@ -36,6 +36,7 @@ import {
   resolveEffectivePlannerHeartbeatPatrolEnabled,
   resolveReboundTarget,
   resolveWorkflowIrForTask,
+  columnsWithFlag,
   resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -3098,9 +3099,29 @@ export class HeartbeatMonitor {
           if (!isAgentEphemeral && this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
             try {
               const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
+              /*
+              FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+              Pass the resolved lane flags so the ranking's terminal filter is not the literal pair.
+
+              `rankAssignedTasksForWakeDelta` gained `flagsByColumnId` and this, its only production
+              caller, passed nothing — so the conversion was inert here. Auditing it also surfaced the
+              larger defect one level down in `getTasksByAssignedAgent`, whose `excludeArchived`
+              filtered on the literal id and therefore returned archived cards as open assigned work.
+              Both halves are needed: the store read stops handing back archived rows, and this stops
+              the ranking counting a finished card as open.
+              */
+              const wakeLaneFlags = new Map<string, { complete?: boolean; archived?: boolean }>();
+              const wakeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+              for (const assignedTask of assignedOpen) {
+                const ir = await resolveWorkflowIrForTask(this.taskStore, assignedTask.id, wakeIrCache).catch(() => undefined);
+                if (!ir) continue;
+                for (const id of columnsWithFlag(ir, "complete")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), complete: true });
+                for (const id of columnsWithFlag(ir, "archived")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), archived: true });
+              }
               const ranked = rankAssignedTasksForWakeDelta(assignedOpen, {
                 agentId,
                 boundTaskId: isNoTaskRun ? null : taskId,
+                ...(wakeLaneFlags.size > 0 ? { flagsByColumnId: wakeLaneFlags as never } : {}),
               });
               const section = formatAssignedTasksWakeDeltaSection(ranked, {
                 boundTaskId: isNoTaskRun ? null : taskId,
