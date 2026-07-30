@@ -92,10 +92,6 @@ describe("resolveWipTargetForTask", () => {
     await expect(resolveWipTargetForTask(storeWith(RENAMED), "FN-1")).resolves.toBe("building");
   });
 
-  it("does NOT return the legacy id for a board that declares no such column", async () => {
-    await expect(resolveWipTargetForTask(storeWith(RENAMED), "FN-1")).resolves.not.toBe("in-progress");
-  });
-
   it("falls back to the legacy id when no workflow resolves", async () => {
     await expect(resolveWipTargetForTask(storeWith(undefined), "FN-1")).resolves.toBe("in-progress");
   });

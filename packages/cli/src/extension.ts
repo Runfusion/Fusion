@@ -1947,9 +1947,11 @@ export default function kbExtension(pi: ExtensionAPI) {
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
         });
         await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
-        await store.moveTask(params.id, "todo", { preserveProgress: true });
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. This is an OPERATOR-triggered Retry: on a board that does not declare `todo` the move is REJECTED and the retry fails in the operator's face. The reply text below uses the SAME resolved value so it cannot name a lane the card did not go to. */
+        const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+        await store.moveTask(params.id, retryTarget, { preserveProgress: true });
         return {
-          content: [{ type: "text", text: `Retried ${params.id} → todo (unusable worktree session metadata cleared)` }],
+          content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (unusable worktree session metadata cleared)` }],
           details: { taskId: params.id, newColumn: 'todo' },
         };
       }
@@ -1969,9 +1971,11 @@ export default function kbExtension(pi: ExtensionAPI) {
               ? `Retry requested via Fusion extension (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
               : `Retry requested via Fusion extension (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
           );
-          await store.moveTask(params.id, "todo", { preserveProgress: true });
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — same operator Retry path as above. */
+          const executionRetryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true });
           return {
-            content: [{ type: "text", text: `Retried ${params.id} → todo (execution failure, preserving step progress)` }],
+            content: [{ type: "text", text: `Retried ${params.id} → ${executionRetryTarget} (execution failure, preserving step progress)` }],
             details: { taskId: params.id, newColumn: 'todo' },
           };
         }
