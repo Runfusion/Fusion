@@ -27,16 +27,48 @@ is stranded rather than in a planner lane, and rescuing it belongs to the
 undeclared-column sweep, not to these guards. `undefined` is reserved for the case
 where even the default cannot be resolved.
 */
-import { resolveTaskLifecycleColumns, type TaskStore, type WorkflowIr } from "@fusion/core";
+import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, type TaskStore, type WorkflowIr } from "@fusion/core";
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-04:10 (PR #2616 review — greptile; a real
+defect in code I merged in #2610):
+A HOLD COLUMN IS ONLY A PLANNER LANE IF IT SITS BEFORE IMPLEMENTATION.
+
+`resolveLifecycleColumns` returns `hold` as the FIRST hold-trait column in declared
+order, with no positional constraint relative to wip. A workflow that uses a
+hold-trait column for a MID-PIPELINE wait — a pause after implementation has started
+— therefore had that column returned as its planner lane, and
+`reconcileMissionFeatureState` demoted the feature to `triaged`. The mission board
+then reported started work as not-yet-started: silent, and wrong in the direction
+that makes a roadmap lie.
+
+The default and Ideas lineages are unaffected because their hold precedes wip, which
+is why this survived: every workflow anyone tested has the hold in front.
+
+So the lane test is now POSITIONAL. A hold column counts only when it appears before
+the wip column in declared order; a wip column that cannot be located leaves the hold
+out rather than guessing, because including it wrongly demotes live work while
+excluding it wrongly only costs a `triaged` transition the next reconcile re-applies.
+*/
 export async function resolvePlannerLanesForTask(
   store: TaskStore,
   taskId: string,
   cache?: Map<string, WorkflowIr>,
 ): Promise<readonly string[] | undefined> {
-  const roles = await resolveTaskLifecycleColumns(store, taskId, cache).catch(() => undefined);
+  const ir = await resolveWorkflowIrForTask(store, taskId, cache).catch(() => undefined);
+  if (!ir) return undefined;
+  const roles = resolveLifecycleColumns(ir);
   if (!roles) return undefined;
-  const lanes = [roles.intake, roles.hold].filter((c): c is string => typeof c === "string");
+
+  const declared = (ir as { columns?: Array<{ id: string }> }).columns ?? [];
+  const indexOf = (id: string | undefined): number =>
+    id === undefined ? -1 : declared.findIndex((column) => column.id === id);
+  const wipIndex = indexOf(roles.wip);
+  const holdIndex = indexOf(roles.hold);
+  const holdPrecedesWip = holdIndex >= 0 && wipIndex >= 0 && holdIndex < wipIndex;
+
+  const lanes = [roles.intake, holdPrecedesWip ? roles.hold : undefined]
+    .filter((c): c is string => typeof c === "string");
   return lanes.length > 0 ? [...new Set(lanes)] : undefined;
 }
 

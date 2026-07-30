@@ -84,4 +84,27 @@ describe("planner lane resolution", () => {
     expect(await resolvePlannerLanesForTask(storeWith(null), "FN-1")).toEqual(["todo"]);
     expect(await resolveDedicatedPlannerColumnsForTask(storeWith(null), "FN-1")).toEqual([]);
   });
+  it("EXCLUDES a hold column that sits AFTER implementation (PR #2616 review)", async () => {
+    /*
+    The defect: `resolveLifecycleColumns` returns the FIRST hold-trait column with no
+    positional constraint, so a workflow using a hold trait for a MID-PIPELINE wait
+    had that column returned as a planner lane — and mission reconciliation demoted
+    the feature to `triaged`, reporting started work as not-yet-started.
+
+    Silent, and wrong in the direction that makes a roadmap lie. It survived because
+    every lineage anyone tested puts the hold in FRONT of wip.
+    */
+    const midPipelineHold = ir([
+      { id: "inbox", traits: [{ trait: "intake" }] },
+      { id: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "awaiting-signoff", traits: [{ trait: "hold", config: { release: "manual" } }] },
+    ]);
+    expect(await resolvePlannerLanesForTask(storeWith(midPipelineHold), "FN-1")).toEqual(["inbox"]);
+  });
+
+  it("still INCLUDES a hold column that precedes implementation", async () => {
+    /* The direction that must not change — every shipped lineage is this shape. */
+    expect(await resolvePlannerLanesForTask(storeWith(SPLIT), "FN-1")).toEqual(["inbox", "drafting"]);
+  });
+
 });
