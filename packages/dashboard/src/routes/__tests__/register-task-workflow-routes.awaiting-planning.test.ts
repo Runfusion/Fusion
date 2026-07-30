@@ -164,6 +164,53 @@ describe("GET /tasks awaitingPlanning enrichment", () => {
     }
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:10:
+  THE INVARIANT: the enrichment finds the board's HOLD lane, whatever that lane is named.
+
+  The filter named `todo`, so a workflow whose waiting lane is called anything else got no
+  enrichment at all — no error, no log, just a silent fall back to the client's step-count
+  heuristic, which is the exact mislabel this whole enrichment exists to correct. The card most
+  likely to be wrong (real spec, zero steps) is the one that read "Queued to plan" forever.
+
+  The store here declares `listWorkflowDefinitions`, which the harness above deliberately does not:
+  every other case in this file exercises the degraded path where the legacy `todo` is all there is,
+  and they must stay green — that compatibility is half the contract.
+
+  REVERT PROOF, measured: restore `task.column === "todo"` and this case fails with
+  `expected undefined to be false`, because the row is not enriched at all. Every other case in the
+  file stays green.
+  */
+  it("enriches a card in a RENAMED hold lane, not only one literally named todo", async () => {
+    const task = makeTask({ id: "FN-RENAMED", column: "backlog" as Task["column"], steps: [] });
+    await seedTaskDir("FN-RENAMED", REAL_SPEC);
+
+    const store = {
+      getRootDir: vi.fn(() => process.cwd()),
+      getProjectScopedPluginMcpServers: vi.fn(async () => []),
+      getTaskDir: vi.fn((id: string) => join(tasksRoot, id)),
+      getSettingsFast: vi.fn(async () => ({})),
+      listTasks: vi.fn(async () => [task]),
+      listWorkflowDefinitions: vi.fn(async () => [{
+        ir: {
+          version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+          columns: [{ id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] }],
+        },
+      }]),
+    } as unknown as TaskStore;
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const res = await REQUEST(app, "GET", "/api/tasks");
+
+    expect(res.status).toBe(200);
+    const rows = res.body as Array<Record<string, unknown>>;
+    expect(rows[0]!.awaitingPlanning).toBe(false);
+    // Flat cost, not per-row: the lane vocabulary is resolved once for the whole board load.
+    expect((store as unknown as { listWorkflowDefinitions: { mock: { calls: unknown[] } } }).listWorkflowDefinitions.mock.calls).toHaveLength(1);
+  });
+
   it("still returns the board when the enrichment cannot resolve task directories", async () => {
     // Best-effort contract: a store without getTaskDir must not fail the board load.
     const task = makeTask({ id: "FN-NODIR" });

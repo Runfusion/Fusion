@@ -1232,7 +1232,33 @@ export class HeartbeatMonitor {
           FNXC:AgentTaskStateDrift 2026-06-23-09:02:
           Reports Health Check must not render a durable direct report as running a parked todo/triage task unless a fresh heartbeat run or tracked executor signal proves live execution. Clearing Agent.taskId here preserves overlapBlockedBy on the task row; the file-scope lease remains the scheduler's source of truth.
           */
-          if (isParkedTaskColumn(linkedTask) && !parkedProof.shouldPreserveParkedLink) {
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (unwired-parameter class, cf. #2803):
+          `isParkedTaskColumn` has taken a resolved `parkedColumns` since its own conversion, but BOTH
+          call sites here passed nothing and silently took the legacy `todo`/`triage` default. On a board
+          whose hold and intake lanes are renamed the check returned false for every card, so this clear
+          never fired: a durable agent kept its task link to a parked card with no live execution proof,
+          and Reports Health Check went on rendering it as RUNNING.
+
+          A resolved seam nobody wired is indistinguishable from no seam at all — which is exactly what
+          the caller audit found five of.
+          */
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1):
+          MEMBERSHIP, not first-per-role. `resolveTaskLifecycleColumns` returns the FIRST column carrying
+          each trait, so a workflow declaring TWO hold lanes (or a hold plus a second intake) had only one
+          of them recognised as parked — a card in the secondary lane still read as live, and the stale
+          link was never cleared for it. Same defect this fix exists to close, one degree narrower.
+
+          `columnsWithFlag` returns EVERY column carrying the trait, so both halves are unions. This is the
+          fifth time this program has hit first-per-role where it wanted membership; the two are not
+          interchangeable and the compiler cannot tell them apart.
+          */
+          const parkedIr = await resolveWorkflowIrForTask(this.taskStore!, linkedTask.id).catch(() => undefined);
+          const parkedColumns = parkedIr
+            ? [...new Set([...columnsWithFlag(parkedIr, "hold"), ...columnsWithFlag(parkedIr, "intake")])]
+            : [];
+          if (isParkedTaskColumn(linkedTask, parkedColumns.length > 0 ? parkedColumns : undefined) && !parkedProof.shouldPreserveParkedLink) {
             reason = `parked ${linkedTask.column} task ${agent.taskId} without live execution proof`;
             clearTaskLink = true;
             taskIdToClear = agent.taskId;
@@ -3100,7 +3126,7 @@ export class HeartbeatMonitor {
             try {
               const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
               /*
-              FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+              FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
               Pass the resolved lane flags so the ranking's terminal filter is not the literal pair.
 
               `rankAssignedTasksForWakeDelta` gained `flagsByColumnId` and this, its only production
@@ -3712,7 +3738,15 @@ export class HeartbeatMonitor {
       if (report.state === "running" && !isEphemeralAgent(report) && report.taskId && this.taskStore) {
         try {
           const linkedTask = await this.taskStore.getTask(report.taskId);
-          if (isParkedTaskColumn(linkedTask)) {
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-23:50: same unwired parameter as above — the health
+             report rendered a parked card as running on any board with renamed hold/intake lanes. */
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1): membership, not
+             first-per-role — see the note on the sweep above. */
+          const reportParkedIr = await resolveWorkflowIrForTask(this.taskStore, report.taskId).catch(() => undefined);
+          const reportParkedColumns = reportParkedIr
+            ? [...new Set([...columnsWithFlag(reportParkedIr, "hold"), ...columnsWithFlag(reportParkedIr, "intake")])]
+            : [];
+          if (isParkedTaskColumn(linkedTask, reportParkedColumns.length > 0 ? reportParkedColumns : undefined)) {
             const activeRun = await agentStore.getActiveHeartbeatRun(report.id);
             const proof = evaluateParkedAgentTaskLink({
               agent: report,

@@ -193,3 +193,61 @@ describe("task-agent-sync under a renamed column vocabulary", () => {
     });
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (the arity trap, sixth site in this program):
+`resolveLinkSyncColumnRoles` built its `parked` and `terminal` sets from `resolveTaskLifecycleColumns`,
+which returns the FIRST column carrying each trait — then handed them to `.includes()` membership tests.
+A workflow declaring TWO hold lanes had link hygiene applied to only one of them: a card moved into the
+second stayed linked to its agent, which is the state this whole module exists to clean up.
+
+The DEFAULT board cannot express this — it declares one column per role — so no rename differential
+catches it. It needs a structurally different board, not a differently-named one.
+
+REVERT CHECK, measured: rebuilding the sets from `resolveTaskLifecycleColumns` fails this case, because
+`overflow-hold` is not the first hold column.
+*/
+describe("every lane carrying a role counts, not just the first", () => {
+  function twoHoldIr(): WorkflowIr {
+    return {
+      version: "v2",
+      id: WF,
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "inbox", label: "Intake", traits: [{ trait: "intake" }] },
+        { id: "backlog", label: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "overflow-hold", label: "Second Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "building", label: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "shipped", label: "Complete", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+  }
+
+  it("treats a SECOND hold lane as parked when clearing the agent link", async () => {
+    const selection = { workflowId: WF, stepIds: [] };
+    const syncCalls: Array<string | undefined> = [];
+    let handler: ((e: { task: { id: string }; from: string; to: string }) => Promise<void>) | undefined;
+
+    const store = {
+      on: vi.fn((_evt: string, h: typeof handler) => { handler = h; }),
+      off: vi.fn(),
+      getTaskWorkflowSelection: vi.fn(() => selection),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: twoHoldIr() })),
+      getTask: vi.fn(async () => ({ id: "FN-1", column: "overflow-hold" }) as Task),
+    } as unknown as TaskStore;
+
+    const agentStore = {
+      listAgents: vi.fn(async () => [{ id: "A1", taskId: "FN-1", state: "running" } as Agent]),
+      getActiveHeartbeatRun: vi.fn(async () => null),
+      updateAgentState: vi.fn(async () => {}),
+      syncExecutionTaskLink: vi.fn(async (_id: string, taskId: string | undefined) => { syncCalls.push(taskId); }),
+    } as unknown as AgentStore;
+
+    attachAgentLinkSync({ store, agentStore, logger: { log: () => {}, warn: () => {} } });
+    await handler?.({ task: { id: "FN-1" }, from: "building", to: "overflow-hold" });
+
+    expect(syncCalls).toContain(undefined);
+  });
+});

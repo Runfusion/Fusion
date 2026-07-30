@@ -117,3 +117,63 @@ describe("selectActionablePlanningContinuations", () => {
     ]);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (closing the partially-threaded half of the gap that
+workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts documented):
+
+`resolvePlanningContinuationCandidate` applied the caller's resolved terminal set to its OWN check and
+then delegated to `isPlanningContinuationTaskDispatchable(task)` WITHOUT it, so the inner predicate
+re-tested against the legacy `done`/`archived` pair.
+
+THE REACHABLE CASE is a board that declares `done` as a NON-terminal column id — legal, and the shape a
+project gets by repurposing a default column rather than renaming one. The outer check passes (the
+resolved set says not terminal), the inner one calls it terminal per the legacy pair, and the card is
+skipped as "paused": stalled by a lane name.
+
+REVERT CHECK, measured: dropping the threaded set makes this fail — the candidate resolves `skip`
+instead of `actionable`.
+*/
+describe("the inner dispatchable predicate uses the caller's resolved terminal set", () => {
+  it("does not treat a NON-terminal `done` column as terminal", () => {
+    const item = { taskId: "FN-1", waitReason: "planning" } as never;
+    const task = {
+      id: "FN-1",
+      column: "done",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    } as never;
+
+    /* This board declares `done` as an ordinary lane; its terminal lane is `shipped`. */
+    const resolved = resolvePlanningContinuationCandidate(item, task, {
+      terminalColumns: new Set(["shipped", "boxed"]),
+    });
+
+    expect(resolved.kind).toBe("actionable");
+  });
+
+  it("still treats the board's OWN terminal lane as terminal", () => {
+    /* Non-vacuous companion: without it, a predicate that never classified anything terminal passes. */
+    const item = { taskId: "FN-2", waitReason: "planning" } as never;
+    const task = {
+      id: "FN-2",
+      column: "shipped",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    } as never;
+
+    const resolved = resolvePlanningContinuationCandidate(item, task, {
+      terminalColumns: new Set(["shipped", "boxed"]),
+    });
+
+    expect(resolved.kind).toBe("orphan");
+  });
+});

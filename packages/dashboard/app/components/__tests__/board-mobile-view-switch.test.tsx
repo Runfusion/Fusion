@@ -130,7 +130,21 @@ describe("Board mobile view switch (FN-001)", () => {
     render(<ViewSwitchHarness />);
 
     // Start in list view
-    expect(document.querySelector(".list-view")).not.toBeNull();
+    /*
+    FNXC:ListView 2026-07-30-12:40:
+    Asserts the SKELETON by name, not `.list-view`, which the skeleton and the real body share.
+
+    This harness renders `<ListView>` with a deliberately small `../../api` mock and no workflows, so
+    what appears here is the workflow skeleton — and that is fine, because the subject of these cases
+    is the BOARD's structure after switching, not the list's contents. Naming it keeps the assertion
+    honest about what it observes.
+
+    Do not "upgrade" this to the real body without also expanding the api mock: supplying workflows
+    makes ListView render its full body, which throws under this mock, and with no ErrorBoundary in
+    the harness React unmounts the entire root — the DOM goes empty and every later query fails with
+    a misleading "switch-to-board not found". Measured; that is what happens.
+    */
+    expect(screen.getByTestId("list-workflows-skeleton")).not.toBeNull();
     expect(document.querySelector(".board")).toBeNull();
 
     // Switch to board view
@@ -154,7 +168,21 @@ describe("Board mobile view switch (FN-001)", () => {
     expect(document.querySelector(".list-view")).toBeNull();
 
     fireEvent.click(screen.getByTestId("switch-to-list"));
-    expect(document.querySelector(".list-view")).not.toBeNull();
+    /*
+    FNXC:ListView 2026-07-30-12:40:
+    Asserts the SKELETON by name, not `.list-view`, which the skeleton and the real body share.
+
+    This harness renders `<ListView>` with a deliberately small `../../api` mock and no workflows, so
+    what appears here is the workflow skeleton — and that is fine, because the subject of these cases
+    is the BOARD's structure after switching, not the list's contents. Naming it keeps the assertion
+    honest about what it observes.
+
+    Do not "upgrade" this to the real body without also expanding the api mock: supplying workflows
+    makes ListView render its full body, which throws under this mock, and with no ErrorBoundary in
+    the harness React unmounts the entire root — the DOM goes empty and every later query fails with
+    a misleading "switch-to-board not found". Measured; that is what happens.
+    */
+    expect(screen.getByTestId("list-workflows-skeleton")).not.toBeNull();
     expect(document.querySelector(".board")).toBeNull();
 
     fireEvent.click(screen.getByTestId("switch-to-board"));

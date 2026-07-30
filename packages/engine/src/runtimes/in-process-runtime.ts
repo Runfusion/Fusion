@@ -196,7 +196,21 @@ export function resolvePlanningContinuationCandidate(
   if (task.paused === true || task.userPaused === true) {
     return { kind: "skip", item, reason: "paused" };
   }
-  if (!isPlanningContinuationTaskDispatchable(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (the partially-threaded conversion named by
+  workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts):
+  THREAD THE SET THIS FUNCTION ALREADY RESOLVED. The terminal test at the top of this function uses the
+  caller's `terminal`; this delegation then re-tested against `LEGACY_TERMINAL_PAIR`, so the conversion
+  was whole at the call site and not whole inside it.
+
+  The reachable case is narrow but real: a board that DECLARES `done` as a non-terminal column id. The
+  outer check passes (not terminal per the resolved set), then the inner predicate calls it terminal per
+  the legacy pair and the continuation is skipped as "paused" — a card stalled by a lane name.
+
+  A partially threaded conversion is indistinguishable from a complete one at every call site that looks
+  converted, which is why this is worth closing even though the outer check dominates the common case.
+  */
+  if (!isPlanningContinuationTaskDispatchable(task, terminal)) {
     return { kind: "skip", item, reason: "paused" };
   }
   return { kind: "actionable", item, task };
