@@ -3682,6 +3682,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-14:40 (fleet: FLAGGED AND SKIPPED, not overlooked):
+      These three literal column queries are the same defect this PR converts elsewhere: on a
+      renamed board each returns nothing, so `reclaimSelfOwnedBranchConflicts` has no candidates in
+      any lane and recovers nothing.
+
+      It is NOT converted here because the conversion is not mechanical. Replacing the three reads
+      with one board read filtered by role broke 12 tests across three reliability suites
+      (reclaim-defers-on-active-session, reclaim-phantom-executor-binding,
+      reclaim-self-owned-resume-limbo-escalation): they stub `listTasks` per COLUMN, so an
+      unfiltered board read returns nothing and the sweep never reaches `inspectBranchConflict`.
+      The product change is right and the test harness has to move with it — which is a change to
+      other slices' reliability tests, not a guard conversion.
+
+      Skipped per the fleet rule rather than forced through, and recorded so the next owner starts
+      from the diagnosis instead of rediscovering it.
+      */
       const todoCandidates = await this.store.listTasks({ column: "todo", slim: true });
       const inProgressCandidates = await this.store.listTasks({ column: "in-progress", slim: true });
       const inProgressByWorktree = new Map<string, string>();
