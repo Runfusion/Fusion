@@ -135,14 +135,36 @@ export function getTaskPrAutomationLabel(t: TFunction<"app">, status?: string): 
   return prAutomationStatusLabels[status];
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only.
+Reached when the caller supplies no resolved flags — the pre-load window before the board's
+workflows fetch resolves, and a card stranded on an id its workflow no longer declares. Nothing to
+resolve from in either state, so deleting the id does not remove a decision, it answers "not a
+review column" for every card during first paint.
+
+NOTE, flagged not fixed: the id is currently an UNCONDITIONAL disjunct, so explicit
+`{ mergeBlocker: false, humanReview: false }` on a column named `in-review` is still classified as
+review. #2664 fixed exactly that shape in `isPreExecutionHoldColumn` (traits first, id as fallback).
+Same fix belongs here, but it is a BEHAVIOR CHANGE and out of scope for a conversion batch.
+*/
 function isReviewColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   return column === "in-review" || flags?.mergeBlocker === true || flags?.humanReview === true;
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only, same
+reasoning as `isReviewColumn` above — and the same flagged inversion: `column === "done"` is an
+unconditional disjunct ahead of the trait read.
+*/
 function isDoneOrReview(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   return column === "done" || isReviewColumn(column, flags) || (flags?.complete === true && flags?.archived !== true);
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only.
+Same rule as `isReviewColumn` above: reached when no resolved flags arrive, where answering
+"mutable" for a done/archived card would offer live-work actions on a terminal one.
+*/
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags) return flags.complete !== true && flags.archived !== true;
   return column !== "done" && column !== "archived";
@@ -287,6 +309,12 @@ export function getTaskMoveTransitions(
   each column's allowed targets on the board-workflows payload so the load window has
   real data instead of a guess.
   */
+  /*
+  FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: legacy move-target path.
+  Reached only when `workflowMoveColumns` is absent — the payload carries no adjacency, so there is
+  no workflow to ask and `VALID_TRANSITIONS` (a closed six-id map) is the only table available. The
+  resolved path above it is the live answer for every workflow-aware caller.
+  */
   const moveTransitions: ColumnId[] = workflowMoveColumns
     ? getWorkflowMoveTargets(task, workflowMoveColumns)
     : isColumn(task.column)
@@ -321,6 +349,11 @@ export function getTaskMoveTransitions(
   const currentOrder = orderById.get(task.column);
   const isBackwardsLabel = (target: ColumnId): boolean => {
     if (visibleOrdered.length === 0) {
+      /*
+      FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: degraded ordering only.
+      Reached when `visibleOrdered` is empty, i.e. no resolved column order arrived — there is no
+      order to compare against, so the legacy pair is the only "is this backwards?" answer left.
+      */
       return target === "in-progress" && task.column === "in-review";
     }
     /*
