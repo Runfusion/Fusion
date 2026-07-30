@@ -11,6 +11,7 @@
  */
 
 import type { Task, TaskStore } from "@fusion/core";
+import { resolveTaskLifecycleColumns, type WorkflowIr } from "@fusion/core";
 import {
   resolveExecutorSessionModel,
   resolveMergerSessionModel,
@@ -121,6 +122,7 @@ export class UsageLimitPauser {
     provider: string,
     settings: Awaited<ReturnType<TaskStore["getSettings"]>>,
     agentType: string,
+    preImplementationColumns?: ReadonlySet<string>,
   ): boolean {
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-15:20 (P0 audit after the Planning-column merge):
@@ -138,7 +140,7 @@ export class UsageLimitPauser {
     literals that remain here name the wip and review lanes and belong to the executor/scheduler
     vocabulary conversion, not to this fix.
     */
-    const isPreImplementation = task.column !== "in-progress" && task.column !== "in-review";
+    const isPreImplementation = preImplementationColumns?.has(task.column) === true;
     const providersByActiveLane = agentType === "triage"
       ? (isPreImplementation ? [
           resolvePlanningSessionModel(task.planningModelProvider, task.planningModelId, settings).provider,
@@ -187,12 +189,36 @@ export class UsageLimitPauser {
       // FNXC:ArchitectureHotPath 2026-07-22-17:20: slim payload — this scan only reads column/pause/model-provider scalars, never heavy detail fields.
       this.store.listTasks({ slim: true }),
     ]);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-20:50 (P0 audit, PR #2572 review — greptile):
+    The planning lane is resolved PER TASK from its own workflow, not inferred by excluding two
+    literals. "Not `in-progress` and not `in-review`" reads any custom non-terminal column — a
+    second processing lane, a manual hold, a bespoke review stage — as pre-implementation, so a
+    planning-provider limit would pause cards that are nowhere near planning. Trait-derived
+    intake/hold is the only answer that holds for a workflow this code has never seen.
+
+    One IR read per WORKFLOW, not per task: the cache is caller-owned (the U1 contract) and shared
+    across the whole fan-out, so a 400-card board spanning three workflows reads three IRs. A task
+    whose workflow cannot be resolved yields an empty set and is skipped rather than guessed into
+    the lane — conservative, because the cost of a wrong include is pausing work that was fine.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const preImplementationByTask = new Map<string, ReadonlySet<string>>();
+    if (agentType === "triage") {
+      await Promise.all(tasks.map(async (task) => {
+        const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
+        const lanes = new Set<string>();
+        if (columns?.intake) lanes.add(columns.intake);
+        if (columns?.hold) lanes.add(columns.hold);
+        preImplementationByTask.set(task.id, lanes);
+      }));
+    }
     const affectedTasks = tasks.filter((task) =>
       task.column !== "done"
       && task.column !== "archived"
       && task.paused !== true
       && providerId !== "unknown"
-      && this.taskUsesProvider(task, providerId, settings, agentType));
+      && this.taskUsesProvider(task, providerId, settings, agentType, preImplementationByTask.get(task.id)));
 
     // Always include the task that produced the 429 even if its actual provider
     // came from a runtime fallback not represented in persisted task settings.

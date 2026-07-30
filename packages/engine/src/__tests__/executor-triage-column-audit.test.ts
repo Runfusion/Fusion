@@ -57,13 +57,33 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
 });
 
 describe("usage-limit fan-out still recognises the planning lane", () => {
-  function detectorHarness(tasks: Task[]) {
+  function detectorHarness(tasks: Task[], ir: WorkflowIr = planningOnlyIr()) {
     const store = createMockStore();
+    const selection = { workflowId: WF, stepIds: [] };
     store.getSettings.mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15_000 });
     store.listTasks = vi.fn().mockResolvedValue(tasks);
     store.getTask.mockResolvedValue(tasks[0]);
     store.pauseTask = vi.fn().mockResolvedValue(undefined);
+    store.getTaskWorkflowSelection = vi.fn(() => selection);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: WF, ir }));
     return { store, detector: new UsageLimitPauser(store as never) };
+  }
+
+  /** A workflow with a SECOND processing lane — not a planning column, despite not being wip. */
+  function twoLaneIr(): WorkflowIr {
+    return {
+      version: "v2",
+      id: WF,
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "todo", label: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", label: "Build", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "qa", label: "QA", traits: [] },
+        { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
   }
 
   const planning = (id: string, column: string): Task =>
@@ -84,11 +104,32 @@ describe("usage-limit fan-out still recognises the planning lane", () => {
 
   it("still pauses a peer in a workflow that DOES declare triage (legacy coding)", async () => {
     const peer = planning("FN-PEER", "triage");
-    const { store, detector } = detectorHarness([planning("FN-TRIGGER", "triage"), peer]);
+    const legacyIr = { version: "v2", id: WF, nodes: [], edges: [], columns: [
+      { id: "triage", label: "Triage", traits: [{ trait: "intake" }] },
+      { id: "todo", label: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", label: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+    ] } as unknown as WorkflowIr;
+    const { store, detector } = detectorHarness([planning("FN-TRIGGER", "triage"), peer], legacyIr);
 
     await detector.onUsageLimitHit("triage", "FN-TRIGGER", "429 usage limit reached", "anthropic");
 
     expect(store.pauseTask).toHaveBeenCalledWith("FN-PEER", true, undefined, expect.anything());
+  });
+
+  it("does NOT treat a custom non-terminal column as a planning lane", async () => {
+    /*
+    FNXC PR #2572 review (greptile): the previous predicate was "not in-progress and not
+    in-review", which reads ANY custom column — a second processing lane, a manual hold, a
+    bespoke review stage — as pre-implementation. A planning-provider limit would then pause
+    cards nowhere near planning. `qa` carries no lifecycle trait, so it is not the planning lane.
+    */
+    const peer = planning("FN-PEER", "qa");
+    const { store, detector } = detectorHarness([planning("FN-TRIGGER", "todo"), peer], twoLaneIr());
+
+    await detector.onUsageLimitHit("triage", "FN-TRIGGER", "429 usage limit reached", "anthropic");
+
+    expect(store.pauseTask).not.toHaveBeenCalledWith("FN-PEER", true, undefined, expect.anything());
   });
 
   it("does NOT sweep a card that is mid-implementation into the planning lane", async () => {
