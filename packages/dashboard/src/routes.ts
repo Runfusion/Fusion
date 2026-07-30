@@ -23,6 +23,7 @@ import {
   listAgentMemoryFiles,
   readAgentMemoryFile,
   writeAgentMemoryFile,
+  resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionType } from "./ai-session-store.js";
@@ -1315,14 +1316,25 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Terminal task statuses — tasks in these states should not be displayed
    * as "working on" in agent UI surfaces to avoid stale activity indicators.
    */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
+  DELIBERATE-LITERAL — the fallback for a task whose workflow will not resolve, reviewed
+  2026-07-31-07:00. The resolved answer is threaded per task at the call site below.
+
+  Census-invisible before this change: a `Set` literal is a definition, not a comparison, so nothing
+  in the lifecycle backlog pointed at this file. On a renamed board it matched nothing, so a FINISHED
+  card kept its agent's "working on" indicator lit — the agent list showed work that had already
+  shipped, which is exactly the stale indicator this sanitizer exists to prevent.
+  */
   const TERMINAL_TASK_STATUSES = new Set(["done", "archived"]);
   const UNRESOLVED_AGENT_TASK_COLUMN = "unresolved";
 
   /**
    * Check if a task status is terminal (done or archived).
    */
-  function isTerminalTaskStatus(status: string | undefined): boolean {
-    return status !== undefined && TERMINAL_TASK_STATUSES.has(status);
+  function isTerminalTaskStatus(status: string | undefined, resolvedTerminal?: ReadonlySet<string>): boolean {
+    if (status === undefined) return false;
+    return (resolvedTerminal ?? TERMINAL_TASK_STATUSES).has(status);
   }
 
   /**
@@ -1348,11 +1360,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       taskStatusMap = new Map<string, string>();
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
+    Each linked task's OWN terminal lanes, resolved once per unique id with a shared IR cache. A task
+    whose workflow will not resolve is left out of the map and falls back to the literal pair above,
+    which is the pre-existing behaviour rather than a guess.
+    */
+    const terminalIrCache = new Map<string, never>();
+    const terminalByTaskId = new Map<string, ReadonlySet<string>>();
+    for (const taskId of taskIds) {
+      const lanes = await resolveTaskLifecycleColumns(scopedStore, taskId, terminalIrCache as never).catch(() => undefined);
+      if (!lanes) continue;
+      const terminal = [lanes.complete, lanes.archived].filter((c): c is string => c !== undefined);
+      if (terminal.length > 0) terminalByTaskId.set(taskId, new Set(terminal));
+    }
+
     return agents.map((agent) => {
       if (!agent.taskId) return agent;
 
       const taskStatus = taskStatusMap.get(agent.taskId);
-      if (isTerminalTaskStatus(taskStatus)) {
+      if (isTerminalTaskStatus(taskStatus, terminalByTaskId.get(agent.taskId))) {
         // Omit taskId for terminal tasks — use spread to create shallow copy without taskId
         const { taskId: _omitted, taskColumn: _taskColumnOmitted, ...sanitized } = agent;
         return sanitized as import("@fusion/core").Agent;
