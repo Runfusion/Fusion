@@ -436,3 +436,81 @@ describe("EphemeralWorkerManager", () => {
     expect(harness.manager.getOwner("FN-RESET")).toBeUndefined();
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+
+THE INVARIANT: the zombie sweep asks the task's OWN workflow whether its worker is still working.
+
+A LIVE WORKER WAS REAPED ON A RENAMED BOARD, and the two guards compounded in the worst possible
+order. `shouldDeleteOnSweep` tested a hard-coded terminal Set first, then fell through to
+`return task.column !== "in-progress"`. On a renamed board the terminal test missed, and the fallthrough
+is TRUE for a renamed wip lane — so an ephemeral worker ACTIVELY EXECUTING a task was classified as a
+zombie and deleted, destroying work in flight.
+
+Census-invisible on both halves: the terminal check is a `Set` literal (a definition, not a
+comparison), and the wip check was reached only after it. Found by grepping for lane-shaped list
+literals, not by the backlog.
+
+THE FALLBACK IS DELIBERATELY ASYMMETRIC. An unresolvable workflow keeps the legacy literals rather
+than guessing: failing to reap a dead worker costs a slot, reaping a live one destroys work. Those
+are not symmetric, so the uncertain case must fail toward keeping the worker.
+
+REVERT PROOF, measured: restore the literal pair and the renamed-wip case fails — the live worker is
+deleted.
+*/
+describe("ephemeral zombie sweep resolves the board's own lanes", () => {
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function renamedHarness() {
+    const harness = createHarness();
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    Object.assign(harness.taskStore as unknown as Record<string, unknown>, {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+    });
+    return harness;
+  }
+
+  it("KEEPS a worker whose task sits in a RENAMED wip lane", async () => {
+    const harness = renamedHarness();
+    const live = makeAgent("renamed-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "building" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+
+  it("still reaps a worker whose task reached a RENAMED complete lane", async () => {
+    // The sweep must keep sweeping — keeping everything would be its own leak.
+    const harness = renamedHarness();
+    const done = makeAgent("renamed-done", { metadata: { agentKind: "task-worker" }, taskId: "FN-DONE" });
+    harness.agentStore.agents.set(done.id, done);
+    harness.taskStore.tasks.set("FN-DONE", makeTask("FN-DONE", { column: "shipped" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(done.id)).toBe(false);
+  });
+
+  it("still reaps a worker parked in a RENAMED hold lane", async () => {
+    const harness = renamedHarness();
+    const parked = makeAgent("renamed-parked", { metadata: { agentKind: "task-worker" }, taskId: "FN-PARKED" });
+    harness.agentStore.agents.set(parked.id, parked);
+    harness.taskStore.tasks.set("FN-PARKED", makeTask("FN-PARKED", { column: "backlog" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(parked.id)).toBe(false);
+  });
+});
