@@ -5197,7 +5197,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        if (worktreeLanes.wip.has(task.column) || worktreeLanes.review.has(task.column)) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",
@@ -10958,11 +10958,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-            ...(fresh.column === "todo" && workflowTransitionNotification
+            /*
+            FNXC:WorkflowResolvedColumns 2026-07-31-05:45 (batch-engine): `fresh` is the re-read row, so its
+            own workflow answers. `resolveMoveLanesSync` keeps this inside the existing sync expression
+            rather than restructuring an await into a spread.
+            */
+            ...(this.resolveMoveLanesSync(fresh.id).hold.has(fresh.column) && workflowTransitionNotification
               ? { workflowTransitionNotification }
               : {}),
           });
-          if (route.kind === "node-requeue" && fresh.column !== "todo") {
+          if (route.kind === "node-requeue" && !this.resolveMoveLanesSync(fresh.id).hold.has(fresh.column)) {
             await this.store.moveTask(task.id, "todo", {
               preserveProgress: true,
               moveSource: "engine",
@@ -11001,7 +11006,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
           await this.store.logEntry(
             task.id,
-            fresh.column === "in-review"
+            this.resolveMoveLanesSync(fresh.id).review.has(fresh.column)
               ? "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression"
               : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling",
           );
