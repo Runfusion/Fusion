@@ -2690,6 +2690,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       card. Scoped to pre-WIP columns otherwise, so no in-progress/in-review status gains a retry path
       it did not have.
       */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-16:35 (fleet: register-task-workflow-routes.ts):
+      RESOLVED UNCONDITIONALLY, and my first version got this wrong in a way worth recording: I reused the
+      resolution that lives inside the `retrySpecificationStatus` branch below, so on every request that
+      did NOT take that branch the review checks silently fell back to the legacy `in-review` — a
+      conversion that reads as done and answers from the default lineage in the common path. The snapshot
+      has to be owned by the scope that uses it, not borrowed from a conditional.
+
+      `workflowIr` is already in scope, so this is a pure read with no extra I/O.
+      */
+      const reviewLifecycle = resolveLifecycleColumns(workflowIr);
       let strandedSpecificationRetry = false;
       if (retrySpecificationStatus && !retrySpecification) {
         if (!workflowDeclaresColumnModel(workflowIr)) {
@@ -2717,13 +2728,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           */
           strandedSpecificationRetry = task.column === "triage" || task.column === "todo";
         } else {
-          const lifecycle = resolveLifecycleColumns(workflowIr);
-          strandedSpecificationRetry = lifecycle !== undefined
-            && (task.column === lifecycle.intake || task.column === lifecycle.hold);
+          strandedSpecificationRetry = reviewLifecycle !== undefined
+            && (task.column === reviewLifecycle.intake || task.column === reviewLifecycle.hold);
         }
       }
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-16:10 (fleet: register-task-workflow-routes.ts):
+      THE SNAPSHOT WAS ALREADY IN SCOPE. `strandedSpecificationRetry` twelve lines up resolves
+      `lifecycle` from this task's own workflow and compares against `lifecycle.intake`/`.hold`, while
+      these three review checks compared against the literal — one aggregation, two boards. Threading the
+      same snapshot is both the fix and the cheaper option: no second IR read.
+
+      `lifecycle` is undefined for a column-less (v1) IR, which is the documented no-basis signal, so the
+      legacy `in-review` remains the answer there rather than inventing one.
+      */
+      const reviewLane = reviewLifecycle?.review ?? "in-review";
       const isInReviewStatusNone =
-        task.column === "in-review" && (task.status === null || task.status === undefined);
+        task.column === reviewLane && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -2756,7 +2777,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const selfHealingManager = _resolveSelfHealingManager(scopedStore);
       const isStaleMergeActiveRetry =
-        task.column === "in-review" &&
+        task.column === reviewLane &&
         isStaleMergeActiveStatus(task, {
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
@@ -4828,7 +4849,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const currentColumn = "columns" in workflowIr
         ? workflowIr.columns.find((column) => column.id === task.column)
         : undefined;
-      const isArchived = task.column === "archived" || (currentColumn != null && resolveColumnFlags(currentColumn).archived);
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-16:20 (fleet): the trait check was already here; the
+         literal beside it only covers a row still stored in a column the workflow no longer declares
+         (`currentColumn` is then undefined). Kept for exactly that case and marked, because on a board
+         that renames its archive lane the TRAIT half is what answers — the literal is the leftover-row
+         fallback, not the primary. DELIBERATE-LITERAL: an undeclared column cannot be resolved by trait. */
+      const isArchived = (currentColumn != null && resolveColumnFlags(currentColumn).archived)
+        || (currentColumn == null && task.column === "archived");
       if (isArchived) {
         throw badRequest("Respecify is not available for archived tasks; unarchive first.");
       }
@@ -5800,7 +5827,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         })).task;
       } else {
         const hasActiveSession = Boolean(updatedTask.sessionFile);
-        if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+        if (steeringCommentId && updatedTask.column === await resolveWipColumnForTask(scopedStore, updatedTask.id)
+          && updatedTask.assignedAgentId && !hasActiveSession) {
           await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
             triggeringCommentType: "steering",
             triggeringCommentIds: [steeringCommentId],
@@ -5855,7 +5883,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
-      if (task.column === "in-review") {
+      if (task.column === await resolveReviewColumnForTask(scopedStore, task.id)) {
         await scopedStore.updateTask(task.id, {
           status: null,
           error: null,
@@ -5873,7 +5901,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const hasActiveSession = Boolean(updatedTask.sessionFile);
-      if (updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+      if (updatedTask.column === await resolveWipColumnForTask(scopedStore, updatedTask.id)
+        && updatedTask.assignedAgentId && !hasActiveSession) {
         await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: [steeringCommentId],

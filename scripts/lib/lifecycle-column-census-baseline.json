@@ -1,16 +1,16 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "totals": {
-    "column": 713,
+    "column": 707,
     "role": 5,
     "status": 186,
-    "deliberate": 20
+    "deliberate": 21
   },
   "byColumnId": {
     "done": 196,
-    "in-progress": 134,
-    "in-review": 193,
-    "archived": 148,
+    "in-progress": 132,
+    "in-review": 190,
+    "archived": 147,
     "todo": 42
   },
   "byFile": {
@@ -20,7 +20,6 @@
     "packages/dashboard/app/components/TaskDetailModal.tsx": 30,
     "packages/engine/src/scheduler.ts": 26,
     "packages/core/src/task-store/moves.ts": 15,
-    "packages/dashboard/src/routes/register-task-workflow-routes.ts": 13,
     "packages/core/src/store.ts": 12,
     "packages/engine/src/project-engine.ts": 12,
     "packages/engine/src/mission-execution-loop.ts": 10,
@@ -34,6 +33,7 @@
     "packages/core/src/default-workflow-hooks.ts": 7,
     "packages/core/src/task-store/update-task-deps.ts": 7,
     "packages/dashboard/app/components/Column.tsx": 7,
+    "packages/dashboard/src/routes/register-task-workflow-routes.ts": 7,
     "packages/core/src/live-agent-count.ts": 6,
     "packages/core/src/task-merge.ts": 6,
     "packages/core/src/task-store/branch-group-ops.ts": 6,
@@ -166,6 +166,7 @@
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000triage": 1,
     "packages/dashboard/app/components/TaskDetailModal.tsx\u0000todo": 1,
     "packages/dashboard/app/utils/columnRoles.ts\u0000todo": 1,
+    "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000archived": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000todo": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts\u0000triage": 1,
     "packages/engine/src/hold-release.ts\u0000archived": 1,
