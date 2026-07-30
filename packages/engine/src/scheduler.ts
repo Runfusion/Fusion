@@ -905,38 +905,24 @@ export class Scheduler {
      * update feature status and potentially activate next pending slice.
      */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-09:40 (fleet — why the arms below are still literals):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-20:10 (fleet — why the arms below are still literals):
 
-    NOT OVERLOOKED, AND NOT MARKABLE EITHER. The ten `from`/`to` comparisons in this handler are
-    genuinely wrong on a renamed board — they are real backlog, deliberately left counted. What
-    follows is the constraint that blocks them, measured, so the next attempt starts here instead of
-    rediscovering it.
+    The ten `from`/`to` comparisons here are real backlog, deliberately left counted. The blocker is
+    ordering, not effort: this handler is `async` but its PROLOGUE is not — there is no `await`
+    between this line and the terminal-blocker branch (~55 lines down), so the snapshot invalidation,
+    PR-monitor start/stop, mission hand-off and failed-task tracking all run in the SAME TICK as the
+    emitter. Hoisting a resolution to convert those arms turns the prologue into a microtask and
+    reorders this listener against every other synchronous `task:moved` subscriber. That is the
+    hazard `resolveTaskParkedColumnsSync` exists to avoid — verified, not assumed.
 
-    THE HANDLER IS `async` BUT ITS PROLOGUE IS NOT. There is no `await` anywhere between this line
-    and the terminal-blocker branch (~55 lines down, `const settings = await this.store.getSettings()`).
-    Everything above that — the snapshot invalidation, the PR-monitor start/stop pair, the mission
-    hand-off, the failed-task tracking — runs in the SAME TICK as the emitter.
+    Lazy resolution inside a branch does not help (the CONDITION needs the lanes). A sync superset
+    prefilter does not either: it needs a predicate that cannot wrongly EXCLUDE on an unknown
+    vocabulary, and a renamed board's terminal id is unknown by construction.
 
-    So hoisting a resolution to the top to convert those arms does not cost "one await": it converts
-    the whole prologue into a microtask and reorders this listener against every other synchronous
-    `task:moved` subscriber and against the emitter's own continuation. That is the hazard
-    `resolveTaskParkedColumnsSync` was written to avoid, and its note is load-bearing rather than
-    stale — verified, not assumed.
-
-    WHY THE OBVIOUS WORKAROUNDS DO NOT APPLY:
-      - Resolving lazily inside a branch does not help: the CONDITION is what needs the lanes, and it
-        is evaluated in the prologue.
-      - A cheap sync superset prefilter (the shape used in `usage-limit-detector`) needs a predicate
-        that cannot wrongly EXCLUDE on an unknown vocabulary. For "is `to` the terminal lane?" no such
-        literal predicate exists — a renamed board's terminal id is unknown by construction.
-
-    WHAT WOULD ACTUALLY UNBLOCK IT, in preference order:
-      1. Prove no subscriber depends on this listener's synchronous prologue, then hoist one await
-         and convert all ten together. That is an ordering audit across every `task:moved` emitter
-         and subscriber, not a scheduler-local change.
-      2. Have the emitter carry the resolved lanes on the event payload, so no listener resolves at
-         all. This is the only option that scales to the other synchronous listeners with the same
-         problem, and it removes the class rather than one instance.
+    Unblocking it means either auditing every `task:moved` emitter/subscriber for prologue-ordering
+    dependence and then converting all ten together, or — preferred, since it removes the class
+    rather than one instance — having the emitter carry the resolved lanes on the event payload so
+    no listener resolves at all.
     */
     this.store.on("task:moved", async ({ task, from, to, source }) => {
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
