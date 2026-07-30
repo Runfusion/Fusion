@@ -110,66 +110,26 @@ function findDroppedProps(): Orphan[] {
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-30-22:20:
-THE SECOND SHAPE: a plain FUNCTION whose trailing flags parameter no caller supplies.
+FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (THE ARITY HALF LIVED HERE AND WAS DELETED):
 
-That is the `worktreeGrouping` defect, and the props check above cannot see it — there is no
-interface and no JSX. It is also the shape the core and engine batches will hit most, since utils and
-hooks take parameters rather than props.
+This file used to also check the SECOND shape — an exported function whose trailing flags parameter
+no caller supplies, the `worktreeGrouping` defect. `scripts/check-inert-flag-seams.mjs` now does that
+repo-wide, in the merge gate, and does it correctly; the copy here had three holes the script has
+since closed, so keeping both meant the weaker one could pass and be believed.
 
-Detection is by ARITY: find exported functions whose last parameter matches the flags pattern, then
-require at least one call somewhere in the app to pass that many arguments. An optional trailing
-parameter that every caller omits is exactly the inert seam.
+MEASURED, on the same reintroduced defect (dropping the flags argument at `Column.tsx`'s supplied
+`isNearDuplicateCanonicalInactive` call): the script reports
+`supplied by 5/6 call sites; omitted at .../Column.tsx:1 (of 2)`; this file's version reported
+3 passed. Its holes were (1) the `/[Cc]olumnFlags/` prefilter gated CALL-SITE collection, and a
+caller that omits the argument mentions no flag name — so it skipped exactly the files containing
+the omissions it existed to find; (2) it took the MAX arg count across callers, so one correct call
+site cleared a seam every sibling under-supplied; (3) it matched callees by name with no shadow or
+import resolution, conflating same-named functions in different modules.
+
+Two guards answering one question, one of them strictly worse, is not redundancy — it is a green
+result available to anyone who runs the weaker one. The props-shape check below has no twin in the
+script and stays.
 */
-function findUnsuppliedTrailingFlagParams(): string[] {
-  const declared = new Map<string, { file: string; index: number }>();
-  const maxArgsByCallee = new Map<string, number>();
-
-  for (const file of walk(APP_ROOT)) {
-    const source = readFileSync(file, "utf8");
-    if (!/[Cc]olumnFlags/.test(source)) continue;
-    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-
-    const visit = (node: ts.Node) => {
-      if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
-        const last = node.parameters[node.parameters.length - 1];
-        const name = last.name.getText(sf);
-        /* Only object-destructured components have Props interfaces; this targets plain params. */
-        if (FLAGS_PROP.test(name) && ts.isIdentifier(last.name)) {
-          declared.set(node.name.text, { file: relative(APP_ROOT, file), index: node.parameters.length });
-        }
-      }
-      if (ts.isCallExpression(node)) {
-        const callee = ts.isIdentifier(node.expression)
-          ? node.expression.text
-          : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
-        if (callee) {
-          maxArgsByCallee.set(callee, Math.max(maxArgsByCallee.get(callee) ?? 0, node.arguments.length));
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sf);
-  }
-
-  const out: string[] = [];
-  for (const [fn, { file, index }] of declared) {
-    const best = maxArgsByCallee.get(fn) ?? 0;
-    if (best < index) out.push(`${file}: ${fn}() takes a trailing flags param no caller supplies (best call passes ${best} of ${index})`);
-  }
-  return out.sort();
-}
-
-describe("resolved column-flag FUNCTION params have a supplier", () => {
-  it("every trailing *ColumnFlags parameter is supplied by at least one caller", () => {
-    expect(
-      findUnsuppliedTrailingFlagParams(),
-      "an optional trailing flags parameter that every caller omits is inert: the literal it "
-        + "replaced is gone, the census counts the conversion, and the behaviour is the fallback "
-        + "forever. This is the `worktreeGrouping` shape, and the one utils and hooks hit.",
-    ).toEqual([]);
-  });
-});
 
 describe("resolved column-flag props are not dropped by the component that declares them", () => {
   /* Completeness: vacuous if the scan finds no flags props at all. */
