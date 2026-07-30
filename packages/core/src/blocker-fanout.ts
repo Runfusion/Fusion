@@ -81,10 +81,7 @@ export const BLOCKER_ESCALATION_COLUMNS = new Set<Task["column"]>(["in-progress"
 
 /** Legacy default: the built-in coding workflow's terminal columns. Retained as
  *  the fallback so an un-resolved caller keeps byte-identical behavior (R11). */
-const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
-/** Legacy default review lane, same role as {@link DEFAULT_TERMINAL_COLUMNS}. */
-const DEFAULT_REVIEW_COLUMNS: ReadonlySet<string> = new Set(["in-review"]);
 
 interface MutableEntry {
   dependentIds: string[];
@@ -145,9 +142,9 @@ export function computeBlockerFanoutMap(
   const staleHighFanoutAgeThresholdMs =
     options.staleHighFanoutAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS;
 
-  const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
+  const terminalColumns = options.terminalColumns ?? LEGACY_TERMINAL_COLUMNS;
   const holdColumn = options.holdColumn ?? "todo";
-  const reviewColumns = options.reviewColumns ?? DEFAULT_REVIEW_COLUMNS;
+  const reviewColumns = options.reviewColumns ?? LEGACY_REVIEW_COLUMNS;
 
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const fanout = new Map<string, MutableEntry>();
