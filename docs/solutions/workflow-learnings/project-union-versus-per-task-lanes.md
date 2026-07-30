@@ -8,7 +8,7 @@ applies_when: choosing between resolveProjectColumnsForRoles and a per-task lane
 
 # The project union and the per-task answer are not ranked
 
-Recorded 2026-07-31, after the same reviewer finding arrived on five PRs in one day and got **four
+Recorded 2026-07-30, after the same reviewer finding arrived on five PRs in one day and got **four
 different correct answers**. The instinct the program had built by then — "a union is the lazy option,
 resolve per task" — is wrong often enough to be worth writing down, because acting on it shipped a
 regression.
