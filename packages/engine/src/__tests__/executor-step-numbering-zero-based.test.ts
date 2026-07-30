@@ -283,6 +283,24 @@ describe("executor tool step numbering is 0-based", () => {
       undefined,
       expect.objectContaining({ agentId: "executor" }),
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-6607-P", "in-review");
+    /*
+    FNXC:ReviewHandoff 2026-07-30-10:15:
+    The handoff now passes a THIRD argument (workflow move provenance), and a two-argument
+    `toHaveBeenCalledWith` demands an exact match — so this failed on the extra options
+    object even though the card moved to the review column correctly.
+
+    Accepting the options with `expect.anything()` rather than pinning their contents. I
+    tried the stronger form first — asserting `workflowMoveSource: "workflow-graph"` and
+    `workflowMoveMetadata.nodeId` — and could NOT attribute it: five separate mutations
+    (the boundary hook's provenance, the review-handoff reason, the node id, and both
+    moveTask call sites) each left it green. `toHaveBeenCalledWith` matches ANY recorded
+    call and this flow makes two, so the specific-looking assertion was being satisfied by
+    whichever call happened to fit rather than by the provenance it named.
+
+    An assertion I cannot make fail is not evidence, so this pins only what it can prove:
+    the card reaches the review column. Provenance is worth asserting somewhere it can be
+    attributed to one call — that needs a single-call seam, not this suite.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-6607-P", "in-review", expect.anything());
   });
 });
