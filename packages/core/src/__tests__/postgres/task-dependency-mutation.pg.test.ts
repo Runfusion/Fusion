@@ -55,7 +55,24 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     expect(updated.dependencies).toEqual([canonical.id]);
     expect(updated.blockedBy).toBeUndefined();
     expect(updated.status).toBeUndefined();
-    expect(updated.column).toBe("triage");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-03:20 (fleet — this assertion pinned a live bug):
+    THE RE-SPECIFICATION TARGET IS THE BOARD'S INTAKE COLUMN, and on today's default lineage that is
+    `todo`, not `triage`. U11 (#2515) merged Todo into Planning KEEPING the id `todo` and DELETING
+    `triage` — measured from `resolveDefaultWorkflowIr()`:
+
+      todo[intake,hold,reset-on-entry]  in-progress[wip,...]  in-review[merge,...]  done[complete]  archived
+
+    So the old code wrote a column the shipped board does not declare, and this expectation locked that in.
+    A test asserting `"triage"` was not protecting behaviour; it was protecting a stale literal that
+    outlived its column.
+
+    The rest of the re-specification contract is unchanged and still asserted above: dependencies replaced,
+    stale blocker cleared, status cleared. What changes is that a board whose intake and hold are the SAME
+    column performs no move — and therefore emits no `task:moved` for one, which is correct: announcing a
+    move into the column the card already occupies re-runs reset-on-entry effects in every listener.
+    */
+    expect(updated.column).toBe("todo");
 
     const reloaded = await store.getTask(dependent.id);
     expect(reloaded.dependencies).toEqual([canonical.id]);
@@ -66,7 +83,8 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     ) as { dependencies: string[]; blockedBy?: string; column: string; status?: string };
     expect(taskJson.dependencies).toEqual([canonical.id]);
     expect(taskJson.blockedBy).toBeUndefined();
-    expect(taskJson.column).toBe("triage");
+    // Same reasoning as above: the intake column of the default lineage is `todo` post-U11.
+    expect(taskJson.column).toBe("todo");
   });
 
   it("removes dependencies and recomputes stale blockers", async () => {
