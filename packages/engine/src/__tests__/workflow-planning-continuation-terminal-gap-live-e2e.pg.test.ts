@@ -176,7 +176,7 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(resolved.kind === "orphan" ? resolved.reason : null).toBe("task-terminal");
   });
 
-  it("AUDIT — one of the two classifier call sites is converted, and the inner predicate is not", async () => {
+  it("AUDIT — the inner predicate is threaded; one of the two classifier call sites still is not", async () => {
     /*
     NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against the
     module's SYNTAX and labelled as such.
