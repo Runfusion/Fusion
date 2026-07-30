@@ -209,6 +209,11 @@ export async function resolveWorkflowIrById(
       : undefined;
     // FNXC:CustomWorkflows 2026-06-21-19:12:
     // Public IR resolution must see the same project-scoped built-in prompt overrides as task execution, while callers without the new store methods keep the canonical built-in IR.
+    /*
+    Marked AFTER the overrides are applied, because `applyPromptOverridesToIr` may return a new object
+    and a non-enumerable brand does not survive a copy. Marking earlier would leave the returned and
+    cached IR unbranded, which is the bug this fixes wearing a different shape.
+    */
     const effective = applyPromptOverridesToIr(resolved, overrides);
     /* Branded BEFORE caching, so a later cache hit on this key reports the fallback too. */
     const answer = fellBackToDefault ? markFellBack(effective) : effective;
@@ -241,9 +246,24 @@ read the one fact only the resolver has.
 */
 const FELL_BACK_TO_DEFAULT = Symbol.for("fusion.workflowIr.fellBackToDefault");
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:45 (#2815 review — found while covering the fourth path):
+BRAND A COPY. `resolveDefaultWorkflowIr()` returns a SHARED object — `a.ir === b.ir` across two
+independent resolutions — so branding it in place marked the singleton itself. After any task
+anywhere hit a fallback, every later resolution of `builtin:coding` reported `source: "default"`,
+including a task that genuinely selected the default workflow. Process-wide, permanent, and
+invisible: the brand is non-enumerable, so nothing in a dump or a deep-equal shows it.
+
+It also made the fourth-path test unfalsifiable — the object under assertion was already branded by
+an earlier case in the same file, so removing the new mark changed nothing.
+
+A shallow copy keeps the IR structurally identical (the property is non-enumerable and the clone is
+deep-equal to the original) while giving the fallback its own object to carry the fact.
+*/
 function markFellBack(ir: WorkflowIr): WorkflowIr {
-  Object.defineProperty(ir, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
-  return ir;
+  const copy = { ...ir } as WorkflowIr;
+  Object.defineProperty(copy, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
+  return copy;
 }
 
 function didFallBackToDefault(ir: WorkflowIr): boolean {
