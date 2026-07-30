@@ -273,3 +273,60 @@ describe("resolveTaskLifecycleColumns — U1 store-aware form", () => {
     await expect(resolveTaskLifecycleColumns(store, "T-1")).resolves.toBeUndefined();
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-07:10 (the arity contract, pinned):
+`LifecycleColumns` names ONE column per role even when the workflow declares several — nothing
+validates that a trait appears at most once, and `resolveLifecycleColumns` takes the head of
+`columnsWithFlag`.
+
+This is asserted rather than left in the doc comment because two production bugs came from assuming
+otherwise (PR #2713): a task in a SECOND terminal column was rejected with a 409, and a task in a
+human-review lane split from the merge lane was classified as outside review entirely. Both read
+like ordinary conversions.
+
+The point of the pair below is the CONTRAST: the struct is safe for "where should this card go" and
+unsafe for "is this card already there". A reader who only sees the first assertion learns the wrong
+lesson.
+*/
+describe("LifecycleColumns arity — one id per role, even when several qualify", () => {
+  const multiRoleIr = {
+    version: "v2",
+    name: "two-intakes-two-terminals",
+    columns: [
+      { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      { id: "released", name: "Released", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [{ id: "start", kind: "start", column: "inbox" }, { id: "end", kind: "end", column: "shipped" }],
+    edges: [{ from: "start", to: "end" }],
+  } as never;
+
+  it("reports only ONE column per role — the others are invisible to the struct", () => {
+    const lifecycle = resolveLifecycleColumns(multiRoleIr);
+    expect(lifecycle).toBeDefined();
+    // Whichever is chosen, it is a single id and the second qualifying column is not represented.
+    expect(typeof lifecycle!.intake).toBe("string");
+    expect(["inbox", "backlog"]).toContain(lifecycle!.intake);
+    expect(typeof lifecycle!.complete).toBe("string");
+    expect(["shipped", "released"]).toContain(lifecycle!.complete);
+  });
+
+  it("so a MEMBERSHIP test against it misses the second column — use columnsWithFlag instead", () => {
+    const lifecycle = resolveLifecycleColumns(multiRoleIr)!;
+    const bothIntakes = columnsWithFlag(multiRoleIr, "intake");
+
+    // Both are genuinely intake lanes.
+    expect(bothIntakes).toHaveLength(2);
+    expect(bothIntakes).toEqual(expect.arrayContaining(["inbox", "backlog"]));
+
+    // But exactly one of them fails an equality check against the struct — the shipped-bug shape.
+    const missed = bothIntakes.find((id) => id !== lifecycle.intake)!;
+    expect(missed).toBeDefined();
+    expect(missed === lifecycle.intake).toBe(false);
+    // The membership form gets it right.
+    expect(bothIntakes.includes(missed)).toBe(true);
+  });
+});
