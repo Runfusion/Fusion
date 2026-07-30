@@ -48,13 +48,25 @@ Its original note, preserved because it is still the reason for every property:
   from the builtins they stop matching everywhere. Fail-soft to the legacy pair so an
   unresolvable or column-less workflow behaves exactly as before.
 */
-export function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string } {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:35 (Phase C convergence):
+`wip` is returned alongside the two planner lanes because a caller that PROMOTES a card out
+of planning needs both halves at once. Resolving the planner lane and then moving to a
+literal `in-progress` is the half-conversion this program has already been burned by twice:
+the guard starts admitting cards on a renamed board and the move then sends them to a column
+that board does not declare — strictly worse than refusing, because the refusal was visible.
+*/
+export function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string } {
   try {
     const ir = (store as unknown as { resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr }).resolveTaskWorkflowIrSync?.(taskId);
     const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
-    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+    return {
+      hold: lifecycle?.hold ?? "todo",
+      intake: lifecycle?.intake ?? "triage",
+      wip: lifecycle?.wip ?? "in-progress",
+    };
   } catch {
-    return { hold: "todo", intake: "triage" };
+    return { hold: "todo", intake: "triage", wip: "in-progress" };
   }
 }
 

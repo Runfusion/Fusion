@@ -20,7 +20,7 @@ import { RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFa
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
+import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
@@ -2874,6 +2874,25 @@ export class TaskExecutor {
   }
 
   /**
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-09:40 (Phase C convergence):
+   * Is `column` one of THIS task's planner lanes (intake or hold)?
+   *
+   * Used by the planning-evacuation branch of the `task:moved` handler, which is why it is
+   * synchronous: that handler runs off a synchronous emitter, and an `await` here would
+   * reorder it against the other listeners.
+   *
+   * WHAT THE GUARD IS FOR, checked rather than assumed: the branch asks "was this card
+   * pulled BACKWARD out of a lane where pre-execution graph work is running?" — Plan Review
+   * and the planning session both run while the card sits there. Named literals answered that
+   * only on the default lineage, so on a renamed board a withdrawn card kept its reviewer
+   * streaming and its pre-execution worktree on disk.
+   */
+  private isPlannerColumnFor(taskId: string, column: string): boolean {
+    const lanes = resolvePlannerLanes(this.store, taskId);
+    return column === lanes.hold || column === lanes.intake;
+  }
+
+  /**
    * FN-5256: register an in-flight disposal so a subsequent dispatch (task:moved
    * → in-progress) can await it before acquiring/creating a worktree. Swallows
    * errors so a failed disposal doesn't poison the map; surfaces them via the
@@ -3407,7 +3426,7 @@ export class TaskExecutor {
             }
           }),
         );
-      } else if ((from === "todo" || from === "triage") && to !== "in-progress" && to !== "in-review" && to !== "done") {
+      } else if (this.isPlannerColumnFor(task.id, from) && to !== "in-progress" && to !== "in-review" && to !== "done") {
         /*
         FNXC:PlanningEvacuation 2026-07-25-23:00:
         A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all
@@ -4949,7 +4968,18 @@ export class TaskExecutor {
       }
       await this.persistTokenUsage(task.id);
       const originColumn = task.column;
-      const promotedFromPlannerColumn = originColumn === "todo" || originColumn === "triage";
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (Phase C convergence):
+      Resolved from the task's OWN workflow. On a renamed board the literals matched nothing,
+      so completed work stranded in the planning lane was NOT recognised as needing promotion:
+      the code fell through to `handoffTaskToReview` directly from the planning column, and
+      role adjacency has no planning -> review edge, so the handoff move was rejected and the
+      card stayed stranded with its work finished and nothing left to rescue it. This is the
+      recovery of last resort — a literal here means the last resort does not exist off the
+      default lineage.
+      */
+      const plannerLanes = resolvePlannerLanes(this.store, task.id);
+      const promotedFromPlannerColumn = originColumn === plannerLanes.hold || originColumn === plannerLanes.intake;
       let completionTask = task;
       if (promotedFromPlannerColumn) {
         this.recoveringCompleted.add(task.id);
@@ -4961,8 +4991,15 @@ export class TaskExecutor {
         triage -> todo -> in-progress path while the recovery ownership set prevents
         scheduler/executor dispatch. Todo callers retain their existing single hop.
         */
-        if (originColumn === "triage") {
-          completionTask = await this.store.moveTask(task.id, "todo", {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-09:30: the two-hop is needed whenever the
+        card sits in a DISTINCT intake lane, because role adjacency gives intake only
+        hold/archived — never wip. Post-U11 the default lineage merges the two roles onto one
+        column, so `hold === intake` and the hop correctly collapses to the single move below;
+        a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
+        */
+        if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
+          completionTask = await this.store.moveTask(task.id, plannerLanes.hold, {
             moveSource: "engine",
             recoveryRehome: true,
             bypassGuards: true,
@@ -4971,7 +5008,7 @@ export class TaskExecutor {
             preserveResumeState: true,
           });
         }
-        completionTask = await this.store.moveTask(task.id, "in-progress");
+        completionTask = await this.store.moveTask(task.id, plannerLanes.wip);
       }
       await this.handoffTaskToReview(completionTask, "completed-task-recovered");
       if (promotedFromPlannerColumn) {
