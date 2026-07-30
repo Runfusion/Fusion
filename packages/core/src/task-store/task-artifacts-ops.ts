@@ -11,7 +11,7 @@
 
 import { TaskStore } from "../store.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
-import {resolveTaskLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
+import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
 import { toJsonNullable } from "../db.js";
@@ -85,7 +85,31 @@ export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, op
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
     Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite enqueueMergeQueueSyncInternal arm is deleted.
     */
-    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-02:10:
+    Resolve the task's OWN review columns before enqueueing. Without them the in-transaction guard
+    falls back to `new Set(["in-review"])` and throws `MergeQueueInvalidColumnError` for a task
+    resting in a renamed review lane, which breaks the merger and self-healing re-enqueue paths on
+    every custom board. `undefined` on failure is deliberate and matches `moves.ts`: it makes the
+    guard fall back to the legacy id rather than to an empty set that matches nothing.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-15:15 (#2819 review — greptile, "traitless workflows reject re-enqueue"):
+    THREE STATES, NOT TWO. `undefined` (unreadable) was already handled. The missing one is an IR that
+    resolves but carries NO lifecycle trait on any column: `synthesizeDefaultColumns` upgrades a v1
+    graph by emitting the default columns with `traits: []`, so `resolveReviewColumns` returns EMPTY
+    while the board's `in-review` column plainly exists and holds the card. Forwarding that empty set
+    made the guard match nothing and throw `MergeQueueInvalidColumnError` — the very failure this
+    conversion was fixing, moved from custom boards onto every pre-v2 project.
+
+    Only a board that EXPRESSES traits and still has no review lane is answering the question; the
+    other two states take the legacy id.
+    */
+    const reviewIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+    const reviewColumns = reviewIr && declaresAnyLifecycleTrait(reviewIr)
+      ? new Set(resolveReviewColumns(reviewIr))
+      : undefined;
+    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts, undefined, reviewColumns);
 }
 
 export function cleanupStaleMergeQueueRowsImpl(store: TaskStore, now: string): void {
