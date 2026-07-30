@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS, API_JSON_HEADERS_NO_ATTRIBUTION } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -366,7 +367,7 @@ describe("refineText", () => {
 
     expect(result).toBe("Refined task description");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/ai/refine-text", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ text: "Original text", type: "clarify" }),
     });
@@ -381,7 +382,7 @@ describe("refineText", () => {
 
     expect(result).toBe("Refined with scoped settings");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/ai/refine-text?projectId=proj-123", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ text: "Original text", type: "clarify" }),
     });
@@ -507,7 +508,9 @@ describe("summarizeTitle", () => {
       "/api/ai/summarize-title",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // `summarizeTitle` calls `fetch()` directly, bypassing `api()`, so no attribution header.
+        // See the note in test/apiRequestHeaders.ts — this is a MUTATION without attribution.
+        headers: API_JSON_HEADERS_NO_ATTRIBUTION,
         body: JSON.stringify({ description: "a".repeat(201), provider: undefined, modelId: undefined }),
       })
     );
@@ -640,7 +643,7 @@ describe("fetchProjects", () => {
     expect(result[0].name).toBe("Test Project");
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/projects",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -985,7 +988,7 @@ describe("fetchGlobalConcurrency", () => {
 
     expect(result.globalMaxConcurrent).toBe(10);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/global-concurrency", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PUT",
       body: JSON.stringify({ globalMaxConcurrent: 10 }),
     });
@@ -1064,7 +1067,7 @@ describe("fetchExecutorStats", () => {
     expect(result.maxConcurrent).toBe(4);
     expect(result.lastActivityAt).toBe("2026-04-01T12:00:00.000Z");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/executor/stats", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 

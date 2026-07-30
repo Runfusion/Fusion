@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -188,7 +189,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(status);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/status", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -210,7 +211,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(commits);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -222,7 +223,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(commits);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits?limit=50", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
   });
@@ -236,7 +237,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(diff);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits/abc123/diff", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -258,7 +259,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(commits);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits/ahead", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -282,7 +283,7 @@ describe("Git Management API", () => {
 
       expect(result).toEqual(commits);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin/commits", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -292,7 +293,7 @@ describe("Git Management API", () => {
       await fetchRemoteCommits("origin", "main", 5);
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin/commits?ref=main&limit=5", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -302,7 +303,7 @@ describe("Git Management API", () => {
       await fetchRemoteCommits("my-remote");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/my-remote/commits", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
   });
@@ -336,7 +337,7 @@ describe("Git Management API", () => {
       await createBranch("feature-branch");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ name: "feature-branch", base: undefined }),
       });
@@ -348,7 +349,7 @@ describe("Git Management API", () => {
       await createBranch("feature-branch", "main");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ name: "feature-branch", base: "main" }),
       });
@@ -368,7 +369,7 @@ describe("Git Management API", () => {
       await checkoutBranch("main");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/main/checkout", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -379,7 +380,7 @@ describe("Git Management API", () => {
       await checkoutBranch("feature/test");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature%2Ftest/checkout", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -392,7 +393,7 @@ describe("Git Management API", () => {
       await deleteBranch("feature");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -403,7 +404,7 @@ describe("Git Management API", () => {
       await deleteBranch("feature", true);
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature?force=true", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -418,7 +419,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(result);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/fetch", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ remote: undefined }),
       });
@@ -431,7 +432,7 @@ describe("Git Management API", () => {
       await fetchRemote("upstream");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/fetch", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ remote: "upstream" }),
       });
@@ -447,7 +448,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(result);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/pull", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ rebase: false }),
       });
@@ -460,7 +461,7 @@ describe("Git Management API", () => {
       await pullBranch({ rebase: true });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/pull", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ rebase: true }),
       });
@@ -485,7 +486,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(result);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/push", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -506,7 +507,7 @@ describe("Git Management API", () => {
 
       expect(response.column).toBe("archived");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/archive", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -518,7 +519,7 @@ describe("Git Management API", () => {
       await archiveTask("FN-001", undefined, { removeLineageReferences: true });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/archive?removeLineageReferences=true", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -539,7 +540,7 @@ describe("Git Management API", () => {
 
       expect(response.column).toBe("done");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/unarchive", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -567,7 +568,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(gitResult);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/revert", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ mode: "auto" }),
       });
@@ -588,7 +589,7 @@ describe("Git Management API", () => {
       await revertTask("FN-001");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/revert", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({}),
       });
@@ -610,7 +611,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(deletedTask);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -622,7 +623,7 @@ describe("Git Management API", () => {
       await deleteTask("FN-001", undefined, { removeDependencyReferences: true });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?removeDependencyReferences=true", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -634,7 +635,7 @@ describe("Git Management API", () => {
       await deleteTask("FN-001", undefined, { githubIssueAction: "delete" });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?githubIssueAction=delete", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -646,7 +647,7 @@ describe("Git Management API", () => {
       await deleteTask("FN-001", undefined, { removeLineageReferences: true });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?removeLineageReferences=true", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "DELETE",
       });
     });
@@ -687,7 +688,7 @@ describe("Git Management API", () => {
 
       expect(response.column).toBe("todo");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/move", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ column: "todo" }),
       });
@@ -701,7 +702,7 @@ describe("Git Management API", () => {
 
       expect(response.column).toBe("done");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/move", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ column: "done" }),
       });
@@ -714,7 +715,7 @@ describe("Git Management API", () => {
       await moveTask("FN-001", "todo", "proj_123");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/move?projectId=proj_123", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ column: "todo" }),
       });
@@ -742,7 +743,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(mergeResult);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/merge", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -763,7 +764,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(retriedTask);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/retry", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -784,7 +785,7 @@ describe("Git Management API", () => {
 
       expect(response.id).toBe("FN-002");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/duplicate", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -805,7 +806,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(pausedTask);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/pause", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -826,7 +827,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(unpausedTask);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/unpause", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -850,7 +851,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/workspaces", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -862,7 +863,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files?workspace=FN-001&path=src", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -874,7 +875,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Findex.ts?workspace=project", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       });
     });
 
@@ -886,7 +887,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Findex.ts?workspace=FN-001", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ content: "hello" }),
       });
@@ -903,7 +904,7 @@ describe("Git Management API", () => {
       expect(response).toEqual(payload);
       // Verify the delete operation goes to /files/{encoded-path}/delete (not the write route)
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Fold/delete?workspace=FN-001", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -917,7 +918,7 @@ describe("Git Management API", () => {
       // Forward slashes in path segments must be encoded so Express matches
       // POST /files/{*filepath}/delete rather than POST /files/{*filepath}
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/a%2Fb%2Fc/delete?workspace=FN-001", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -931,7 +932,7 @@ describe("Git Management API", () => {
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/old-folder/delete?workspace=FN-001", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
       });
     });
@@ -981,7 +982,7 @@ describe("Planning Mode API", () => {
       expect(result.sessionId).toBe("plan-123");
       expect(result.currentQuestion).toEqual(FAKE_QUESTION);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/start", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ initialPlan: "Build a user auth system" }),
       });
@@ -1004,7 +1005,7 @@ describe("Planning Mode API", () => {
 
       expect(result.sessionId).toBe("plan-456");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/start", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ initialPlan: "a".repeat(2000) }),
       });
@@ -1020,7 +1021,7 @@ describe("Planning Mode API", () => {
 
       expect(result.sessionId).toBe("plan-123");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/respond", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ sessionId: "plan-123", responses: { scope: "small" } }),
       });
@@ -1052,7 +1053,7 @@ describe("Planning Mode API", () => {
       await cancelPlanning("plan-123");
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/cancel", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ sessionId: "plan-123" }),
       });
@@ -1096,7 +1097,7 @@ describe("Planning Mode API", () => {
       expect(result.id).toBe("FN-042");
       expect(result.column).toBe("triage");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/create-task", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({ sessionId: "plan-123" }),
       });
@@ -1142,7 +1143,7 @@ describe("Planning Mode API", () => {
       });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/create-task", {
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         method: "POST",
         body: JSON.stringify({
           sessionId: "plan-123",
