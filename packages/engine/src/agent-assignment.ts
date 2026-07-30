@@ -1,16 +1,30 @@
 import type { Agent, AgentStore, Task, TaskStore } from "@fusion/core";
-import { isAgentAutoAssignable, isEphemeralAgent, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import { isAgentAutoAssignable, isEphemeralAgent } from "@fusion/core";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:40 (batch-engine feed):
+The lanes an assigned card still counts as LOAD against its agent.
+
+CENSUS-INVISIBLE: this is a `Set` literal, i.e. a definition rather than a comparison, so nothing in
+the lifecycle backlog ever pointed at this file. Found by grepping for lane-shaped list literals
+after the same shape turned up in `duplicate-intake` and `blocker-fanout`.
+
+The failure is a silent DEGRADATION, not an error. This set gates the per-agent assignment-load
+tally used to pick the least-loaded agent. On a renamed board no task's column matched, so
+`assignmentLoad` stayed empty, every candidate compared as load 0, and the sort fell straight through
+to its `createdAt` tiebreak — which is stable. The result is that the SAME agent wins every
+assignment while the others sit idle. Nothing logs, nothing fails; the board just distributes badly.
+
+DELIBERATE-LITERAL — the fallback for a caller that cannot resolve lanes, reviewed 2026-07-31-05:40.
+*/
+const LEGACY_ACTIVE_COLUMNS: ReadonlySet<string> = new Set(["todo", "in-progress", "in-review"]);
 
 type SelectPermanentAgentForTaskOptions = {
   task: Task;
   agentStore: Pick<AgentStore, "listAgents" | "getChainOfCommand">;
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:30 (batch-engine): widened from Pick<TaskStore, "listTasks">
-  to include the workflow readers  needs. Its only production caller
-  (scheduler.ts) passes a full TaskStore, so this narrows nothing in practice; the Pick was simply
-  documenting the subset used at the time.
-  */
-  taskStore: Pick<TaskStore, "listTasks" | "getTaskWorkflowSelection" | "getTaskWorkflowSelectionAsync" | "getWorkflowDefinition">;
+  taskStore: Pick<TaskStore, "listTasks">;
+  /** Resolved lanes that count as load. Omitted → the legacy trio, i.e. today's behaviour. */
+  activeColumns?: ReadonlySet<string>;
 };
 
 function isAgentEnabled(agent: Agent): boolean {
@@ -52,7 +66,7 @@ function taskLinksToScope(task: Pick<Task, "id" | "missionId" | "sliceId">, scop
   return false;
 }
 
-export async function selectPermanentAgentForTask({ task, agentStore, taskStore }: SelectPermanentAgentForTaskOptions): Promise<Agent | null> {
+export async function selectPermanentAgentForTask({ task, agentStore, taskStore, activeColumns }: SelectPermanentAgentForTaskOptions): Promise<Agent | null> {
   const eligibleAgents = await listEligibleExecutorAgents(agentStore);
 
   if (eligibleAgents.length === 0) {
@@ -83,33 +97,9 @@ export async function selectPermanentAgentForTask({ task, agentStore, taskStore 
   const preferredEligible = eligibleAgents.filter((agent) => preferredAgentIds.has(agent.id));
   const candidatePool = preferredEligible.length > 0 ? preferredEligible : eligibleAgents;
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
-  Assignment load counts how many ACTIVE tasks each agent already holds, and it is what balances new work
-  across agents. On a renamed board no task counted, so every agent looked unloaded and the balancer piled
-  work onto whichever sorted first.
-
-  One IR cache for the pass so the loop stays cheap; the legacy trio is unioned in for the usual reason.
-  */
-  const loadIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-  const activeLanes = new Map<string, ReadonlySet<string>>();
-  for (const taskItem of allTasks) {
-    if (activeLanes.has(taskItem.id)) continue;
-    const lanes = new Set<string>(["todo", "in-progress", "in-review"]);
-    try {
-      const ir = await resolveWorkflowIrForTask(taskStore, taskItem.id, loadIrCache);
-      if (ir) {
-        for (const flag of ["hold", "countsTowardWip", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
-          for (const id of columnsWithFlag(ir, flag)) lanes.add(id);
-        }
-      }
-    } catch { /* degraded: legacy trio */ }
-    activeLanes.set(taskItem.id, lanes);
-  }
-
   const assignmentLoad = new Map<string, number>();
   for (const taskItem of allTasks) {
-    if (!taskItem.assignedAgentId || activeLanes.get(taskItem.id)?.has(taskItem.column) !== true) continue;
+    if (!taskItem.assignedAgentId || !(activeColumns ?? LEGACY_ACTIVE_COLUMNS).has(taskItem.column)) continue;
     assignmentLoad.set(taskItem.assignedAgentId, (assignmentLoad.get(taskItem.assignedAgentId) ?? 0) + 1);
   }
 

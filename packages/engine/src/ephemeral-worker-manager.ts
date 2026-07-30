@@ -20,8 +20,7 @@
  * sweep here close that gap.
  */
 import type { AgentStore, AgentState, Agent, TaskStore, Task, Settings } from "@fusion/core";
-import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
-import { isEphemeralAgent } from "@fusion/core";
+import { isEphemeralAgent, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 export interface TaskOwner {
   agentId: string;
@@ -47,30 +46,7 @@ export interface EphemeralWorkerManagerOptions {
   getSettings?: () => Promise<Pick<Settings, "ephemeralAgentsEnabled">>;
 }
 
-
-/*
-FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (batch-engine):
-Terminal and wip lanes for one task, unioned with the legacy ids — `resolveWorkflowIrForTask` returns the
-BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a degraded renamed
-board resolves sets that exclude its own lanes and the idle test inverts again.
-*/
-async function resolveIdleEvaluationLanes(
-  store: TaskStore,
-  taskId: string,
-): Promise<{ terminal: ReadonlySet<string>; wip: ReadonlySet<string> }> {
-  const terminal = new Set<string>(["done", "archived"]);
-  const wip = new Set<string>(["in-progress"]);
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    if (ir) {
-      for (const flag of ["complete", "archived"] as const) {
-        for (const id of columnsWithFlag(ir, flag)) terminal.add(id);
-      }
-      for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
-    }
-  } catch { /* degraded: legacy ids */ }
-  return { terminal, wip };
-}
+const TERMINAL_TASK_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
 
 export class EphemeralWorkerManager {
   private readonly agentStore: AgentStore;
@@ -364,15 +340,43 @@ export class EphemeralWorkerManager {
       const task = await this.taskStore.getTask(agent.taskId);
       if (!task) return true;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (batch-engine — census-invisible membership, #2763 class):
-      "Is this agent idle?" — true when its bound task is terminal, or not actively being worked. Both
-      halves were hardcoded sets/ids, so on a renamed board an agent working a LIVE card in the wip lane
-      was reported idle and became eligible for teardown, while an agent bound to a FINISHED card was not.
-      Exactly inverted from the truth on both sides.
+      FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+      A LIVE WORKER WAS REAPED AS A ZOMBIE ON A RENAMED BOARD.
+
+      Census-invisible: the terminal check is a `Set` literal (a definition, not a comparison), and
+      the wip check below it was the bare literal. Both missed on a renamed board, and they compound
+      in the WORST order — the terminal test failed, so control fell to
+      `return task.column !== "in-progress"`, which is TRUE for a renamed wip lane. An ephemeral
+      worker actively executing a task was therefore classified as a zombie and deleted by the sweep.
+
+      Resolved from the task's OWN workflow. The `catch` below already treats an unreadable task as a
+      broken binding, so an unresolvable workflow keeps the documented literals rather than inventing
+      a lane: failing to reap a dead worker costs a slot, while reaping a live one destroys work in
+      flight, and those are not symmetric.
       */
-      const idleLanes = await resolveIdleEvaluationLanes(this.taskStore, task.id);
-      if (idleLanes.terminal.has(task.column)) return true;
-      return !idleLanes.wip.has(task.column);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+      MEMBERSHIP, not first-per-role. `resolveLifecycleColumns` returns the FIRST column carrying each
+      trait, so a workflow declaring TWO implementation lanes had only one of them recognised — a live
+      worker in the second lane was still classified as a zombie and deleted. Same defect this commit
+      exists to fix, one degree narrower, and it would have reappeared the first time someone declared
+      a second wip lane.
+
+      `columnsWithFlag` returns every column carrying the trait, so both halves are unions.
+      */
+      const ir = await resolveWorkflowIrForTask(this.taskStore, task.id).catch(() => undefined);
+      if (ir === undefined) {
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-06:10. */
+        if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
+        return task.column !== "in-progress";
+      }
+      const terminalLanes = new Set<string>([
+        ...columnsWithFlag(ir, "complete"),
+        ...columnsWithFlag(ir, "archived"),
+      ]);
+      if (terminalLanes.has(task.column)) return true;
+      const wipLanes = new Set<string>(columnsWithFlag(ir, "countsTowardWip"));
+      return !wipLanes.has(task.column);
     } catch {
       // If we can't even read the task, assume the binding is broken.
       return true;

@@ -196,3 +196,74 @@ describe("listEligibleExecutorAgents", () => {
     expect(selected).toBeNull();
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:40 (batch-engine feed):
+
+THE INVARIANT: assignment load counts the cards a board's OWN lanes call active.
+
+CENSUS-INVISIBLE. The gate was a `Set` literal — a definition, not a comparison — so no lifecycle
+backlog entry ever pointed at this file. Found by grepping for lane-shaped list literals after the
+same shape turned up in `duplicate-intake` and `blocker-fanout`.
+
+The failure is a silent DEGRADATION rather than an error, and it is invisible in exactly the way that
+matters: on a renamed board no column matched, so `assignmentLoad` stayed empty, every candidate
+compared as load 0, and the sort fell through to its stable `createdAt` tiebreak. The SAME agent then
+wins every assignment while the rest sit idle. Nothing logs and nothing fails — the board simply
+distributes badly, which reads as an agent being "busy" rather than as a bug.
+
+REVERT PROOF, measured: restore the hard-coded Set and the renamed case fails — the loaded agent is
+picked instead of the idle one, because its load reads as 0.
+*/
+describe("assignment load resolves the board's own active lanes", () => {
+  const agents = [
+    makeAgent({ id: "AG-BUSY", createdAt: "2026-01-01T00:00:00.000Z" }),
+    makeAgent({ id: "AG-IDLE", createdAt: "2026-01-02T00:00:00.000Z" }),
+  ];
+
+  const store = (columnOfBusyWork: string) => ({
+    listTasks: async () => [
+      makeTask({ id: "FN-EXISTING", assignedAgentId: "AG-BUSY", column: columnOfBusyWork } as never),
+    ],
+  }) as never;
+
+  const select = (columnOfBusyWork: string, activeColumns?: ReadonlySet<string>) =>
+    selectPermanentAgentForTask({
+      task: makeTask({ id: "FN-NEW" }),
+      agentStore: { listAgents: async () => agents, getChainOfCommand: async () => [] } as never,
+      taskStore: store(columnOfBusyWork),
+      ...(activeColumns ? { activeColumns } : {}),
+    });
+
+  it("prefers the idle agent when the busy one's work sits in a RENAMED wip lane", async () => {
+    // Pre-fix: `building` matched no literal, AG-BUSY read as load 0, and its earlier createdAt won.
+    const selected = await select("building", new Set(["backlog", "building", "signoff"]));
+
+    expect(selected?.id).toBe("AG-IDLE");
+  });
+
+  it("keeps the legacy trio when no lanes are supplied", async () => {
+    const selected = await select("in-progress");
+
+    expect(selected?.id).toBe("AG-IDLE");
+  });
+
+  it("counts work parked in a RENAMED hold lane, as the legacy set counted todo", async () => {
+    /*
+    #2787 review, second round (greptile P1). The legacy set is `{todo, in-progress, in-review}` and
+    `todo` is the HOLD lane, so a resolved set covering only wip and review DROPS assigned backlog
+    work from the tally — a regression against legacy introduced by the argument meant to fix the
+    renamed case. The resolved answer must cover every role the literal covered.
+    */
+    const selected = await select("backlog", new Set(["backlog", "building", "signoff"]));
+
+    expect(selected?.id).toBe("AG-IDLE");
+  });
+
+  it("does not count work parked outside the supplied lanes", async () => {
+    // A finished card must not hold load against its agent, or the agent looks busy forever.
+    const selected = await select("shipped", new Set(["backlog", "building", "signoff"]));
+
+    expect(selected?.id).toBe("AG-BUSY");
+  });
+});

@@ -1,5 +1,7 @@
 import {
   TaskStore,
+  resolveReviewColumns,
+  resolveWorkflowIrForTask,
   isPrEntityActive,
   isPrEntityActionable,
   autoMergeGateReason,
@@ -146,9 +148,74 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
       process.exit(1);
     }
 
-    // Validate task is in 'in-review' column
-    if (task.column !== "in-review") {
-      console.error(`Error: Task must be in 'in-review' column to create a PR (current: ${task.column})`);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:30 (batch-cli-plugins):
+    `fn pr create` gates on the task's OWN review lane, resolved from its workflow.
+
+    Keyed on the literal, this refused EVERY card on a renamed board — `fn pr create` was unusable
+    there, and the error told the operator to move the task to a column their board does not have.
+    That message is the whole bug report: it names a column that cannot exist.
+
+    Uses core's `resolveReviewColumns` (the set, not `lifecycle.review`) because a board may declare
+    more than one review lane, and a `humanReview`-only lane is still a lane you can open a PR from.
+    A single-id answer refused those cards — the same narrowing that PR #2728's review caught in the
+    CLI retry gate.
+
+    DELIBERATE-LITERAL — the unresolvable-workflow fallback, reviewed 2026-07-30-22:30. An
+    unresolvable workflow keeps today's behaviour rather than refusing everything (an empty set) or
+    accepting everything.
+    */
+    const prIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:55 (#2775 review — greptile P2):
+    A RESOLVED WORKFLOW WITH NO REVIEW LANE IS AN ANSWER, not a missing one.
+
+    My first pass fell back to `'in-review'` for both the unresolvable-workflow case AND the
+    resolved-but-no-review-lane case, which reproduced the exact defect this change fixes: the
+    refusal named a lane the board does not have. The two cases are different questions and get
+    different answers —
+
+      prIr === undefined            → the workflow could not be read at all. Keep the legacy literal;
+                                      this is today's behaviour and the only safe default.
+      prIr resolved, lanes empty    → the board genuinely declares no review lane. Say so. Inventing
+                                      `'in-review'` here sends the operator to a phantom column.
+    */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:55 (#2775 review — greptile, "legacy review lane rejected"):
+    AN EMPTY REVIEW SET IS NOT AN ANSWER HERE. THIS IS THE ONE PLACE THAT EXCEPTION APPLIES.
+
+    Two review rounds pushed this guard in opposite directions and both were right about their own
+    case, so the resolution has to hold both:
+
+      - inventing `'in-review'` whenever the set is empty names a lane a v2 board may not have;
+      - refusing whenever the set is empty rejects every V1 workflow.
+
+    The v1 case is the decisive one. `synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1
+    graph by emitting `DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] }))` — every
+    column, NO traits. So a v1-upgraded workflow resolves to an EMPTY review set while sitting on a
+    board whose `in-review` column plainly exists and is where its cards live. Treating empty as "this
+    board has no review lane" refuses `fn pr create` for every pre-v2 project — a far worse regression
+    than the phantom lane, and one no v2 test would ever surface.
+
+    Empty therefore means UNEXPRESSED, not absent: indistinguishable from a v1 upgrade, so it takes the
+    same legacy fallback as an unresolvable workflow. `in-review` is the correct answer for exactly the
+    boards that produce an empty set, because those are the ones that declare it by convention.
+
+    The general "an empty resolved set is an answer" rule still holds elsewhere; it fails here only
+    because the v1 upgrade path manufactures empty traits for columns that do exist.
+    */
+    const resolvedReviewColumns = prIr === undefined ? [] : resolveReviewColumns(prIr);
+    const reviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
+    if (!reviewColumns.has(task.column)) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-21:58:
+      The trailing "column" is load-bearing and keeps getting dropped: `task.test.ts:3422` pins
+      `must be in 'in-review' column`. Keeping it makes the single-lane message byte-identical to the
+      pre-conversion string, which is what a vocabulary conversion should be — a message change is a
+      user-visible behaviour change and is out of scope here.
+      */
+      const expected = [...reviewColumns].map((c) => `'${c}'`).join(" or ");
+      console.error(`Error: Task must be in ${expected} column to create a PR (current: ${task.column})`);
       await closeProjectStore(context);
       process.exit(1);
     }

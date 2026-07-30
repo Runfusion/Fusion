@@ -2296,10 +2296,48 @@ export class Scheduler {
               return null;
             }
 
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+            PASS THE RESOLVED LANES. Without this the optional parameter added to
+            `selectPermanentAgentForTask` is never supplied by the only production caller, so the
+            predicate keeps its legacy default and the load tally stays empty on a renamed board —
+            a converted function reachable only through an argument nobody passes is the
+            guard-that-cannot-fire pattern, and shipping one would have been worse than leaving the
+            literal in place, because the site then reads as done.
+
+            The set is a MEMBERSHIP union of every wip/review lane the board declares, not the
+            first-per-role ids: a workflow may declare more than one implementation lane, and load
+            held in the second must still count.
+            */
+            const loadLaneIr = await resolveWorkflowIrForTask(this.store, freshTask.id).catch(() => undefined);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-10:40 (#2787 review — greptile P1, second round):
+            THE HOLD AND INTAKE LANES COUNT AS LOAD TOO.
+
+            The legacy set is `{todo, in-progress, in-review}` — and `todo` is the HOLD/INTAKE lane.
+            My first union covered only wip and review, so passing it OVERRODE the fallback and
+            dropped assigned backlog work from the tally: a regression against the legacy behaviour
+            for that lane, introduced by the very argument meant to fix the renamed case.
+
+            That is the trap in overriding a default rather than extending it — the resolved answer
+            must cover EVERY role the literal covered, or wiring the parameter is a downgrade for the
+            roles it forgot.
+            */
+            const activeLoadColumns = loadLaneIr === undefined
+              ? undefined
+              : new Set<string>([
+                ...columnsWithFlag(loadLaneIr, "intake"),
+                ...columnsWithFlag(loadLaneIr, "hold"),
+                ...columnsWithFlag(loadLaneIr, "countsTowardWip"),
+                ...columnsWithFlag(loadLaneIr, "mergeOrchestration"),
+                ...columnsWithFlag(loadLaneIr, "mergeBlocker"),
+                ...columnsWithFlag(loadLaneIr, "humanReview"),
+              ]);
             const selectedAgent = await selectPermanentAgentForTask({
               task: freshTask,
               agentStore: this.options.agentStore,
               taskStore: this.store,
+              ...(activeLoadColumns && activeLoadColumns.size > 0 ? { activeColumns: activeLoadColumns } : {}),
             });
             if (!selectedAgent) {
               await this.store.updateTask(task.id, { status: "queued" });
