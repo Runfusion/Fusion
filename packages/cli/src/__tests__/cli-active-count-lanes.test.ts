@@ -137,19 +137,33 @@ site that accepts the parameter and does not pass it is the failure mode a unit 
 describe("the shared missing-worktree classifier takes the caller's review lane", () => {
   const FAILURE = "Refusing to start coding agent in missing worktree: /gone";
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-11:30:
+  The second parameter is a RESOLVED BOOLEAN (`isReviewColumn?: boolean`), not a lane Set. These two
+  cases passed `new Set([...])`, and a non-empty Set is TRUTHY — so `isReviewColumn ?? ...` short-
+  circuited to the Set and the classifier answered `true` for every column. The negative case failed
+  on main, and the positive case was passing for the wrong reason: any truthy second argument
+  satisfies it, including `new Set(["nothing-relevant"])`.
+
+  Both now derive the boolean the way the real caller does — `commands/task.ts:1396` passes
+  `retryReviewColumns.has(task.column)` — so the lane set is still what decides, and the cases
+  exercise the resolution rather than a hand-picked literal.
+  */
+  const reviewLanes = new Set(["signoff"]);
+
   it("recognises a renamed review lane when the caller supplies it", async () => {
     const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
     const task = { id: "FN-1", column: "signoff", error: FAILURE } as never;
 
     // Pre-fix: `signoff` !== "in-review", so the retry bypass this classifier exists for never applied.
-    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(true);
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, reviewLanes.has(task.column))).toBe(true);
   });
 
   it("still refuses a column outside the supplied set", async () => {
     const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
     const task = { id: "FN-2", column: "building", error: FAILURE } as never;
 
-    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(false);
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, reviewLanes.has(task.column))).toBe(false);
   });
 
   it("keeps the legacy literal when no set is supplied", async () => {
