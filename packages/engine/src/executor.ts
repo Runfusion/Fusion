@@ -12479,7 +12479,32 @@ export class TaskExecutor {
     // so existing filesystem validation paths remain authoritative.
     // Skip for tasks that are already in-progress, in-review, merging, or done —
     // these should not be interrupted and sent back to triage for re-planning.
-    const activeColumns = new Set(["in-progress", "in-review", "done"]);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+    THIS GUARD DID THE EXACT THING ITS OWN COMMENT SAYS IT MUST NOT.
+
+    The comment directly above is explicit: skip for tasks already in-progress, in-review, merging or
+    done, because "these should not be interrupted and sent back to triage for re-planning". Keyed on
+    a hard-coded `Set`, a renamed board matched NOTHING, so `isActiveTask` was false for a card in a
+    renamed wip/review/complete lane — the stale-spec guard then ran on a LIVE task and
+    `moveTaskToReplanColumn` + `status: "needs-replan"` yanked it out of execution mid-flight.
+
+    `activeMergeStatuses` still covers the merging states, so a merging card was protected by
+    accident; a plain in-progress card was not.
+
+    CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
+    backlog pointed here. Found by grepping for lane-shaped list literals.
+
+    Resolved from the task's OWN workflow, unioned with the legacy trio for the reason documented on
+    `resolveTerminalColumnsFor`: `resolveWorkflowIrForTask` returns the BUILT-IN IR rather than
+    throwing when a definition is missing or corrupt, so a degraded resolution must not NARROW this
+    set — narrowing it re-opens the interruption this fixes.
+    */
+    const activeLifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, task.id));
+    const activeColumns = new Set<string>(["in-progress", "in-review", "done"]);
+    for (const lane of [activeLifecycle?.wip, activeLifecycle?.review, activeLifecycle?.complete]) {
+      if (lane !== undefined) activeColumns.add(lane);
+    }
     const activeMergeStatuses = new Set(["merging", "merging-pr", "merging-fix"]);
     const isActiveTask = activeColumns.has(task.column) || activeMergeStatuses.has(task.status ?? "");
     if (!isActiveTask) {
