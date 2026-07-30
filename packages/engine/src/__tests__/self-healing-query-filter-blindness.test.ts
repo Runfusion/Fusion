@@ -87,6 +87,7 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    recordRunAuditEvent: vi.fn(async () => undefined),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -767,6 +768,41 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const { store, updateTask } = productionFaithfulStore([stuck]);
 
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:45 (the query-filter class, sixteenth sweep):
+  A card that reached a terminal lane while still carrying `merging`/`merging-pr` holds the MERGER QUEUE.
+  Two literal reads meant that on a renamed board the stale status was never cleared, so one finished
+  card blocked every task queued behind it — the widest blast radius in this series, since the damage is
+  not confined to the stranded card.
+
+  REVERT CHECK, measured: with the literal reads restored, this fails — the card is never listed, so its
+  stale status is never cleared and the queue stays blocked.
+  */
+  it("clears a stale merging status on a RENAMED terminal lane", async () => {
+    const stale = {
+      ...shippedCard(),
+      id: "FN-STALEMERGE",
+      column: RENAMED_VOCAB.complete,
+      status: "merging",
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([stale]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileStaleMergerStatus();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-STALEMERGE", expect.objectContaining({ status: null }));
+  });
+
+  it("leaves a card with no stale merging status alone", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared the status of everything it found would
+    satisfy the case above. Same board, same terminal lane — only the status differs.
+    */
+    const settled = { ...shippedCard(), id: "FN-SETTLED", column: RENAMED_VOCAB.complete, status: null } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([settled]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileStaleMergerStatus();
 
     expect(updateTask).not.toHaveBeenCalled();
   });
