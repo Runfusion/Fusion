@@ -3331,6 +3331,56 @@ describe("runTaskPrCreate", () => {
     vi.restoreAllMocks();
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:05 (#2775 review — "legacy review lane rejected"):
+
+  A V1 WORKFLOW MUST STILL BE ABLE TO OPEN A PR FROM ITS `in-review` COLUMN.
+
+  `synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph by emitting every default
+  column id with `traits: []`. So a v1-upgraded workflow resolves to an EMPTY review set while its
+  `in-review` column plainly exists and is where its cards live. A guard that reads empty as "this
+  board declares no review lane" refuses `fn pr create` on every pre-v2 project.
+
+  This is the ratchet for that: the store resolves a real v1-shaped workflow, and the command must get
+  past the review guard rather than refusing. No v2 fixture can catch this — a v2 board expresses its
+  traits, so its set is never empty.
+  */
+  it("does NOT refuse a v1-upgraded workflow whose synthesized columns carry no traits", async () => {
+    const v1UpgradedIr = {
+      version: "v2",
+      id: "wf-v1-upgraded",
+      name: "legacy",
+      nodes: [],
+      edges: [],
+      // Exactly what synthesizeDefaultColumns emits: every column, NO traits.
+      columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+    };
+    const selection = { workflowId: "wf-v1-upgraded", stepIds: [] };
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      updatePrInfo: mockUpdatePrInfo,
+      ensurePrEntityForSource: vi.fn(() => ({ id: "pr-entity-1" })),
+      updatePrEntity: vi.fn(),
+      logEntry: mockLogEntry,
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-v1-upgraded", ir: v1UpgradedIr }),
+    }));
+
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo({ number: 77, url: "https://github.com/owner/repo/pull/77" }));
+
+    await runTaskPrCreate("FN-001", {});
+
+    /*
+    The witness is that the command reached PR creation at all. Asserting on the absence of an error
+    message would also pass if the guard refused for some other reason and exited quietly.
+    */
+    expect(mockCreatePr).toHaveBeenCalled();
+  });
+
   it("creates PR successfully with all options", async () => {
     const task = makeInReviewTask();
     mockGetTask.mockResolvedValueOnce(task);
