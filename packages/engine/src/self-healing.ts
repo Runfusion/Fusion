@@ -7093,20 +7093,41 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           || this.options.isTaskActive?.(taskId) === true;
       };
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-06:20 (batch-engine — reconcileOrphanedPendingStepResults):
+      Lanes per page, one IR cache across pages. This sweep paginates the WHOLE board (no column filter), so
+      unlike the merge-failure and merged-review sweeps its guards are reachable for every lane and
+      converting them changes real behaviour: the WIP skip exists because those rows are executor-owned and
+      resume is deferred at startup, and on a renamed board it never fired — so the sweep rewrote pending
+      step results out from under a live executor.
+      */
+      const orphanedIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const pageWipLanes = new Map<string, ReadonlySet<string>>();
+      const wipLanesFor = async (taskId: string): Promise<ReadonlySet<string>> => {
+        const cached = pageWipLanes.get(taskId);
+        if (cached) return cached;
+        const wip = new Set<string>(["in-progress"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, orphanedIrCache);
+          if (ir) for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
+        } catch { /* degraded: legacy id */ }
+        pageWipLanes.set(taskId, wip);
+        return wip;
+      };
       for (;;) {
         const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
         for (const task of tasks) {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
           // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+          if ((await wipLanesFor(task.id)).has(task.column)) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+          if (!fresh || fresh.userPaused === true || (await wipLanesFor(fresh.id)).has(fresh.column)) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
