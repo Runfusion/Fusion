@@ -62,10 +62,31 @@ the decision.
 - `scripts/check-inert-flag-seams.mjs` — trailing lane/flag parameter with no supplier (gate).
 - `packages/dashboard/app/__tests__/resolved-flags-seams-have-suppliers.test.ts` — the props shape.
 
-Both match by NAME, which means three documented ways to mislead: they prove only that ONE caller
-supplies (not all — a real defect got through this); they exclude `__tests__`, so test-only exports
-look unsupplied; and they cannot see imported shadows (two same-named functions in different modules
-are conflated, which produced false reports and one wrong "fix" that `tsc` rejected).
+Both match by NAME, which leaves two known ways to mislead: they prove only that ONE caller supplies
+(not all — a real defect got through this), and they exclude `__tests__`, so test-only exports look
+unsupplied.
+
+## A false positive you have learned to ignore will hide a true one
+
+The third way was imported shadows: two same-named functions in different modules conflated. It cost
+a wrong "fix" that `tsc` rejected and a bad list sent to two other batches, and I wrote it down as a
+known limitation — reports mentioning `sortTasksForDisplayColumn` are noise, read past them.
+
+That annotation was the actual damage. Core's `sortTasksForDisplayColumn` really never receives its
+`columnFlags` argument outside its own tests; the dashboard function of the same name, called with
+more arguments from three components, was raising the arg-count max and clearing core's seam. The
+offender had been sitting behind a row everyone had been told to skip. Resolving imports (record the
+module each callee is imported FROM, match it against the seam's declaring module) surfaced it
+immediately.
+
+So: a guard's false positives are not a cosmetic problem to be documented around. Each one trains its
+readers to skip a line, and the skipped line is where the next real finding appears. Fix the noise or
+delete the guard.
+
+The cost argument that kept this open for days — "import resolution is not worth it until a report is
+wrong in a way that costs more than reading it carefully" — was already false when written. The
+report had by then been wrong twice, both times expensively. Re-read that kind of deferral whenever
+the thing it defers has since happened; nothing prompts you to.
 
 ## The rule that produced every fix above
 
