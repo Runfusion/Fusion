@@ -118,7 +118,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanes } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -314,16 +314,11 @@ NOTE FOR U11: once `triage` carries the capacity hold, `hold` and `intake` resol
 to the SAME column. Every `hold || intake` check below then collapses to one
 column, and the release move becomes a no-op the guard already skips — which is
 the intended end state, not a degenerate case.
+
+MOVED to `replan-target.ts` (2026-07-30) so the executor's stranded-completed recovery and
+planning-evacuation branches resolve the SAME lanes rather than growing a second copy. The
+note above is kept here because this is where the eight decisions it describes live.
 */
-function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string } {
-  try {
-    const ir = (store as unknown as { resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr }).resolveTaskWorkflowIrSync?.(taskId);
-    const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
-    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
-  } catch {
-    return { hold: "todo", intake: "triage" };
-  }
-}
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-29-19:10 (U11 — STALL 3):
 The pre-implementation column ids that shipped as the builtin lifecycle vocabulary,

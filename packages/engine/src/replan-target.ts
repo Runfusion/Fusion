@@ -1,5 +1,6 @@
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import { resolveLifecycleColumns, resolveWorkflowIrForTask, workflowHasColumn } from "@fusion/core";
+import type { WorkflowIr } from "@fusion/core";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:15:
@@ -31,6 +32,32 @@ Recorded here for the U12 literal ratchet's allowlist. That ratchet does not exi
 tree yet; grep `DELIBERATE-LITERAL` to enumerate the sites it must admit, with the reason
 attached at the site rather than in a separate list that can drift from it.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:20 (Phase C convergence — shared planner lanes):
+
+MOVED, NOT CHANGED. This is triage.ts's private `resolvePlannerLanes` verbatim, lifted here
+so the executor can ask the same question with the same answer. triage.ts now delegates to
+it; every returned value, the fail-soft legacy pair, and the synchronous shape are
+unchanged, because the executor sites that need it sit in a `task:moved` listener where
+introducing an `await` would reorder handlers relative to a synchronous emitter.
+
+Its original note, preserved because it is still the reason for every property:
+  Triage's column decisions are all one of two questions — "is this card in a planner
+  lane?" (hold or intake) and "where does a finished plan get released to?" (hold). Under a
+  renamed workflow every literal answer silently stops matching; after U11 deletes `triage`
+  from the builtins they stop matching everywhere. Fail-soft to the legacy pair so an
+  unresolvable or column-less workflow behaves exactly as before.
+*/
+export function resolvePlannerLanes(store: TaskStore, taskId: string): { hold: string; intake: string } {
+  try {
+    const ir = (store as unknown as { resolveTaskWorkflowIrSync?: (id: string) => WorkflowIr }).resolveTaskWorkflowIrSync?.(taskId);
+    const lifecycle = ir ? resolveLifecycleColumns(ir) : undefined;
+    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+  } catch {
+    return { hold: "todo", intake: "triage" };
+  }
+}
+
 /*
  * FNXC:WorkflowReplan 2026-07-15-13:15:
  * FN-7977: a planning/provider recovery may finish after another engine lane has
