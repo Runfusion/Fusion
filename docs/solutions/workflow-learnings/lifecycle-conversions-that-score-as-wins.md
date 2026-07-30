@@ -199,6 +199,43 @@ wired upstream.
 That is the point at which a ratchet has earned its keep. Until a guard has failed on code you did
 not write, you know it encodes your habits; you do not yet know it encodes the invariant.
 
+## Mutation testing has one blind spot: your own imagination
+
+Everything above says "watch the guard go red before you trust it." That rule is necessary and it is
+not sufficient, and the way it fails is worth stating because it cost the most.
+
+Three instruments were written during this program, each mutation-tested in both directions before
+shipping, each green. Reviewers then found, in those same instruments:
+
+- a file-level pre-filter that skipped whole files, so a forbidden site added to a file with no other
+  SQL was invisible;
+- an anchored pattern that missed qualified and compound fragments (`t."column" = 'done'`);
+- a scan over SOURCE text, where a double-quoted TS string still spells `\"column\"` with the
+  backslashes in it;
+- an operator list of `= != <>` that never considered `IN (...)`;
+- and worst, a template scan that joined only the STATIC spans — so a Drizzle query, which puts the
+  COLUMN in the interpolation hole and the legacy id in the static text, matched nothing. **That gate
+  was blind on the exact files it was built to freeze.** Enabling that one shape revealed five
+  previously invisible files and took the population from 14 to 31.
+
+Every one of those is a FALSE NEGATIVE, and none was catchable by the mutation tests that were run,
+for a structural reason: **a mutation you write is a mutation you already imagined, so it lands
+inside the space your scanner understands.** Reintroducing a defect the checker was designed around
+proves the checker still handles that defect. It says nothing about the shapes you never modelled.
+
+What actually finds these:
+
+1. **Run the instrument against the code it was written for, and read the hits by hand.** The Drizzle
+   blindness was visible the moment someone asked "why is the merge-queue query, the reason this
+   exists, not in the output?"
+2. **Prefer one unanchored pattern over a fast pre-filter plus a precise one.** Every false negative
+   above came from two patterns disagreeing about whether to even run the real check. A pre-filter is
+   a second, weaker specification of the thing you are testing.
+3. **Treat a guard's own count as a claim to verify, not a result.** "14 sites" read as coverage for
+   days; it was the subset one scanner happened to model.
+
+A false positive is loud and gets fixed. A false negative prints a baseline and reads as coverage.
+
 ## The rule that produced every fix above
 
 **A green guard is evidence only once you have watched it go red.**
