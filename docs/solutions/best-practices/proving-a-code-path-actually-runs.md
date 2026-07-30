@@ -25,7 +25,7 @@ related_components:
 
 # Proving a code path actually runs
 
-Four findings from U8 of the workflow-owned-lifecycle program. Each one is a case where code was
+Five findings from U8 of the workflow-owned-lifecycle program. Each one is a case where code was
 correct, type-checked, tested, reviewed, merged — and never executed, or was verified by something
 that could not fail. They share a root: **we confirmed a property of the source rather than of the
 run.**
