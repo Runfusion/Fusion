@@ -382,6 +382,37 @@ pgTest("move-path equivalence — the flag gates MORE than side effects (Phase A
     const inlineTargets = await targetsFor("inline", inlineTask.id);
 
     /*
+    FNXC:MovePathConvergence 2026-07-31-10:45 (PR #2638 review — greptile P2):
+    The HOOKS path with a card genuinely STRANDED, which the first version never exercised: it
+    created the card in a declared column and only ran the inline path, so a regression in the hooks
+    rebound resolution would not have failed anything.
+
+    Stranding needs a direct row write — `moveTask` refuses to take a card into an undeclared column,
+    which is the transition policy working. The corrupt post-upgrade state IS the fixture, and it is
+    the state U11 leaves behind for every row still sitting in `triage`.
+    */
+    await setPath("hooks");
+    const strandedTask = await store.createTask({ description: "undeclared-source hooks" });
+    await h.adminSql()`UPDATE project.tasks SET "column" = 'a-column-no-workflow-declares' WHERE id = ${strandedTask.id}`;
+    store.taskCache.delete(strandedTask.id);
+
+    const hooksErr = await store
+      .moveTask(strandedTask.id, "in-progress")
+      .then(() => null, (e: unknown) => e as Error);
+
+    /*
+    On the hooks path the SOURCE column is undeclared, so `resolveAllowedColumns` has no adjacency to
+    read and U11's escape hatch supplies the workflow's rebound target instead. Whatever the outcome,
+    it is reached through workflow resolution — asserted as "not the legacy VALID_TRANSITIONS answer",
+    because the legacy table is what the inline path consults and the two must be distinguishable.
+
+    Deliberately not asserting a specific message: the point is that the two paths answer from
+    DIFFERENT SOURCES for the same stranded card. Pinning hooks' exact wording here would duplicate
+    the rejection-shape divergence above and make this case fail for the wrong reason.
+    */
+    expect(hooksErr === null || !/Valid targets: in-progress, triage, archived/.test(hooksErr.message)).toBe(true);
+
+    /*
     The inline path enumerates the LEGACY table, so it reports legacy ids regardless of what the
     task's workflow declares. The hooks path does not report a target list at all for an unknown
     column — it throws the typed unknown-column rejection first, asserted above.
