@@ -3,6 +3,7 @@ import type { TaskStore, Task } from "@fusion/core";
 import {
   RestartRecoveryCoordinator,
   extractMissingWorktreePathFromSessionStartFailure,
+  isInReviewMissingWorktreeSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
   isRecoverableMissingWorktreeReviewFailure,
@@ -25,6 +26,45 @@ function createTask(overrides: Partial<Task>): Task {
     ...overrides,
   } as Task;
 }
+
+/*
+FNXC:MissingWorktreeRetry 2026-07-31-06:10 (PR #2728 review — greptile):
+The classifier hardcoded `in-review`, so on a renamed board a card stranded by an unusable-worktree
+session start was not recognised as retryable — while every guard AROUND it had already been
+converted. A disagreement between neighbouring checks is harder to diagnose than the original inert
+literal, because each one individually looks right.
+
+`reviewColumns` is optional and defaults to the legacy id, so the three existing call sites are
+unchanged until each passes its own resolved set.
+*/
+describe("isInReviewMissingWorktreeSessionStartFailure", () => {
+  const stranded = (column: string): Task => ({
+    id: "FN-1",
+    column,
+    error: "Refusing to start coding agent in missing worktree: /repo/.worktrees/FN-1",
+  } as unknown as Task);
+
+  it("recognises a stranded card in a RENAMED review lane when the caller supplies one", () => {
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"), ["signoff"])).toBe(true);
+  });
+
+  it("accepts ANY of several review lanes — membership, not equality", () => {
+    expect(
+      isInReviewMissingWorktreeSessionStartFailure(stranded("second-signoff"), ["signoff", "second-signoff"]),
+    ).toBe(true);
+  });
+
+  it("keeps the legacy id when the caller supplies nothing", () => {
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("in-review"))).toBe(true);
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"))).toBe(false);
+  });
+
+  it("still requires the worktree failure, so widening the lane did not widen the classifier", () => {
+    const healthy = { id: "FN-2", column: "signoff", error: "something else entirely" } as unknown as Task;
+
+    expect(isInReviewMissingWorktreeSessionStartFailure(healthy, ["signoff"])).toBe(false);
+  });
+});
 
 describe("RestartRecoveryCoordinator", () => {
   it("classifies missing-worktree session-start failures across all assertValidWorktreeSession variants", () => {

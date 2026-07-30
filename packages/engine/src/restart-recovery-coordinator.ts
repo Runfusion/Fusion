@@ -93,8 +93,24 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(task: Task): boo
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 
-export function isInReviewMissingWorktreeSessionStartFailure(task: Task): boolean {
-  return task.column === "in-review"
+/*
+FNXC:MissingWorktreeRetry 2026-07-31-06:10 (PR #2728 review — greptile):
+THE REVIEW LANE COMES FROM THE CALLER, because this predicate has no store to resolve one.
+
+It hardcoded `in-review`, so on a renamed board a card stranded by an unusable-worktree session start
+was not recognised as retryable — and its three callers had already converted the guards AROUND it,
+which made the disagreement worse than the original literal: every neighbouring check said the card
+was in review, and this one said it was not.
+
+`reviewColumns` is OPTIONAL and defaults to the legacy id, so existing callers are unchanged; the same
+shape as `tierForTask`'s `roles` parameter. A caller that can resolve passes its own set — membership,
+not equality, because a board may declare several review lanes.
+*/
+export function isInReviewMissingWorktreeSessionStartFailure(
+  task: Task,
+  reviewColumns: Iterable<string> = ["in-review"],
+): boolean {
+  return new Set(reviewColumns).has(task.column)
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 
