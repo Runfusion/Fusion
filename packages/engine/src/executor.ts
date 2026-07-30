@@ -9642,9 +9642,24 @@ export class TaskExecutor {
     if (failureValue === "review-pending") return true;
     const context = result.context;
     if (!context) return false;
-    return Object.entries(context).some(
-      ([key, value]) => key.startsWith("node:") && key.endsWith(":value") && value === "review-pending",
-    );
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-21:40 (U8 / R4, PR #2590 review — greptile, 2nd):
+    Scanning EVERY `node:*:value` was too broad in the opposite direction. The run context is
+    shared for the whole walk, so a graph that continues past a pending-review node and then dies
+    on a genuine downstream failure still carries the earlier value — and a blanket scan would
+    park that card in review, hiding a real failure behind a wait. Trading a guard that misses for
+    one that over-claims is not a fix.
+
+    The narrow rule: the pending-review ending counts only when nothing AFTER it produced its own
+    verdict. Walk the visited nodes backwards and take the first recorded value — that is the
+    run's actual last word. If it is `review-pending`, the ending stands; if a later node spoke,
+    that node's outcome is the run's, and this classifier stays out of the way.
+    */
+    for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
+      const value = context[`node:${result.visitedNodeIds[i]}:value`];
+      if (typeof value === "string") return value === "review-pending";
+    }
+    return false;
   }
 
   private graphFailureValue(result: WorkflowGraphTaskRunResult): string | undefined {

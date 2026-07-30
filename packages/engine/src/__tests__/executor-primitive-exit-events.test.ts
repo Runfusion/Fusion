@@ -173,14 +173,13 @@ describe("compat park for graphs that do not route review-pending", () => {
     return { store, live, executor: new TaskExecutor(store, "/tmp/test") };
   }
 
-  it("parks in review when a DOWNSTREAM node's value ended the walk", async () => {
+  it("parks in review when the walk ended on a node that recorded no verdict of its own", async () => {
+    /* The compat shape: the generic failure edge passes through a node that reports nothing, so
+       the run's last word is still the implementation node's `review-pending`. */
     const { store, live, executor } = parkHarness();
 
     await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
-      .handleGraphFailure(live, failureRun({
-        "node:execute:value": "review-pending",
-        "node:cleanup:value": "cleanup-done",
-      }));
+      .handleGraphFailure(live, failureRun({ "node:execute:value": "review-pending" }));
 
     expect(store.handoffToReview).toHaveBeenCalledWith("FN-COMPAT", expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith(
@@ -188,6 +187,25 @@ describe("compat park for graphs that do not route review-pending", () => {
       expect.objectContaining({ status: "failed" }),
       expect.anything(),
     );
+  });
+
+  it("does NOT park when a LATER node reported its own failure (stale value must not mask it)", async () => {
+    /*
+    FNXC PR #2590 review (greptile, 2nd): the run context is shared for the whole walk, so a graph
+    that continues past a pending-review node and then dies downstream still carries the earlier
+    value. Parking on that would hide a real failure behind a wait — the opposite over-reach from
+    the first finding, and worse, because the operator sees a card waiting for a reviewer who has
+    nothing to review.
+    */
+    const { store, live, executor } = parkHarness();
+
+    await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
+      .handleGraphFailure(live, failureRun({
+        "node:execute:value": "review-pending",
+        "node:cleanup:value": "verification-failed",
+      }));
+
+    expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 
   it("does NOT park for an ordinary failure with no pending-review value anywhere", async () => {
