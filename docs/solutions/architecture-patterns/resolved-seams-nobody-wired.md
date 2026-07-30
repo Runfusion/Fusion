@@ -87,6 +87,26 @@ sit inside self-healing sweeps that are query-gated and never run on a renamed b
 
 Run step 2 of the method per helper before believing any "audit complete" claim, including this one.
 
+Two of those five are now fixed (`default-workflow-hooks:72`, `executor.ts:2404` — both had the resolved
+lane already in scope). The remaining three are each blocked on something other than effort, and the
+reason matters more than the count:
+
+- **`task-merge.ts:377` (`isTaskReadyForMerge`) — dead in production.** Exported and referenced only by
+  the index barrels and its own test. Wiring a parameter into a function nothing calls is the
+  unwired-parameter anti-pattern itself; it is left, like `selectActionablePlanningContinuations`.
+- **`task-merge.ts:355` (`getTaskHardMergeBlocker`) — mostly query-gated.** Three of its four callers are
+  self-healing sweeps behind hardcoded `listTasks({ column: "in-review" })`, so they never run on a
+  renamed board regardless (see the self-healing doc). Only `project-engine.ts:3537` is live.
+- **`in-review-stall.ts:237` (`getInReviewStallReason`) — needs a batch prefetch, not a per-task resolve.**
+  Its four callers are in `reads.ts`, which decorates EVERY task on every list read. A per-task
+  `resolveWorkflowIrForTask` there costs one IR resolution per row on a hot path. The correct shape is the
+  prefetched per-workflow map used by the converted self-healing sweeps — resolve once per workflow for
+  the batch, then index by task. That is a performance-shaped change, not a one-argument wiring, which is
+  why it is recorded here rather than done in passing.
+
+The operator-visible cost of the last one is the in-review stall badge: on a renamed board the stall
+reason is computed against the legacy lane, so the badge can be wrong for every card in review.
+
 ## The recurring shape: outer question resolved, inner one not
 
 The sharpest instances are not "a caller forgot an argument" but "the same function resolved the lane and
