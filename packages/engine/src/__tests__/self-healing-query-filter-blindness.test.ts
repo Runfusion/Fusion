@@ -37,6 +37,18 @@ import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { resolveLifecycleColumns } from "@fusion/core";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:40:
+`classifyForeignOnlyContamination` is a STATIC named import in the sweep, so `vi.spyOn` on the module
+object cannot intercept it under ESM — the binding is already resolved. Only the other named exports are
+passed through, so the sweeps in this file that use `inspectBranchConflict` are unaffected.
+*/
+const classifyForeignOnlyContamination = vi.fn(async () => ({ kind: "clean" as const }));
+vi.mock("../branch-conflicts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../branch-conflicts.js")>();
+  return { ...actual, classifyForeignOnlyContamination: (...args: unknown[]) => classifyForeignOnlyContamination(...args as []) };
+});
+
 vi.mock("../run-audit.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../run-audit.js")>();
   return {
@@ -769,5 +781,59 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
 
     expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:35 (the query-filter class, fourteenth sweep):
+  `recoverForeignOnlyContaminatedInReviewTasks` classifies a branch that carries ONLY foreign commits and
+  clears the contamination park nothing else clears. Two literal reads meant that on a renamed board it
+  classified nothing and the task stayed parked indefinitely.
+
+  The two `task.column === …` checks inside its filters were redundant while the query pinned the column;
+  under a resolved read they ARE the per-card verdict, so they convert here rather than being deleted.
+
+  `classifyForeignOnlyContamination` is a module function needing git, so the observable is CANDIDACY —
+  it is called once per accepted card and not at all for a card the filters reject, which is exactly the
+  read-plus-verdict this change is about.
+
+  REVERT CHECK, measured: with the literal reads restored, this fails — the card is never listed, so the
+  classifier is never called for it.
+  */
+  it("classifies a foreign-only contaminated branch on a RENAMED review lane", async () => {
+    const parked = {
+      ...shippedCard(),
+      id: "FN-FOREIGN",
+      column: RENAMED_VOCAB.review,
+      branch: "fusion/FN-FOREIGN",
+      worktree: "/tmp/worktrees/FN-FOREIGN",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([parked]);
+    classifyForeignOnlyContamination.mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
+
+    expect(classifyForeignOnlyContamination).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-FOREIGN" }));
+  });
+
+  it("does not classify a card whose lane is neither review nor wip on a RENAMED board", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. Same
+    board, same card — only its lane changes, to the board's own hold lane.
+    */
+    const parked = {
+      ...shippedCard(),
+      id: "FN-FOREIGN",
+      column: RENAMED_VOCAB.hold,
+      branch: "fusion/FN-FOREIGN",
+      worktree: "/tmp/worktrees/FN-FOREIGN",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([parked]);
+    classifyForeignOnlyContamination.mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
+
+    expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
 });

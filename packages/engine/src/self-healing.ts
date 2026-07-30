@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  LEGACY_COLUMN_IDS_BY_ROLE,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -11033,11 +11034,50 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const inReview = await this.store.listTasks({ column: "in-review", slim: true });
-      const inProgress = await this.store.listTasks({ column: "in-progress", slim: true });
-      const candidates = [
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-04:30 (the query-filter class, fourteenth sweep):
+      Two literal reads, and two per-card `task.column === …` checks inside the filters below. Those
+      checks were redundant while the query pinned the column; under a resolved read they become the
+      per-card verdict, so they convert in the same change rather than being deleted.
+
+      On a renamed board both reads returned empty, so a branch carrying ONLY foreign commits was never
+      classified and the task stayed parked on a contamination pause that nothing else clears.
+      */
+      const contaminationReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const contaminationWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const readContaminationBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+        }
+        return [...byId.values()];
+      };
+      const inReview = await readContaminationBucket(contaminationReviewColumns);
+      const inProgress = await readContaminationBucket(contaminationWipColumns);
+      /* Per-card lanes for the two verdicts below; legacy ids unioned for a degraded or mid-rename board. */
+      const contaminationLanes = new Map<string, { review: Set<string>; wip: Set<string> }>();
+      for (const task of [...inReview, ...inProgress]) {
+        if (contaminationLanes.has(task.id)) continue;
+        const lanes = {
+          review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
+          wip: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? []),
+        };
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, task.id);
+          if (ir) {
+            for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
+            for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
+          }
+        } catch { /* degraded: legacy ids above still answer */ }
+        contaminationLanes.set(task.id, lanes);
+      }
+      const contaminationLanesOf = (id: string) => contaminationLanes.get(id) ?? {
+        review: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.mergeOrchestration ?? []),
+        wip: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.countsTowardWip ?? []),
+      };
+      const contaminationCandidates = [
         ...inReview.filter((task) =>
-          task.column === "in-review" &&
+          contaminationLanesOf(task.id).review.has(task.column) &&
           allowsAutoMergeProcessing(task, settings) &&
           Boolean(task.branch) &&
           Boolean(task.worktree) &&
@@ -11050,7 +11090,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // projects (mirroring the FN-5704 reclaim contract), so override-less
         // tasks stay untouched while explicit autoMerge:true tasks recover.
         ...inProgress.filter((task) =>
-          task.column === "in-progress" &&
+          contaminationLanesOf(task.id).wip.has(task.column) &&
           allowsAutoMergeProcessing(task, settings) &&
           task.paused === true &&
           (task.pausedReason === "branch-cross-contamination" || task.pausedReason === "branch-conflict-unrecoverable") &&
@@ -11060,6 +11100,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           !executingIds.has(task.id),
         ),
       ];
+      /*
+      Deduped across the buckets, the hazard reviewed on #2879. The two literal reads were disjoint by
+      construction; resolved ones are not, and the two filters here have DIFFERENT predicates, so a column
+      carrying both a review role and the wip role could match both and classify the same branch twice.
+      Explicit `has` guard rather than `new Map(entries)`, which keeps the LAST value for a repeated key.
+      */
+      const contaminationById = new Map<string, Task>();
+      for (const task of contaminationCandidates) {
+        if (!contaminationById.has(task.id)) contaminationById.set(task.id, task);
+      }
+      const candidates = [...contaminationById.values()];
 
       let recovered = 0;
       const integrationBranch = await resolveIntegrationBranch(this.options.rootDir, settings);
