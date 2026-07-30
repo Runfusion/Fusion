@@ -342,3 +342,47 @@ describe("the summary separates the three classes", () => {
     expect(summary.byColumnId).toEqual({ todo: 1 });
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-03:50 (usability gap in my own tool, found by using it):
+
+`--update-baseline` MUST work even when a file ROSE. The first version could not: the rise check
+exited before the write, so the only way to re-record after a merge that added a guard was to hand-
+edit the JSON — which is how a ratchet becomes something people bypass instead of run. Found by
+running `--strict` on main after four of my own PRs merged: 11 files had DROPPED and one had risen,
+and there was no supported way to record either.
+
+The flag is an explicit operator action, so it re-records unconditionally and PRINTS what it accepted.
+Silently accepting a rise is the real danger; refusing to let anyone re-record is the same danger one
+step later, wearing a red check.
+
+The CLI's exit codes are the contract, so they are asserted here rather than described: the pure
+summarizer cannot express them.
+*/
+describe("the baseline contract", () => {
+  const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
+
+  it("documents the three flags it enforces", async () => {
+    const { readFileSync } = await import("node:fs");
+    const cli = readFileSync(cliPath, "utf8");
+
+    // A rise fails, a drop fails (a stale allowance is a hole), and --update-baseline records both.
+    expect(cli).toContain("column-guard count ROSE");
+    expect(cli).toContain("baseline is STALE");
+    expect(cli).toContain("ACCEPTED RISES");
+  });
+
+  it("re-records unconditionally under --update-baseline, before the rise check can exit", async () => {
+    const { readFileSync } = await import("node:fs");
+    const cli = readFileSync(cliPath, "utf8");
+
+    // Order matters and is the bug being fixed: the write must come BEFORE the rise exit, or a risen
+    // file can never be re-recorded through the supported path.
+    const updateAt = cli.indexOf("if (updateBaseline) {");
+    const riseExitAt = cli.indexOf('console.error("\\nlifecycle-column-census --strict: column-guard count ROSE');
+
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(riseExitAt).toBeGreaterThan(-1);
+    expect(updateAt).toBeLessThan(riseExitAt);
+  });
+});
