@@ -261,7 +261,25 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   if (!workflowId) {
     return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default" };
   }
-  return { ir: await resolveWorkflowIrById(store, workflowId, irCache), source: "selection", workflowId };
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (PR #2618 review — greptile P1):
+  A NAMED SELECTION IS NOT A RESOLVED ONE. `resolveWorkflowIrById` degrades to the default coding
+  IR in three further cases — a missing definition, a malformed one, and a throwing lookup — so
+  reporting `source: "selection"` merely because the store named an id would hand a caller the
+  default's columns wearing the selected workflow's label. That is worse than having no provenance
+  at all: the entire value of this API is that a caller can TRUST "selection", and a signal that
+  lies is one nobody can build the census conversions on.
+
+  Verified by identity, not by hope: a v2 IR carries its own id, so a returned IR whose id is not
+  the selected one is a fallback however it arose. A v1/column-less IR carries no id to check, and
+  it has no column vocabulary either, so it is reported as a default rather than guessed at.
+  */
+  const ir = await resolveWorkflowIrById(store, workflowId, irCache);
+  const resolvedId = (ir as { id?: unknown }).id;
+  if (typeof resolvedId !== "string" || resolvedId !== workflowId) {
+    return { ir, source: "default" };
+  }
+  return { ir, source: "selection", workflowId };
 }
 
 export async function resolveWorkflowIrForTask(

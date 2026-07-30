@@ -94,3 +94,49 @@ describe("workflow IR resolution provenance", () => {
     expect(getWorkflowDefinition).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:25 (PR #2618 review — greptile P1):
+`resolveWorkflowIrById` degrades to the default coding IR in three further cases beyond the two
+the first version handled — a missing definition, a malformed one, and a throwing lookup. Naming a
+selection is not resolving it, and reporting "selection" for any of these hands the caller the
+default's columns wearing the selected workflow's label. A provenance signal that lies is worse
+than none, because its whole value is that "selection" can be trusted.
+*/
+describe("a named selection that does not actually resolve is a default", () => {
+  const WF = "custom:missing";
+  const base = {
+    getTaskWorkflowSelectionAsync: async () => ({ workflowId: WF, stepIds: [] }),
+    getTaskWorkflowSelection: () => ({ workflowId: WF, stepIds: [] }),
+  };
+
+  it("reports `default` when the definition is MISSING", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => undefined } as never, "FN-1");
+    expect(resolved.source).toBe("default");
+    expect(resolved.workflowId).toBeUndefined();
+  });
+
+  it("reports `default` when the definition lookup THROWS", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => { throw new Error("db down"); } } as never, "FN-1");
+    expect(resolved.source).toBe("default");
+  });
+
+  it("reports `default` when the stored definition resolves to a DIFFERENT workflow", async () => {
+    /* Identity, not hope: a returned IR whose id is not the selected one is a fallback however
+       it arose, so this catches degradation paths added later without touching this test. */
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => ({ id: "other", ir: { version: "v2", id: "other", nodes: [], edges: [], columns: [] } }) } as never,
+      "FN-1");
+    expect(resolved.source).toBe("default");
+  });
+
+  it("still reports `selection` when the definition genuinely resolves", async () => {
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(
+      { ...base, getWorkflowDefinition: async () => ({ id: WF, ir: { version: "v2", id: WF, nodes: [], edges: [], columns: [{ id: "inbox", traits: [{ trait: "intake" }] }] } }) } as never,
+      "FN-1");
+    expect(resolved.source).toBe("selection");
+    expect(resolved.workflowId).toBe(WF);
+  });
+});
