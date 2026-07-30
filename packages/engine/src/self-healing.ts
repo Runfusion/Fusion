@@ -9547,15 +9547,64 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const [reviewTasks, todoTasks] = await Promise.all([
-        this.store.listTasks({ column: "in-review", slim: true }),
-        this.store.listTasks({ column: "todo", slim: true }),
-      ]);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-06:10 (the query-filter class, fifteenth sweep):
+      A task whose merge is CONFIRMED but which never reached the complete lane. Two literal reads meant
+      that on a renamed board it was never found, so a card whose work is merged sat in review or hold
+      forever while its commit was already on the base branch.
 
-      const mergedButNotDone = [
-        ...reviewTasks.filter((t) => t.column === "in-review"),
-        ...todoTasks.filter((t) => t.column === "todo"),
-      ].filter((t) =>
+      The two `t.column === …` checks were redundant while the query pinned the column; under a resolved
+      read they become the per-card verdict, so they convert rather than being deleted.
+      */
+      const mergedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const mergedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
+      const readMergedBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+        }
+        return [...byId.values()];
+      };
+      const [reviewTasks, todoTasks] = await Promise.all([
+        readMergedBucket(mergedReviewColumns),
+        readMergedBucket(mergedHoldColumns),
+      ]);
+      /*
+      Per-card lanes. NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT — the shape #2891 settled on:
+      `resolveWorkflowIrForTask` SUBSTITUTES the built-in IR rather than failing, so a card with an
+      unreadable selection would otherwise be rejected by the verdict that the project-scoped query had
+      just admitted from a renamed lane. Falling back to the project sets keeps it.
+      */
+      const mergedLanes = new Map<string, { review: Set<string>; hold: Set<string> }>();
+      for (const task of [...reviewTasks, ...todoTasks]) {
+        if (mergedLanes.has(task.id)) continue;
+        const lanes = { review: new Set<string>(), hold: new Set<string>() };
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          if (source === "default") {
+            for (const id of mergedReviewColumns) lanes.review.add(id);
+            for (const id of mergedHoldColumns) lanes.hold.add(id);
+          } else {
+            for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
+            for (const id of columnsWithFlag(ir, "hold")) lanes.hold.add(id);
+          }
+        } catch {
+          for (const id of mergedReviewColumns) lanes.review.add(id);
+          for (const id of mergedHoldColumns) lanes.hold.add(id);
+        }
+        mergedLanes.set(task.id, lanes);
+      }
+      const mergedLanesOf = (id: string) => mergedLanes.get(id) ?? { review: mergedReviewColumns, hold: mergedHoldColumns };
+
+      /* Deduped across the buckets — the P1 reviewed on #2879; a dual-role column would otherwise finalize one card twice. */
+      const mergedCandidateById = new Map<string, Task>();
+      for (const task of [
+        ...reviewTasks.filter((t) => mergedLanesOf(t.id).review.has(t.column)),
+        ...todoTasks.filter((t) => mergedLanesOf(t.id).hold.has(t.column)),
+      ]) {
+        if (!mergedCandidateById.has(task.id)) mergedCandidateById.set(task.id, task);
+      }
+      const mergedButNotDone = [...mergedCandidateById.values()].filter((t) =>
         !t.deletedAt &&
         allowsAutoMergeProcessing(t, settings) &&
         t.mergeDetails?.mergeConfirmed === true,

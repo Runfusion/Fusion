@@ -657,4 +657,67 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(pastBlocker).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:15 (the query-filter class, fifteenth sweep):
+  `recoverMergedReviewTasks` finalizes a task whose merge is CONFIRMED but which never reached the
+  complete lane. Two literal reads meant that on a renamed board the card sat in review or hold forever
+  while its commit was already on the base branch — merged work that the board still shows as unfinished.
+
+  Observable is `resolveSelfHealingMergeTarget`, a private method called once per candidate, so the
+  assertion sits downstream of both the read and the per-card verdict without needing a git fixture.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal reads restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-review"` -> fails, the renamed review lane does not match
+  */
+  it("finalizes a merge-confirmed card stranded on a RENAMED review lane", async () => {
+    const merged = {
+      ...shippedCard(),
+      id: "FN-MERGED",
+      column: RENAMED_VOCAB.review,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([merged]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: resolveTarget,
+      isCommitReachableFromBranch: vi.fn(async () => false),
+      recordSharedGroupDefaultTargetGuard: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMergedReviewTasks();
+
+    expect(resolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-MERGED" }),
+      expect.anything(),
+      "recover-merged-review",
+    );
+  });
+
+  it("ignores a merge-confirmed card sitting in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. This
+    sweep covers review and hold only — a card mid-execution is not its business.
+    */
+    const merged = {
+      ...shippedCard(),
+      id: "FN-MERGED",
+      column: RENAMED_VOCAB.wip,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([merged]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: resolveTarget,
+      isCommitReachableFromBranch: vi.fn(async () => false),
+      recordSharedGroupDefaultTargetGuard: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMergedReviewTasks();
+
+    expect(resolveTarget).not.toHaveBeenCalled();
+  });
 });
