@@ -1232,7 +1232,20 @@ export class HeartbeatMonitor {
           FNXC:AgentTaskStateDrift 2026-06-23-09:02:
           Reports Health Check must not render a durable direct report as running a parked todo/triage task unless a fresh heartbeat run or tracked executor signal proves live execution. Clearing Agent.taskId here preserves overlapBlockedBy on the task row; the file-scope lease remains the scheduler's source of truth.
           */
-          if (isParkedTaskColumn(linkedTask) && !parkedProof.shouldPreserveParkedLink) {
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (unwired-parameter class, cf. #2803):
+          `isParkedTaskColumn` has taken a resolved `parkedColumns` since its own conversion, but BOTH
+          call sites here passed nothing and silently took the legacy `todo`/`triage` default. On a board
+          whose hold and intake lanes are renamed the check returned false for every card, so this clear
+          never fired: a durable agent kept its task link to a parked card with no live execution proof,
+          and Reports Health Check went on rendering it as RUNNING.
+
+          A resolved seam nobody wired is indistinguishable from no seam at all — which is exactly what
+          the caller audit found five of.
+          */
+          const parkedLanes = await resolveTaskLifecycleColumns(this.taskStore!, linkedTask.id).catch(() => undefined);
+          const parkedColumns = [parkedLanes?.hold, parkedLanes?.intake].filter((c): c is string => typeof c === "string");
+          if (isParkedTaskColumn(linkedTask, parkedColumns.length > 0 ? parkedColumns : undefined) && !parkedProof.shouldPreserveParkedLink) {
             reason = `parked ${linkedTask.column} task ${agent.taskId} without live execution proof`;
             clearTaskLink = true;
             taskIdToClear = agent.taskId;
@@ -3712,7 +3725,11 @@ export class HeartbeatMonitor {
       if (report.state === "running" && !isEphemeralAgent(report) && report.taskId && this.taskStore) {
         try {
           const linkedTask = await this.taskStore.getTask(report.taskId);
-          if (isParkedTaskColumn(linkedTask)) {
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-23:50: same unwired parameter as above — the health
+             report rendered a parked card as running on any board with renamed hold/intake lanes. */
+          const reportParkedLanes = await resolveTaskLifecycleColumns(this.taskStore, report.taskId).catch(() => undefined);
+          const reportParkedColumns = [reportParkedLanes?.hold, reportParkedLanes?.intake].filter((c): c is string => typeof c === "string");
+          if (isParkedTaskColumn(linkedTask, reportParkedColumns.length > 0 ? reportParkedColumns : undefined)) {
             const activeRun = await agentStore.getActiveHeartbeatRun(report.id);
             const proof = evaluateParkedAgentTaskLink({
               agent: report,
