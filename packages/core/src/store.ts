@@ -126,7 +126,7 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { resolveReviewColumns } from "./workflow-lifecycle-traits.js";
+import { resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
@@ -307,6 +307,31 @@ function repairIgnoredOverlapPath(path: string, ignorePath: string): boolean {
 function filterRepairOverlapIgnoredPaths(paths: string[], ignorePaths: string[]): string[] {
   if (ignorePaths.length === 0) return paths;
   return paths.filter((path) => !ignorePaths.some((ignorePath) => repairIgnoredOverlapPath(path, ignorePath)));
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+Does this candidate still hold an active file-scope lease? Hoisted to module scope because the
+overlap repair asks it in TWO places (the blocker pre-check and the reroute search) and they must not
+drift — one of the two answering differently is how the repair reroutes to a blocker the other half
+already dismissed.
+
+Pause/failed state is checked by each caller, which owns that half of the question; this decides only
+the LANE half.
+
+`lanes === undefined` means the candidate's workflow could not be read: keep today's literals.
+A resolved workflow with no wip/review lane answers false for that half rather than substituting one.
+*/
+export function holdsRepairFileScopeLease(
+  candidate: Pick<Task, "column" | "worktree">,
+  lanes: { wip: string | undefined; review: string | undefined } | undefined,
+): boolean {
+  /* DELIBERATE-LITERAL — the unresolvable-workflow default documented above, reviewed 2026-07-31-01:10. */
+  if (!lanes) {
+    return candidate.column === "in-progress" || (candidate.column === "in-review" && Boolean(candidate.worktree));
+  }
+  if (lanes.wip !== undefined && candidate.column === lanes.wip) return true;
+  return lanes.review !== undefined && candidate.column === lanes.review && Boolean(candidate.worktree);
 }
 
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
@@ -1638,8 +1663,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async recordRunAuditEvent(input: RunAuditEventInput): Promise<RunAuditEvent> {
     return recordRunAuditEventImpl(this, input);
   }
-  public isLegacyAutoMergeStampCandidate(task: Pick<Task, "column" | "autoMerge" | "autoMergeProvenance">): boolean {
-    return task.column === "in-review" && task.autoMerge === true && task.autoMergeProvenance !== "user";
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+  `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
+
+  Synchronous by necessity — it is a pure row predicate used to filter an already-loaded list — so it
+  takes the answer rather than resolving one. Keyed on the literal it selected NOTHING on a renamed
+  board, so the legacy auto-merge stamp backfill silently reconciled zero rows and reported success.
+
+  DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-01:10.
+  */
+  public isLegacyAutoMergeStampCandidate(
+    task: Pick<Task, "column" | "autoMerge" | "autoMergeProvenance">,
+    reviewColumns?: ReadonlySet<string>,
+  ): boolean {
+    const inReviewLane = reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review";
+    return inReviewLane && task.autoMerge === true && task.autoMergeProvenance !== "user";
   }
   public async listLegacyAutoMergeStampCandidates(): Promise<Task[]> {
     return listLegacyAutoMergeStampCandidatesImpl(this);
@@ -1768,7 +1807,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return { taskId: id, dryRun, repaired: false, statusCleared: false, reason: "no-overlap-blocker", message: `Task ${id} has no overlap blocker`, task };
     }
 
-    if (task.column !== "todo") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    ONE lane resolution for the whole repair, shared by every question below.
+
+    The overlap-blocker repair was inert end to end on a renamed board. It refused here first
+    ("not a repairable todo state") for a card sitting in the board's own hold lane; past that it
+    would have found no active lease holders and no queued reroute candidates either, because the
+    same three literals appear at each step. A repair that declines everything looks identical in the
+    logs to a board with nothing to repair.
+
+    `repairIrCache` is caller-owned per the contract on `resolveTaskLifecycleColumns`: this pass
+    resolves lanes for the task, its blocker, and every reroute candidate, so a board spanning three
+    workflows must read three IRs — not one per card.
+    */
+    const repairIrCache = new Map<string, WorkflowIr>();
+    const repairLanesFor = async (taskId: string) =>
+      (await resolveTaskLifecycleColumns(this, taskId, repairIrCache).catch(() => undefined));
+    const taskLanes = await repairLanesFor(task.id);
+    /*
+    The hold lane is resolved, NOT defaulted per field: `taskLanes === undefined` means the workflow
+    could not be read (keep the literal), while a resolved workflow with no hold lane is an ANSWER —
+    the board has nowhere repairable, so the repair declines and says so rather than inventing "todo".
+    */
+    const repairableHoldColumn = taskLanes === undefined ? "todo" : taskLanes.hold;
+    if (repairableHoldColumn === undefined || task.column !== repairableHoldColumn) {
       return {
         taskId: id,
         dryRun,
@@ -1776,7 +1839,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         statusCleared: false,
         previousOverlapBlockedBy,
         reason: "not-repairable-state",
-        message: `Task ${id} is in ${task.column}, not a repairable todo state`,
+        message: repairableHoldColumn === undefined
+          ? `Task ${id} is in ${task.column}; its workflow declares no hold lane, so there is no repairable state`
+          : `Task ${id} is in ${task.column}, not a repairable ${repairableHoldColumn} state`,
         task,
       };
     }
@@ -1798,10 +1863,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const taskScope = await getScope(task.id);
     if (blocker) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+      The blocker's OWN lanes decide whether it still holds a file-scope lease — it may live on a
+      different board from the task it blocks.
+
+      NOTE for whoever unifies this: `holdsRepairFileScopeLease` below and
+      `shouldHoldActiveFileScopeLease` in `engine/scheduler.ts` are a THIRD and FOURTH copy of this
+      same predicate. They must keep agreeing or the repair reroutes to a blocker the scheduler
+      ignores. Not unified here because the scheduler's copy lives in `@fusion/engine`, which core
+      cannot import, and moving it is a cross-batch refactor rather than a conversion.
+      */
+      const blockerLanes = await repairLanesFor(blocker.id);
       const blockerHoldsActiveLease = !blocker.paused
         && !blocker.userPaused
         && blocker.status !== "failed"
-        && (blocker.column === "in-progress" || (blocker.column === "in-review" && Boolean(blocker.worktree)));
+        && holdsRepairFileScopeLease(blocker, blockerLanes);
       const blockerScope = await getScope(blocker.id);
       if (blockerHoldsActiveLease && repairScopesOverlap(taskScope, blockerScope)) {
         return {
@@ -1818,12 +1895,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
-    const unresolvedDeps = (task.dependencies ?? []).filter((depId) => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    Each dependency's terminal columns come from ITS OWN workflow. Keyed on the literals, a finished
+    dependency on a renamed board never counted as resolved, so the repair kept re-blocking the card
+    it had just unblocked.
+    */
+    const dependencyLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
+    for (const depId of task.dependencies ?? []) {
+      dependencyLanesByTaskId.set(depId, await repairLanesFor(depId));
+    }
+    const isUnresolvedDependency = (depId: string): boolean => {
       const dep = taskById.get(depId);
-      return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "archived";
-    });
+      if (!dep || dep.deletedAt) return false;
+      const lanes = dependencyLanesByTaskId.get(depId);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-01:10. */
+      if (!lanes) return dep.column !== "done" && dep.column !== "archived";
+      return dep.column !== lanes.complete && dep.column !== lanes.archived;
+    };
+    const unresolvedDeps = (task.dependencies ?? []).filter(isUnresolvedDependency);
 
-    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy);
+    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy, repairLanesFor);
     const statusCleared = unresolvedDeps.length === 0 && !currentOverlapBlocker && task.status === "queued";
 
     /*
@@ -1901,10 +1993,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         skipped = overlapBlockerChangedResult(current);
         return null;
       }
-      const currentUnresolvedDeps = (current.dependencies ?? []).filter((depId) => {
-        const dep = taskById.get(depId);
-        return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "archived";
-      });
+      /* Same resolved answer as the pre-check above — a second copy here is how the two halves of
+         this repair end up disagreeing about whether a dependency is finished. */
+      const currentUnresolvedDeps = (current.dependencies ?? []).filter(isUnresolvedDependency);
       const currentStatusCleared = currentUnresolvedDeps.length === 0 && current.status === "queued";
       return {
         overlapBlockedBy: null,
@@ -1938,19 +2029,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     tasks: Task[],
     getScope: (taskId: string) => Promise<string[]>,
     previousOverlapBlockedBy: string,
+    /* The CALLER's resolver, so this search shares the repair's single IR cache rather than opening a
+       second one — and so both halves of the repair resolve a given card's lanes identically. */
+    resolveLanes: (taskId: string) => Promise<LifecycleColumns | undefined>,
   ): Promise<string | null> {
     /*
     FNXC:OverlapRepair 2026-06-25-05:49:
     Stale-overlap repair must reroute only to tasks that the scheduler would still treat as active file-scope lease holders. Operator-paused or failed active rows are parked work, not live blockers, so the repair should clear stale state instead of creating a fresh blocker edge to them.
     */
-    const holdsRepairFileScopeLease = (candidate: Task) => {
-      if (candidate.paused || candidate.userPaused || candidate.status === "failed") return false;
-      if (candidate.column === "in-progress") return true;
-      return candidate.column === "in-review" && Boolean(candidate.worktree);
-    };
-    const activeCandidates = tasks
-      .filter((candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy)
-      .filter(holdsRepairFileScopeLease)
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    Resolve each candidate's lanes before the sync filter, sharing the caller's IR cache. Resolution
+    is restricted to candidates that survive the id filter so an unrelated backlog costs nothing.
+    */
+    const candidatePool = tasks.filter(
+      (candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy,
+    );
+    const candidateLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
+    for (const candidate of candidatePool) {
+      candidateLanesByTaskId.set(candidate.id, await resolveLanes(candidate.id));
+    }
+    const activeCandidates = candidatePool
+      .filter((candidate) => {
+        if (candidate.paused || candidate.userPaused || candidate.status === "failed") return false;
+        return holdsRepairFileScopeLease(candidate, candidateLanesByTaskId.get(candidate.id));
+      })
       .sort((a, b) => a.id.localeCompare(b.id));
 
     for (const candidate of activeCandidates) {
@@ -1961,8 +2064,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const priorityRank: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
     const taskRank = priorityRank[task.priority ?? "normal"] ?? 2;
     const taskCreatedAt = Date.parse(task.createdAt);
-    const queuedCandidates = tasks
-      .filter((candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy && candidate.column === "todo")
+    const queuedCandidates = candidatePool
+      .filter((candidate) => {
+        const lanes = candidateLanesByTaskId.get(candidate.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-01:10. */
+        if (!lanes) return candidate.column === "todo";
+        return lanes.hold !== undefined && candidate.column === lanes.hold;
+      })
       .filter((candidate) => {
         const candidateRank = priorityRank[candidate.priority ?? "normal"] ?? 2;
         if (candidateRank < taskRank) return true;
