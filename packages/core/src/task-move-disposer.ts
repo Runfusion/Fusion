@@ -85,6 +85,11 @@ export async function disposeTaskBeforeMove(store: TaskStore, input: TaskMoveDis
   So the default board behaves exactly as before, and only a board whose lanes do NOT match the
   legacy pair pays a resolution — which is precisely the case the literals got wrong.
   */
+  /* FNXC:WorkflowResolvedColumns 2026-07-30-15:50 DELIBERATE-LITERAL: a fast path, not the guard.
+     The legacy pair is what a default board uses, so matching it short-circuits the workflow read.
+     The actual lane decision is the RESOLVED membership test inside this block; these two ids only
+     decide whether resolution is needed, and answering "no" for them is always correct because they
+     are exactly the pair the resolved test would have matched anyway. */
   if (input.from !== "in-progress" || input.to !== "todo") {
     let wipLanes: ReadonlySet<string> = new Set<string>();
     let preWipLanes: ReadonlySet<string> = new Set<string>();
