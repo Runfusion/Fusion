@@ -41,13 +41,27 @@ against them, and its own comment records the outcome: "a write against a workfl
 on a task whose custom workflow defines fields is rejected as unknown-id. Same reader is used by
 `workflow-ops.ts` for the old-defs diff.
 
+Three production callers, not one — verified by grep while checking the review correction below:
+`task-update.ts` (update), `workflow-ops.ts` (the old-defs diff on workflow change), and
+`workflow-task-create-ops.ts` (task CREATE). So the exposure covers creating a task with custom
+fields as well as updating one.
+
 REASONED FROM SOURCE, NOT OBSERVED: I did not execute this path. No test in `packages/core` covers
 `CustomFieldRejectionError` or `resolveTaskCustomFieldDefsSync`, which is consistent with the gap but
 is not proof. Reproduce before fixing.
 
-**2. Per-workflow capacity pools collapse.** `resolveEffectiveWorkflowIdSyncImpl` reads the same
-selection, so it always calls `resolveCapacityPoolId(undefined)` — every task resolves to the default
-pool regardless of its workflow.
+METHOD NOTE, earned the hard way: a consequence is only real if something CALLS the defective
+function. I listed the capacity item without checking, and review caught it. Every other item here
+has had its call sites verified — `isTaskTerminalNodeIdImpl` via the `isTerminalNodeId` callback in
+`branch-and-pr-entities.ts`, the hook re-run in `lifecycle-ops.ts`, and the three above.
+
+**2. The synchronous capacity-pool helper returns the default pool — but nothing calls it.**
+`resolveEffectiveWorkflowIdSyncImpl` reads the same selection, so it always calls
+`resolveCapacityPoolId(undefined)`. CORRECTED after review: I first wrote this as "per-workflow
+capacity pools collapse", which was wrong and would have sent someone to fix an unused path. The
+binding capacity path reads the selection ASYNCHRONOUSLY inside its transaction, and this sync helper
+has NO callers — `grep` finds only its own definition, its `Impl`, and one comment. Latent, not live:
+it becomes real the moment someone calls it, which is the only reason it is still listed.
 
 **3. Plugin transition hooks re-run against the wrong IR.** `lifecycle-ops.ts` crash-recovery passes
 this IR to `runPluginColumnTransitionHooks`, so a custom-workflow card's hooks are evaluated against
