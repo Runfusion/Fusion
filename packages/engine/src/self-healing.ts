@@ -10449,11 +10449,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (the query-filter class, tenth sweep):
+      Read the review lanes this PROJECT declares rather than the literal `in-review`, then decide each
+      card against ITS OWN workflow below. A card wedged `failed` after a post-done continuation error on
+      a renamed board was never listed at all, so it stayed failed with every step done.
+      */
+      const wedgeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const wedgeById = new Map<string, Task>();
+      for (const column of wedgeReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: false })) wedgeById.set(task.id, task);
+      }
+      const tasks = [...wedgeById.values()];
+      /* Per-card review lanes; also fed to the hard-blocker below so it judges the card's own vocabulary. */
+      const wedgeLanesByTask = new Map<string, Set<string>>();
+      const unresolvedWedgeCards: string[] = [];
+      for (const task of tasks) {
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        if (source === "default") unresolvedWedgeCards.push(task.id);
+        const own = REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)]);
+        wedgeLanesByTask.set(task.id, own.length > 0 ? new Set(own) : new Set(["in-review"]));
+      }
+      if (unresolvedWedgeCards.length > 0) {
+        log.warn(
+          `post-done non-continuable wedge recovery: ${unresolvedWedgeCards.length} card(s) fell back to the built-in workflow (${unresolvedWedgeCards.slice(0, 5).join(", ")})`,
+        );
+      }
       let recovered = 0;
 
       for (const task of tasks) {
-        if (task.column !== "in-review" || task.deletedAt) continue;
+        const wedgeLanes = wedgeLanesByTask.get(task.id) ?? new Set(["in-review"]);
+        if (!wedgeLanes.has(task.column) || task.deletedAt) continue;
         if (!allowsAutoMergeProcessing(task, settings)) continue;
         if (task.paused || task.userPaused) continue;
         if (task.status !== "failed") continue;
@@ -10461,7 +10487,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) continue;
         const doneMarker = [...(task.log ?? [])].reverse().find((entry) => entry.action === "Task marked done by agent");
         if (!doneMarker) continue;
-        if (getTaskHardMergeBlocker({ ...task, status: undefined, error: undefined, steps: task.steps ?? [], workflowStepResults: task.workflowStepResults })) continue;
+        /* Wired in the SAME change as the read: widening the query without this makes the sweep find renamed-board cards and decline every one. */
+        if (getTaskHardMergeBlocker({ ...task, status: undefined, error: undefined, steps: task.steps ?? [], workflowStepResults: task.workflowStepResults }, { reviewColumns: wedgeLanes })) continue;
 
         const evidence = this.getPostDoneNonContinuableEvidence(task);
         if (!evidence) continue;
