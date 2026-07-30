@@ -2310,9 +2310,24 @@ export class Scheduler {
             held in the second must still count.
             */
             const loadLaneIr = await resolveWorkflowIrForTask(this.store, freshTask.id).catch(() => undefined);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-10:40 (#2787 review — greptile P1, second round):
+            THE HOLD AND INTAKE LANES COUNT AS LOAD TOO.
+
+            The legacy set is `{todo, in-progress, in-review}` — and `todo` is the HOLD/INTAKE lane.
+            My first union covered only wip and review, so passing it OVERRODE the fallback and
+            dropped assigned backlog work from the tally: a regression against the legacy behaviour
+            for that lane, introduced by the very argument meant to fix the renamed case.
+
+            That is the trap in overriding a default rather than extending it — the resolved answer
+            must cover EVERY role the literal covered, or wiring the parameter is a downgrade for the
+            roles it forgot.
+            */
             const activeLoadColumns = loadLaneIr === undefined
               ? undefined
               : new Set<string>([
+                ...columnsWithFlag(loadLaneIr, "intake"),
+                ...columnsWithFlag(loadLaneIr, "hold"),
                 ...columnsWithFlag(loadLaneIr, "countsTowardWip"),
                 ...columnsWithFlag(loadLaneIr, "mergeOrchestration"),
                 ...columnsWithFlag(loadLaneIr, "mergeBlocker"),

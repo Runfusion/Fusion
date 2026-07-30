@@ -248,6 +248,18 @@ describe("assignment load resolves the board's own active lanes", () => {
     expect(selected?.id).toBe("AG-IDLE");
   });
 
+  it("counts work parked in a RENAMED hold lane, as the legacy set counted todo", async () => {
+    /*
+    #2787 review, second round (greptile P1). The legacy set is `{todo, in-progress, in-review}` and
+    `todo` is the HOLD lane, so a resolved set covering only wip and review DROPS assigned backlog
+    work from the tally — a regression against legacy introduced by the argument meant to fix the
+    renamed case. The resolved answer must cover every role the literal covered.
+    */
+    const selected = await select("backlog", new Set(["backlog", "building", "signoff"]));
+
+    expect(selected?.id).toBe("AG-IDLE");
+  });
+
   it("does not count work parked outside the supplied lanes", async () => {
     // A finished card must not hold load against its agent, or the agent looks busy forever.
     const selected = await select("shipped", new Set(["backlog", "building", "signoff"]));
