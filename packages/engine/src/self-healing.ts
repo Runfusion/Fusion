@@ -3645,9 +3645,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       let recovered = 0;
       const integrationBranch = await resolveIntegrationBranch(this.options.rootDir, settings);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (batch-engine — reclaimSelfOwnedBranchConflicts):
+      One IR cache for the sweep; lanes resolved per candidate at the top of the loop body, which is
+      already async. Every question below is about the ITERATED task's own column, so per-task resolution
+      is the right scope — unlike `clearStaleBlockedBy`, where the questions were about referenced rows.
+
+      Membership with the legacy ids unioned in, for the reason recorded on the other sweeps: a missing or
+      corrupt workflow yields the BUILT-IN IR rather than throwing, so without the union a degraded renamed
+      board resolves lane sets that exclude its own lanes and every guard here goes inert.
+      */
+      const reclaimIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const reclaimLanesFor = async (taskId: string) => {
+        const lanes = {
+          wip: new Set<string>(["in-progress"]),
+          hold: new Set<string>(["todo"]),
+          review: new Set<string>(["in-review"]),
+        };
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, reclaimIrCache);
+          if (ir) {
+            for (const id of columnsWithFlag(ir, "countsTowardWip")) lanes.wip.add(id);
+            for (const id of columnsWithFlag(ir, "hold")) lanes.hold.add(id);
+            for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+              for (const id of columnsWithFlag(ir, flag)) lanes.review.add(id);
+            }
+          }
+        } catch { /* degraded: legacy ids only */ }
+        return lanes;
+      };
+
       for (const task of candidates) {
         if (!task.branch || !task.worktree) continue;
         if (task.userPaused) continue;
+        const lanes = await reclaimLanesFor(task.id);
         const liveExecutionSignal = this.getFalsePositiveRequeueSignal(task, {
           executingIds,
           activeHeartbeatTaskIds: activeTaskIds,
@@ -3656,7 +3687,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           includeCheckedOutLease: true,
         });
         if (liveExecutionSignal) {
-          const canEvaluatePhantomBinding = task.column === "in-progress"
+          const canEvaluatePhantomBinding = lanes.wip.has(task.column)
             && (liveExecutionSignal.reason === "executor-active" || liveExecutionSignal.reason === "live-worktree-and-branch");
           if (canEvaluatePhantomBinding) {
             const nowMs = Date.now();
@@ -3728,7 +3759,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           );
           continue;
         }
-        if (task.column === "todo" && task.blockedBy) {
+        if (lanes.hold.has(task.column) && task.blockedBy) {
           log.debug(`[self-healing] skipping blocked todo task ${task.id} during self-owned branch reclaim (blockedBy=${task.blockedBy})`);
           continue;
         }
@@ -3750,7 +3781,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
         if (!await isUsableTaskWorktree(this.options.rootDir, task.worktree)) continue;
 
-        const reviewProof = task.column === "in-review"
+        const reviewProof = lanes.review.has(task.column)
           ? await this.evaluateBackwardMoveTripleProof(task, {
             stage: "reclaim-self-owned-branch-conflict",
             graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
@@ -3871,7 +3902,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 `[recovery] tip-already-merged ${task.id} branch=${branchName} tip=${inspection.tipSha.slice(0, 12)} integrationRef=${inspection.integrationRef} reason=stale-cached-metadata-ghost-conflict`,
               );
 
-              if (task.column === "in-review") {
+              if (lanes.review.has(task.column)) {
                 if (!reviewProof?.ok) {
                   await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
                 } else {
@@ -3976,7 +4007,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`,
                 );
 
-                if (task.column === "in-review") {
+                if (lanes.review.has(task.column)) {
                   if (!reviewProof?.ok) {
                     await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
                   } else {
@@ -4066,12 +4097,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const unchangedSincePriorResume = hasPriorSnapshot
             && task.resumeLimboTipSha === inspection.tipSha
             && task.resumeLimboStepSignature === stepSignature;
-          const isNoProgressResume = task.column === "in-progress"
+          const isNoProgressResume = lanes.wip.has(task.column)
             && unchangedSincePriorResume
             && !hasActiveSessionSignal;
           const resumeAttemptCount = isNoProgressResume ? (task.resumeLimboCount ?? 0) + 1 : 0;
 
-          if (task.column === "in-progress" && isNoProgressResume && resumeAttemptCount >= MAX_NO_PROGRESS_RESUME_ATTEMPTS) {
+          if (lanes.wip.has(task.column) && isNoProgressResume && resumeAttemptCount >= MAX_NO_PROGRESS_RESUME_ATTEMPTS) {
             const idleAnchor = task.executionStartedAt ?? task.columnMovedAt ?? task.updatedAt;
             const idleAnchorMs = Date.parse(idleAnchor ?? "");
             const idleMs = Number.isFinite(idleAnchorMs) ? Math.max(0, Date.now() - idleAnchorMs) : null;
@@ -4140,7 +4171,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${reclaimedWorktreePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`,
           );
 
-          if (task.column === "in-review") {
+          if (lanes.review.has(task.column)) {
             if (!reviewProof?.ok) {
               await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
             } else {
