@@ -7225,3 +7225,116 @@ describe("TriageProcessor.sweepStalePlanningStatuses", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:40 (the test PR #2593's review asked for):
+
+WHY THIS TOOK THREE ATTEMPTS TO WRITE HONESTLY. The guard under test is the ORPHAN arm of
+`inPlannerColumn` — `task.column === "triage" && !declaresLegacyTriage`. On a bare mock store the arm
+is NEVER REACHED: `resolvePlannerLanes` reads `resolveTaskWorkflowIrSync`, which a bare mock does not
+define, so it returns LEGACY_PLANNER_LANES (`intake: "triage"`) and a `triage` card matches the FIRST
+arm. Every earlier fixture I wrote passed through that short-circuit and proved nothing.
+
+So all three cases below stub `resolveTaskWorkflowIrSync` with the MERGED DEFAULT shape, which is what
+production resolves: `intake` and `hold` both `todo`. That makes the first arm fail for a `triage` card
+and leaves the orphan arm as the only thing deciding the outcome.
+
+The three cases differ ONLY in the workflow readers, so the outcome difference can have no other cause.
+Case B is the positive control: without it, "returns false" is unfalsifiable — every case would pass if
+the arm were dead.
+*/
+describe("recoverApprovedTask — the orphan-`triage` arm, with the intake short-circuit disabled", () => {
+  const MERGED_DEFAULT = {
+    version: "v2", id: "builtin:coding", nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never;
+  const customIr = (id: string, withTriage: boolean) => ({
+    version: "v2", id, nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      ...(withTriage ? [{ id: "triage", name: "Code review", traits: [{ trait: "review" }] }] : []),
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never);
+
+  const PLAN = "## Objective\nDo the thing.\n\n## Steps\n1. Step one\n";
+  let root = "";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "fusion-orphan-triage-"));
+    await mkdir(join(root, ".fusion", "tasks", "FN-ORPHAN"), { recursive: true });
+    await writeFile(join(root, ".fusion", "tasks", "FN-ORPHAN", "PROMPT.md"), PLAN);
+  });
+  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  /** Identical in every case except the workflow readers passed in. */
+  const run = async (workflowReaders: Partial<TaskStore>): Promise<boolean> => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10000,
+        groupOverlappingFiles: false, autoMerge: true, requirePlanApproval: true,
+      } as Settings),
+      // Production resolves the MERGED default here, so `lanes.intake` is `todo`, not `triage`.
+      resolveTaskWorkflowIrSync: vi.fn(() => MERGED_DEFAULT),
+      ...workflowReaders,
+    } as Partial<TaskStore>);
+    return new TriageProcessor(store, root).recoverApprovedTask({
+      id: "FN-ORPHAN",
+      description: "Orphaned triage row",
+      column: "triage",
+      status: "planning",
+      approvedPlanFingerprint: computePlanApprovalFingerprint(PLAN),
+      dependencies: [], steps: [], currentStep: 0,
+      log: [{ timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" }],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as never);
+  };
+
+  it("B (POSITIVE CONTROL) recovers the orphan when the workflow RESOLVES and declares no `triage`", async () => {
+    // Proves the arm is reachable and returns true. Without this the two false cases below are
+    // unfalsifiable.
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:no-triage", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:no-triage", false) })),
+    } as Partial<TaskStore>)).toBe(true);
+  });
+
+  it("A (BEHAVIOR PIN — does NOT discriminate) declines when the workflow cannot be resolved", async () => {
+    /*
+    HONEST LABEL, from the mutation run. I wrote this as THE regression case and it is not: reverting
+    to the pre-fix sync read leaves it GREEN. It returns false in both worlds, so something other
+    than `declaresLegacyTriage` decides it — most likely a later gate that needs the selection this
+    case deliberately withholds. Kept as a fail-closed behavior pin, explicitly NOT as proof of the
+    fix; case C below is what actually discriminates.
+
+    Left in with the wrong-looking result documented rather than deleted, because a future edit that
+    makes this case flip would be informative — it would mean the orphan arm had become reachable
+    here, which is a real change in the guard's scope.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: undefined,
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+    } as Partial<TaskStore>)).toBe(false);
+  });
+
+  it("C (THE REGRESSION) declines when the workflow DECLARES `triage` as a non-intake lane", async () => {
+    /*
+    THE DISCRIMINATOR, confirmed by mutation: reverting `recoverApprovedTask` to the pre-fix
+    `resolveTaskWorkflowIrSync` read makes THIS case fail (and only this one, of the three). The sync
+    reader ignores the selection and hands back the default IR, which declares no `triage`, so the
+    orphan arm fires and the card is finalized out of a custom workflow's CODE REVIEW column —
+    bypassing that column's transition. This is the greptile P1 case, and it is the one that proves
+    the provenance fix does work.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:triage-review", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:triage-review", true) })),
+    } as Partial<TaskStore>)).toBe(false);
+  });
+});
