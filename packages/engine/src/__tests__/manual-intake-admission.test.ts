@@ -23,6 +23,23 @@ mechanism — "`eligibleTriageTasks`, which only matches `column === "triage"`" 
 So this file's store RESOLVES the workflow. That single difference is the whole point: a test whose
 fixture cannot reach the code path proves nothing about it.
 
+SURFACE ENUMERATION (AGENTS.md requires this for a bug-class fix; here is what was checked, not
+assumed):
+
+  1. TRIAGE DISCOVERY -> `specifyTask`. BOTH dispatch sites (`triage.ts` ~536 via the admission
+     coordinator, and ~1985 via the poll) call `discoverReadyPlanningTasks`, so the gate has ONE
+     home. Covered by this suite, driving `poll()`.
+  2. HOLD-RELEASE into WIP (`issueRelease` / `reserveSlot` / `promoteHeldTask` /
+     `releaseHeldTaskByEvent`). Safe already: `isUnplannedForExecution` holds a card whose PROMPT.md
+     is still the bootstrap stub while it rests in an `intake`-trait column, and a parked idea is by
+     definition unplanned. Nothing to change — the release surfaces share that one predicate.
+  3. SELF-HEALING's stranded-hold continuation. Candidate requires a REAL spec; a parked idea has a
+     bootstrap stub, so it is not a candidate.
+  4. SCHEDULER dispatch. Reads WIP-bound work from the hold column, and reaches a card only after
+     release, which (2) gates.
+  5. OPERATOR-TRIGGERED re-specification (a user comment on a parked card). Deliberately NOT gated:
+     that is an operator acting on their own card, which is the promotion path, not auto-planning.
+
 CONSEQUENCE FOR THE CODING-IDEAS MERGE (ideas + todo -> one Planning column): it cannot be reasoned
 about until this signal exists, because merging makes `intake === hold` and the two admission branches
 collapse onto one column. With `manualIntake` honoured, a merged manual lane parks correctly and is
