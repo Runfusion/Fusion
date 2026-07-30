@@ -35,6 +35,9 @@ import {
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
   type SecretScope,
+  resolveTaskLifecycleColumns,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -870,7 +873,10 @@ async function formatDuplicateLineageLine(task: Task, store: TaskStore): Promise
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      return linked.column === "archived" ? `${id} (archived)` : id;
+      /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:45 (fleet): the board's archived column — the same marker
+         as the CLI command's copy of this helper, converted there in this PR. */
+      const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
+      return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
     } catch {
       return id;
     }
@@ -885,6 +891,11 @@ export function formatTaskLine(t: Task): string {
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
+  /* DELIBERATE-LITERAL: `formatTaskLine` is a SYNCHRONOUS formatter taking only a Task — no store, no IR, and
+     it is called from list rendering where a per-row async resolution would be a read per line. The literal
+     only decides whether to print "(paused)", so a renamed board's mislabel is cosmetic. Converting it means
+     threading resolved flags in from every caller, which belongs with the board-render conversion that owns
+     the same problem (see the glyph note in commands/task.ts). */
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
@@ -1865,8 +1876,30 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
       
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-12:40 (PR #2728 review — the retry gate exists THREE times):
+      This is `fn_task_retry`, the MCP tool AGENTS call — the third copy of the same classifier, after the
+      dashboard route (#2713) and the CLI command (this PR). Converting two of three is worse than converting
+      none: the operator retries from the board and it works, the agent retries the same card and is told it
+      is not retryable, and nothing in either message mentions columns.
+
+      Same SET semantics as the other two surfaces (mergeBlocker / humanReview can sit on different columns,
+      #2713), and the same note applies: three copies of one predicate is the argument for a set-returning
+      resolver in core, which is a follow-up rather than a rider on this PR.
+      */
+      const retryIr = await resolveWorkflowIrForTask(store, params.id).catch(() => undefined);
+      const retryReviewColumns = new Set<string>(
+        retryIr
+          ? [
+              ...columnsWithFlag(retryIr, "mergeBlocker"),
+              ...columnsWithFlag(retryIr, "humanReview"),
+              ...columnsWithFlag(retryIr, "mergeOrchestration").slice(0, 1),
+            ]
+          : [],
+      );
+      if (retryReviewColumns.size === 0) retryReviewColumns.add("in-review");
       const isInReviewStatusNone =
-        task.column === "in-review" && (task.status === null || task.status === undefined);
+        retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -1877,7 +1910,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
       const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
       const isInReviewRetry =
-        task.column === "in-review" &&
+        retryReviewColumns.has(task.column) &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
@@ -1886,7 +1919,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:MissingWorktreeRetry 2026-07-10-18:30:
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
       */
-      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns);
 
       // Validate task is in a retryable state
       if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {

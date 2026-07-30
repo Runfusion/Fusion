@@ -2876,7 +2876,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       FNXC:MissingWorktreeRetry 2026-07-10-18:32:
       Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
       */
-      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+      /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:15 (PR #2728 review): the classifier now takes the set
+         this route already resolved, instead of falling back to its own literal — the gate above and this
+         delegate must agree about which columns are review. */
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns);
       if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }

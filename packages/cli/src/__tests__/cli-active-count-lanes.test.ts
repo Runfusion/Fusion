@@ -93,3 +93,66 @@ describe("the CLI's active-task count resolves the board's lanes", () => {
     ])).toBe(2);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-13:00 (PR #2728 review — greptile P1 x2):
+
+THE INVARIANT: the shared missing-worktree classifier answers with the CALLER'S review lane.
+
+`isInReviewMissingWorktreeSessionStartFailure` is used by three surfaces — the dashboard retry route, the CLI
+retry command, and `fn_task_retry` (the MCP tool agents call). All three resolve the review lane before
+calling it, and the classifier compared the literal anyway. So every surface recognised a renamed review lane
+and then delegated to a predicate that did not: the card was refused for the ONE reason the delegate exists to
+allow, and no message anywhere mentions columns.
+
+Testing the classifier directly rather than through three route harnesses: it is a pure function and the
+defect lives in it. The three call sites passing their sets is asserted structurally below, because a call
+site that accepts the parameter and does not pass it is the failure mode a unit test cannot see.
+*/
+describe("the shared missing-worktree classifier takes the caller's review lane", () => {
+  const FAILURE = "Refusing to start coding agent in missing worktree: /gone";
+
+  it("recognises a renamed review lane when the caller supplies it", async () => {
+    const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
+    const task = { id: "FN-1", column: "signoff", error: FAILURE } as never;
+
+    // Pre-fix: `signoff` !== "in-review", so the retry bypass this classifier exists for never applied.
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(true);
+  });
+
+  it("still refuses a column outside the supplied set", async () => {
+    const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
+    const task = { id: "FN-2", column: "building", error: FAILURE } as never;
+
+    expect(isInReviewMissingWorktreeSessionStartFailure(task, new Set(["signoff"]))).toBe(false);
+  });
+
+  it("keeps the legacy literal when no set is supplied", async () => {
+    // Backwards compatibility is the reason the parameter is optional: existing callers must not change.
+    const { isInReviewMissingWorktreeSessionStartFailure } = await import("@fusion/engine");
+
+    expect(isInReviewMissingWorktreeSessionStartFailure({ id: "FN-3", column: "in-review", error: FAILURE } as never)).toBe(true);
+    expect(isInReviewMissingWorktreeSessionStartFailure({ id: "FN-4", column: "signoff", error: FAILURE } as never)).toBe(false);
+  });
+
+  it("is called WITH a resolved set at all three surfaces", async () => {
+    /*
+    A call site that accepts the parameter and forgets to pass it is exactly the half-conversion this thread
+    was about, and no unit test on the classifier can see it. Structural, and it names the file so a fourth
+    surface has to be added here deliberately.
+    */
+    const { readFile } = await import("node:fs/promises");
+    const surfaces = [
+      new URL("../extension.ts", import.meta.url),
+      new URL("../commands/task.ts", import.meta.url),
+      new URL("../../../dashboard/src/routes/register-task-workflow-routes.ts", import.meta.url),
+    ];
+
+    for (const surface of surfaces) {
+      const code = (await readFile(surface, "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
+      const call = code.match(/isInReviewMissingWorktreeSessionStartFailure\(([^)]*)\)/);
+      expect(call, `${surface.pathname} does not call the classifier`).toBeTruthy();
+      expect(call?.[1], `${surface.pathname} calls it without a resolved review set`).toContain(",");
+    }
+  });
+});
