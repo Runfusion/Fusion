@@ -5474,6 +5474,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       workflow. On a renamed board all three reads returned empty, so no stale `blockedBy` was ever cleared
       and the cards stayed blocked behind dependencies that had long since finished.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-00:30 (#2876 review — greptile, "traitless workflow
+      columns stay invisible"): CONFIRMED, DEFERRED, AND THE REASON IS THAT IT IS NOT LOCAL.
+
+      `resolveProjectColumnsForRoles` returns its legacy floor plus what workflows DECLARE for the
+      role. A board that renames its lanes but declares no lifecycle traits contributes nothing, so
+      the card never enters `blockedCandidates` and the per-card classification below — which is
+      correct — never runs for it. Invisible before the guard is reached.
+
+      This is the three-state rule at PROJECT scope: unreadable and untraited take the legacy answer,
+      and only a board that EXPRESSES traits and still lacks the role is answering. The merge queue
+      got the per-task version of this in #2819.
+
+      NOT FIXED HERE BECAUSE A BLANKET FIX WOULD BE WRONG. The safe direction differs by caller: for
+      a sweep, over-inclusion costs extra `listTasks` calls the per-card check discards; for the
+      analytics aggregators (#2864, #2866) the same widening inflates a number an operator reads. It
+      needs an opt-in — `resolveProjectColumnsForRoles(store, roles, { untraitedProject:
+      "declared-columns" })` defaulting to today's behaviour — which is a shared-helper contract
+      change touching every sweep, both aggregators and the glasses notifier.
+
+      Premise correction for whoever writes the fixture: this is a hand-authored V2 board, not a v1
+      upgrade. `synthesizeDefaultColumns` emits the DEFAULT ids with `traits: []`, so a v1-upgraded
+      board cannot have a renamed lane — a v1-shaped fixture would pass vacuously.
+      */
       /* `hold` only, NOT `intake`: the original read asked for `todo`. Adding intake would newly scan `triage` cards — a behavior change riding along in a conversion. */
       const blockedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
       const blockedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
