@@ -388,7 +388,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     is allowed to be stale; a capacity decision is not.
     */
     const workflowSelectionForMove = await store.getTaskWorkflowSelectionAsync(id);
-    const effectiveWorkflowIdForMove = workflowSelectionForMove?.workflowId ?? DEFAULT_WORKFLOW_ID;
+    /*
+    FNXC:WorkflowColumns 2026-07-31-05:25 (PR #2655 review — greptile P2 follow-through):
+    `effectiveWorkflowIdForMove` is DELETED. It existed only to feed the emitted `workflowId`, and it
+    applied a `?? DEFAULT_WORKFLOW_ID` fallback — so keeping it would have meant either an unused
+    binding or the very fallback-as-authoritative stamp that review flagged. The emit site now reads
+    the SELECTION directly, so the absence signal is preserved and there is nothing left to guess.
+    */
     // FNXC:WorkflowColumns 2026-07-31-04:00 (U12): resolved unconditionally — the gate is gone, so
     // `undefined` now means only "no IR on this path or a v1 column-less IR", never "flag off".
     const workflowIr: WorkflowIr | undefined = await resolveTaskWorkflowIrForMove(store, id);
@@ -1298,17 +1304,22 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         ...(internal.runContext?.runId ? { runId: internal.runContext.runId } : {}),
         /*
         FNXC:WorkflowEvents 2026-07-27-15:10 (U3, PR #2467 review):
-        OMIT rather than guess. `effectiveWorkflowIdForMove` reads the task's real
-        selection only when `useWorkflow` is true; otherwise it is hardcoded to
-        `builtin:coding`. That compat flag is off for effectively every real
-        project (see the note at the flag-OFF adjacency branch above), so
-        emitting it unconditionally would stamp `builtin:coding` onto moves of
-        tasks on a custom workflow — a wrong value baked into a brand-new wire
-        field, latent only because no subscriber reads it yet. An absent
-        `workflowId` means "not resolved here"; a subscriber that needs it reads
-        the selection itself.
+        OMIT rather than guess. An absent `workflowId` means "not resolved here";
+        a subscriber that needs it reads the selection itself.
+
+        FNXC:WorkflowColumns 2026-07-31-05:20 (PR #2655 review — greptile P2):
+        The flag deletion nearly destroyed that signal. `effectiveWorkflowIdForMove`
+        is `selection?.workflowId ?? DEFAULT_WORKFLOW_ID`, so emitting it
+        unconditionally would stamp `builtin:coding` onto every task that has no
+        explicit selection — reporting a FALLBACK as an authoritative choice, which
+        is the same "wrong value baked into a wire field" this note was written to
+        prevent, arrived at from the other direction.
+
+        So the condition survives the flag: emit only when the selection genuinely
+        resolved. `builtin:coding` still appears here for tasks that really select
+        it, and is absent for tasks that merely default to it.
         */
-        workflowId: effectiveWorkflowIdForMove,
+        ...(workflowSelectionForMove?.workflowId ? { workflowId: workflowSelectionForMove.workflowId } : {}),
       });
     }
     if (toColumn === "done") {

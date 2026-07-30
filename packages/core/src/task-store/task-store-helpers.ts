@@ -86,10 +86,26 @@ export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     moveSource: NonNullable<MoveTaskOptions["moveSource"]>,
     options?: MoveTaskOptions,
   ): boolean {
-    void moveSource;
+  /*
+  FNXC:WorkflowColumns 2026-07-31-05:15 (PR #2655 review — greptile P1, and it is exact):
+  USE THE RESOLVED `moveSource`, not `options?.moveSource`.
+
+  `void moveSource;` discarded the parameter and re-read the raw option, so an OPTIONLESS call —
+  `moveTask(id, target)` — resolved `moveSource` to "engine" at every call site and then computed
+  `bypassGuards === false`, because `options` was undefined. The two disagreed about what kind of
+  move it was.
+
+  Harmless while the move-path flag gated validation, because nothing consumed the answer. The flag
+  is gone, so seam 2's guards now run for these calls and an internal executor/merger/recovery move
+  made without an options object would be judged as if a user had made it.
+
+  The `void` was a deliberate unused-parameter suppression, i.e. someone noticed the argument was
+  unused and silenced the lint instead of wiring it up. Using it aligns bypass with the `moveSource`
+  every caller already resolves the same way.
+  */
     return options?.recoveryRehome === true ||
       (options?.bypassGuards ??
-        (options?.moveSource === "engine" || options?.moveSource === "scheduler" || options?.skipMergeBlocker === true));
+        (moveSource === "engine" || moveSource === "scheduler" || options?.skipMergeBlocker === true));
 }
 
 export function shouldSkipWorkflowMovePoliciesImpl(store: TaskStore,
