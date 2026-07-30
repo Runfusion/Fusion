@@ -217,3 +217,67 @@ describe("retryTask", () => {
     expect(deps.moveTask).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-03:20 (U11 #2515 audit — unowned plugin sites):
+
+These operator actions gated on `column === "triage"`. U11 (#2515) merged Todo into
+Planning KEEPING the id `todo` and DELETING `triage`, so on the default lineage:
+
+  approvePlan  — REFUSED for every card. An awaiting-approval card now sits in `todo`,
+                 the gate demands `triage`, so the operator's approve action from the
+                 glasses surface fails with a conflict on a perfectly valid card.
+  retryTask    — its triage-retry branch never fires, so a stuck/needs-replan card
+                 cannot be retried from the glasses at all.
+  startWork    — SURVIVES, because it already accepted `todo` as well.
+
+That asymmetry is the tell: the one gate written to accept both ids kept working, and
+the two written against a single id broke. `plugins/` is in no unit's file list and no
+drift-review assignment.
+
+The fix accepts the PRE-IMPLEMENTATION LANE rather than one id, resolving the task's
+own workflow when the plugin's store can (it depends on `@fusion/core`) and falling
+back to both legacy ids when it cannot. The fallback is why these cases assert the
+default vocabulary too.
+*/
+describe("post-U11 planning-column gates", () => {
+  it("approvePlan accepts an awaiting-approval card in the MERGED planning column", async () => {
+    // Pre-fix: conflict. The card is valid and the operator's action just failed.
+    const deps = createDeps(makeTask({ column: "todo", status: "awaiting-approval" }));
+
+    const result = await approvePlan({ taskId: "FN-1" }, deps as never);
+
+    expect(result.task.column).toBe("todo");
+    expect(deps.updateTask).toHaveBeenCalled();
+  });
+
+  it("approvePlan still accepts a legacy `triage` card (migration window)", async () => {
+    const deps = createDeps(makeTask({ column: "triage", status: "awaiting-approval" }));
+
+    await expect(approvePlan({ taskId: "FN-1" }, deps as never)).resolves.toBeTruthy();
+  });
+
+  it("approvePlan still REFUSES a card that has left the planning lane", async () => {
+    // The other side, so "always accepts" cannot pass for "accepts the lane".
+    const deps = createDeps(makeTask({ column: "in-progress", status: "awaiting-approval" }));
+
+    await expectInputError(approvePlan({ taskId: "FN-1" }, deps as never), 409);
+  });
+
+  it("retryTask reaches its planning-lane branch for a card in the MERGED column", async () => {
+    // Pre-fix the branch was unreachable for default-lineage cards, so a stuck card
+    // could not be retried from this surface at all.
+    const deps = createDeps(makeTask({ column: "todo", status: "stuck-killed", stuckKillCount: 2 }));
+
+    await retryTask({ taskId: "FN-1" }, deps as never);
+
+    expect(deps.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "needs-replan" }));
+  });
+
+  it("startWork keeps accepting both ids (it already did — the control)", async () => {
+    for (const column of ["todo", "triage"]) {
+      const deps = createDeps(makeTask({ column, status: null }));
+      await expect(startWork({ taskId: "FN-1" }, deps as never)).resolves.toBeTruthy();
+    }
+  });
+});
