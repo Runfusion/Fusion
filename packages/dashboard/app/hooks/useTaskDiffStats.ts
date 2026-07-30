@@ -16,7 +16,7 @@ interface UseTaskDiffStatsResult {
 
 interface UseTaskDiffStatsOptions {
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-03:30 (fleet phase):
   Resolved trait flags for the task's column, so "is this done / still working" is a ROLE question. The
   hook took a bare `column: string` and compared it to `done` / `in-progress` / `in-review`, which on a
   renamed board fetched NOTHING — the diff stats silently never loaded and the row showed no changes.
@@ -148,7 +148,7 @@ export function useTaskDiffStats(
       // Check cache first - return immediately without loading flicker (unless force refresh)
       if (!forceRefresh) {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-03:30 DELIBERATE-LITERAL:
+        FNXC:WorkflowResolvedColumns 2026-07-30-03:30 DELIBERATE-LITERAL:
         `mode` is this function's OWN `"done" | "active"` discriminant, assigned three lines up from
         `shouldFetchDoneTask`. It is not a column id and there is no trait to resolve — the census
         classifies it as a column guard because the receiver is compared to the string `done`, which is
@@ -172,7 +172,7 @@ export function useTaskDiffStats(
           setStats(data.stats);
           // Store in cache
           /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-03:30 DELIBERATE-LITERAL:
+        FNXC:WorkflowResolvedColumns 2026-07-30-03:30 DELIBERATE-LITERAL:
         `mode` is this function's OWN `"done" | "active"` discriminant, assigned three lines up from
         `shouldFetchDoneTask`. It is not a column id and there is no trait to resolve — the census
         classifies it as a column guard because the receiver is compared to the string `done`, which is
