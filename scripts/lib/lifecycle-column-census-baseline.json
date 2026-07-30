@@ -46,7 +46,6 @@
     "packages/dashboard/src/github-tracking-state.ts": 2,
     "packages/dashboard/src/server.ts": 2,
     "packages/engine/src/auto-merge-finalization.ts": 2,
-    "packages/engine/src/worktree-pool.ts": 2,
     "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts": 2,
     "plugins/fusion-plugin-reports/src/store/report-store.ts": 2,
     "packages/cli/src/commands/pr.ts": 1,
