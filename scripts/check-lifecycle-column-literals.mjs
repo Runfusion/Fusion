@@ -342,8 +342,8 @@ function main() {
     const raised = [
       ...Object.entries(counts).filter(([f, c]) => c > ((existing.ceilings ?? {})[f] ?? 0))
         .map(([f, c]) => ({ f, c, was: (existing.ceilings ?? {})[f] ?? 0, kind: "comparison" })),
-      ...Object.entries(membershipCounts).filter(([f, c]) => c > ((existing.membershipCeilings ?? {})[f] ?? 0))
-        .map(([f, c]) => ({ f, c, was: (existing.membershipCeilings ?? {})[f] ?? 0, kind: "membership" })),
+      // Membership is INFORMATIONAL (see the note at the regression check): it RISES when a
+      // conversion succeeds, so refusing to record a rise would block the update on doing the work right.
     ];
     if (raised.length > 0) {
       console.error("refusing to RAISE a ceiling — --update may only lower one. These files gained literals:");
@@ -359,6 +359,7 @@ function main() {
       total,
       ceilings: counts,
       membershipTotal,
+      // Informational only — NOT enforced. See the note at the regression check.
       membershipCeilings: membershipCounts,
     }, null, 2)}\n`);
     console.log(`\nledger updated: ${LEDGER_PATH}`);
@@ -373,10 +374,24 @@ function main() {
     if (count > ceiling) regressions.push({ file, count, ceiling });
   }
 
-  for (const [file, count] of Object.entries(membershipCounts)) {
-    const ceiling = (ledger.membershipCeilings ?? {})[file] ?? 0;
-    if (count > ceiling) regressions.push({ file, count, ceiling, kind: "membership" });
-  }
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-11:20 (membership is INFORMATIONAL, not ratcheted):
+  Membership forms were ratcheted here and that was WRONG — the metric rises every time a conversion
+  SUCCEEDS. Measured: after this program converted five files, all five gained a membership site, and
+  every one is the intended end state rather than a regression:
+
+    live-agent-count.ts / DocumentsView.tsx   `LEGACY_PRE_IMPLEMENTATION_* = new Set(["triage","todo"])`
+    self-healing.ts / replan-target.ts /      `intake: lifecycle?.intake ?? "triage"`
+    comments-ops.ts
+
+  A converted guard resolves the role and keeps a documented legacy fallback; both shapes are membership
+  forms. Ratcheting them means the tool goes red for doing the work right, which is how a ratchet gets
+  muted or deleted.
+
+  Kept as a REPORT because it earned its place once: the comparison census is blind to these, and that
+  blindness hid a live defect (the routine editor defaulted new tasks to the deleted column, and no
+  comparison count showed it). Surfacing them for a human is useful; gating on them is not.
+  */
 
   if (regressions.length > 0) {
     console.error("\nLIFECYCLE-COLUMN CENSUS REGRESSION — these files gained hard-coded column comparisons:");
