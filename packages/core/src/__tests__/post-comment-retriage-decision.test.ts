@@ -9,10 +9,11 @@ is invalidated, or an already-specified card is sent back for re-specification.
 Both write `status: "needs-replan"`; they differ in the audit wording, and — the
 case that matters — in WHETHER anything happens at all.
 
-These cases pin the behaviour BEFORE the U11 column conversion, including the
-default-lineage hole they expose. The conversion commit changes the last two.
+Post-conversion: STATUS decides. The two cases marked U11 REGRESSION GUARD are the
+ones the column literals got wrong for the default lineage — they fail if the
+`column === "triage"` checks come back.
 */
-describe("resolvePostCommentRetriageDecision — pre-conversion behaviour", () => {
+describe("resolvePostCommentRetriageDecision — status is the discriminator", () => {
   it("invalidates a pending approval on the legacy planner column", () => {
     expect(resolvePostCommentRetriageDecision({ column: "triage", status: "awaiting-approval", hasRealPrompt: false }))
       .toEqual({ invalidateApproval: true, retriagePlanned: false });
@@ -34,18 +35,26 @@ describe("resolvePostCommentRetriageDecision — pre-conversion behaviour", () =
   });
 
   /*
-  The two below are the U11 hole. `builtin:coding` resolves to
-  BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR, whose merged Planning column
-  keeps the id `todo` and declares NO `triage` column at all — so a default card
-  awaiting spec approval sits in `todo` and matches neither `triage` arm.
+  The three below are what the column literals got wrong. `builtin:coding` resolves
+  to BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR, whose merged Planning column
+  keeps the id `todo` and declares NO `triage` column — so a default card awaiting
+  spec approval matched neither `triage` arm.
   */
-  it("PRE-CONVERSION HOLE: a merged-column card awaiting approval is NOT invalidated", () => {
+  it("U11 REGRESSION GUARD: a merged-Planning card awaiting approval IS invalidated", () => {
+    // Pre-conversion this returned all-false: the approval silently stood.
     expect(resolvePostCommentRetriageDecision({ column: "todo", status: "awaiting-approval", hasRealPrompt: false }))
-      .toEqual({ invalidateApproval: false, retriagePlanned: false });
+      .toEqual({ invalidateApproval: true, retriagePlanned: false });
   });
 
-  it("PRE-CONVERSION HOLE: with a real spec it is re-triaged instead of invalidated", () => {
+  it("U11 REGRESSION GUARD: invalidation wins over re-triage when a spec exists", () => {
+    // Pre-conversion this re-triaged, mis-auditing an approval invalidation.
     expect(resolvePostCommentRetriageDecision({ column: "todo", status: "awaiting-approval", hasRealPrompt: true }))
-      .toEqual({ invalidateApproval: false, retriagePlanned: true });
+      .toEqual({ invalidateApproval: true, retriagePlanned: false });
+  });
+
+  it("a card on a workflow with a differently-named planning column behaves the same", () => {
+    // The point of the conversion: no column id appears in the decision at all.
+    expect(resolvePostCommentRetriageDecision({ column: "planning", status: "awaiting-approval", hasRealPrompt: false }))
+      .toEqual({ invalidateApproval: true, retriagePlanned: false });
   });
 });
