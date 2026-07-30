@@ -4646,6 +4646,72 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.column).not.toBe("todo");
     });
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-20:30 (#2843 review — greptile P1, "fallback equality
+    masks wrong hold"):
+    EQUALITY WITH A FABRICATED LANE IS NOT EVIDENCE.
+
+    The board the review names, and the one every earlier case here misses: `todo` is INTAKE and
+    `queued` is hold. `createTask` puts the card on `todo`; a degraded lookup fabricates the built-in
+    `hold: "todo"`; the two match, so the "no move needed" rule accepted it and reported a delegation
+    for a card assigned-agent dispatch will never select, because the real hold lane is `queued`.
+
+    Settled with `params.workflow_id` — caller INPUT, so there is no second snapshot to race. A
+    caller that named a workflow proves a real one exists, so a substitution proves we failed to read
+    it, and its hold lane cannot be inferred from the built-in vocabulary.
+
+    The neighbouring degraded-resolve cases stay green precisely because they pass NO `workflow_id`:
+    there, "substituted" and "this project has no resolvable workflow" are the same observation and
+    the card belongs where it is. That distinction is the whole content of the fix.
+
+    REVERT PROOF, measured: drop the `substituted && workflowId` arm and this fails on `isError` —
+    the tool reports a successful delegation for a card sitting on intake.
+    */
+    it("refuses to claim pickup when the NAMED workflow could not be resolved, even if lanes match", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-todo-intake-queued-hold" });
+      const store = h.store();
+      const todoIntake = await store.createWorkflowDefinition({
+        name: "Todo intake, queued hold",
+        ir: {
+          version: "v2",
+          name: "Todo intake, queued hold",
+          columns: [
+            /* `todo` is INTAKE here — the id the built-in fallback would call hold. */
+            { id: "todo", name: "Inbox", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "todo" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      /* Reader only — `createTask` writes the selection rather than reading it through this method. */
+      const selection = vi.spyOn(store, "getTaskWorkflowSelectionAsync")
+        .mockResolvedValue({ workflowId: "wf-vanished", stepIds: [] });
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-todo-intake",
+          { agent_id: agentId, description: "Intake is called todo here", workflow_id: todoIntake.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        selection.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      /* Still on intake, and the message must be about the workflow rather than about a move. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("todo");
+    });
+
     it("rejects unknown agent", async () => {
       const tool = api.tools.get("fn_delegate_task")!;
       const result = await tool.execute(

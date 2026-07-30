@@ -5352,7 +5352,32 @@ export default function kbExtension(pi: ExtensionAPI) {
            `holdColumn` is then undefined and the untraited branch below is the honest answer. */
         const holdColumn = resolveLifecycleColumns(resolved.ir)?.hold;
         const substituted = resolved.source !== "selection";
-        if (substituted && holdColumn && holdColumn !== task.column) {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-20:30 (#2843 review — greptile P1, "fallback equality
+        masks wrong hold"):
+        A SUBSTITUTION IS FATAL WHEN THE CALLER NAMED THE WORKFLOW. Equality proves nothing on its own.
+
+        The equality rule below accepts a substitution whose hold lane already matches the card's
+        column, on the grounds that no move means nothing was decided on bad information. The review
+        names the board where that is false: a workflow using `todo` as INTAKE and `queued` as hold
+        puts the card on `todo`, the degraded lookup fabricates `hold: "todo"`, the two match, and the
+        delegation is reported for a card assigned-agent dispatch will never select.
+
+        `params.workflow_id` settles the decidable half WITHOUT a second read — it is caller input, so
+        there is no snapshot to race. When the caller NAMED a workflow and the resolver substituted,
+        a real workflow provably exists and we provably failed to read it, so its hold lane cannot be
+        inferred from the built-in vocabulary and the landing is refused.
+
+        WHAT THIS DOES NOT COVER, stated because the gap is real: the same board reached through the
+        project DEFAULT with no `workflow_id` argument. There, "substituted" and "this project has no
+        resolvable workflow" are the same observation, and the second is a legitimate configuration
+        whose cards belong exactly where they are. Failing it would trade a false success for a false
+        alarm on a valid setup. Distinguishing them needs the read that just failed; it is not
+        available here, and guessing is what produced the last four rounds of this review.
+        */
+        if (substituted && workflowId) {
+          landingError = `the requested workflow (${workflowId}) could not be resolved, so its ready lane is unknown`;
+        } else if (substituted && holdColumn && holdColumn !== task.column) {
           landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
         /*
         FNXC:WorkflowLifecycleColumns 2026-07-30-19:35 (#2843 review — greptile P1, "lifecycle snapshot
