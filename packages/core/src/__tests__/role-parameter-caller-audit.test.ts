@@ -44,10 +44,23 @@ const ROLE_PARAMETERISED: ReadonlyArray<{ fn: string; param: string }> = [
  * Call sites that deliberately do not pass the role. Each needs a reason, and the
  * reason is the point of the entry.
  */
-const REGISTERED_OMISSIONS: ReadonlyArray<{ file: string; fn: string; why: string }> = [
+/*
+FNXC:RoleParameterAudit 2026-07-31-09:40 (PR #2588 review — greptile):
+REGISTRATIONS ARE KEYED BY COUNT, not just by file+fn. Matching on file and function
+alone let every LATER omission of that function in the same file inherit an existing
+reason — so a second, unreviewed call site could be added to a registered file and
+the audit would stay green.
+
+Keyed by line number would be the obvious fix and the wrong one: it churns on every
+edit above the call and would make this file a merge-conflict magnet. `sites` records
+how many omitting call sites the reason was written for, so ADDING one fails while
+moving one does not.
+*/
+const REGISTERED_OMISSIONS: ReadonlyArray<{ file: string; fn: string; sites: number; why: string }> = [
   {
     file: "packages/core/src/task-priority.ts",
     fn: "computeBlockerFanoutMap",
+    sites: 1,
     why:
       "STRUCTURAL, not an oversight: `holdColumn` is a SINGLE board-wide value, but the " +
       "fanout map is computed across ALL tasks, which on a multi-workflow board span " +
@@ -60,16 +73,80 @@ const REGISTERED_OMISSIONS: ReadonlyArray<{ file: string; fn: string; why: strin
   {
     file: "packages/engine/src/scheduler.ts",
     fn: "computeBlockerFanoutMap",
+    sites: 1,
     why:
       "Same structural limit as task-priority.ts. Consequence is worth stating: " +
       "`emitHighOverlapFanoutWarnings` gates on `overlapBlockedTodoCount >= THRESHOLD`, and " +
       "with the hold column defaulted the count is 0 on a renamed board — so the warning " +
       "never fires. A guard that never fires does not fail a test.",
   },
+  /*
+  The three below were INVISIBLE to this audit until its pathspec was widened in this
+  PR — they sit in the dashboard app tree, one directory outside the old glob. They
+  are registered rather than fixed because the fix is the same structural one
+  task-priority.ts is waiting on, and stating that is more useful than three copies
+  of the same paragraph.
+  */
+  {
+    file: "packages/dashboard/app/hooks/useBlockerFanout.ts",
+    fn: "computeBlockerFanoutMap",
+    sites: 1,
+    why:
+      "The dashboard wrapper takes only `tasks`, so it has no column vocabulary to pass. " +
+      "Fixing it properly means threading the per-task `classify` option (the core API " +
+      "already accepts it and it is the only correct choice on a multi-workflow board) from " +
+      "the callers that DO hold column flags. Consequence while it waits: on a renamed " +
+      "board `isTodo` is false for every card, so blocker fan-out counts read 0 and the " +
+      "high-fanout affordances never appear.",
+  },
+  {
+    file: "packages/dashboard/app/components/ExecutorStatusBar.tsx",
+    fn: "computeBlockerFanoutMap",
+    sites: 1,
+    why:
+      "Calls the dashboard wrapper above, so it inherits that wrapper's limitation rather " +
+      "than having one of its own. Registered separately so widening the wrapper does not " +
+      "silently absolve this site — it has to be re-checked when the wrapper gains the option.",
+  },
+  {
+    file: "packages/dashboard/app/components/TaskDetailModal.tsx",
+    fn: "computeBlockerFanoutMap",
+    sites: 1,
+    why:
+      "Same inheritance as ExecutorStatusBar. Worth noting this surface has column flags " +
+      "available nearby (`currentColumnFlags`), so it is the most likely FIRST site to be " +
+      "fixed once the wrapper accepts `classify`.",
+  },
 ];
 
 function productionSources(): string[] {
-  return execFileSync("git", ["ls-files", "packages/*/src/**/*.ts", "packages/*/src/*.ts"], {
+  /*
+  FNXC:RoleParameterAudit 2026-07-31-09:15 (PR #2588 review — greptile):
+  THE PATHSPEC OMITTED THE DASHBOARD, which is where the audit's own motivating
+  defect lives. A "packages, any package, src" glob misses the dashboard's `app`
+  tree, and a .ts-only glob misses every .tsx component — so an audit written
+  because "the stale-paused badges stayed silent on renamed boards" could not see
+  the badge code.
+
+  Verified concretely, not assumed: `dashboard/app/hooks/useBlockerFanout.ts` calls
+  `computeBlockerFanoutMap` passing only `staleHighFanoutAgeThresholdMs`, so
+  `holdColumn` takes its "todo" default and the fanout misclassifies every renamed
+  board. The audit reported zero unregistered omissions while that call sat one
+  directory outside its glob.
+
+  Same blind spot, same two directions, as the census pathspec fixed in #2557.
+
+  (Glob strings kept out of this note on purpose: one of them contains the
+  block-comment terminator and truncates the comment silently. That has now bitten
+  three files in this program.)
+  */
+  return execFileSync("git", [
+    "ls-files",
+    "packages/*/src/**/*.ts", "packages/*/src/*.ts",
+    "packages/*/src/**/*.tsx", "packages/*/src/*.tsx",
+    "packages/*/app/**/*.ts", "packages/*/app/*.ts",
+    "packages/*/app/**/*.tsx", "packages/*/app/*.tsx",
+  ], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -136,10 +213,25 @@ describe("role-parameter caller audit", () => {
        longer needs them, and is the usual way a ratchet decays into decoration. */
     const omitting = auditCallers().filter((s) => !s.passes);
     for (const reg of REGISTERED_OMISSIONS) {
+      const matching = omitting.filter((s) => s.file === reg.file && s.fn === reg.fn);
       expect(
-        omitting.some((s) => s.file === reg.file && s.fn === reg.fn),
+        matching.length > 0,
         `REGISTERED_OMISSIONS entry is stale — ${reg.fn} in ${reg.file} now passes the role, so delete the entry`,
       ).toBe(true);
+      /*
+      FNXC:RoleParameterAudit 2026-07-31-09:45 (PR #2588 review — greptile):
+      The COUNT is checked, not just the existence. Without this a registered file
+      absorbs every later omission of the same function: someone adds a second
+      unreviewed call site, it matches an existing file+fn entry, and the audit stays
+      green on a site nobody looked at. Adding one now fails; moving one does not,
+      which is why this counts rather than pinning line numbers.
+      */
+      expect(
+        matching.length,
+        `REGISTERED_OMISSIONS entry for ${reg.fn} in ${reg.file} covers ${reg.sites} call site(s), `
+        + `but ${matching.length} now omit the role — a NEW omission cannot inherit an existing `
+        + `reason. Review the new site, then update \`sites\` if the reason genuinely covers it.`,
+      ).toBe(reg.sites);
     }
   });
 
