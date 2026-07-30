@@ -35,7 +35,6 @@ import {
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
   resolveLifecycleColumns,
-  resolveTaskLifecycleColumns,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
