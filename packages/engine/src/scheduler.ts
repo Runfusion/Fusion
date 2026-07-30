@@ -328,17 +328,40 @@ export function shouldHoldActiveFileScopeLease(
     mergeRequestContractShadowEnabled?: boolean;
     handoffAccepted?: boolean;
     schedulingDependencyOptions?: Parameters<typeof getUnmetSchedulingDependencies>[2];
+    /** Resolved role answers. Omitted → the legacy column-id literals, i.e. today's behaviour. */
+    isWipColumn?: boolean;
+    isReviewColumn?: boolean;
   },
 ): boolean {
   /*
   FNXC:OverlapScheduling 2026-06-25-04:34:
   Active file-scope leases are a scheduler contract, not just a column check. Self-healing and repair paths must use this same predicate so stale `overlapBlockedBy` cleanup does not preserve blockers the scheduler would ignore on the next tick.
   */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:00:
+  The two ROLE questions are parameters with literal defaults, not hard-coded ids.
+
+  This predicate decides whether a card holds an active file-scope lease, and it was keyed on
+  `column === "in-progress"` / `!== "in-review"`. On a board whose columns are renamed, BOTH branches
+  fell through and the function returned false for every card, so `activeScopes` stayed empty and the
+  dispatch path saw no overlap — two agents editing the same files, which is exactly what
+  `groupOverlappingFiles` prevents. Capacity arithmetic in the same sweep already resolved
+  `countsTowardWip` from the IR, so the scheduler was simultaneously right about capacity and wrong
+  about leases.
+
+  Why optional booleans rather than a flags object: this is an EXPORTED predicate shared with the
+  self-healing / repair paths (see the note below), which must keep agreeing with the scheduler. A
+  caller that has resolved the column's traits passes the answer; a caller that has not gets exactly
+  today's behaviour, so no existing call site changes meaning. Covered by
+  scheduler-renamed-wip-file-scope-lease.test.ts.
+  */
   if (task.paused || task.userPaused) return false;
-  if (task.column === "in-progress") {
+  const isWipColumn = options?.isWipColumn ?? task.column === "in-progress";
+  const isReviewColumn = options?.isReviewColumn ?? task.column === "in-review";
+  if (isWipColumn) {
     return getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions).length === 0;
   }
-  if (task.column !== "in-review") return false;
+  if (!isReviewColumn) return false;
   if (!task.worktree || task.status === "failed") return false;
   if (options?.mergeRequestContractShadowEnabled === true && options.handoffAccepted === true) return false;
   return true;
@@ -1733,8 +1756,19 @@ export class Scheduler {
 
       if (settings.groupOverlappingFiles) {
         for (const task of tasks) {
-          if (task.column !== "in-progress") continue;
-          if (!shouldHoldActiveFileScopeLease(task, tasks, { schedulingDependencyOptions })) continue;
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-16:30:
+          Trait-aware, not `column !== "in-progress"`. `activeScopes` is the file-scope lease registry
+          the dispatch path reads to decide whether a candidate overlaps work already in flight. The
+          literal skipped every card in a RENAMED wip column, so the registry stayed empty while the
+          capacity arithmetic above — which resolves `countsTowardWip` from the IR — counted the same
+          cards correctly; a second task sharing the file scope then dispatched instead of queueing,
+          putting two agents on the same files. `isWipColumnTask` is the same predicate capacity uses,
+          so the two cannot disagree again. Covered by
+          scheduler-renamed-wip-file-scope-lease.test.ts.
+          */
+          if (!isWipColumnTask(task)) continue;
+          if (!shouldHoldActiveFileScopeLease(task, tasks, { schedulingDependencyOptions, isWipColumn: true })) continue;
           const filteredScope = await getFilteredFileScope(task.id);
           if (isCoordinationOnlyTask(task, filteredScope)) continue;
           if (filteredScope.length === 0) continue;
