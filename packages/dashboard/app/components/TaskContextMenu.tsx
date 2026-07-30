@@ -176,7 +176,22 @@ export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenu
   Same shape, different degraded answer: the trait path is identical and the fallbacks are not
   interchangeable. Kept separate with the difference recorded, rather than made to look shared.
   */
-  return column === "triage" || flags?.intake === true || flags?.hold === true;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:15 (RESTORED — see below):
+  RESOLVED TRAITS ARE AUTHORITATIVE. The legacy id was an unconditional disjunct, so
+  `isPreExecutionHoldColumn("triage", { intake: false, hold: false })` returned true — explicit
+  traits saying "planning does not happen in this column" were overruled by the id, exposing the
+  Plan action on a card whose workflow says otherwise. The id now serves only as the NO-METADATA
+  fallback, which still covers a card stranded on an id its workflow no longer declares (that card
+  has no flags at all).
+
+  PROVENANCE: this fix was reviewed and approved on PR #2645 (coderabbit, Major) and then LOST —
+  the consolidation branch it lived on was force-pushed by another worker, and #2645 merged
+  unrelated content under its number. Restored here with its test, because the defect is real and
+  the PR that reported it is closed.
+  */
+  if (flags) return flags.intake === true || flags.hold === true;
+  return column === "triage";
 }
 
 

@@ -2,7 +2,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Task } from "@fusion/core";
-import { TaskContextMenu, buildTaskActionMenuModel } from "../TaskContextMenu";
+import { TaskContextMenu, buildTaskActionMenuModel, isPreExecutionHoldColumn } from "../TaskContextMenu";
 
 const t = ((key: string, fallback: string, vars?: Record<string, string>) => {
   if (!vars) return fallback;
@@ -374,5 +374,57 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
     // The assertion that fails if anyone reintroduces an id comparison: `backlog` matches no
     // legacy literal, so a correct answer here can only come from the trait.
     expect(model("backlog", { intake: true })).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-01:15 (RESTORED with the fix it covers):
+Reviewed and approved on PR #2645 (coderabbit, Major), then lost when that consolidation branch was
+force-pushed and #2645 merged unrelated content under its number. Restored because the defect is
+real and the reporting PR is closed.
+
+The predicate drives the Plan action, so both the classifier and the caller are pinned: a classifier
+assertion alone cannot tell you the menu behaved correctly.
+*/
+describe("isPreExecutionHoldColumn — explicit traits outrank the legacy id", () => {
+  it("returns FALSE for `triage` when traits explicitly deny the lane", () => {
+    // The regression. With the legacy id as an unconditional disjunct this returns true.
+    expect(isPreExecutionHoldColumn("triage", { intake: false, hold: false })).toBe(false);
+  });
+
+  it("still honours the legacy id when NO traits are supplied", () => {
+    // Must survive: a card stranded on an undeclared id has no flags, and dropping it from the
+    // pre-implementation lane would silently remove its affordances.
+    expect(isPreExecutionHoldColumn("triage", undefined)).toBe(true);
+  });
+
+  it("treats either trait as qualifying, and complete/archived as disqualifying", () => {
+    expect(isPreExecutionHoldColumn("anything", { intake: true })).toBe(true);
+    expect(isPreExecutionHoldColumn("anything", { hold: true })).toBe(true);
+    expect(isPreExecutionHoldColumn("triage", { complete: true })).toBe(false);
+    expect(isPreExecutionHoldColumn("triage", { archived: true })).toBe(false);
+  });
+
+  it("does NOT offer the Plan action through the caller when traits deny the lane", () => {
+    // Caller-level: the predicate is not the product. `onPlan` must be injected or Plan is
+    // omitted entirely regardless of column, which would make this pass for the wrong reason.
+    const model = buildTaskActionMenuModel({
+      task: { id: "FN-1", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [] } as never,
+      t: ((_k: string, fallback: string) => fallback) as never,
+      columnLabel: ((c: string) => c) as never,
+      currentColumnFlags: { intake: false, hold: false } as never,
+      onPlan: () => {},
+    });
+    expect(model.actions.some((a) => a.id === "plan")).toBe(false);
+  });
+
+  it("DOES offer Plan on the legacy id with no traits (the fallback still works end to end)", () => {
+    const model = buildTaskActionMenuModel({
+      task: { id: "FN-1", column: "triage", dependencies: [], steps: [], currentStep: 0, log: [] } as never,
+      t: ((_k: string, fallback: string) => fallback) as never,
+      columnLabel: ((c: string) => c) as never,
+      onPlan: () => {},
+    });
+    expect(model.actions.some((a) => a.id === "plan")).toBe(true);
   });
 });
