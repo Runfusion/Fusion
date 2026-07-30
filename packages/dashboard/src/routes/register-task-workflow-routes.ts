@@ -71,6 +71,7 @@ import {
   validateTaskDocumentPreconditions,
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
+  resolveProjectColumnsForRoles,
   type NearDuplicateCandidate,
   type ThinkingLevel,
 } from "@fusion/core";
@@ -1227,25 +1228,34 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       try {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8, DELIBERATELY NOT CONVERTED):
-        This filter names `todo`, so a workflow whose waiting lane is called something else
-        gets no enrichment and silently falls back to the heuristic. I converted it and then
-        REVERTED: resolving each task's hold column needs a per-task workflow read, and this
-        is the board-load path whose own comment above exists because unbounded reads here
-        "turn a board load into thousands of reads". My version did those reads for every
-        task BEFORE the enrich limit applied — trading a silent degradation for a load-time
-        regression on every board.
+        FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (converting R8's stated deferral):
+        The hold lanes, resolved ONCE PER BOARD LOAD rather than once per card.
 
-        Converting it properly needs the hold column resolved per WORKFLOW from data the
-        board payload already carries, not per task from the store. That is a real change
-        with a measurable cost, not a rename, so it is left for one — with the cost stated
-        rather than the conversion quietly skipped.
+        The note this replaces deferred the conversion for a good reason and named the shape the
+        fix had to take: "the hold column resolved per WORKFLOW from data the board payload already
+        carries, not per task from the store". A per-task resolve is what made the first attempt a
+        load-time regression — it read a workflow for every row BEFORE the enrich limit applied, on
+        the very path whose comment above exists because unbounded reads here "turn a board load
+        into thousands of reads".
+
+        `resolveProjectColumnsForRoles` is the project-scoped shape: ONE `listWorkflowDefinitions()`
+        read, independent of task count, returning every column any workflow calls `hold` unioned
+        with the legacy `todo`. Measured cost is therefore one extra query per board load — flat,
+        not per-row — and the enrich limit still bounds the PROMPT.md reads, which are the expensive
+        part and are unchanged.
+
+        Over-inclusion is the safe direction here, deliberately: a card sitting in some other
+        workflow's hold lane is annotated with `awaitingPlanning`, which is what a waiting card in a
+        waiting lane should show. Under-inclusion is what the literal did — no enrichment at all, no
+        error, and a silent fall back to the client's step-count heuristic that this enrichment
+        exists to correct.
         */
-        const todoRows = tasks.filter((task) => task.column === "todo");
-        const enrichable = todoRows.slice(0, AWAITING_PLANNING_ENRICH_LIMIT);
-        if (todoRows.length > enrichable.length) {
+        const holdColumns = await resolveProjectColumnsForRoles(scopedStore, ["hold"]);
+        const holdRows = tasks.filter((task) => holdColumns.has(task.column));
+        const enrichable = holdRows.slice(0, AWAITING_PLANNING_ENRICH_LIMIT);
+        if (holdRows.length > enrichable.length) {
           severityAuditLog.warn(
-            `awaitingPlanning enrichment truncated: ${enrichable.length}/${todoRows.length} todo tasks ` +
+            `awaitingPlanning enrichment truncated: ${enrichable.length}/${holdRows.length} hold-lane tasks ` +
             "annotated (remaining cards fall back to the client step-count heuristic)",
           );
         }
