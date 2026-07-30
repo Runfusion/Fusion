@@ -41,6 +41,23 @@ parent that already resolves flags (TaskDetailModal's `detailColumnFlags`, or Ma
     still falls back, because `OverflowViewRenderProps` carries no per-task flags. Guard count is 0
     for the file either way, so do not read it as done.
 
+CROSS-BATCH COUPLING — for whoever owns batch-core (u12, 2026-08-01-22:40)
+
+  packages/dashboard/app/hooks/useTasks.ts  <->  packages/core/src/in-review-stall.ts:179
+
+  `clearInReviewStallForFreshAgentLog` clears the in-review stall badge while a review agent is
+  actively logging. It is keyed on the literal, and so is `getInReviewStallReason`, which PRODUCES
+  the badge. On a renamed board neither fires: no badge is produced, so none needs clearing. Two
+  bugs that currently cancel.
+
+  CONVERTING THE CORE GATE ALONE ENDS THE CANCELLATION IN THE WRONG DIRECTION: the badge starts
+  appearing and the dashboard clearer never fires, so a card reads "stalled" for the whole time an
+  agent is working on it. That is a regression created by fixing the other half.
+
+  Convert them together, or convert the dashboard side first. Flagged rather than silently
+  converted, because the dashboard half needs a per-task flags map threaded into `useTasks` (a data
+  hook with no flags in scope) and that work is only worth doing alongside the core change.
+
 ORIGINAL SIZING (kept for the reasoning):
 
 

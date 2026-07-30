@@ -123,6 +123,25 @@ function hasFreshAgentLog(task: Task, entry: AgentLogActivityEvent): boolean {
 }
 
 function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-22:40 (batch-dashboard-app — SIZED, and CROSS-BATCH):
+  STILL A LITERAL, deliberately, and it is COUPLED TO packages/core. Read before converting either.
+
+  This clears the in-review stall badge while a review agent is actively writing logs. Today the
+  literal is harmless, because the badge it clears cannot exist on a renamed board either:
+  `getInReviewStallReason` (core/src/in-review-stall.ts:179) gates on `task.column !== "in-review"`
+  with its own unconverted literal, so no signal is ever produced there. Two bugs that cancel.
+
+  THE ORDER MATTERS. If batch-core converts that gate and this stays literal, the cancellation ends
+  in the WRONG direction: the badge starts appearing on renamed boards and this clearer never fires,
+  so a card shows "stalled" for the entire time an agent is actively working on it — a regression
+  introduced by fixing the other half.
+
+  Not marked, because it is not correct-forever; it stays counted so the pairing is visible. This
+  hook owns the task list and has no flags in scope (board-workflows is a separate downstream
+  fetch), so converting it means threading a per-task flags map into `useTasks` — which is worth
+  doing exactly when core's gate is converted, and not before.
+  */
   if (task.column !== "in-review" || !hasFreshAgentLog(task, entry)) return task;
   if (!task.inReviewStall && !task.inReviewStalled && !task.stalledReview) return task;
 
