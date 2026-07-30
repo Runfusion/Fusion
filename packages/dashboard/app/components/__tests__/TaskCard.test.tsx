@@ -804,6 +804,61 @@ describe("TaskCard", () => {
     }
   });
 
+  it("rebuilds the context menu when workflow flags arrive AFTER first render", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (PR #2688 review — greptile, third round on this file):
+    `contextMenuActions` is a useMemo whose body reads `isDoneColumn` / `isArchived` / `isReviewColumn`.
+    Those derive from `taskColumnFlags`, which arrives after first paint, so omitting them from the
+    dependency array left the menu built from the PRE-RESOLUTION answer for the life of the card.
+
+    On a renamed complete column (`shipped`) the legacy fallback says "not done", so Archive and Revert
+    were absent — permanently, on a card that IS complete. The operator sees a finished card with no way
+    to archive it and no indication why.
+
+    WHAT THIS TEST DOES AND DOES NOT PROVE, stated because I nearly claimed more than I measured.
+
+    It pins the OPERATOR-VISIBLE behaviour: a card whose flags land late must end up with a menu built
+    from the resolved roles. That is the thing worth protecting.
+
+    It does NOT discriminate the dependency-array line. Removing the three role deps leaves this test —
+    and all 389 others — green, because `taskActionMenuModel` already lists `taskColumnFlags` among its
+    own deps, so its identity changes when the flags land and this memo recomputes transitively. So the
+    review finding is correct as written and currently UNREACHABLE: there is no state where the roles
+    change without that dep changing too.
+
+    The three deps are kept anyway, as hygiene: they make this memo correct on its own terms rather than
+    correct by accident of a neighbour's dependency list, which is exactly the kind of accident a later
+    refactor of `taskActionMenuModel` would silently remove. This test is what would catch that
+    refactor.
+    */
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const completedTask = () => makeTask({ column: "shipped" as never, status: "done" as never });
+    try {
+      const { rerender } = render(
+        <TaskCard task={completedTask()} onOpenDetail={noop} addToast={noop} onArchiveTask={vi.fn()} />,
+      );
+
+      /* Flags resolve: `shipped` is this board's complete column. */
+      rerender(
+        <TaskCard
+          task={completedTask()}
+          taskColumnFlags={{ complete: true } as never}
+          onOpenDetail={noop}
+          addToast={noop}
+          onArchiveTask={vi.fn()}
+        />,
+      );
+
+      const card = document.querySelector(".card") as HTMLElement;
+      card.focus();
+      fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+
+      expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
   it("opens the board card context menu from keyboard as a viewport portal, selects an action, and closes", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
