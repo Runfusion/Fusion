@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, storeLog} from "../store.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -107,13 +108,43 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         const hasNewDeps = normalizedDependencies.some((d) => !oldDeps.has(d));
         task.dependencies = normalizedDependencies;
 
-        if (hasNewDeps && task.column === "todo") {
-          task.column = "triage";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        THIS WROTE A COLUMN THAT NO LONGER EXISTS ON ANY BOARD.
+
+        Adding a new dependency to a hold-lane card re-seeds it for re-specification. The destination
+        was the literal `"triage"` — a column U11 (#2515) DELETED. The default lineage is now
+        `todo | in-progress | in-review | done | archived`, so on a stock board today this moves the
+        card into a column nothing declares and nothing renders: the card leaves its lane and appears
+        in none, recoverable only by moving it back by hand.
+
+        That is a live defect independent of renaming, which is why it is fixed rather than flagged:
+        the old behaviour cannot be preserved, because the column it targeted is gone.
+
+        Resolved intake lane, and NO literal fallback. On the default board the intake lane is `todo`
+        — the card's current column — so the move becomes a no-op while the status reset and the log
+        entry still record the re-specification. When the workflow will not resolve, the column is
+        left ALONE: refusing to move is recoverable, writing a column that may not exist is not.
+        */
+        const depLanes = hasNewDeps
+          ? await resolveTaskLifecycleColumns(store, id).catch(() => undefined)
+          : undefined;
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default for the SOURCE lane only; the
+           destination below never falls back to a literal. Reviewed 2026-07-31-02:40. */
+        const holdLane = depLanes === undefined ? "todo" : depLanes.hold;
+        if (hasNewDeps && holdLane !== undefined && task.column === holdLane) {
+          const intakeLane = depLanes?.intake;
+          const relocating = intakeLane !== undefined && intakeLane !== task.column;
+          if (relocating) {
+            task.column = intakeLane;
+            task.columnMovedAt = new Date().toISOString();
+          }
           task.status = undefined;
-          task.columnMovedAt = new Date().toISOString();
           const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
-            action: "Moved to triage for re-specification — new dependency added",
+            action: relocating
+              ? `Moved to ${intakeLane} for re-specification — new dependency added`
+              : "Re-seeded for re-specification — new dependency added",
           };
           if (runContext) {
             depLogEntry.runContext = runContext;
@@ -171,7 +202,25 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       ) {
         task.paused = undefined;
         task.pausedByAgentId = undefined;
-        if (task.column === "in-progress" || task.column === "in-review") {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        Clearing the `paused` STATUS on unassignment applies to the two lanes where a card is
+        actively being worked — wip and review. Keyed on the literals, a renamed board left
+        `status: "paused"` behind after the pause itself was lifted, so the card read as paused in
+        every status-driven surface while `task.paused` was already false. A card that is not paused
+        but says it is, forever.
+
+        The lanes are compared directly rather than routed through `column-roles.ts`: those helpers
+        take a column's TRAIT FLAGS, and this site holds a resolved lane struct, not flags.
+        Manufacturing flags from lane equality just to call the helper would be a longer way to write
+        the same comparison while looking like it consulted the trait registry.
+        */
+        const unassignLanes = await resolveTaskLifecycleColumns(store, id).catch(() => undefined);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-02:40. */
+        const inActiveWorkLane = unassignLanes === undefined
+          ? task.column === "in-progress" || task.column === "in-review"
+          : task.column === unassignLanes.wip || task.column === unassignLanes.review;
+        if (inActiveWorkLane) {
           if (task.status === "paused") {
             task.status = undefined;
           }
