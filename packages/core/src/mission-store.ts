@@ -2329,6 +2329,17 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       const linkedTask = this.db.prepare(
         `SELECT id, "column" FROM tasks WHERE id = ? AND "deletedAt" IS NULL`
       ).get(feature.taskId) as { id: string; column: string } | undefined;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-20:15 (audited — DEAD SYNC PATH, do not convert):
+      On a renamed board this literal would call an archived card LIVE and refuse the unforced delete,
+      except that this class does not run in production. `getMissionStoreImpl` returns the
+      AsyncDataLayer-backed `AsyncMissionStore` in PostgreSQL backend mode; the sync `MissionStore`
+      (`this.db.prepare`, two lines up) is legacy SQLite only, and `store.db` throws under PG.
+
+      Same class as `dequeueMergeQueueOnColumnExitImpl` in `project-store-ops.ts`. Recorded rather
+      than converted so the census entry is not mistaken for unconverted debt, and so whoever deletes
+      the sync SQLite residue takes this with it.
+      */
       const linkedToLiveTask = linkedTask && linkedTask.column !== "archived";
 
       if (linkedToLiveTask && !force) {

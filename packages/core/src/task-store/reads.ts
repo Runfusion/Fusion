@@ -369,7 +369,22 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
     FNXC:PostgresArchiveReads 2026-07-14-17:09:
     Pagination belongs to the composed active-plus-archive result. When cold storage participates, fetch both sources before sorting, deduplicating, and slicing; paginating only project.tasks can make archived rows unreachable or shift them onto the wrong page.
     */
-    const includeColdStorage = includeArchived && (!columnFilter || columnFilter === "archived");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
+    COLD STORAGE IS CONSULTED FOR THE BOARD'S OWN ARCHIVE LANE, not for the literal `archived`.
+
+    Archived rows live in a separate store; this decides whether to read it. Keyed on the literal, a
+    caller asking for a RENAMED archive lane (`listTasks({ column: "filed", includeArchived: true })`)
+    skipped cold storage entirely and got an empty page — the archived tasks were unreachable through
+    the only API that can reach them. The unfiltered read was always correct, so this fails only for
+    the caller that names the lane, which is the archive view itself.
+
+    `resolveProjectColumnsForRoles` seeds the legacy id, so `"archived"` still opts in on every board,
+    and this widens an INCLUSION: a superset consults cold storage on a read that used to skip it,
+    costing one extra query and returning rows that are then filtered as before.
+    */
+    const archiveLaneColumns = await resolveProjectColumnsForRoles(store, ["archived"]);
+    const includeColdStorage = includeArchived && (!columnFilter || archiveLaneColumns.has(columnFilter));
     const boundedMergedPrefix = includeColdStorage && paginationLimit !== undefined
       ? paginationOffset + paginationLimit
       : undefined;

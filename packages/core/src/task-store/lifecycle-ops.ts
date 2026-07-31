@@ -652,6 +652,18 @@ export async function checkForChangesImpl(store: TaskStore): Promise<void> {
               // Skip already-archived cache entries to avoid no-op emits.
               // Activity-log listeners skip polling emits; the originating
               // TaskStore instance wrote the row in-process.
+              /*
+              FNXC:WorkflowResolvedColumns 2026-07-31-20:15 (audited — DEAD SYNC PATH, do not convert):
+              Both the guard and the `to: "archived"` it emits are literals, so on a renamed board a
+              polling replica would emit a move to a column the board does not declare. It cannot:
+              `checkForChangesImpl` opens with `store.db.getLastModified()` and `store.db.prepare`,
+              which throw in PostgreSQL backend mode, so this whole polling replica path is legacy
+              SQLite only.
+
+              Recorded rather than converted, for the same reason as `mission-store.ts` and
+              `project-store-ops.ts`: an unconverted literal in dead code is not debt a fleet pass
+              should spend a signature change on, but it must not read as missed either.
+              */
               if (cached.column !== "archived") {
                 store.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });
               }
