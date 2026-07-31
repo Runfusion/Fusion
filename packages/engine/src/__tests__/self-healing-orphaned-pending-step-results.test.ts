@@ -58,7 +58,26 @@ function task(id: string, overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function storeFor(tasks: Task[]): TaskStore & EventEmitter {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-17:55:
+A board whose implementation lane is `building`. Supplied through `listWorkflowDefinitions`, which is
+the ONLY store read `resolveProjectColumnsForRoles` makes — a project-wide async read that works under
+PostgreSQL, unlike the sync workflow-SELECTION reader that makes `resolveTaskWorkflowIrSync`-based
+conversions inert. Using the async helper here is what makes the conversion real rather than decorative.
+*/
+const RENAMED_WIP_IR = {
+  version: "v2",
+  id: "custom:wf",
+  nodes: [],
+  edges: [],
+  columns: [
+    { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+  ],
+};
+
+function storeFor(tasks: Task[], workflowIr?: unknown): TaskStore & EventEmitter {
   const tasksById = new Map(tasks.map((entry) => [entry.id, entry]));
   return Object.assign(new EventEmitter(), {
     getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false } as Settings)),
@@ -70,6 +89,8 @@ function storeFor(tasks: Task[]): TaskStore & EventEmitter {
       return all.slice(offset, offset + limit);
     }),
     getTask: vi.fn(async (id: string) => tasksById.get(id)),
+    /* Absent → the helper keeps the legacy ids, which is every other case in this file. */
+    ...(workflowIr ? { listWorkflowDefinitions: vi.fn(async () => [{ ir: workflowIr }]) } : {}),
     updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
       const next = { ...tasksById.get(id)!, ...patch } as Task;
       tasksById.set(id, next);
@@ -255,5 +276,47 @@ describe("review-gate lease liveness (in-review gates)", () => {
     expect(await manager.reconcileOrphanedPendingStepResults()).toBe(1);
     const after = await store.getTask("FN-NO-OWNER");
     expect(after?.workflowStepResults?.[0]?.status).toBe("failed");
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:55:
+  THE EXECUTOR-OWNED SKIP MUST FOLLOW A RENAMED IMPLEMENTATION LANE.
+
+  This sweep REWRITES `pending` step results to `failed`. It skips implementation-lane rows because
+  they are executor-owned and their liveness is unprovable here — a skip that was keyed on the
+  `in-progress` literal. On a board whose wip lane is named anything else the skip did not apply, so
+  the sweep rewrote a live executor's pending results out from under it, closing the merge gate on a
+  step that was still running.
+
+  Both legs are asserted: the page-snapshot guard and the re-read guard. They are separate `continue`s
+  and either one alone would let this pass while the other stayed literal.
+  */
+  it("skips an executor-owned row resting in a RENAMED implementation lane", async () => {
+    const live = task("FN-RENAMED-WIP", {
+      column: "building",
+      workflowStepResults: [stepResult({ status: "pending", startedAt: new Date().toISOString() })],
+    });
+    const store = storeFor([live], RENAMED_WIP_IR);
+    const manager = new SelfHealingManager(store, "/repo", {} as never);
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(0);
+    expect((await store.getTask("FN-RENAMED-WIP"))?.workflowStepResults?.[0]?.status).toBe("pending");
+  });
+
+  /*
+  The paired negative. The conversion widens membership, so it must not turn every lane into a skip:
+  a card in the same board's REVIEW lane with a dead session is still an orphan and must still be
+  rewritten, or the fix trades one silent failure for another.
+  */
+  it("still rewrites an orphan in a renamed lane that is NOT the implementation lane", async () => {
+    const stranded = task("FN-RENAMED-REVIEW", {
+      column: "checking",
+      workflowStepResults: [stepResult({ status: "pending", startedAt: new Date().toISOString() })],
+    });
+    const store = storeFor([stranded], RENAMED_WIP_IR);
+    const manager = new SelfHealingManager(store, "/repo", {} as never);
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(1);
+    expect((await store.getTask("FN-RENAMED-REVIEW"))?.workflowStepResults?.[0]?.status).toBe("failed");
   });
 });
