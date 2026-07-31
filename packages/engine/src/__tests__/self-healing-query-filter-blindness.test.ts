@@ -899,4 +899,53 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (the query-filter class, thirty-first sweep):
+  `recoverDoneTaskMergeMetadata` repairs the merge metadata of a card that already reached the COMPLETE
+  lane — the commit sha an operator sees, and that later reconcilers trust. The literal read meant that
+  on a renamed board a done card's metadata was never repaired, so a completed task could keep pointing
+  at a commit that is not the one that landed.
+
+  Scoped to `complete`, NOT the terminal union: an archived card is out of scope, and widening to
+  TERMINAL_ROLES would start repairing rows nobody reads — a behaviour change wearing a conversion's
+  clothes. The companion case pins that.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "done"` -> fails, the renamed complete lane is filtered out
+  */
+  function doneMetaFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-DONEMETA",
+      column,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const findLandedTaskCommit = vi.fn(async () => null);
+    Object.assign(manager, { findLandedTaskCommit });
+    return { manager, findLandedTaskCommit };
+  }
+
+  it("repairs merge metadata on a RENAMED complete lane", async () => {
+    const { manager, findLandedTaskCommit } = doneMetaFixture(RENAMED_VOCAB.complete);
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(findLandedTaskCommit).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-DONEMETA" }));
+  });
+
+  it("does not touch a card in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    still in review has not landed, so "repairing" its merge metadata would invent an answer.
+    */
+    const { manager, findLandedTaskCommit } = doneMetaFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(findLandedTaskCommit).not.toHaveBeenCalled();
+  });
 });
