@@ -396,6 +396,38 @@ This matters more than it sounds. A probe that wrongly reports "caught" retires 
 that wrongly reports "missed" sends you rewriting an instrument that was already correct. The first
 nearly shipped a double-counting change to the SQL gate, on evidence that was entirely fictional.
 
+### A seventh shape: reusing an ALREADY-RESOLVED local, without checking what resolved it
+
+The three inert conversions this program had catalogued (#3051, #3062, #3068) all called
+`resolveTaskWorkflowIrSync` **at the call site**, where the sync resolver is visible in the diff. The
+fourth did not, and it is mine: #3114 converted a `triage.ts` arm to `disposeLanes.wip`, reusing a
+value `resolvePlannerLanes` had already produced a few lines above. It landed, and `main` went red on
+`check-inert-sync-lanes` (`triage.ts: 7 -> 8`).
+
+My stated reasoning, verbatim: *"`resolvePlannerLanes` already called immediately above — no new
+resolution/await."* That sentence checks the cost question and skips the correctness one. I confirmed
+I was adding no `await` to a synchronous listener — the usual blocker — and never asked what kind of
+resolver had produced the local I was reusing.
+
+**Reusing an existing resolved value reads as strictly safer than resolving.** No new work, no new
+await, no new failure mode; the resolution is a fait accompli. That intuition is correct about cost
+and silent about correctness, and the sync-ness sits one hop away inside the helper, where a
+call-site reviewer will not see it.
+
+So the check is not "am I calling a sync resolver here?" but **"what produced every lane value I am
+about to compare against, transitively?"** A local is not evidence of anything; the resolver behind it
+is. #3122 widened the gate to follow wrappers for exactly this reason — and I walked through the door
+it was widened to cover, in the same phase I was adding it.
+
+Two corollaries worth keeping:
+
+- **A gate that catches the defect but does not block is a report.** This fired correctly and the PR
+  merged anyway, because `check:inert-sync-lanes` was not in the blocking set (being fixed in #3127).
+  That is the second time in one phase that a correct non-blocking signal was ignored.
+- **The remaining count is not backlog.** Reverting the arm takes `triage.ts` to 7, and those seven
+  are the same shape — they need the emitter-side / async-threading work, not another conversion pass.
+  `--claims` now marks sync-resolver files as inert-risk and keeps them out of the start-here list.
+
 ## The rule that produced every fix above
 
 **A green guard is evidence only once you have watched it go red.**
