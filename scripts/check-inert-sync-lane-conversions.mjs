@@ -147,6 +147,24 @@ function unwrapForSyncCall(node) {
   const walk = (n) => {
     if (!n) return;
     if (ts.isAwaitExpression(n) || ts.isParenthesizedExpression(n)) return walk(n.expression);
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-22:40 (SEVENTH shape — a type assertion hid the source):
+    `as`, `satisfies` and `!` are erased at runtime and change nothing about the value, but they are
+    real AST nodes, so the walk stopped at them:
+
+        resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id) as never)   MISSED
+        resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id))            caught
+
+    Measured against a probe file — `as never` and `!` both took the count 20 -> 19 while the
+    uncast form counted. #3251's audit reported this as "a DIRECT sync read is untracked"; the
+    direct read is tracked, the CAST around it was not, which is why the two probes disagreed.
+
+    Same shape as the six before it (inline, membership, cross-module, wrapper argument, census
+    switch/includes, ternary destination): the rewrite that hides a guard is the one that changes its
+    syntactic category without changing its meaning. Erased-at-runtime nodes are the purest case —
+    they cannot change behaviour, only visibility.
+    */
+    if (ts.isAsExpression(n) || ts.isSatisfiesExpression?.(n) || ts.isNonNullExpression(n) || ts.isTypeAssertionExpression?.(n)) return walk(n.expression);
     if (ts.isConditionalExpression(n)) { walk(n.whenTrue); walk(n.whenFalse); return; }
     if (ts.isBinaryExpression(n)) { walk(n.left); walk(n.right); return; }
     /*
