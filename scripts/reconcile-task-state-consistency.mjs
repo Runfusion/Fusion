@@ -5,7 +5,7 @@ import { openBackend, importCore } from "./lib/backend-db.mjs";
 const DEFAULT_NOTE = "FN-4000 reconciliation: cleared stale transient failure state using TaskStore done-normalization so database and task JSON remain synchronized.";
 
 /*
-FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:10:
+FNXC:OperatorScriptLaneAssumptions 2026-07-31-02:10:
 Both checks ask this task's OWN lanes, because keyed on the literals they fail in BOTH directions.
 
   `hasDoneTransient` gated on `column === "done"`. On a board whose complete lane is named anything
@@ -48,7 +48,7 @@ export function findTaskStateInconsistencies(task, lanes = {}) {
 }
 
 /*
-FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:10:
+FNXC:OperatorScriptLaneAssumptions 2026-07-31-02:10:
 `resolveLanes` is INJECTED, not built here, and `main` below supplies the real one.
 
 Resolving inside this function would drag `importCore()` — and therefore a built `packages/core/dist`
