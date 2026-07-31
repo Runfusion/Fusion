@@ -165,7 +165,7 @@ describe("TaskDetailModal worktree terminal tab", () => {
     const { container } = renderDetail();
 
     await screen.findByRole("button", { name: "Terminal" });
-    const tabLabels = Array.from(container.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab"))
+    const tabLabels = Array.from(document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab"))
       .map((tab) => tab.textContent?.trim());
 
     expect(tabLabels.indexOf("Comments")).toBeGreaterThanOrEqual(0);

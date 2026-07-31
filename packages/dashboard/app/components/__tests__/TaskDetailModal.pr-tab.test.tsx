@@ -72,11 +72,11 @@ describe("TaskDetailModal Pull Request tab", () => {
     );
 
     expect(screen.queryByTestId("pr-panel-stub")).toBeNull();
-    expect(container.querySelector(".detail-in-review-stall")).toBeNull();
+    expect(document.querySelector(".detail-in-review-stall")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Pull Request" }));
 
     expect(screen.getByTestId("pr-panel-stub")).toBeInTheDocument();
-    expect(container.querySelector(".detail-in-review-stall")).toBeTruthy();
+    expect(document.querySelector(".detail-in-review-stall")).toBeTruthy();
   });
 });
