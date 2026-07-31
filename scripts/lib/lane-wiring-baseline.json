@@ -1,6 +1,5 @@
 {
   "counts": {
-    "packages/core/src/in-review-stall.ts": 1,
     "packages/core/src/task-merge.ts": 1,
     "packages/core/src/task-store/moves.ts": 2,
     "packages/engine/src/auto-merge-finalization.ts": 1,
