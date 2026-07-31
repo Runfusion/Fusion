@@ -27,6 +27,8 @@ async function resolveFinalizationColumns(
     return {
       completeColumn: "done",
       mergeColumn: "in-review",
+      /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above calls `columnHasFlag`.
+         Reached only when IR resolution throws, where the legacy id is the only answer left. */
       isCompleteColumn: (columnId: string) => columnId === "done",
     };
   }
