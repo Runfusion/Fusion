@@ -20,7 +20,7 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveProjectColumnsForRoles, resolveReboundTargetForTask, REVIEW_ROLES, setRunningAgentCountSource } from "@fusion/core";
+import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveReboundTargetForTask, setRunningAgentCountSource } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -88,6 +88,7 @@ import {
   recoverAlreadyMergedReviewTasksRecoveriesPerDay,
   countEntriesInto,
   countBouncesOut,
+  resolveReliabilityLanes,
 } from "./reliability-metrics.js";
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
 import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
@@ -1918,10 +1919,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     summing across disjoint pairs cannot double-count. On the built-in board this is 1x1 — exactly
     the two queries that were here before — and on a renamed board it is a handful.
     */
-    const [reviewLanes, wipLanes] = await Promise.all([
-      resolveProjectColumnsForRoles(scopedStore, REVIEW_ROLES),
-      resolveProjectColumnsForRoles(scopedStore, ["countsTowardWip"]),
-    ]);
+    const { review: reviewLanes, wip: wipLanes, complete: durationCompleteLanes } =
+      await resolveReliabilityLanes(scopedStore);
     const [runAuditEvents, enteredByDay, bouncedByDay, durationEvents, mergedTaskIds] = await Promise.all([
       runAuditEventsPromise,
       countEntriesInto(scopedStore, { since: startIso, until: endIso }, reviewLanes),
@@ -1933,9 +1932,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const postMergeByDay = postMergeAuditFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
     const fileScopeByDay = fileScopeInvariantFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
     const recoveriesByDay = recoverAlreadyMergedReviewTasksRecoveriesPerDay(runAuditEvents, effectiveStartMs, nowMs);
-    /* `reviewLanes` is already resolved above for the entry/bounce counts; the complete lanes are the
-       other half of the review -> done transition this metric measures. */
-    const durationCompleteLanes = await resolveProjectColumnsForRoles(scopedStore, ["complete"]);
     const duration = inReviewDurationMetrics(durationEvents, effectiveStartMs, nowMs, {
       review: reviewLanes,
       complete: durationCompleteLanes,

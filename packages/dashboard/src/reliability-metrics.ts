@@ -1,4 +1,5 @@
 import type { ActivityLogEntry, RunAuditEvent } from "@fusion/core";
+import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "@fusion/core";
 
 /**
  * Discovery notes (FN-4360):
@@ -369,4 +370,34 @@ export async function countBouncesOut(
     pairs.map((pair) => store.getTaskMovedCountsByDay({ ...window, ...pair })),
   );
   return results.reduce<Record<string, number>>((acc, counts) => mergeDayCounts(acc, counts), {});
+}
+
+/**
+ * FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
+ * The Reliability endpoint's three lane reads, behind one seam.
+ *
+ * WHY THIS EXISTS. These resolves lived inline in the `/api/health/reliability` route closure, which
+ * has no route-level test — the only way in was booting `createServer` behind a mock-the-world
+ * shell, which the slow-test rule forbids. So all three were UNCOVERED and unpinnable: blinding any
+ * of them left the whole dashboard suite green. `reliability-metrics.test.ts` looks like it covers
+ * them and does not — it exercises the collaborators (`countEntriesInto` and friends) with lane sets
+ * passed in by hand, which can never fail when the CALLER's resolve is blinded.
+ *
+ * This function is that missing caller-side seam: it resolves, so a test of it fails when a resolve
+ * is blinded.
+ *
+ * WHAT THE LANES MEAN. `review` and `wip` are the two sides of the entered/bounced counts;
+ * `complete` is the other half of the review -> done transition the duration metric measures.
+ * Keyed on literals, a renamed board returned {} from every query, so the headline divided one zero
+ * by another and reported a healthy rate — a NUMBER, not an error, saying everything is fine.
+ */
+export async function resolveReliabilityLanes(
+  store: Parameters<typeof resolveProjectColumnsForRoles>[0],
+): Promise<{ review: ReadonlySet<string>; wip: ReadonlySet<string>; complete: ReadonlySet<string> }> {
+  const [review, wip, complete] = await Promise.all([
+    resolveProjectColumnsForRoles(store, REVIEW_ROLES),
+    resolveProjectColumnsForRoles(store, ["countsTowardWip"]),
+    resolveProjectColumnsForRoles(store, ["complete"]),
+  ]);
+  return { review, wip, complete };
 }
