@@ -45,6 +45,7 @@ vi.mock("../run-audit.js", async (importOriginal) => {
   };
 });
 
+import { createRunAuditor } from "../run-audit.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { executingTaskLock } from "../active-session-registry.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
@@ -769,5 +770,62 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
 
     expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:15 (the query-filter class, nineteenth sweep):
+  `recoverOrphanedExecutions` takes NO lifecycle action — it emits `task:orphan-detected-no-action` so an
+  operator can see a wip card with no live session behind it. The literal read meant that on a renamed
+  board the event was never emitted, so the one signal pointing at an orphaned execution was silently
+  absent. What this restores is visibility, not a repair.
+
+  The observable is therefore the AUDITOR construction, which happens once per detected candidate.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column !== "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  it("emits the orphan-detected signal for a card on a RENAMED wip lane", async () => {
+    const orphan = {
+      ...shippedCard(),
+      id: "FN-ORPHANEXEC",
+      column: RENAMED_VOCAB.wip,
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([orphan]);
+    (createRunAuditor as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanedExecutions();
+
+    expect(createRunAuditor).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: "FN-ORPHANEXEC", phase: "recover-orphaned-executions" }),
+    );
+  });
+
+  it("does not emit the orphan signal for a card already in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    in review is not an orphaned EXECUTION — it has no slot and no session to be missing.
+    */
+    const reviewing = {
+      ...shippedCard(),
+      id: "FN-ORPHANEXEC",
+      column: RENAMED_VOCAB.review,
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([reviewing]);
+    (createRunAuditor as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanedExecutions();
+
+    expect(createRunAuditor).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ phase: "recover-orphaned-executions" }),
+    );
   });
 });

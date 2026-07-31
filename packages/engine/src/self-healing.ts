@@ -11659,12 +11659,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverOrphanedExecutions(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (the query-filter class, nineteenth sweep):
+      WHAT THIS SWEEP RESTORES IS VISIBILITY, NOT A REPAIR. It takes no lifecycle action — it only emits
+      `task:orphan-detected-no-action` so an operator can see a wip card with no live session behind it.
+      The literal read meant that on a renamed board the event was never emitted, so the one signal
+      pointing at an orphaned execution was silently absent. Worth stating because the rest of this series
+      fixes stalls; this one fixes a blind spot.
+
+      The `t.column !== "in-progress"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const orphanWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const orphanExecById = new Map<string, Task>();
+      for (const column of orphanWipColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) orphanExecById.set(entry.id, entry);
+      }
+      const tasks = [...orphanExecById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const orphanExecLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          orphanExecLanes.set(entry.id, source === "default" ? new Set(orphanWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
+        } catch {
+          orphanExecLanes.set(entry.id, new Set(orphanWipColumns));
+        }
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
       const orphaned = tasks.filter((t) => {
-        if (t.column !== "in-progress" || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
+        if (!(orphanExecLanes.get(t.id) ?? orphanWipColumns).has(t.column) || t.paused || executingIds.has(t.id) || isTaskWorkComplete(t)) {
           return false;
         }
         const staleness = now - new Date(t.updatedAt).getTime();
