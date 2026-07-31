@@ -8,7 +8,7 @@ deliberately does NOT assert the renamed-lane case.
 The gap is narrow rather than absent because `deletedAt` covers the soft-delete half and that is the
 common path — which is also why it stayed invisible.
 
-I CONVERTED IT, AND BACKED THE CONVERSION OUT. `archived-column-gate-parity.test.ts` caught it, and
+I CONVERTED IT, BACKED IT OUT, AND HAVE NOW CONVERTED IT PROPERLY. `archived-column-gate-parity.test.ts` caught it, and
 its reasoning is correct and not obvious: this gate has THREE encodings — TypeScript comparisons,
 Drizzle `eq`/`ne` predicates, and raw SQL templates — and converting only the TypeScript arm makes
 them DIVERGE. TS would call the row archived while the SQL side still returns it as live: a log write
@@ -67,11 +67,20 @@ function row(column: string) {
 
 describe("the log-entry archive gate", () => {
   /*
-  DELIBERATELY ABSENT: "refuses a log write to a card in a RENAMED archive lane". That is the
-  behaviour this gate SHOULD have and does not, and it cannot be fixed in the TypeScript arm alone —
-  see the header. Written down rather than left as a silent hole, so the next reader knows the
-  omission is a decision and not an oversight.
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59: the renamed case is NO LONGER ABSENT — it is the
+  first case below. The omission recorded here said the gate "cannot be fixed in the TypeScript arm
+  alone". That was the right call on the evidence then and is now wrong: the conversion is ADDITIVE,
+  keeping `pgRow.column === "archived"` verbatim as the fallback, so no encoding's literal count moves
+  and the parity gate is satisfied rather than bypassed.
   */
+  it("refuses a log write to a card in a RENAMED archive lane", async () => {
+    readTaskRowMock.mockResolvedValue(row("filed"));
+
+    await expect(logEntryImpl(storeWith(RENAMED_IR), "KB-1", "did a thing"))
+      .rejects.toThrow(/archived — logging is read-only/);
+  });
+
+  /* CONTROL: the resolved set is legacy-seeded, so the built-in id must still refuse. */
   it("refuses a log write to the legacy `archived` column", async () => {
     readTaskRowMock.mockResolvedValue(row("archived"));
 

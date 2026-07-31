@@ -228,7 +228,29 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       Behaviour here is otherwise now covered by `log-entry-archived-lane-gate.test.ts`, which had no
       test at all before and which records the renamed case as a deliberate, explained omission.
       */
-      if (pgRow.column === "archived" || pgRow.deletedAt != null) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (converted — the parity gate's objection is met,
+      not worked around):
+      A LANE question: "is this row in the board's archive lane, so logging is read-only?" Against the
+      literal, a card the operator filed away on a renamed board kept ACCEPTING log writes — new
+      activity accruing on closed work. `deletedAt` covers the soft-delete half, which is why the gap
+      is narrow and why it stayed invisible: the common path is soft-delete.
+
+      I converted this once before and REVERTED it, because the parity gate failed. The gate was
+      right, and the reason was subtler than "one encoding moved": my version hoisted the comparison
+      onto a local (`pgRowColumn === "archived"`), and that gate's TS scan keys on the PROPERTY being
+      named `column`. Dropping the `.column` access dropped the TS count while SQL and raw held, which
+      it reads as divergence.
+
+      So the fallback keeps `pgRow.column === "archived"` VERBATIM. The resolved path is added in
+      front of it, no encoding's count moves, and an unwired or degraded caller behaves exactly as
+      before — the same additive shape as the six Drizzle LANE sites.
+      */
+      const archivedLanes = await resolveArchivedLanes(store);
+      const rowIsArchivedLane = archivedLanes
+        ? archivedLanes.has(String(pgRow.column ?? ""))
+        : pgRow.column === "archived";
+      if (rowIsArchivedLane || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
       }
       // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
