@@ -73,15 +73,27 @@ discrepancy to the thing being measured instead of to the measuring.
 
 ## Read the reported COUNT, not the exit code
 
-There is a second probing technique that sidesteps §1 entirely, and it is strictly more informative.
+There is a second probing technique that sidesteps §1 entirely. It is **more informative for shape
+coverage** — not strictly more informative, since it cannot answer §1's question at all: a count tells
+you what the detector saw, never whether the ratchet would have failed on it.
 
 Instead of asking "did the tool exit non-zero", parse the tool's own **per-file count** out of its
 output:
 
 ```bash
-node scripts/check-move-target-literals.mjs 2>&1 | grep -a "my-probe-tmp" \
-  | grep -aoE "^ +[0-9]+" | tr -d ' '
+# Capture output and status SEPARATELY: the pipeline below ends in `tr`, so a piped form reports
+# `tr`'s success and a crashed detector reads as a clean zero — the failure this document is about.
+out=$(node scripts/check-move-target-literals.mjs 2>&1); rc=$?
+[ "$rc" -le 1 ] || { printf 'detector failed (rc=%s)\n%s\n' "$rc" "$out" >&2; exit 1; }
+
+count=$(printf '%s\n' "$out" | grep -a "my-probe-tmp" | grep -aoE "^ +[0-9]+" | tr -d ' ')
+[ -n "$count" ] || { printf 'no matching line — probe not scanned?\n%s\n' "$out" >&2; exit 1; }
+printf '%s\n' "$count"
 ```
+
+`rc -le 1` because these ratchets use 1 for "violations found" and 2+ for "could not run"; a missing
+match is reported rather than silently returning empty, since an absent line and a zero count are
+different findings.
 
 Two properties matter:
 
@@ -105,7 +117,10 @@ both report zero hits, and neither is a finding.
 
 - Before trusting a ratchet's number, run it once with a deliberate violation and confirm it goes red.
   A ratchet nobody has seen fail is a ratchet nobody has verified.
-- When probing what a tool can see, use `pnpm check:*`, not a bare `node scripts/...`.
+- Match the probe to the question: `pnpm check:*` for **"can this ratchet fail?"** (§1 — always run
+  it through the CI entry point, never a bare `node scripts/...`), and the per-file **count** probe for
+  **"what shapes can it see?"**. The count cannot answer the first question and the exit code cannot
+  answer the second.
 - Prefer one discovery mechanism across a family of tools. If a tool must differ, say so in its header
   and say why, so a cross-tool differential is readable.
 - `git ls-files --cached --others --exclude-standard` is the tracked-plus-untracked form (dedupe the
