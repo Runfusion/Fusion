@@ -2255,7 +2255,7 @@ export class Scheduler {
           && typeof task.worktree === "string" && task.worktree.length > 0)
         .map((task) => task.id);
       /*
-      FNXC:WorkflowScheduling 2026-08-01-01:05 (self-deadlock in the widened ledger, observed live):
+      FNXC:WorkflowScheduling 2026-07-31-23:43 (self-deadlock in the widened ledger, observed live):
       A planned Ready card RETAINS its planning worktree for execution reuse, so counting it as a
       holder must not block ITS OWN release — on release the slot TRANSFERS (the card executes in
       the same worktree), it does not add. Without this exclusion the first unpause released only
