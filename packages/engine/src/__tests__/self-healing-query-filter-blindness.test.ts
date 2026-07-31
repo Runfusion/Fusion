@@ -37,6 +37,17 @@ import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { resolveLifecycleColumns } from "@fusion/core";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-15:35:
+`isBranchAheadOfBase` is a static named import that shells out to git, so it is mocked rather than
+spied — the ESM binding is already resolved by the time a spy could replace it.
+*/
+const isBranchAheadOfBase = vi.fn(async () => ({ aheadCount: 0 }));
+vi.mock("../self-healing-branch.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../self-healing-branch.js")>();
+  return { ...actual, isBranchAheadOfBase: (...args: unknown[]) => isBranchAheadOfBase(...args as []) };
+});
+
 vi.mock("../run-audit.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../run-audit.js")>();
   return {
@@ -769,5 +780,58 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
 
     expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:40 (the query-filter class, twenty-eighth sweep):
+  `auditNoCommitsExpectedCandidates` flags a card that finished every step and pushed NO commits — either
+  a legitimately commit-free task nobody declared as such, or work that silently produced nothing.
+
+  The literal read meant that on a renamed board only the `no_commits` ERROR path fed the audit, so a card
+  sitting quietly in a renamed review lane with zero commits and no error was never flagged. The sweep
+  did not go dead — it went half-blind, which is harder to notice.
+
+  REVERT CHECK, measured: with the literal read and verdict restored, this fails — the card contributes
+  nothing, because it has no `no_commits` error to be caught by the other arm.
+  */
+  it("flags a zero-commit card on a RENAMED review lane with no error text", async () => {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOCOMMITS",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      error: null,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    isBranchAheadOfBase.mockClear();
+
+    const flagged = await new SelfHealingManager(store, { rootDir: "/repo" }).auditNoCommitsExpectedCandidates();
+
+    expect(isBranchAheadOfBase).toHaveBeenCalled();
+    expect(flagged).toBe(1);
+  });
+
+  it("does not flag a zero-commit card that already declared noCommitsExpected", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep flagging every zero-commit card it found would satisfy the
+    case above. Same board, same lane — only the declaration differs, which is the whole point of the flag.
+    */
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOCOMMITS",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      error: null,
+      noCommitsExpected: true,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    isBranchAheadOfBase.mockClear();
+
+    const flagged = await new SelfHealingManager(store, { rootDir: "/repo" }).auditNoCommitsExpectedCandidates();
+
+    expect(isBranchAheadOfBase).not.toHaveBeenCalled();
+    expect(flagged).toBe(0);
   });
 });
