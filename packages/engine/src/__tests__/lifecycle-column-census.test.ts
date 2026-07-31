@@ -605,28 +605,52 @@ describe("the ratchet follows the count down", () => {
     const { join } = await import("node:path");
     const { execFile } = await import("node:child_process");
 
-    const baseline = JSON.parse(await readFile(realBaseline, "utf8"));
-    const file = mutate(baseline);
     const dir = await mkdtemp(join(tmpdir(), "fusion-census-tighten-"));
     const path = join(dir, "baseline.json");
+
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-20:10:
+    SYNC THE COPY TO THE TREE FIRST, so these cases do not depend on the COMMITTED baseline.
+
+    `inflate` adds 3 to a file's recorded allowance and the assertion below reads back
+    `inflatedFrom - 3`. That arithmetic only holds while the recorded number equals the tree's. It
+    stopped holding the moment a fleet PR took `self-healing.ts` from 26 to 22 without re-recording:
+    the CLI correctly tightened to 22 while the fixture expected 26, and both cases in this block
+    went red for a reason that had nothing to do with the CLI.
+
+    That is not a one-off. The census EXITS 0 on a drop by design — so one worker's merge cannot
+    redden the gate — which means the committed baseline goes stale silently and this fixture is
+    what eventually trips over it. Syncing a temp copy first makes the cases self-maintaining: they
+    assert the CLI tightens by EXACTLY the inflation, which is the property they were written for,
+    against whatever the tree currently holds.
+    */
+    await writeFile(path, await readFile(realBaseline, "utf8"));
+    await runCli(["--strict", "--update-baseline"], path, "");
+
+    const baseline = JSON.parse(await readFile(path, "utf8"));
+    const file = mutate(baseline);
     await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`);
 
-    const result = await new Promise<{ code: number; out: string }>((resolve) => {
-      execFile(
-        process.execPath, [cliPath, ...args],
-        {
-          cwd: repoRoot,
-          env: {
-            ...process.env,
-            FUSION_CENSUS_BASELINE_PATH: path,
-            /* Empty string = "this change touched nothing", which is the lenient path the other cases need. */
-            FUSION_CENSUS_TOUCHED_PATHS: touchedPaths ? touchedPaths() : "",
+    function runCli(cliArgs: string[], baselinePath: string, touched: string) {
+      return new Promise<{ code: number; out: string }>((resolve) => {
+        execFile(
+          process.execPath, [cliPath, ...cliArgs],
+          {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              FUSION_CENSUS_BASELINE_PATH: baselinePath,
+              /* Empty string = "this change touched nothing", which is the lenient path the other cases need. */
+              FUSION_CENSUS_TOUCHED_PATHS: touched,
+            },
+            maxBuffer: 32 * 1024 * 1024,
           },
-          maxBuffer: 32 * 1024 * 1024,
-        },
-        (error, stdout, stderr) => resolve({ code: (error as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` }),
-      );
-    });
+          (error, stdout, stderr) => resolve({ code: (error as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` }),
+        );
+      });
+    }
+
+    const result = await runCli(args, path, touchedPaths ? touchedPaths() : "");
     const after = JSON.parse(await readFile(path, "utf8"));
     return {
       ...result,
