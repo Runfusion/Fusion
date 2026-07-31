@@ -116,15 +116,25 @@ pgDescribe("startup sweep lane vocabulary, resolved from a sentinel task id", ()
     expect(await sweepThenRead(store, taskId)).toBeNull();
   });
 
-  it("CHARACTERIZATION — the same card on a RENAMED board is NEVER swept", async () => {
-    /*
-    The card is in none of the four queried columns (`triage`, `todo`, and the two sentinel-resolved
-    lanes, which are both `todo`), so the sweep does not see it. Its stale `planning` status survives
-    and it holds a planning admission slot indefinitely.
-    */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-23:59:
+  WAS A CHARACTERIZATION, IS NOW A REGRESSION TEST — the defect it pinned is fixed.
+
+  It asserted `"planning"` survives: the card sat in none of the four queried columns, because the
+  sentinel `""` task id could resolve no board and the union collapsed to the legacy pair. The header
+  above notes that making `resolvePlannerLanes` async would NOT repair this, "because the defect is
+  the argument, not the resolver" — which is right, and is why the fix is a PROJECT-level resolver.
+
+  `resolveProjectColumnsForRoles(store, ["intake", "hold"])` asks the question this sweep actually has:
+  there is no task to resolve against, and it wants every column playing those roles anywhere in the
+  project. The renamed planning column is now queried, so the stale status is cleared.
+
+  The assertion is inverted rather than deleted, so the file keeps its record of what the bug WAS.
+  */
+  it("clears a stale planning status on a RENAMED board", async () => {
     const store = h.store();
     const taskId = await stalePlanningCard(store, RENAMED_VOCAB, "wf-renamed-sweep");
 
-    expect(await sweepThenRead(store, taskId)).toBe("planning");
+    expect(await sweepThenRead(store, taskId)).toBeNull();
   });
 });

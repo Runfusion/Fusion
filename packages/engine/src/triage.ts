@@ -36,6 +36,7 @@ import {
   resolveWorkflowIrForTask,
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
+  resolveProjectColumnsForRoles,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -970,8 +971,25 @@ export class TriageProcessor {
     Querying extra columns is free here: the sweep only READS and every row is
     filtered on `status === "planning"` before anything is written.
     */
-    const sweepLanes = resolvePlannerLanes(this.store, "");
-    const sweepColumns = [...new Set(["triage", "todo", sweepLanes.intake, sweepLanes.hold])];
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (SYNC -> PROJECT-LEVEL, the last convertible site
+    in this file):
+    `resolvePlannerLanes(this.store, "")` was called with an EMPTY task id — there is no task here, so
+    it could never resolve one and returned the DEFAULT board's lanes. The sweep therefore queried
+    `{triage, todo}` on every board, and a stale `planning` card resting in a RENAMED planning column
+    was never swept: it holds a planning admission slot permanently, which is the exact failure the
+    note above describes.
+
+    The right shape is PROJECT-level, not per-task: this sweep has no task to resolve against and
+    wants every column that plays these roles anywhere in the project. `resolveProjectColumnsForRoles`
+    is that resolver, already used for the same purpose in `self-healing.ts`.
+
+    The legacy pair stays in the union deliberately — the note above explains why (`triage` and `todo`
+    must both be swept for pre-U11 and Coding (Ideas) rows), and querying extra columns is free here
+    because the sweep only READS and every row is filtered on `status === "planning"` first.
+    */
+    const projectPlannerColumns = await resolveProjectColumnsForRoles(this.store, ["intake", "hold"]);
+    const sweepColumns = [...new Set(["triage", "todo", ...projectPlannerColumns])];
     const swept = await Promise.all(
       sweepColumns.map((column) => this.store.listTasks({ column, slim: true })),
     );
