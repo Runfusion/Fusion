@@ -33,19 +33,39 @@ const ROOTS = ["packages", "scripts", "docs"];
 const BASELINE = join(REPO, "scripts", "lib", "fnxc-future-dates-baseline.json");
 /* Build output and vendored bundles are generated; their stamps are copies of the source ones. */
 const SKIP_DIRS = new Set(["node_modules", "dist", ".gate-bundle", "coverage", "build", ".next"]);
-const STAMP = /FNXC:[A-Za-z0-9_]+\s+(\d{4}-\d{2}-\d{2})/g;
+/*
+FNXC:FnxcStampHygiene 2026-07-31-03:40 (#2941 review): HYPHENS ARE PART OF THE REQUIRED FORM.
+AGENTS.md specifies `FNXC:Area-of-product`, and the first matcher accepted only `[A-Za-z0-9_]+` — so
+every hyphenated area, i.e. the documented spelling, was skipped entirely. The gate was blind to the
+shape the rule actually prescribes, which is the worst possible subset to miss.
+*/
+const STAMP = /FNXC:[A-Za-z0-9_-]+\s+(\d{4}-\d{2}-\d{2})/g;
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) yield* walk(full);
-    else if (/\.(tsx?|mjs|md)$/.test(full)) yield full;
+    /* `.js`/`.cjs` too: FNXC comments live in plain-JS scripts as well, and omitting them let a
+       future-dated stamp land unseen in exactly the files this repo writes tooling in. */
+    else if (/\.(tsx?|m?js|cjs|md)$/.test(full)) yield full;
   }
 }
 
-/** Today in the repo's local calendar; a stamp for TODAY is fine, tomorrow is not. */
-const today = new Date().toISOString().slice(0, 10);
+/*
+Today in the repo's LOCAL calendar; a stamp for today is fine, tomorrow is not.
+
+FNXC:FnxcStampHygiene 2026-07-31-03:40 (#2941 review): `toISOString()` is UTC, so for anyone west of
+Greenwich it rolls the date forward for part of each day — a stamp written correctly at 5pm in
+California read as "tomorrow" and failed the gate. Authors write the local date, so the comparison
+has to use the local one.
+*/
+const now = new Date();
+const today = [
+  now.getFullYear(),
+  String(now.getMonth() + 1).padStart(2, "0"),
+  String(now.getDate()).padStart(2, "0"),
+].join("-");
 
 function scan() {
   const counts = {};
@@ -73,12 +93,29 @@ if (process.argv.includes("--update-baseline")) {
   process.exit(0);
 }
 
+/*
+FNXC:FnxcStampHygiene 2026-07-31-03:45 (#2941 review): VALIDATE THE SHAPE, not just the JSON.
+
+The first version caught only a parse error, so `null`, an array, or a negative/NaN count reached the
+comparison and either crashed with a stack trace or — worse — compared as `undefined` and silently
+allowed everything. A ratchet whose baseline can be quietly neutered by a bad edit is not a ratchet.
+*/
 let baseline;
 try {
   baseline = JSON.parse(readFileSync(BASELINE, "utf8"));
 } catch {
-  console.error("[check-fnxc-future-dates] missing baseline; run with --update-baseline");
+  console.error("[check-fnxc-future-dates] missing or malformed baseline; run with --update-baseline");
   process.exit(1);
+}
+if (baseline === null || typeof baseline !== "object" || Array.isArray(baseline)) {
+  console.error("[check-fnxc-future-dates] baseline must be a JSON object of file -> count");
+  process.exit(1);
+}
+for (const [file, count] of Object.entries(baseline)) {
+  if (!Number.isInteger(count) || count < 0) {
+    console.error(`[check-fnxc-future-dates] baseline entry "${file}" must be a non-negative integer, got ${JSON.stringify(count)}`);
+    process.exit(1);
+  }
 }
 
 const problems = [];

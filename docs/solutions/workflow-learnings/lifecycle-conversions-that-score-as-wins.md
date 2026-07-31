@@ -192,7 +192,13 @@ CORRECTION, 2026-07-31. This paragraph used to read "the SQL surface survived th
 all genuinely vocabulary-bound". Both halves were wrong within a day. The population was 31 once the
 scanner stopped missing Drizzle-templated queries, and hand-reading split it into roughly fourteen
 lane-bound sites, eleven `archived` comparisons (three of them CORRECT as literals — they read a
-state, not a lane), and one in dead code. Writing "all genuinely vocabulary-bound" was the same
+state, not a lane), one in dead code, and five that the hand-read simply did not reach before the
+paragraph was written.
+
+The arithmetic not adding up (14 + 11 + 1 = 26, not 31) is itself the point and is left visible rather
+than tidied: the categories came from reading, the total came from the tool, and the gap is the part
+of the population nobody had classified yet. A tidied version would have implied a complete audit that
+had not happened — which is the exact failure this section is about. Writing "all genuinely vocabulary-bound" was the same
 mistake this section warns about, committed in the sentence that warns about it.
 
 ## Guards start catching other people's work, not just yours
