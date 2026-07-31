@@ -32,6 +32,7 @@ export default defineConfig({
       transitively — this project aliases `@fusion/dashboard`, and `app/api/client.ts` imports the
       browser-safe delete-attribution leaf.
       */
+      "@fusion/core/column-roles": fileURLToPath(new URL("../../packages/core/src/column-roles.ts", import.meta.url)),
       "@fusion/core/task-delete-attribution": fileURLToPath(new URL("../../packages/core/src/task-delete-attribution.ts", import.meta.url)),
       "@fusion/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       // FNXC:Clipboard 2026-07-12-00:00: The reports plugin imports the dashboard clipboard helper through its package subpath export; keep this exact alias ahead of the package root alias so vitest does not collapse the subpath to src/index.ts.

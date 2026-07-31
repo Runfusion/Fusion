@@ -52,6 +52,7 @@ export default defineConfig({
       transitively — this project aliases `@fusion/dashboard`, and `app/api/client.ts` imports the
       browser-safe delete-attribution leaf.
       */
+      { find: "@fusion/core/column-roles", replacement: fileURLToPath(new URL("../../packages/core/src/column-roles.ts", import.meta.url)) },
       { find: "@fusion/core/task-delete-attribution", replacement: fileURLToPath(new URL("../../packages/core/src/task-delete-attribution.ts", import.meta.url)) },
       { find: "@fusion/core", replacement: fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)) },
       {
