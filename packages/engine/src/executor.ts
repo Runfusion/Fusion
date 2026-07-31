@@ -20,7 +20,7 @@ import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipT
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolvePlannerLanesForTaskAsync, resolveReplanTargetColumn } from "./replan-target.js";
+import { moveTaskToReplanColumn, resolvePlannerLanes, resolvePlannerLanesForTaskAsync, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem, TaskMoveLanes } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
@@ -3075,13 +3075,38 @@ export class TaskExecutor {
    * default board. When the emitter itself could not resolve (`lanes` undefined on the payload), the
    * legacy ids answer, which is exactly what `resolvePlannerLanes` degraded to anyway.
    */
-  private isBackwardMoveOutOfPlanning(from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
+  private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (fallback CHANGED — adopting the better argument
+    from the duplicate PR #3140):
+    The payload is the real path and is preferred. The FALLBACK, for the case where the emitter could
+    not resolve, is the SYNC resolver rather than the legacy literals.
+
+    I had it the other way round. Falling back to literals reads cleaner and drops these guards off
+    `check-inert-sync-lanes` — but it makes the NO-PAYLOAD path strictly WORSE, because
+    `resolvePlannerLanes` is best-effort (it answers correctly under legacy SQLite, and only degrades
+    to the default board under PostgreSQL) whereas a literal can never be right on a renamed board.
+    Optimising the guard off a ratchet at the cost of the degraded path is scoring the number.
+
+    MEASURED CONSEQUENCE, and it is not the one I predicted. I expected these to stay counted by
+    `check-inert-sync-lanes` and wrote that down; the gate then reported `executor.ts` at ZERO
+    (12 remaining = triage 7 + scheduler 5). It flags a guard whose lane value comes from the sync
+    resolver, and here the sync result reaches the comparison only through a fallback chain the scan
+    does not follow.
+
+    So the ratchet under-reports this shape. That is worth knowing and NOT worth "fixing" by writing
+    the code in whatever form the scanner happens to recognise — the payload-first/sync-fallback shape
+    is the correct one on the merits, and a guard that pushes authors toward a worse degraded path to
+    keep its own count tidy is a guard doing harm. Recorded here so the zero is not read as proof that
+    no sync resolver remains in this file.
+    */
+    const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = {
-      hold: moveLanes?.hold ?? "todo",
-      intake: moveLanes?.intake ?? "triage",
-      wip: moveLanes?.wip ?? "in-progress",
-      review: moveLanes?.review ?? "in-review",
-      complete: moveLanes?.complete ?? "done",
+      hold: moveLanes?.hold ?? sync?.hold ?? "todo",
+      intake: moveLanes?.intake ?? sync?.intake ?? "triage",
+      wip: moveLanes?.wip ?? sync?.wip ?? "in-progress",
+      review: moveLanes?.review ?? sync?.review ?? "in-review",
+      complete: moveLanes?.complete ?? sync?.complete ?? "done",
     };
     if (from !== lanes.hold && from !== lanes.intake) return false;
     const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter(
@@ -3726,7 +3751,7 @@ export class TaskExecutor {
             }
           }),
         );
-      } else if (this.isBackwardMoveOutOfPlanning(from, to, lanes)) {
+      } else if (this.isBackwardMoveOutOfPlanning(task.id, from, to, lanes)) {
         /*
         FNXC:PlanningEvacuation 2026-07-25-23:00:
         A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all

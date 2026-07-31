@@ -262,8 +262,8 @@ exercises and what runs.
 */
 describe("a forward move off a renamed planner lane is not an evacuation", () => {
   const isBackward = (h: ReturnType<typeof harness>, from: string, to: string, ir?: WorkflowIr) =>
-    (h.executor as unknown as { isBackwardMoveOutOfPlanning: (f: string, t: string, l: TaskMoveLanes | undefined) => boolean })
-      .isBackwardMoveOutOfPlanning(from, to, ir ? toTaskMoveLanes(ir) : undefined);
+    (h.executor as unknown as { isBackwardMoveOutOfPlanning: (id: string, f: string, t: string, l: TaskMoveLanes | undefined) => boolean })
+      .isBackwardMoveOutOfPlanning("FN-STRANDED", from, to, ir ? toTaskMoveLanes(ir) : undefined);
 
   it("does NOT evacuate a card advancing into the renamed wip/review/complete lanes", () => {
     // Pre-fix each of these returned true, so the executor aborted live planning work and
