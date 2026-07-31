@@ -3446,7 +3446,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         limitMs: timeoutMs,
         status: task?.status ?? null,
       });
-      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-12:36 (fleet phase): the wedge recovery re-enqueues a
+         merge only for a card still in review; keyed on the id it never re-enqueued on a renamed board
+         and the wedged merge stayed wedged. */
+      const wedgeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && wedgeReviewColumns.has(task.column)) {
         try {
           this.options.enqueueMerge?.(activeId);
         } catch (enqueueErr: unknown) {
@@ -4524,6 +4528,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const tasks = await this.store.listTasks({ slim: true, includeArchived: true });
       const taskById = new Map(tasks.map((task) => [task.id.toUpperCase(), task]));
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-12:20 (fleet phase): the ARCHIVED role, not the id —
+         a renamed archive lane left its branches eligible for reclaim while the card still existed. */
+      const reclaimArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
 
       let reclaimed = 0;
       for (const branch of branches) {
@@ -4531,7 +4538,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!derivedTaskId) continue;
 
         const task = taskById.get(derivedTaskId.toUpperCase());
-        if (!task || task.column === "archived" || task.checkedOutBy || task.userPaused) continue;
+        if (!task || reclaimArchivedColumns.has(task.column) || task.checkedOutBy || task.userPaused) continue;
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.debug(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;
@@ -5065,7 +5072,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-12:15 (fleet phase):
+      REVIEW is the union of the three review roles. Keyed on the id this filter selected NOTHING on a
+      renamed board, so the rebind sweep ran over an empty list and reported success every cycle.
+      */
+      const rebindReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const tasks = allTasks.filter((task) => rebindReviewColumns.has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,
@@ -5284,9 +5297,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       let repaired = 0;
 
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-13:00 (fleet phase): TERMINAL role pair — on a renamed
+         board this skip never fired, so finished cards' worktree metadata was rebound every pass. */
+      const worktreeReconcileTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+      const worktreeReconcileWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const worktreeReconcileReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        if (!options?.includeTaskIds?.has(task.id) && worktreeReconcileTerminalColumns.has(task.column)) {
           continue;
         }
 
@@ -5323,8 +5341,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          /* FNXC:WorkflowResolvedColumns 2026-07-31-13:20 (fleet phase): the same WIP/REVIEW roles this
+             sweep already resolved above, so the safety condition and the liveness guard beneath it
+             cannot disagree about which lanes are live. */
+          && !worktreeReconcileWipColumns.has(task.column)
+          && (!worktreeReconcileReviewColumns.has(task.column) || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
@@ -5352,7 +5373,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-13:10 (fleet phase): "still live" is WIP u REVIEW.
+           Keyed on ids this guard went silent on a renamed board — and its whole purpose is to stop the
+           sweep yanking a worktree out from under a running shell (FN-5256). */
+        if (worktreeReconcileWipColumns.has(task.column) || worktreeReconcileReviewColumns.has(task.column)) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",
@@ -5411,10 +5435,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       followersByHolder.set(task.blockedBy, (followersByHolder.get(task.blockedBy) ?? 0) + 1);
     }
 
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-12:49 (fleet phase): WIP role, not the id — a paused card
+       holding file scope in a renamed execution lane was never rebounded, so its scope decayed forever. */
+    const scopeDecayWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
     const now = Date.now();
     const reboundedIds: string[] = [];
     for (const task of tasks) {
-      if (task.column !== "in-progress" || task.paused !== true) continue;
+      if (!scopeDecayWipColumns.has(task.column) || task.paused !== true) continue;
       if (SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS.has(task.pausedReason ?? "")) continue;
       const followerCount = followersByHolder.get(task.id) ?? 0;
       if (followerCount <= 0) continue;
@@ -5871,6 +5898,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           already-logged blocker, so the degraded answer costs a duplicate log line on a renamed board, not
           a wrong lifecycle decision. Restructuring a sweep's control flow to convert a logging guard is
           the wrong trade.
+
+          DELIBERATE-LITERAL — reviewed 2026-07-31-13:12. The rationale above predates the marker
+          convention, so the census kept scoring a decided site as backlog. Recording the decision where
+          the census reads it, rather than re-deciding it.
           */
           || memoTask?.column !== "todo"
           || memoTask.status !== "queued"
@@ -6170,9 +6201,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return filteredScope;
     };
 
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-12:45 (fleet phase): the holder must be in a WIP lane and
+       the blocked dependency on HOLD. Keyed on ids, neither matched on a renamed board, so the
+       dependency-deadlock recovery never found a candidate and the deadlock persisted. */
+    const deadlockWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+    const deadlockHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
     let recovered = 0;
     for (const holder of tasks) {
-      if (holder.column !== "in-progress") continue;
+      if (!deadlockWipColumns.has(holder.column)) continue;
       if (holder.paused === true || holder.userPaused === true) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
@@ -6191,7 +6227,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           deadlockEvidence = "stale-overlap-blocker";
           break;
         }
-        if (dependency.column !== "todo") continue;
+        if (!deadlockHoldColumns.has(dependency.column)) continue;
         const dependencyScope = await getFilteredFileScope(dependency.id);
         if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
         if (pathsOverlap(holderScope, dependencyScope)) {
@@ -6310,10 +6346,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
 
     const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-12:47 (fleet phase): the HOLD role. A completed-blocked
+       park sits in the board's hold lane, which is only called `todo` on the built-in workflow. */
+    const completedBlockedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== "todo") continue;
+      if (!completedBlockedHoldColumns.has(snapshot.column)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -6409,9 +6448,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       ? { markerAcceptedByTaskId }
       : undefined;
 
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-12:34 (fleet phase): REVIEW is the union of the three
+       review roles; keyed on the id this sweep skipped every card on a renamed board. */
+    const unmetDepReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     let recovered = 0;
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.deletedAt) continue;
+      if (!unmetDepReviewColumns.has(task.column) || task.deletedAt) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
@@ -7312,20 +7354,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           || this.options.isTaskActive?.(taskId) === true;
       };
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-12:58 (fleet phase):
+      The executor-owned skip is a WIP-ROLE question. Keyed on the id it stopped firing on a renamed
+      board, so this sweep would rewrite `pending` step results out from under a LIVE executor run —
+      the one thing its own header says it must never do. Resolved once per pass, outside the paging
+      loop, so a large board still pays one resolve.
+      */
+      const orphanedPendingWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       for (;;) {
         const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
         for (const task of tasks) {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
           // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+          if (orphanedPendingWipColumns.has(task.column)) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+          if (!fresh || fresh.userPaused === true || orphanedPendingWipColumns.has(fresh.column)) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
@@ -11246,7 +11296,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== "in-review") return false;
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-12:51 (fleet phase): REVIEW is the union of the three
+       review roles. An approved merge commit stranded on a renamed review lane was never recovered. */
+    const strandedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    if (!strandedReviewColumns.has(task.column)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -12870,13 +12923,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const recoveredAgentIds = new Set<string>();
     const runningAgents = await agentStore.listAgents({ state: "running", includeEphemeral: true });
 
+    const agentLinkTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+    const agentLinkLiveColumns = new Set<string>([
+      ...await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+      ...await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES),
+    ]);
     for (const agent of runningAgents) {
       if (isEphemeralAgent(agent) || !agent.taskId) {
         continue;
       }
 
       const linkedTask = await this.store.getTask(agent.taskId);
-      if (linkedTask && (linkedTask.column === "in-progress" || linkedTask.column === "in-review" || linkedTask.column === "done" || linkedTask.column === "archived")) {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-13:24 (fleet phase): WIP u REVIEW u TERMINAL. Keyed on
+         ids, none matched on a renamed board, so this sweep evaluated agents whose task was plainly
+         still executing — the case the skip exists to protect. */
+      if (linkedTask && (agentLinkLiveColumns.has(linkedTask.column) || agentLinkTerminalColumns.has(linkedTask.column))) {
         continue;
       }
 
@@ -12922,6 +12983,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
     const clearedAgentIds = new Set<string>();
     const durableAgents = await agentStore.listAgents({ includeEphemeral: false });
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-13:28 (fleet phase): the TERMINAL role pair — the reason
+       string below already calls it "terminal column", so the ids were the only thing disagreeing. */
+    const agentLinkTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
 
     for (const agent of durableAgents) {
       if (!agent.taskId) {
@@ -12938,7 +13002,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!linkedTask) {
         shouldClear = true;
         reason = "linked task missing";
-      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+      } else if (agentLinkTerminalColumns.has(linkedTask.column)) {
         shouldClear = true;
         reason = `linked task in terminal column ${linkedTask.column}`;
       } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
@@ -14576,7 +14640,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (task.column === "done" || task.column === "archived") {
+                /* FNXC:WorkflowResolvedColumns 2026-07-31-12:32 (fleet phase): the shorter done-task
+                   grace never applied on a renamed board, so finished tasks' temp worktrees lingered
+                   for the full stale window. */
+                const tempWorktreeTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+                if (tempWorktreeTerminalColumns.has(task.column)) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }
