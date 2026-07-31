@@ -10,7 +10,7 @@ import {TaskStore} from "../store.js";
 import type {Settings} from "../types.js";
 import {parseWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflow-reconciliation.js";
-import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
+import {resolveDefaultWorkflowIr} from "../builtin-workflows.js";
 import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflow-definition-types.js";
@@ -430,7 +430,28 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     // so they now resolve to the built-in default workflow (KTD-1); the re-home
     // move preserves task fields (preserveProgress) and emits one audit per card.
     if (occupantTaskIds.length > 0) {
-      const defaultEntry = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (the #3178 drift, in the delete path):
+      THE DEFAULT WORKFLOW, NOT THE LEGACY ONE. `BUILTIN_CODING_WORKFLOW_IR` is
+      `builtin:legacy-coding`; the catalog's actual default is `resolveDefaultWorkflowIr()`. Post-U11
+      they differ by exactly the column this line reads:
+
+          default  todo, in-progress, in-review, done, archived
+          legacy   triage, todo, in-progress, in-review, done, archived
+
+      so `resolveEntryColumnId` answered `triage` for the legacy IR and `todo` for the default —
+      measured, not inferred. The comment above already says "re-home each occupant to the DEFAULT
+      workflow's entry column"; the code read the legacy one.
+
+      CONSEQUENCE: deleting a workflow re-homed every occupant into `triage`, a column the default
+      board does not declare. `moveTask` rejects an undeclared target EXCEPT under `recoveryRehome`
+      with a legacy id — and `triage` IS a legacy id — so this slipped through the guard that exists
+      to stop exactly this, and left the card in a lane its workflow has no node for.
+
+      Same drift #3178 fixed in the TUI board and `builtin-workflows.ts` records as already fixed for
+      the move-path resolvers. This is the third door into it.
+      */
+      const defaultEntry = resolveEntryColumnId(resolveDefaultWorkflowIr());
       if (defaultEntry) {
         for (const taskId of occupantTaskIds) {
           await store.rehomeOccupant(taskId, defaultEntry, "workflow-delete", { workflowId: id });
