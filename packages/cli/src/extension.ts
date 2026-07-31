@@ -1857,7 +1857,18 @@ export default function kbExtension(pi: ExtensionAPI) {
         call, so all three callers now resolve identically and the fallback lives in one place.
         */
         const overrideLanes = await resolveNodeOverrideLanes(store, task.id);
-        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null, overrideLanes);
+        /*
+        Spelled as an object literal naming both keys, not `…, overrideLanes)`. The two are identical
+        at runtime, but `scripts/lib/lane-wiring-census.mjs` matches an object-literal argument and
+        cannot see through a variable — passing the resolved object directly reads to that gate as an
+        UNWIRED call and turns it red. #3019's header records the same constraint, and it is what
+        pushed that PR toward resolving the lanes inline; the constraint is real, the bespoke
+        resolution it produced was not required by it.
+        */
+        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null, {
+          wipColumns: overrideLanes.wipColumns,
+          completeColumns: overrideLanes.completeColumns,
+        });
         if (!validation.allowed) {
           return {
             content: [{ type: "text", text: validation.message ?? "Node override change blocked" }],
