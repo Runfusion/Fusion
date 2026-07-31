@@ -60,7 +60,7 @@ import {
   type MergeTargetResolution,
   type Settings,
   type Task,
-  type TaskStore,
+  type TaskStore, resolveReviewColumns
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "./worktree-names.js";
@@ -1170,7 +1170,22 @@ export async function runAiMerge(
   if (await isAlreadyFinalizedColumn(store, task)) {
     return noOpResult(task, branch, "already-finalized");
   }
-  const blocker = getTaskMergeBlocker(task, { manual: options.manual === true });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:10 (MERGING WAS BROKEN ON A RENAMED BOARD):
+  `getTaskMergeBlocker`'s identity check RETURNS A BLOCKER when the column is not a review lane, so
+  calling it without `reviewColumns` on a board whose review lane is renamed produced
+  `Cannot merge FN-x: task is in 'signoff', must be in 'in-review'` — and the merge threw. Not a
+  degraded message: no task could be merged at all.
+
+  The helper's own comment records this exact defect being fixed in `moves.ts`; these two merge
+  entry points were missed. Resolve the task's own review lanes and pass them.
+  */
+  const aiReviewColumns = new Set<string>(["in-review"]);
+  try {
+    const aiIr = await resolveWorkflowIrForTask(store, taskId);
+    if (aiIr) for (const id of resolveReviewColumns(aiIr)) aiReviewColumns.add(id);
+  } catch { /* degraded: the legacy id above still answers */ }
+  const blocker = getTaskMergeBlocker(task, { manual: options.manual === true, reviewColumns: aiReviewColumns });
   if (blocker) throw new Error(`Cannot merge ${taskId}: ${blocker}`);
 
   const settings = await store.getSettings();
